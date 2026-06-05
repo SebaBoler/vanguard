@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.vanguard/
+*.log
+
+# sekrety / zmienne środowiskowe
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+
+# lokalne ustawienia Claude Code (per-maszyna)
+.claude/settings.local.json
