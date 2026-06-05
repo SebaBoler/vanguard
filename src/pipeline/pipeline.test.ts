@@ -50,8 +50,8 @@ function recordingAgent(received: AgentRunInput[]): AgentProvider {
     name: 'rec',
     async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
       received.push(input);
-      yield { text: 'pracuję' };
-      return { finalText: 'gotowe <promise>COMPLETE</promise>', turns: 1, sessionId: 'sess' };
+      yield { text: 'working' };
+      return { finalText: 'done <promise>COMPLETE</promise>', turns: 1, sessionId: 'sess' };
     },
   };
 }
@@ -64,8 +64,8 @@ describe('runStages', () => {
     const outcomes = await runStages(
       ctx,
       [
-        { name: 'implementer', promptTemplate: 'zrób {{TITLE}}' },
-        { name: 'reviewer', promptTemplate: 'przejrzyj:\n{{PREVIOUS_DIFF}}' },
+        { name: 'implementer', promptTemplate: 'do {{TITLE}}' },
+        { name: 'reviewer', promptTemplate: 'review:\n{{PREVIOUS_DIFF}}' },
       ],
       { agent: recordingAgent(received), variables: { TITLE: 'X' } },
     );
@@ -84,7 +84,7 @@ describe('commitStage', () => {
     const wm = new WorktreeManager(repo);
     const ctx = await prepareContext({ taskId: 'p2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     await writeFile(join(ctx.worktreePath, 'x.txt'), 'data');
-    const out = await commitStage(ctx, { message: 'feat: praca agenta' });
+    const out = await commitStage(ctx, { message: 'feat: agent work' });
     expect(out.committed).toBe(true);
     expect(out.branch).toBe('vanguard/p2');
     expect(out.sha).toBeTruthy();
@@ -124,7 +124,7 @@ describe('generateEvaluateRepairStages', () => {
       ctx,
       [
         { name: 'a', promptTemplate: 'a' },
-        { name: 'b', promptTemplate: 'widzę: {{PREVIOUS_FINAL}}' },
+        { name: 'b', promptTemplate: 'I see: {{PREVIOUS_FINAL}}' },
       ],
       { agent },
     );

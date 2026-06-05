@@ -25,16 +25,16 @@ function stripCodeFences(raw: string): string {
 
 export function extractJson<T>(text: string, tag: string, schema: z.ZodType<T>): T {
   const raw = extractTag(text, tag);
-  if (raw === undefined) throw new StructuredOutputError(`Brak taga <${tag}> w odpowiedzi`);
+  if (raw === undefined) throw new StructuredOutputError(`Missing <${tag}> tag in the response`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripCodeFences(raw));
   } catch (cause) {
-    throw new StructuredOutputError(`Niepoprawny JSON w <${tag}>`, { cause });
+    throw new StructuredOutputError(`Invalid JSON in <${tag}>`, { cause });
   }
   const result = schema.safeParse(parsed);
   if (!result.success) {
-    throw new StructuredOutputError(`Walidacja <${tag}> nie powiodła się`, { cause: result.error });
+    throw new StructuredOutputError(`Validation of <${tag}> failed`, { cause: result.error });
   }
   return result.data;
 }

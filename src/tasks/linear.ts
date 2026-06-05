@@ -51,3 +51,13 @@ export class LinearTaskFetcher implements TaskFetcher {
 export function createLinearTaskFetcher(apiKey: string): LinearTaskFetcher {
   return new LinearTaskFetcher(new LinearClient({ apiKey }) as unknown as LinearClientLike);
 }
+
+/** Minimal client surface for commenting (satisfied structurally by LinearClient). */
+export interface LinearCommentClient {
+  createComment: (input: { issueId: string; body: string }) => Promise<unknown>;
+}
+
+/** Comment a PR link back onto the source Linear issue (closes the loop). */
+export async function linkLinearIssue(client: LinearCommentClient, issueId: string, prUrl: string): Promise<void> {
+  await client.createComment({ issueId, body: `Vanguard opened a PR for review: ${prUrl}` });
+}

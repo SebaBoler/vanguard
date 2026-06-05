@@ -17,6 +17,11 @@ function buildArgs(input: AgentRunInput): string[] {
   if (input.maxTurns !== undefined) args.push('--max-turns', String(input.maxTurns));
   if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
   if (input.forkSession === true) args.push('--fork-session');
+  if (input.systemPrompt !== undefined) args.push('--append-system-prompt', input.systemPrompt);
+  if (input.mcpConfig !== undefined) args.push('--mcp-config', input.mcpConfig, '--strict-mcp-config');
+  if (input.allowedTools !== undefined && input.allowedTools.length > 0) {
+    args.push('--allowed-tools', ...input.allowedTools);
+  }
   return args;
 }
 
@@ -84,9 +89,9 @@ export class ClaudeCodeProvider implements AgentProvider {
       }
     }
 
-    if (res.exitCode !== 0) throw new AgentError(`Agent zakończył się błędem (exit ${res.exitCode})`);
-    if (!parsedAny) throw new AgentError('Strumień agenta nie zawierał poprawnego JSON');
-    if (!sawResult && finalText === '') throw new AgentError('Strumień agenta zakończył się bez wyniku');
+    if (res.exitCode !== 0) throw new AgentError(`Agent exited with an error (exit ${res.exitCode})`);
+    if (!parsedAny) throw new AgentError('Agent stream contained no valid JSON');
+    if (!sawResult && finalText === '') throw new AgentError('Agent stream ended without a result');
 
     const output: AgentRunOutput = { finalText, turns };
     if (sessionId !== undefined) output.sessionId = sessionId;

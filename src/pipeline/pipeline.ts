@@ -70,18 +70,18 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
     {
       name: 'implementer',
       promptTemplate:
-        'Zadanie: {{TITLE}}\n\n{{DESCRIPTION}}\n\nZaimplementuj rozwiązanie w bieżącym repo. Gdy skończysz, napisz dokładnie <promise>COMPLETE</promise>.',
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
     },
     {
       name: 'reviewer',
       promptTemplate:
-        'Przejrzyj poniższy diff pod kątem błędów i braków, a następnie popraw kod:\n\n{{PREVIOUS_DIFF}}\n\nGdy skończysz, napisz <promise>COMPLETE</promise>.',
+        'Review the diff below for bugs and gaps, then fix the code:\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
     },
     {
       name: 'simplifier',
       promptTemplate:
-        'Uprość i uporządkuj zmieniony kod bez zmiany zachowania (DRY, czytelność). Gdy skończysz, napisz <promise>COMPLETE</promise>.',
+        'Simplify and tidy the changed code without changing behaviour (DRY, readability). When done, write <promise>COMPLETE</promise>.',
     },
   ];
 }
@@ -125,19 +125,19 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
     {
       name: 'generator',
       promptTemplate:
-        '<task_instructions>\nZadanie: {{TITLE}}\n\n{{DESCRIPTION}}\n\nWygeneruj pierwszą wersję rozwiązania w bieżącym repo. Implementuj, nie oceniaj. Gdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+        '<task_instructions>\nTask: {{TITLE}}\n\n{{DESCRIPTION}}\n\nGenerate a first version of the solution in the current repo. Implement, do not review. When done, write <promise>COMPLETE</promise>.\n</task_instructions>',
     },
     {
       name: 'evaluator',
       promptTemplate:
-        '<role>Surowy recenzent. Nie zmieniasz plików.</role>\n<task_instructions>\nPrzeanalizuj poniższy diff i wypisz WYŁĄCZNIE listę naruszeń i błędów wewnątrz <violations>...</violations>. Nie edytuj kodu.\n\n{{PREVIOUS_DIFF}}\n\nGdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+        '<role>Strict reviewer. You do not change files.</role>\n<task_instructions>\nAnalyse the diff below and list ONLY violations and bugs inside <violations>...</violations>. Do not edit code.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       effort: 'high',
       resumePrevious: false,
     },
     {
       name: 'repairer',
       promptTemplate:
-        '<task_instructions>\nNa podstawie raportu naruszeń wykonaj celowane poprawki w kodzie. Popraw tylko to, co wskazano:\n\n{{PREVIOUS_FINAL}}\n\nGdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+        '<task_instructions>\nApply targeted fixes based on the violations report. Fix only what is listed:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       resumePrevious: false,
     },
   ];
