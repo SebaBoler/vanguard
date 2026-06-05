@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinearTaskFetcher } from './linear.js';
+import { LinearTaskFetcher, linkLinearIssue } from './linear.js';
 import type { LinearClientLike } from './linear.js';
 
 function fakeClient(): LinearClientLike {
@@ -27,5 +27,20 @@ describe('LinearTaskFetcher', () => {
     expect(all).toHaveLength(1);
     const none = await new LinearTaskFetcher(fakeClient()).list({ labels: ['nope'] });
     expect(none).toHaveLength(0);
+  });
+});
+
+describe('linkLinearIssue', () => {
+  it('comments the PR url on the issue', async () => {
+    const calls: Array<{ issueId: string; body: string }> = [];
+    const client = {
+      createComment: async (input: { issueId: string; body: string }): Promise<unknown> => {
+        calls.push(input);
+        return {};
+      },
+    };
+    await linkLinearIssue(client, 'ISSUE-1', 'https://example/pr/2');
+    expect(calls[0]?.issueId).toBe('ISSUE-1');
+    expect(calls[0]?.body).toContain('https://example/pr/2');
   });
 });

@@ -47,6 +47,9 @@ export interface StageInput {
   timeoutMs?: number;
   resumeSessionId?: string;
   forkSession?: boolean;
+  systemPrompt?: string;
+  mcpConfig?: string;
+  allowedTools?: string[];
   signal?: AbortSignal;
 }
 
@@ -111,6 +114,9 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(input.maxBudgetUsd !== undefined ? { maxBudgetUsd: input.maxBudgetUsd } : {}),
       ...(input.resumeSessionId !== undefined ? { resumeSessionId: input.resumeSessionId } : {}),
       ...(input.forkSession !== undefined ? { forkSession: input.forkSession } : {}),
+      ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+      ...(input.mcpConfig !== undefined ? { mcpConfig: input.mcpConfig } : {}),
+      ...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
     });
 
     let finalText = '';
@@ -205,6 +211,9 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
       ...(opts.maxBudgetUsd !== undefined ? { maxBudgetUsd: opts.maxBudgetUsd } : {}),
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       ...(opts.resumeSessionId !== undefined ? { resumeSessionId: opts.resumeSessionId } : {}),
+      ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+      ...(opts.mcpConfig !== undefined ? { mcpConfig: opts.mcpConfig } : {}),
+      ...(opts.allowedTools !== undefined ? { allowedTools: opts.allowedTools } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
   } finally {

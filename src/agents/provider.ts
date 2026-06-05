@@ -11,6 +11,9 @@ export interface AgentRunInput {
   maxBudgetUsd?: number;
   resumeSessionId?: string;
   forkSession?: boolean;
+  systemPrompt?: string;
+  mcpConfig?: string;
+  allowedTools?: string[];
   signal?: AbortSignal;
 }
 

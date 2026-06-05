@@ -68,4 +68,28 @@ describe('ClaudeCodeProvider', () => {
       })(),
     ).rejects.toThrow();
   });
+
+  it('adds capability flags to the claude command', async () => {
+    let captured = '';
+    const sandbox = {
+      exec: async (command: string): Promise<ExecResult> => {
+        captured = command;
+        return { stdout: streamJson, stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const gen = new ClaudeCodeProvider().run({
+      prompt: 'p',
+      sandbox,
+      workdir: '/workspace',
+      home: '/root',
+      systemPrompt: 'SYS',
+      mcpConfig: '/workspace/mcp.json',
+      allowedTools: ['Read', 'Bash'],
+    });
+    for await (const turn of gen) void turn;
+    expect(captured).toContain('--append-system-prompt');
+    expect(captured).toContain('--mcp-config');
+    expect(captured).toContain('--strict-mcp-config');
+    expect(captured).toContain('--allowed-tools');
+  });
 });
