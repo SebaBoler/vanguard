@@ -23,6 +23,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   private readonly secretsMode: SecretsMode;
   private readonly secrets: Record<string, string>;
   private envDir: string | undefined;
+  private owner: string | undefined;
   private started = false;
 
   constructor(config: SandboxConfig = {}) {
@@ -151,12 +152,24 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     return { stdout, result };
   }
 
+  /** uid:gid of the container's run user, so copied files can be chowned to it (memoised). */
+  private async containerOwner(): Promise<string> {
+    if (this.owner === undefined) {
+      const res = await execa('docker', ['exec', this.name, 'sh', '-c', 'printf "%s:%s" "$(id -u)" "$(id -g)"']);
+      this.owner = res.stdout.trim();
+    }
+    return this.owner;
+  }
+
   async copyIn(hostPath: string, sandboxPath: string): Promise<void> {
     try {
       const isDir = (await stat(hostPath)).isDirectory();
       await execa('docker', ['exec', this.name, 'mkdir', '-p', isDir ? sandboxPath : dirname(sandboxPath)]);
       const src = isDir ? `${hostPath}/.` : hostPath;
       await execa('docker', ['cp', src, `${this.name}:${sandboxPath}`]);
+      // docker cp preserves host uid/gid, so chown to the container user; otherwise the non-root
+      // agent cannot edit copied files (only create new ones).
+      await execa('docker', ['exec', '-u', '0', this.name, 'chown', '-R', await this.containerOwner(), sandboxPath]);
     } catch (cause) {
       throw new SandboxError(`copyIn failed: ${hostPath} -> ${sandboxPath}`, { cause });
     }
