@@ -17,6 +17,11 @@ function buildArgs(input: AgentRunInput): string[] {
   if (input.maxTurns !== undefined) args.push('--max-turns', String(input.maxTurns));
   if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
   if (input.forkSession === true) args.push('--fork-session');
+  if (input.systemPrompt !== undefined) args.push('--append-system-prompt', input.systemPrompt);
+  if (input.mcpConfig !== undefined) args.push('--mcp-config', input.mcpConfig, '--strict-mcp-config');
+  if (input.allowedTools !== undefined && input.allowedTools.length > 0) {
+    args.push('--allowed-tools', ...input.allowedTools);
+  }
   return args;
 }
 
