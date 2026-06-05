@@ -6,7 +6,7 @@ import type { AgentProvider } from '../agents/provider.js';
 
 export interface PipelineStage {
   name: string;
-  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_STAGE}}, task variables, and !`cmd`. */
+  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, task variables, and !`cmd`. */
   promptTemplate: string;
   effort?: ReasoningEffort;
   maxTurns?: number;
@@ -44,6 +44,7 @@ export async function runStages(
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
       PREVIOUS_DIFF: previous?.diff ?? '',
+      PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
     };
     const result = await runAgent(ctx, {
@@ -111,4 +112,33 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
   });
   const { stdout } = await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath });
   return { committed: true, branch: ctx.branch, sha: stdout.trim() };
+}
+
+/**
+ * Generate -> Evaluate -> Repair (Anthropic playbook). The Evaluator only reports violations
+ * (no edits); the Repairer applies targeted fixes from that report. Evaluator and Repairer run
+ * in fresh contexts (resumePrevious: false) to cut tokens, operating on the shared worktree plus
+ * the diff / report passed in.
+ */
+export function generateEvaluateRepairStages(): PipelineStage[] {
+  return [
+    {
+      name: 'generator',
+      promptTemplate:
+        '<task_instructions>\nZadanie: {{TITLE}}\n\n{{DESCRIPTION}}\n\nWygeneruj pierwszą wersję rozwiązania w bieżącym repo. Implementuj, nie oceniaj. Gdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+    },
+    {
+      name: 'evaluator',
+      promptTemplate:
+        '<role>Surowy recenzent. Nie zmieniasz plików.</role>\n<task_instructions>\nPrzeanalizuj poniższy diff i wypisz WYŁĄCZNIE listę naruszeń i błędów wewnątrz <violations>...</violations>. Nie edytuj kodu.\n\n{{PREVIOUS_DIFF}}\n\nGdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+      effort: 'high',
+      resumePrevious: false,
+    },
+    {
+      name: 'repairer',
+      promptTemplate:
+        '<task_instructions>\nNa podstawie raportu naruszeń wykonaj celowane poprawki w kodzie. Popraw tylko to, co wskazano:\n\n{{PREVIOUS_FINAL}}\n\nGdy skończysz, napisz <promise>COMPLETE</promise>.\n</task_instructions>',
+      resumePrevious: false,
+    },
+  ];
 }

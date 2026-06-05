@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, commitStage } from './pipeline.js';
+import { runStages, commitStage, generateEvaluateRepairStages } from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -97,6 +97,38 @@ describe('commitStage', () => {
     const ctx = await prepareContext({ taskId: 'p3', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     const out = await commitStage(ctx, { message: 'noop' });
     expect(out.committed).toBe(false);
+    await disposeContext(ctx);
+  });
+});
+
+describe('generateEvaluateRepairStages', () => {
+  it('defines generator -> evaluator -> repairer with separated contexts', () => {
+    const stages = generateEvaluateRepairStages();
+    expect(stages.map((s) => s.name)).toEqual(['generator', 'evaluator', 'repairer']);
+    expect(stages[1]?.resumePrevious).toBe(false);
+    expect(stages[2]?.resumePrevious).toBe(false);
+  });
+
+  it('forwards the previous stage final text as {{PREVIOUS_FINAL}}', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const agent: AgentProvider = {
+      name: 'rec',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'RAPORT-' + received.length, turns: 1 };
+      },
+    };
+    const ctx = await prepareContext({ taskId: 'ger', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runStages(
+      ctx,
+      [
+        { name: 'a', promptTemplate: 'a' },
+        { name: 'b', promptTemplate: 'widzę: {{PREVIOUS_FINAL}}' },
+      ],
+      { agent },
+    );
+    expect(received[1]?.prompt).toContain('RAPORT-1');
     await disposeContext(ctx);
   });
 });
