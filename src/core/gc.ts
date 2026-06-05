@@ -20,8 +20,9 @@ export async function reapContainers(
   maxAgeMs: number = DEFAULT_MAX_AGE_MS,
 ): Promise<string[]> {
   const stale = (await lister()).filter((container) => container.ageMs > maxAgeMs);
-  await Promise.all(stale.map((container) => remover(container.id)));
-  return stale.map((container) => container.id);
+  const ids = stale.map((container) => container.id);
+  await Promise.all(ids.map(remover));
+  return ids;
 }
 
 /** Docker-backed lister of vanguard-labeled containers with their age in ms. */
