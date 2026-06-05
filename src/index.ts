@@ -21,3 +21,8 @@ export { WorktreeManager } from './worktree/manager.js';
 export { SkillRegistry } from './context/skill-registry.js';
 export { renderPrompt } from './context/prompt-engine.js';
 export { extractTag, extractJson, hasTerminationSignal } from './structured/extract.js';
+export { DockerSandboxProvider } from './sandbox/docker.js';
+export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
+export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
+export { taskToVariables } from './tasks/fetcher.js';
+export type { Stage, StageContext, StageResult, Pipeline } from './pipeline/pipeline.js';
