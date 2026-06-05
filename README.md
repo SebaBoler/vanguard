@@ -1,6 +1,19 @@
-# Vanguard
+<p align="center">
+  <img src="assets/banner.png" alt="Vanguard - Autonomous Software Factory" width="820" />
+</p>
 
-An autonomous "software factory": take a task, run a Claude Code agent in an isolated sandbox on its own `git worktree`, and produce a reviewable branch and PR. Vanguard is a standalone TypeScript framework, not a wrapper around another tool.
+<p align="center">
+  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D24-3c873a" alt="Node >=24" />
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178c6" alt="TypeScript strict" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
+</p>
+
+<p align="center">
+  An autonomous "software factory": take a task, run a Claude Code agent in an isolated sandbox on its
+  own <code>git worktree</code>, and produce a reviewable branch and PR. A standalone TypeScript framework,
+  not a wrapper around another tool.
+</p>
 
 Status: Phase 1 (core engine) and Phase 2 (task sources, pipeline, evals) are implemented and tested.
 
