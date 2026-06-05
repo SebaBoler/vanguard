@@ -84,9 +84,9 @@ export class ClaudeCodeProvider implements AgentProvider {
       }
     }
 
-    if (res.exitCode !== 0) throw new AgentError(`Agent zakończył się błędem (exit ${res.exitCode})`);
-    if (!parsedAny) throw new AgentError('Strumień agenta nie zawierał poprawnego JSON');
-    if (!sawResult && finalText === '') throw new AgentError('Strumień agenta zakończył się bez wyniku');
+    if (res.exitCode !== 0) throw new AgentError(`Agent exited with an error (exit ${res.exitCode})`);
+    if (!parsedAny) throw new AgentError('Agent stream contained no valid JSON');
+    if (!sawResult && finalText === '') throw new AgentError('Agent stream ended without a result');
 
     const output: AgentRunOutput = { finalText, turns };
     if (sessionId !== undefined) output.sessionId = sessionId;

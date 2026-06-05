@@ -6,6 +6,6 @@ export class PiProvider implements AgentProvider {
   readonly name = 'pi';
 
   async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
-    throw new NotImplementedError('Pi provider — Faza 2');
+    throw new NotImplementedError('Pi provider is a Phase 2 stub');
   }
 }

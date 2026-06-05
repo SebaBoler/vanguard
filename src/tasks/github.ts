@@ -61,5 +61,5 @@ export async function linkPullRequest(
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
   const number = issueNumber(issueRef);
-  await gh(['issue', 'comment', number, '--repo', repo, '--body', `Vanguard otworzył PR do review: ${prUrl}`]);
+  await gh(['issue', 'comment', number, '--repo', repo, '--body', `Vanguard opened a PR for review: ${prUrl}`]);
 }

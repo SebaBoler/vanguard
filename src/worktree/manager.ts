@@ -20,7 +20,7 @@ export class WorktreeManager {
       await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
-      throw new WorktreeError(`Nie udało się utworzyć worktree dla ${taskId}`, { cause });
+      throw new WorktreeError(`Failed to create worktree for ${taskId}`, { cause });
     }
   }
 
@@ -29,7 +29,7 @@ export class WorktreeManager {
       const { stdout } = await execa('git', ['status', '--porcelain'], { cwd: worktreePath });
       return stdout.trim() !== '';
     } catch (cause) {
-      throw new WorktreeError(`Nie udało się sprawdzić stanu worktree ${worktreePath}`, { cause });
+      throw new WorktreeError(`Failed to check worktree status ${worktreePath}`, { cause });
     }
   }
 
@@ -40,7 +40,7 @@ export class WorktreeManager {
       const { stdout } = await execa('git', ['diff', 'HEAD'], { cwd: worktreePath });
       return stdout;
     } catch (cause) {
-      throw new WorktreeError(`Nie udało się pobrać diff worktree ${worktreePath}`, { cause });
+      throw new WorktreeError(`Failed to get worktree diff ${worktreePath}`, { cause });
     }
   }
 
@@ -48,7 +48,7 @@ export class WorktreeManager {
     try {
       await execa('git', ['worktree', 'remove', ...(force ? ['--force'] : []), worktreePath], { cwd: this.repoPath });
     } catch (cause) {
-      throw new WorktreeError(`Nie udało się usunąć worktree ${worktreePath}`, { cause });
+      throw new WorktreeError(`Failed to remove worktree ${worktreePath}`, { cause });
     }
   }
 }

@@ -5,18 +5,18 @@ import { execa } from 'execa';
 import { run, DockerSandboxProvider, ClaudeCodeProvider, authFromEnv, authSecrets } from '../src/index.js';
 
 /**
- * Live smoke: uruchamia prawdziwego agenta w obrazie vanguard-sandbox na świeżym repo.
- * Wymaga zbudowanego obrazu (docker/build.sh) oraz uwierzytelnienia w środowisku procesu:
- * CLAUDE_CODE_OAUTH_TOKEN (subskrypcja, domyślnie) albo ANTHROPIC_API_KEY (API).
- * Dokładnie jeden sekret trafia do sandboxa przez tmpfs, nie przez argv.
+ * Live smoke: runs a real agent in the vanguard-sandbox image against a fresh repo.
+ * Requires a built image (docker/build.sh) and authentication in the process environment:
+ * CLAUDE_CODE_OAUTH_TOKEN (subscription, default) or ANTHROPIC_API_KEY (API).
+ * Exactly one secret reaches the sandbox via tmpfs, not via argv.
  *
- * Uruchom (sekret z 1Password, nigdy w repo):
+ * Run (secret from 1Password, never in the repo):
  *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Claude/oauth-token") pnpm tsx examples/smoke.ts
  */
 async function main(): Promise<void> {
   const auth = authFromEnv();
   if (auth === undefined) {
-    throw new Error('Ustaw CLAUDE_CODE_OAUTH_TOKEN (subskrypcja) lub ANTHROPIC_API_KEY (API) przed uruchomieniem.');
+    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
   }
 
   const repo = await mkdtemp(join(tmpdir(), 'vanguard-smoke-'));
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     taskId: 'smoke',
     localRepoPath: repo,
     promptTemplate:
-      'Utwórz w bieżącym katalogu plik HELLO.txt o treści "hi". Gdy skończysz, napisz dokładnie <promise>COMPLETE</promise>.',
+      'Create a file HELLO.txt with the content "hi" in the current directory. When done, write exactly <promise>COMPLETE</promise>.',
     sandbox,
     agent: new ClaudeCodeProvider(),
     effort: 'low',
