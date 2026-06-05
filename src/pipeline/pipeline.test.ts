@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, commitStage, generateEvaluateRepairStages } from './pipeline.js';
+import { runStages, commitStage, generateEvaluateRepairStages, publishForReview } from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -129,6 +129,28 @@ describe('generateEvaluateRepairStages', () => {
       { agent },
     );
     expect(received[1]?.prompt).toContain('RAPORT-1');
+    await disposeContext(ctx);
+  });
+});
+
+describe('publishForReview', () => {
+  it('pushes the branch and opens a PR via the injected runner', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'pub', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push({ file, args });
+      return file === 'gh' ? 'https://github.com/o/r/pull/42' : '';
+    };
+    const out = await publishForReview(ctx, { title: 'PR', body: 'b', runner });
+    expect(out.prUrl).toBe('https://github.com/o/r/pull/42');
+    expect(out.branch).toBe('vanguard/pub');
+    expect(calls[0]?.file).toBe('git');
+    expect(calls[0]?.args).toContain('push');
+    expect(calls[1]?.file).toBe('gh');
+    expect(calls[1]?.args).toEqual(
+      expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub', '--base', 'main', '--title', 'PR']),
+    );
     await disposeContext(ctx);
   });
 });
