@@ -12,6 +12,7 @@ import {
   fastStages,
   defaultSystemPrompt,
   publishForReview,
+  planImplementReviewStages,
 } from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
@@ -170,6 +171,17 @@ describe('publishForReview', () => {
       expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub', '--base', 'main', '--title', 'PR']),
     );
     await disposeContext(ctx);
+  });
+});
+
+describe('planImplementReviewStages', () => {
+  it('plans on opus and implements/reviews on sonnet', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.map((s) => s.name)).toEqual(['planner', 'implementer', 'reviewer']);
+    expect(stages[0]?.model).toBe('opus');
+    expect(stages[1]?.model).toBe('sonnet');
+    expect(stages[2]?.model).toBe('sonnet');
+    expect(stages.every((s) => (s.systemPrompt ?? '').includes('<tradeoffs>'))).toBe(true);
   });
 });
 

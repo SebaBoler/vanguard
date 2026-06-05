@@ -136,6 +136,44 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
   return stages.map((stage) => ({ systemPrompt, ...stage }));
 }
 
+/**
+ * Plan with the most capable model, then implement and review with a faster one. The planner
+ * (opus, high effort) emits a <plan>; the implementer and reviewer run on sonnet to cut cost and
+ * latency. Each later stage gets the plan / diff via variables, in a fresh context.
+ */
+export function planImplementReviewStages(): PipelineStage[] {
+  const systemPrompt = defaultSystemPrompt();
+  const stages: PipelineStage[] = [
+    {
+      name: 'planner',
+      model: 'opus',
+      effort: 'high',
+      maxTurns: 10,
+      resumePrevious: false,
+      promptTemplate:
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
+    },
+    {
+      name: 'implementer',
+      model: 'sonnet',
+      maxTurns: 30,
+      resumePrevious: false,
+      promptTemplate:
+        'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+    },
+    {
+      name: 'reviewer',
+      model: 'sonnet',
+      effort: 'high',
+      maxTurns: 20,
+      resumePrevious: false,
+      promptTemplate:
+        'Review the diff below for bugs and gaps, then fix the code:\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+    },
+  ];
+  return stages.map((stage) => ({ systemPrompt, ...stage }));
+}
+
 export interface CommitOptions {
   message: string;
   authorName?: string;
