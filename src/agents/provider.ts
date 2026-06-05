@@ -14,6 +14,7 @@ export interface AgentRunInput {
   systemPrompt?: string;
   mcpConfig?: string;
   allowedTools?: string[];
+  model?: string;
   signal?: AbortSignal;
 }
 

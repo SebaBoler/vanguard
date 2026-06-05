@@ -34,7 +34,7 @@ export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { GitHubProjectFetcher } from './tasks/github-project.js';
 export type { GitHubProjectFetcherOptions } from './tasks/github-project.js';
 export { linkPullRequest } from './tasks/github.js';
-export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, defaultSystemPrompt, commitStage, publishForReview } from './pipeline/pipeline.js';
+export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, fastStages, defaultSystemPrompt, commitStage, publishForReview } from './pipeline/pipeline.js';
 export { buildXmlPrompt } from './context/xml-prompt.js';
 export type { XmlPromptSections } from './context/xml-prompt.js';
 export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome, PublishOptions, PublishOutcome, CommandRunner } from './pipeline/pipeline.js';

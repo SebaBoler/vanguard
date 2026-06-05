@@ -21,6 +21,7 @@ export interface RunOptions {
   systemPrompt?: string;
   mcpConfig?: string;
   allowedTools?: string[];
+  model?: string;
   sandbox: IsolatedSandboxProvider;
   agent: AgentProvider;
   logger?: VanguardLogger;

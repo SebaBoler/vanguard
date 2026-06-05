@@ -10,6 +10,7 @@ export interface PipelineStage {
   promptTemplate: string;
   effort?: ReasoningEffort;
   maxTurns?: number;
+  model?: string;
   /** System prompt appended for this stage (role/policy/guidelines/tradeoffs). */
   systemPrompt?: string;
   /** Resume the previous stage's session so this stage keeps context. Default true. */
@@ -55,6 +56,7 @@ export async function runStages(
       variables,
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
+      ...(stage.model !== undefined ? { model: stage.model } : {}),
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
       ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
@@ -87,6 +89,24 @@ export function defaultSystemPrompt(): string {
     'A wrong or sloppy change costs reviewer trust and rework, far more than the few seconds a typecheck or test run takes. An over-large change costs review time and risks regressions. Favor a minimal, verified change over a fast, unverified one.',
     '</tradeoffs>',
   ].join('\n');
+}
+
+/**
+ * Fast single-stage preset: one implementer pass with low effort on a fast model. Cheaper and
+ * quicker than the multi-stage pipeline, and still runs on the Claude subscription via the CLI.
+ */
+export function fastStages(): PipelineStage[] {
+  return [
+    {
+      name: 'implementer',
+      promptTemplate:
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
+      effort: 'low',
+      model: 'haiku',
+      maxTurns: 12,
+      systemPrompt: defaultSystemPrompt(),
+    },
+  ];
 }
 
 /** Canonical Implementer -> Reviewer -> Simplifier stages (Merger is commitStage). */
