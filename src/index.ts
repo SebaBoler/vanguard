@@ -20,7 +20,7 @@ export { authSecrets, authFromEnv, SUBSCRIPTION_ENV, API_ENV } from './agents/au
 export type { AgentAuth } from './agents/auth.js';
 export { PiProvider } from './agents/pi.js';
 export { WorktreeManager } from './worktree/manager.js';
-export { SkillRegistry } from './context/skill-registry.js';
+export { SkillRegistry, skillRegistryFromDirectory } from './context/skill-registry.js';
 export { renderPrompt } from './context/prompt-engine.js';
 export { extractTag, extractJson, hasTerminationSignal } from './structured/extract.js';
 export { DockerSandboxProvider } from './sandbox/docker.js';
@@ -34,7 +34,7 @@ export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { GitHubProjectFetcher } from './tasks/github-project.js';
 export type { GitHubProjectFetcherOptions } from './tasks/github-project.js';
 export { linkPullRequest } from './tasks/github.js';
-export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, fastStages, defaultSystemPrompt, commitStage, publishForReview } from './pipeline/pipeline.js';
+export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, fastStages, planImplementReviewStages, defaultSystemPrompt, commitStage, publishForReview } from './pipeline/pipeline.js';
 export { buildXmlPrompt } from './context/xml-prompt.js';
 export type { XmlPromptSections } from './context/xml-prompt.js';
 export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome, PublishOptions, PublishOutcome, CommandRunner } from './pipeline/pipeline.js';
