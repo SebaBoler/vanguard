@@ -36,8 +36,13 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       const value = process.env[key];
       if (value !== undefined) this.secrets[key] = value;
     }
-    for (const [k, v] of Object.entries(this.secrets)) {
-      if (/[\n\r]/.test(v)) throw new SandboxError(`Sekret ${k} zawiera znak nowej linii — niedozwolone`);
+    for (const [key, value] of Object.entries(this.secrets)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new SandboxError(`Invalid secret name: ${key}`);
+      }
+      if (/[\n\r]/.test(value)) {
+        throw new SandboxError(`Secret ${key} contains a newline, which is not allowed`);
+      }
     }
   }
 
@@ -49,9 +54,17 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     return Object.keys(this.secrets).length > 0;
   }
 
+  /** Raw KEY=value lines for docker --env-file (parsed literally by docker, never by a shell). */
   private secretsBody(): string {
     return Object.entries(this.secrets)
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n');
+  }
+
+  /** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
+  private secretsShellBody(): string {
+    return Object.entries(this.secrets)
+      .map(([key, value]) => `${key}='${value.replace(/'/g, "'\\''")}'`)
       .join('\n');
   }
 
@@ -85,18 +98,18 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       await execa('docker', args);
       this.started = true;
     } catch (cause) {
-      throw new SandboxError(`Nie udało się uruchomić kontenera ${this.name}`, { cause });
+      throw new SandboxError(`Failed to start container ${this.name}`, { cause });
     }
 
     if (this.hasSecrets && this.secretsMode === 'tmpfs') {
       // Write the secrets file via stdin (umask 077) so the value never appears in argv.
       const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
         reject: false,
-        input: this.secretsBody(),
+        input: this.secretsShellBody(),
       });
       if (write.exitCode !== 0) {
         await this.destroy();
-        throw new SandboxError(`Nie udało się zapisać sekretów do tmpfs: ${write.stderr}`);
+        throw new SandboxError(`Failed to write secrets to tmpfs: ${write.stderr}`);
       }
     }
   }
