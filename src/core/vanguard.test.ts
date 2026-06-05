@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { run } from './vanguard.js';
+import { run, prepareContext, runAgent, disposeContext } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { RunOptions } from './types.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
@@ -103,6 +103,26 @@ describe('vanguard.run', () => {
     expect(res.completed).toBe(false);
     expect(res.exitReason).toBe('incomplete');
     expect(res.worktreePreserved).toBe(false);
+    expect(wasDestroyed()).toBe(true);
+  });
+
+  it('reuses one context across multiple agent stages (R11)', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox, wasDestroyed } = makeSandbox();
+    const ctx = await prepareContext({ taskId: 't3', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const a1 = await runAgent(ctx, {
+      promptTemplate: 'a',
+      agent: fakeAgent([{ text: 'one' }], { finalText: 'one', turns: 1, sessionId: 's' }),
+    });
+    const a2 = await runAgent(ctx, {
+      promptTemplate: 'b',
+      agent: fakeAgent([{ text: 'two' }], { finalText: 'two', turns: 1, sessionId: 's' }),
+      resumeSessionId: 's',
+    });
+    expect(a1.turns).toBe(1);
+    expect(a2.turns).toBe(1);
+    expect(wasDestroyed()).toBe(false);
+    await disposeContext(ctx);
     expect(wasDestroyed()).toBe(true);
   });
 });
