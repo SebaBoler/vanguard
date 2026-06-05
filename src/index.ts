@@ -1,4 +1,4 @@
-export { run, type RunDeps } from './core/vanguard.js';
+export { run, prepareContext, runAgent, disposeContext, type RunDeps, type RunContext, type PrepareOptions, type StageInput } from './core/vanguard.js';
 export * as vanguard from './core/vanguard.js';
 export type { RunOptions, RunResult, ReasoningEffort, ExitReason } from './core/types.js';
 export type {
@@ -25,5 +25,17 @@ export { DockerSandboxProvider } from './sandbox/docker.js';
 export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
-export type { Stage, StageContext, StageResult, Pipeline } from './pipeline/pipeline.js';
+export { LinearTaskFetcher, createLinearTaskFetcher } from './tasks/linear.js';
+export type { LinearClientLike, LinearIssueLike, LinearLabelNode } from './tasks/linear.js';
+export { GitHubTaskFetcher } from './tasks/github.js';
+export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
+export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, commitStage, publishForReview } from './pipeline/pipeline.js';
+export { buildXmlPrompt } from './context/xml-prompt.js';
+export type { XmlPromptSections } from './context/xml-prompt.js';
+export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome, PublishOptions, PublishOutcome, CommandRunner } from './pipeline/pipeline.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
+export { runEvals } from './evals/run-evals.js';
+export type { RunEvalsOptions } from './evals/run-evals.js';
+export { programmaticJudge, llmJudge } from './evals/judges.js';
+export type { Predicate, Complete } from './evals/judges.js';
+export type { EvalKind, EvalCase, EvalVerdict, EvalCaseResult, EvalReport, KindTally, Judge } from './evals/types.js';
