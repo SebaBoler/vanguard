@@ -10,6 +10,8 @@ export interface PipelineStage {
   promptTemplate: string;
   effort?: ReasoningEffort;
   maxTurns?: number;
+  /** System prompt appended for this stage (role/policy/guidelines/tradeoffs). */
+  systemPrompt?: string;
   /** Resume the previous stage's session so this stage keeps context. Default true. */
   resumePrevious?: boolean;
 }
@@ -53,6 +55,7 @@ export async function runStages(
       variables,
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
+      ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
       ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
@@ -64,9 +67,32 @@ export async function runStages(
   return outcomes;
 }
 
+/**
+ * XML system prompt with explicit trade-off reasoning (Anthropic playbook). Appended to every
+ * canonical stage so the agent weighs cost-of-error against cost-of-verification, not just follows
+ * instructions. Pass it as PipelineStage.systemPrompt (the canonical stage sets do this by default).
+ */
+export function defaultSystemPrompt(): string {
+  return [
+    '<role>',
+    'You are a senior software engineer working autonomously in an isolated sandbox on a single task.',
+    '</role>',
+    '<policy>',
+    'Make the smallest correct change that satisfies the task. Do not commit or push; the host commits and opens a pull request for human review. Keep changes scoped to the task.',
+    '</policy>',
+    '<guidelines>',
+    'Prefer tools over assumptions: when a tool is available (typecheck, run_tests), call it to verify instead of guessing. Read the relevant files before editing. Match the existing code style.',
+    '</guidelines>',
+    '<tradeoffs>',
+    'A wrong or sloppy change costs reviewer trust and rework, far more than the few seconds a typecheck or test run takes. An over-large change costs review time and risks regressions. Favor a minimal, verified change over a fast, unverified one.',
+    '</tradeoffs>',
+  ].join('\n');
+}
+
 /** Canonical Implementer -> Reviewer -> Simplifier stages (Merger is commitStage). */
 export function implementReviewSimplifyStages(): PipelineStage[] {
-  return [
+  const systemPrompt = defaultSystemPrompt();
+  const stages: PipelineStage[] = [
     {
       name: 'implementer',
       promptTemplate:
@@ -87,6 +113,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       maxTurns: 20,
     },
   ];
+  return stages.map((stage) => ({ systemPrompt, ...stage }));
 }
 
 export interface CommitOptions {
@@ -124,7 +151,8 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
  * the diff / report passed in.
  */
 export function generateEvaluateRepairStages(): PipelineStage[] {
-  return [
+  const systemPrompt = defaultSystemPrompt();
+  const stages: PipelineStage[] = [
     {
       name: 'generator',
       promptTemplate:
@@ -144,6 +172,7 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
       resumePrevious: false,
     },
   ];
+  return stages.map((stage) => ({ systemPrompt, ...stage }));
 }
 
 export type CommandRunner = (file: string, args: string[], cwd: string) => Promise<string>;
