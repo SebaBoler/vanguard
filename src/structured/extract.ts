@@ -16,9 +16,10 @@ export function extractTag(text: string, tag: string): string | undefined {
   return last;
 }
 
+const CODE_FENCE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i;
+
 function stripCodeFences(raw: string): string {
-  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i;
-  const match = fence.exec(raw.trim());
+  const match = CODE_FENCE.exec(raw.trim());
   return match?.[1] !== undefined ? match[1].trim() : raw;
 }
 
