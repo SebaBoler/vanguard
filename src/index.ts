@@ -27,6 +27,8 @@ export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
 export { LinearTaskFetcher, createLinearTaskFetcher } from './tasks/linear.js';
 export type { LinearClientLike, LinearIssueLike, LinearLabelNode } from './tasks/linear.js';
+export { GitHubTaskFetcher } from './tasks/github.js';
+export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { runStages, implementReviewSimplifyStages, commitStage } from './pipeline/pipeline.js';
 export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome } from './pipeline/pipeline.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
