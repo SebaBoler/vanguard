@@ -90,11 +90,13 @@ describe('ClaudeCodeProvider', () => {
       systemPrompt: 'SYS',
       mcpConfig: '/workspace/mcp.json',
       allowedTools: ['Read', 'Bash'],
+      model: 'haiku',
     });
     for await (const turn of gen) void turn;
     expect(captured).toContain('--append-system-prompt');
     expect(captured).toContain('--mcp-config');
     expect(captured).toContain('--strict-mcp-config');
     expect(captured).toContain('--allowed-tools');
+    expect(captured).toContain('--model');
   });
 });

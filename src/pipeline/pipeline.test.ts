@@ -9,6 +9,7 @@ import {
   commitStage,
   generateEvaluateRepairStages,
   implementReviewSimplifyStages,
+  fastStages,
   defaultSystemPrompt,
   publishForReview,
 } from './pipeline.js';
@@ -137,6 +138,16 @@ describe('generateEvaluateRepairStages', () => {
     );
     expect(received[1]?.prompt).toContain('RAPORT-1');
     await disposeContext(ctx);
+  });
+});
+
+describe('fastStages', () => {
+  it('is a single low-effort implementer on a fast model', () => {
+    const stages = fastStages();
+    expect(stages).toHaveLength(1);
+    expect(stages[0]?.effort).toBe('low');
+    expect(stages[0]?.model).toBe('haiku');
+    expect(stages[0]?.systemPrompt).toContain('<tradeoffs>');
   });
 });
 

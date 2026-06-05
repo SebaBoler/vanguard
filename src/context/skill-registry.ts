@@ -7,12 +7,22 @@ const SKILLS_DIR = '/workspace/.vanguard/skills';
 export class SkillRegistry {
   constructor(private readonly skills: Record<string, string>) {}
 
+  /** Inject the named skills to /workspace/.vanguard/skills (explicit, targeted). */
   async inject(ids: string[], sandbox: IsolatedSandboxProvider): Promise<void> {
-    const resolved = ids.map((id) => {
+    for (const id of ids) {
       const hostPath = this.skills[id];
       if (hostPath === undefined) throw new VanguardError(`Unknown skill: ${id}`);
-      return { id, hostPath };
-    });
-    await Promise.all(resolved.map(({ id, hostPath }) => sandbox.copyIn(hostPath, `${SKILLS_DIR}/${id}`)));
+      await sandbox.copyIn(hostPath, `${SKILLS_DIR}/${id}`);
+    }
+  }
+
+  /**
+   * Inject ALL registered skills into the agent's Claude skills directory ($HOME/.claude/skills),
+   * where the claude CLI auto-discovers them and the model selects the relevant ones at runtime.
+   */
+  async injectAll(sandbox: IsolatedSandboxProvider, home: string): Promise<void> {
+    for (const [id, hostPath] of Object.entries(this.skills)) {
+      await sandbox.copyIn(hostPath, `${home}/.claude/skills/${id}`);
+    }
   }
 }

@@ -22,6 +22,7 @@ function buildArgs(input: AgentRunInput): string[] {
   if (input.allowedTools !== undefined && input.allowedTools.length > 0) {
     args.push('--allowed-tools', ...input.allowedTools);
   }
+  if (input.model !== undefined) args.push('--model', input.model);
   return args;
 }
 

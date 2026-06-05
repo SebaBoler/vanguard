@@ -50,6 +50,7 @@ export interface StageInput {
   systemPrompt?: string;
   mcpConfig?: string;
   allowedTools?: string[];
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -74,7 +75,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   await opts.sandbox.start();
   const home = await resolveHome(opts.sandbox);
   await opts.sandbox.copyIn(wt.path, WORKDIR);
-  if (opts.skills && opts.skills.length > 0) await skills.inject(opts.skills, opts.sandbox);
+  await skills.injectAll(opts.sandbox, home);
   return {
     taskId: opts.taskId,
     sandbox: opts.sandbox,
@@ -123,6 +124,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
       ...(input.mcpConfig !== undefined ? { mcpConfig: input.mcpConfig } : {}),
       ...(input.allowedTools !== undefined ? { allowedTools: input.allowedTools } : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
     });
 
     let finalText = '';
@@ -220,6 +222,7 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
       ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
       ...(opts.mcpConfig !== undefined ? { mcpConfig: opts.mcpConfig } : {}),
       ...(opts.allowedTools !== undefined ? { allowedTools: opts.allowedTools } : {}),
+      ...(opts.model !== undefined ? { model: opts.model } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     });
   } finally {
