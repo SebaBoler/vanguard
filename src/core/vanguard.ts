@@ -4,7 +4,7 @@ import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
-import { captureSession, restoreSession } from '../agents/session-store.js';
+import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
 import { createLogger } from './logger.js';
 import { SandboxError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
@@ -97,8 +97,14 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 
   try {
     if (input.resumeSessionId !== undefined) {
-      const hostFile = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId, `${input.resumeSessionId}.jsonl`);
-      await restoreSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId: input.resumeSessionId, hostFile });
+      // Within a shared sandbox the session is already present natively (the prior stage wrote it).
+      // Restoring it would overwrite the agent-owned jsonl with a root-owned copy the agent cannot
+      // read, breaking resume. Only restore for a true cross-run resume, when it is not present.
+      const present = await ctx.sandbox.exists(sessionPath(ctx.home, WORKDIR, input.resumeSessionId));
+      if (!present) {
+        const hostFile = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId, `${input.resumeSessionId}.jsonl`);
+        await restoreSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId: input.resumeSessionId, hostFile });
+      }
     }
 
     const prompt = await renderPrompt(input.promptTemplate, { variables: input.variables ?? {}, sandbox: ctx.sandbox });
