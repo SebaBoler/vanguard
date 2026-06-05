@@ -10,16 +10,19 @@ import {
   commitStage,
   publishForReview,
   disposeContext,
+  authFromEnv,
+  authSecrets,
 } from '../src/index.js';
 
 /**
  * Pełna pętla Vanguard z GitHub Issue jako JEDYNYM źródłem prawdy (bez Linear).
  * GitHub Issue = wejście, GitHub PR = review. Wszystko w jednym repo.
  *
- * Wymaga: obrazu vanguard-sandbox (docker/build.sh), zalogowanego `gh`,
- * ANTHROPIC_API_KEY w env, i uruchomienia z klona docelowego repo (origin = to repo).
+ * Wymaga: obrazu vanguard-sandbox (docker/build.sh), zalogowanego `gh`, uwierzytelnienia w env
+ * (CLAUDE_CODE_OAUTH_TOKEN — subskrypcja, domyślnie — albo ANTHROPIC_API_KEY — API),
+ * i uruchomienia z klona docelowego repo (origin = to repo).
  *
- *   ANTHROPIC_API_KEY=$(op read "op://Vault/Anthropic/credential") \
+ *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Claude/oauth-token") \
  *     pnpm tsx examples/from-github-issue.ts 123
  */
 async function main(): Promise<void> {
@@ -27,8 +30,9 @@ async function main(): Promise<void> {
   if (issueRef === undefined) {
     throw new Error('Podaj numer issue: pnpm tsx examples/from-github-issue.ts <numer>');
   }
-  if (process.env.ANTHROPIC_API_KEY === undefined) {
-    throw new Error('Brak ANTHROPIC_API_KEY w środowisku — wstrzyknij z vaulta przed uruchomieniem.');
+  const auth = authFromEnv();
+  if (auth === undefined) {
+    throw new Error('Ustaw CLAUDE_CODE_OAUTH_TOKEN (subskrypcja) lub ANTHROPIC_API_KEY (API) przed uruchomieniem.');
   }
 
   const repoPath = process.env.REPO_PATH ?? process.cwd();
@@ -39,7 +43,7 @@ async function main(): Promise<void> {
 
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
-    forwardEnv: ['ANTHROPIC_API_KEY'],
+    secrets: authSecrets(auth),
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
