@@ -25,5 +25,7 @@ export { DockerSandboxProvider } from './sandbox/docker.js';
 export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
+export { LinearTaskFetcher, createLinearTaskFetcher } from './tasks/linear.js';
+export type { LinearClientLike, LinearIssueLike, LinearLabelNode } from './tasks/linear.js';
 export type { Stage, StageContext, StageResult, Pipeline } from './pipeline/pipeline.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
