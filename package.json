@@ -4,7 +4,7 @@
   "main": "dist/index.js",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc",
+    "build": "tsc && cp src/mcp/typecheck-server.mjs dist/mcp/typecheck-server.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "tsx",
     "clean": "rm -rf dist .vanguard"
