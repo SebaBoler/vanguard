@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, commitStage, generateEvaluateRepairStages, publishForReview } from './pipeline.js';
+import {
+  runStages,
+  commitStage,
+  generateEvaluateRepairStages,
+  implementReviewSimplifyStages,
+  defaultSystemPrompt,
+  publishForReview,
+} from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -151,6 +158,39 @@ describe('publishForReview', () => {
     expect(calls[1]?.args).toEqual(
       expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub', '--base', 'main', '--title', 'PR']),
     );
+    await disposeContext(ctx);
+  });
+});
+
+describe('defaultSystemPrompt', () => {
+  it('states role, policy, guidelines and explicit trade-offs', () => {
+    const sp = defaultSystemPrompt();
+    expect(sp).toContain('<role>');
+    expect(sp).toContain('<policy>');
+    expect(sp).toContain('<guidelines>');
+    expect(sp).toContain('<tradeoffs>');
+    expect(sp).toMatch(/cost/i);
+  });
+
+  it('is attached to every canonical stage', () => {
+    for (const stage of [...implementReviewSimplifyStages(), ...generateEvaluateRepairStages()]) {
+      expect(stage.systemPrompt).toContain('<tradeoffs>');
+    }
+  });
+
+  it('runStages forwards a stage system prompt to the agent', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const agent: AgentProvider = {
+      name: 'rec',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'x', turns: 1 };
+      },
+    };
+    const ctx = await prepareContext({ taskId: 'sp', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runStages(ctx, [{ name: 's', promptTemplate: 'p', systemPrompt: 'SYS-XYZ' }], { agent });
+    expect(received[0]?.systemPrompt).toBe('SYS-XYZ');
     await disposeContext(ctx);
   });
 });
