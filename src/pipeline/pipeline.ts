@@ -71,17 +71,20 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       name: 'implementer',
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
+      maxTurns: 30,
     },
     {
       name: 'reviewer',
       promptTemplate:
         'Review the diff below for bugs and gaps, then fix the code:\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
+      maxTurns: 20,
     },
     {
       name: 'simplifier',
       promptTemplate:
         'Simplify and tidy the changed code without changing behaviour (DRY, readability). When done, write <promise>COMPLETE</promise>.',
+      maxTurns: 20,
     },
   ];
 }
