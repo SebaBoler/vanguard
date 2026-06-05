@@ -47,6 +47,16 @@ suite('DockerSandboxProvider', () => {
     await rm(out, { recursive: true, force: true });
   }, 60_000);
 
+  it('makes copied-in files editable by the sandbox user (chown)', async () => {
+    const host = await mkdtemp(join(tmpdir(), 'vg-edit-'));
+    await writeFile(join(host, 'f.txt'), 'one');
+    await sb.copyIn(host, '/workspace/edit');
+    const r = await sb.exec('echo two >> /workspace/edit/f.txt && cat /workspace/edit/f.txt');
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('two');
+    await rm(host, { recursive: true, force: true });
+  }, 60_000);
+
   it('exposes secrets to commands but keeps them out of docker inspect (tmpfs default)', async () => {
     const sec = new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { VG_SECRET: 'topsecret' } });
     try {
