@@ -11,19 +11,19 @@ function fakeSandbox(stdout: string, exitCode: number = 0): IsolatedSandboxProvi
 
 const streamJson = [
   JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
-  JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'pracuję' }] } }),
+  JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'working' }] } }),
   JSON.stringify({
     type: 'result',
     subtype: 'success',
     session_id: 'sess-1',
-    result: 'gotowe',
+    result: 'done',
     usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 80 },
     total_cost_usd: 0.01,
   }),
 ].join('\n');
 
 function input(sandbox: IsolatedSandboxProvider): AgentRunInput {
-  return { prompt: 'zrób', sandbox, workdir: '/workspace', home: '/root', effort: 'high' };
+  return { prompt: 'do it', sandbox, workdir: '/workspace', home: '/root', effort: 'high' };
 }
 
 async function drain(sandbox: IsolatedSandboxProvider): Promise<{ turns: string[]; out: AgentRunOutput }> {
@@ -39,9 +39,9 @@ async function drain(sandbox: IsolatedSandboxProvider): Promise<{ turns: string[
 describe('ClaudeCodeProvider', () => {
   it('parses stream-json into turns and captures sessionId, usage, cost', async () => {
     const { turns, out } = await drain(fakeSandbox(streamJson));
-    expect(turns).toContain('pracuję');
+    expect(turns).toContain('working');
     expect(out.sessionId).toBe('sess-1');
-    expect(out.finalText).toBe('gotowe');
+    expect(out.finalText).toBe('done');
     expect(out.usage?.cacheReadInputTokens).toBe(80);
     expect(out.costUsd).toBe(0.01);
   });
@@ -67,5 +67,29 @@ describe('ClaudeCodeProvider', () => {
         for await (const turn of gen) void turn;
       })(),
     ).rejects.toThrow();
+  });
+
+  it('adds capability flags to the claude command', async () => {
+    let captured = '';
+    const sandbox = {
+      exec: async (command: string): Promise<ExecResult> => {
+        captured = command;
+        return { stdout: streamJson, stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const gen = new ClaudeCodeProvider().run({
+      prompt: 'p',
+      sandbox,
+      workdir: '/workspace',
+      home: '/root',
+      systemPrompt: 'SYS',
+      mcpConfig: '/workspace/mcp.json',
+      allowedTools: ['Read', 'Bash'],
+    });
+    for await (const turn of gen) void turn;
+    expect(captured).toContain('--append-system-prompt');
+    expect(captured).toContain('--mcp-config');
+    expect(captured).toContain('--strict-mcp-config');
+    expect(captured).toContain('--allowed-tools');
   });
 });

@@ -16,6 +16,8 @@ export type {
   AgentUsage,
 } from './agents/provider.js';
 export { ClaudeCodeProvider } from './agents/claude-code.js';
+export { authSecrets, authFromEnv, SUBSCRIPTION_ENV, API_ENV } from './agents/auth.js';
+export type { AgentAuth } from './agents/auth.js';
 export { PiProvider } from './agents/pi.js';
 export { WorktreeManager } from './worktree/manager.js';
 export { SkillRegistry } from './context/skill-registry.js';
@@ -25,10 +27,13 @@ export { DockerSandboxProvider } from './sandbox/docker.js';
 export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
-export { LinearTaskFetcher, createLinearTaskFetcher } from './tasks/linear.js';
-export type { LinearClientLike, LinearIssueLike, LinearLabelNode } from './tasks/linear.js';
-export { GitHubTaskFetcher } from './tasks/github.js';
+export { LinearTaskFetcher, createLinearTaskFetcher, linkLinearIssue } from './tasks/linear.js';
+export type { LinearClientLike, LinearIssueLike, LinearLabelNode, LinearCommentClient } from './tasks/linear.js';
+export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner } from './tasks/github.js';
 export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
+export { GitHubProjectFetcher } from './tasks/github-project.js';
+export type { GitHubProjectFetcherOptions } from './tasks/github-project.js';
+export { linkPullRequest } from './tasks/github.js';
 export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages, commitStage, publishForReview } from './pipeline/pipeline.js';
 export { buildXmlPrompt } from './context/xml-prompt.js';
 export type { XmlPromptSections } from './context/xml-prompt.js';

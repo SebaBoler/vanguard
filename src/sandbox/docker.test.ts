@@ -61,11 +61,29 @@ suite('DockerSandboxProvider', () => {
       await sec.destroy();
     }
   }, 120_000);
+
+  it('keeps shell metacharacters in secret values literal (no injection)', async () => {
+    const tricky = "a'b$(echo pwned);c`d`";
+    const sec = new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { VG_TRICKY: tricky } });
+    try {
+      await sec.start();
+      const r = await sec.exec('printf %s "$VG_TRICKY"');
+      expect(r.stdout).toBe(tricky);
+    } finally {
+      await sec.destroy();
+    }
+  }, 120_000);
 });
 
 // Runs without Docker: the validation throws in the constructor, before any docker invocation.
 describe('DockerSandboxProvider secret validation', () => {
   it('rejects a secret value containing a newline', () => {
-    expect(() => new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { BAD: 'a\nb' } })).toThrow(/nowej linii/);
+    expect(() => new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { BAD: 'a\nb' } })).toThrow(/newline/);
+  });
+
+  it('rejects an invalid secret name', () => {
+    expect(() => new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { 'bad name': 'x' } })).toThrow(
+      /Invalid secret name/,
+    );
   });
 });

@@ -71,13 +71,13 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'result.txt'), 'done');
     });
     const agent = fakeAgent(
-      [{ text: 'krok 1' }, { text: 'zrobione <promise>COMPLETE</promise>' }],
-      { finalText: 'zrobione <promise>COMPLETE</promise>', sessionId: 's1', turns: 2 },
+      [{ text: 'step 1' }, { text: 'done <promise>COMPLETE</promise>' }],
+      { finalText: 'done <promise>COMPLETE</promise>', sessionId: 's1', turns: 2 },
     );
     const opts: RunOptions = {
       taskId: 't1',
       localRepoPath: repo,
-      promptTemplate: 'zrób {{X}}',
+      promptTemplate: 'do {{X}}',
       variables: { X: 'to' },
       sandbox,
       agent,
@@ -95,7 +95,7 @@ describe('vanguard.run', () => {
   it('removes a clean worktree and reports not-completed', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();
-    const agent = fakeAgent([{ text: 'nic' }], { finalText: 'nic', turns: 1 });
+    const agent = fakeAgent([{ text: 'nothing' }], { finalText: 'nothing', turns: 1 });
     const res = await run(
       { taskId: 't2', localRepoPath: repo, promptTemplate: 'x', sandbox, agent },
       { worktrees: wm },

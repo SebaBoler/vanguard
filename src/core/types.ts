@@ -18,6 +18,9 @@ export interface RunOptions {
   maxBudgetUsd?: number;
   timeoutMs?: number;
   resumeSessionId?: string;
+  systemPrompt?: string;
+  mcpConfig?: string;
+  allowedTools?: string[];
   sandbox: IsolatedSandboxProvider;
   agent: AgentProvider;
   logger?: VanguardLogger;

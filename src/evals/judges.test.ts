@@ -17,7 +17,7 @@ describe('programmaticJudge', () => {
   });
 
   it('passes a full verdict through unchanged', async () => {
-    const verdict = { passed: true, score: 0.7, reason: 'częściowo' };
+    const verdict = { passed: true, score: 0.7, reason: 'partial' };
     const v = await programmaticJudge(() => verdict).judge({ testCase, output: 'Z' });
     expect(v).toEqual(verdict);
   });
