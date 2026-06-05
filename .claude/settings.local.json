@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude:*)",
+      "Bash(npm update:*)",
+      "Bash(npm view:*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}
