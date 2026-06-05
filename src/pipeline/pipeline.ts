@@ -142,3 +142,54 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
     },
   ];
 }
+
+export type CommandRunner = (file: string, args: string[], cwd: string) => Promise<string>;
+
+const defaultRunner: CommandRunner = async (file: string, args: string[], cwd: string): Promise<string> =>
+  (await execa(file, args, { cwd })).stdout;
+
+export interface PublishOptions {
+  title: string;
+  body?: string;
+  baseBranch?: string;
+  draft?: boolean;
+  remote?: string;
+  /** Injected for tests; defaults to running git/gh via execa. */
+  runner?: CommandRunner;
+}
+
+export interface PublishOutcome {
+  branch: string;
+  prUrl: string;
+}
+
+/**
+ * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
+ * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the
+ * review surface only; the task source of truth (e.g. Linear) is separate.
+ */
+export async function publishForReview(ctx: RunContext, opts: PublishOptions): Promise<PublishOutcome> {
+  const run = opts.runner ?? defaultRunner;
+  await run('git', ['push', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
+  const args = [
+    'pr',
+    'create',
+    '--head',
+    ctx.branch,
+    '--base',
+    opts.baseBranch ?? 'main',
+    '--title',
+    opts.title,
+    '--body',
+    opts.body ?? '',
+  ];
+  if (opts.draft === true) args.push('--draft');
+  const out = await run('gh', args, ctx.worktreePath);
+  const prUrl =
+    out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('http'))
+      .pop() ?? out.trim();
+  return { branch: ctx.branch, prUrl };
+}
