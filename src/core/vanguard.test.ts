@@ -101,6 +101,7 @@ describe('vanguard.run', () => {
       { worktrees: wm },
     );
     expect(res.completed).toBe(false);
+    expect(res.exitReason).toBe('incomplete');
     expect(res.worktreePreserved).toBe(false);
     expect(wasDestroyed()).toBe(true);
   });

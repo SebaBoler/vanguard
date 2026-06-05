@@ -58,3 +58,11 @@ suite('DockerSandboxProvider', () => {
     }
   }, 120_000);
 });
+
+// Runs without Docker: the validation throws before any docker invocation.
+describe('DockerSandboxProvider secret validation', () => {
+  it('rejects a secret value containing a newline', async () => {
+    const sb = new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { BAD: 'a\nb' } });
+    await expect(sb.start()).rejects.toThrow(/nowej linii/);
+  });
+});

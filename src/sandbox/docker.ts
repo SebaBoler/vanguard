@@ -43,6 +43,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       if (value !== undefined) secrets[key] = value;
     }
     if (Object.keys(secrets).length > 0) {
+      for (const [k, v] of Object.entries(secrets)) {
+        if (/[\n\r]/.test(v)) throw new SandboxError(`Sekret ${k} zawiera znak nowej linii — niedozwolone w env-file`);
+      }
       this.envDir = await mkdtemp(join(tmpdir(), 'vg-env-'));
       const file = join(this.envDir, 'env');
       const body = Object.entries(secrets)
