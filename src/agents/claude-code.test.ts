@@ -51,8 +51,13 @@ describe('ClaudeCodeProvider', () => {
     expect(out.sessionId).toBe('sess-1');
   });
 
-  it('throws AgentError on non-zero exit', async () => {
-    const gen = new ClaudeCodeProvider().run(input(fakeSandbox(streamJson, 1)));
+  it('does not throw on a non-zero exit when a result was produced (graceful stop like max_turns)', async () => {
+    const { out } = await drain(fakeSandbox(streamJson, 1));
+    expect(out.finalText).toBe('done');
+  });
+
+  it('throws AgentError on a crash with no result (non-zero exit, no result line)', async () => {
+    const gen = new ClaudeCodeProvider().run(input(fakeSandbox('boom: fatal', 1)));
     await expect(
       (async () => {
         for await (const turn of gen) void turn;

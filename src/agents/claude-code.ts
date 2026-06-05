@@ -89,9 +89,11 @@ export class ClaudeCodeProvider implements AgentProvider {
       }
     }
 
-    if (res.exitCode !== 0) throw new AgentError(`Agent exited with an error (exit ${res.exitCode})`);
-    if (!parsedAny) throw new AgentError('Agent stream contained no valid JSON');
-    if (!sawResult && finalText === '') throw new AgentError('Agent stream ended without a result');
+    // Only a genuine crash (no result produced) is an error. The CLI returns a non-zero exit code
+    // for graceful stops too (max_turns, max_budget), so do not treat exit code alone as failure.
+    const detail = (): string => (res.stderr.trim() !== '' ? res.stderr.trim() : res.stdout.trim().slice(-600));
+    if (!parsedAny) throw new AgentError(`Agent produced no parseable output (exit ${res.exitCode}): ${detail()}`);
+    if (!sawResult) throw new AgentError(`Agent exited without a result (exit ${res.exitCode}): ${detail()}`);
 
     const output: AgentRunOutput = { finalText, turns };
     if (sessionId !== undefined) output.sessionId = sessionId;
