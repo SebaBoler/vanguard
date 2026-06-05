@@ -16,6 +16,8 @@ export type {
   AgentUsage,
 } from './agents/provider.js';
 export { ClaudeCodeProvider } from './agents/claude-code.js';
+export { authSecrets, authFromEnv, SUBSCRIPTION_ENV, API_ENV } from './agents/auth.js';
+export type { AgentAuth } from './agents/auth.js';
 export { PiProvider } from './agents/pi.js';
 export { WorktreeManager } from './worktree/manager.js';
 export { SkillRegistry } from './context/skill-registry.js';

@@ -2,19 +2,21 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { run, DockerSandboxProvider, ClaudeCodeProvider } from '../src/index.js';
+import { run, DockerSandboxProvider, ClaudeCodeProvider, authFromEnv, authSecrets } from '../src/index.js';
 
 /**
  * Live smoke: uruchamia prawdziwego agenta w obrazie vanguard-sandbox na świeżym repo.
- * Wymaga zbudowanego obrazu (docker/build.sh) i ANTHROPIC_API_KEY w środowisku procesu.
- * Klucz jest przekazywany przez forwardEnv -> plik env 0600 wewnątrz sandboxa, nie przez argv.
+ * Wymaga zbudowanego obrazu (docker/build.sh) oraz uwierzytelnienia w środowisku procesu:
+ * CLAUDE_CODE_OAUTH_TOKEN (subskrypcja, domyślnie) albo ANTHROPIC_API_KEY (API).
+ * Dokładnie jeden sekret trafia do sandboxa przez tmpfs, nie przez argv.
  *
- * Uruchom (klucz z 1Password, nigdy w repo):
- *   ANTHROPIC_API_KEY=$(op read "op://Vault/Anthropic/credential") pnpm tsx examples/smoke.ts
+ * Uruchom (sekret z 1Password, nigdy w repo):
+ *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Claude/oauth-token") pnpm tsx examples/smoke.ts
  */
 async function main(): Promise<void> {
-  if (process.env.ANTHROPIC_API_KEY === undefined) {
-    throw new Error('Brak ANTHROPIC_API_KEY w środowisku — wstrzyknij z vaulta przed uruchomieniem.');
+  const auth = authFromEnv();
+  if (auth === undefined) {
+    throw new Error('Ustaw CLAUDE_CODE_OAUTH_TOKEN (subskrypcja) lub ANTHROPIC_API_KEY (API) przed uruchomieniem.');
   }
 
   const repo = await mkdtemp(join(tmpdir(), 'vanguard-smoke-'));
@@ -26,7 +28,7 @@ async function main(): Promise<void> {
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
     workdir: '/workspace',
-    forwardEnv: ['ANTHROPIC_API_KEY'],
+    secrets: authSecrets(auth),
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
