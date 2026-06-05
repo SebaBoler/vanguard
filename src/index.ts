@@ -41,6 +41,8 @@ export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, Comm
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
 export { runEvals } from './evals/run-evals.js';
 export type { RunEvalsOptions } from './evals/run-evals.js';
+export { buildMcpConfig, injectMcpServer, serverScriptPath, MCP_SERVER_NAME, MCP_TOOL_NAMES } from './mcp/config.js';
+export type { McpServerSpec, InjectedMcp } from './mcp/config.js';
 export { programmaticJudge, llmJudge } from './evals/judges.js';
 export type { Predicate, Complete } from './evals/judges.js';
 export type { EvalKind, EvalCase, EvalVerdict, EvalCaseResult, EvalReport, KindTally, Judge } from './evals/types.js';
