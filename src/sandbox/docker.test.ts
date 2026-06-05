@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { execaSync } from 'execa';
+import { execa, execaSync } from 'execa';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,22 +47,25 @@ suite('DockerSandboxProvider', () => {
     await rm(out, { recursive: true, force: true });
   }, 60_000);
 
-  it('injects secrets via env-file (readable inside the container)', async () => {
+  it('exposes secrets to commands but keeps them out of docker inspect (tmpfs default)', async () => {
     const sec = new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { VG_SECRET: 'topsecret' } });
     try {
       await sec.start();
       const r = await sec.exec('echo $VG_SECRET');
       expect(r.stdout.trim()).toBe('topsecret');
+      const inspect = await execa('docker', ['inspect', `vg-${sec.id}`, '--format', '{{json .Config.Env}}'], {
+        reject: false,
+      });
+      expect(inspect.stdout).not.toContain('topsecret');
     } finally {
       await sec.destroy();
     }
   }, 120_000);
 });
 
-// Runs without Docker: the validation throws before any docker invocation.
+// Runs without Docker: the validation throws in the constructor, before any docker invocation.
 describe('DockerSandboxProvider secret validation', () => {
-  it('rejects a secret value containing a newline', async () => {
-    const sb = new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { BAD: 'a\nb' } });
-    await expect(sb.start()).rejects.toThrow(/nowej linii/);
+  it('rejects a secret value containing a newline', () => {
+    expect(() => new DockerSandboxProvider({ image: 'alpine:3.20', secrets: { BAD: 'a\nb' } })).toThrow(/nowej linii/);
   });
 });

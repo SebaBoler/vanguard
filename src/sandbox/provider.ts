@@ -44,8 +44,14 @@ export interface SandboxConfig {
   workdir?: string;
   env?: Record<string, string>;
   forwardEnv?: string[];
-  /** Secrets injected off the command line (env-file / stdin), never via -e KEY=VAL. */
+  /** Secrets injected off the command line (tmpfs / env-file), never via -e KEY=VAL. */
   secrets?: Record<string, string>;
+  /**
+   * How secrets reach the sandbox. 'tmpfs' (default) writes them to an in-RAM file the
+   * commands source at runtime, so they never appear in `docker inspect` Config.Env or on
+   * disk. 'env-file' loads them into the container env (visible to docker inspect).
+   */
+  secretsMode?: 'tmpfs' | 'env-file';
   memoryMb?: number;
   cpus?: number;
   pidsLimit?: number;

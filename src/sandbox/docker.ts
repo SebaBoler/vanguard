@@ -9,6 +9,10 @@ import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, Sand
 
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 const DEFAULT_WORKDIR = '/workspace';
+const SECRETS_DIR = '/run/vanguard';
+const SECRETS_FILE = `${SECRETS_DIR}/secrets.env`;
+
+type SecretsMode = 'tmpfs' | 'env-file';
 
 /** Runs an isolated command environment as a detached Docker container. */
 export class DockerSandboxProvider implements IsolatedSandboxProvider {
@@ -16,6 +20,8 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   private readonly image: string;
   private readonly workdir: string;
   private readonly config: SandboxConfig;
+  private readonly secretsMode: SecretsMode;
+  private readonly secrets: Record<string, string>;
   private envDir: string | undefined;
   private started = false;
 
@@ -24,10 +30,35 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     this.id = randomUUID();
     this.image = config.image ?? DEFAULT_IMAGE;
     this.workdir = config.workdir ?? DEFAULT_WORKDIR;
+    this.secretsMode = config.secretsMode ?? 'tmpfs';
+    this.secrets = { ...config.secrets };
+    for (const key of config.forwardEnv ?? []) {
+      const value = process.env[key];
+      if (value !== undefined) this.secrets[key] = value;
+    }
+    for (const [k, v] of Object.entries(this.secrets)) {
+      if (/[\n\r]/.test(v)) throw new SandboxError(`Sekret ${k} zawiera znak nowej linii — niedozwolone`);
+    }
   }
 
   private get name(): string {
     return `vg-${this.id}`;
+  }
+
+  private get hasSecrets(): boolean {
+    return Object.keys(this.secrets).length > 0;
+  }
+
+  private secretsBody(): string {
+    return Object.entries(this.secrets)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+  }
+
+  /** In tmpfs mode, source the in-RAM secrets file so values reach the command env without docker-inspect exposure. */
+  private wrap(command: string): string {
+    if (this.secretsMode !== 'tmpfs' || !this.hasSecrets) return command;
+    return `set -a; [ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}; set +a; ${command}`;
   }
 
   async start(): Promise<void> {
@@ -37,21 +68,14 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
     if (this.config.pidsLimit !== undefined) args.push('--pids-limit', String(this.config.pidsLimit));
 
-    const secrets: Record<string, string> = { ...this.config.secrets };
-    for (const key of this.config.forwardEnv ?? []) {
-      const value = process.env[key];
-      if (value !== undefined) secrets[key] = value;
+    if (this.hasSecrets && this.secretsMode === 'tmpfs') {
+      // In-RAM tmpfs: secrets never land in the image, on disk, or in docker inspect Config.Env.
+      args.push('--tmpfs', `${SECRETS_DIR}:rw,noexec,nosuid,mode=1777,size=1m`);
     }
-    if (Object.keys(secrets).length > 0) {
-      for (const [k, v] of Object.entries(secrets)) {
-        if (/[\n\r]/.test(v)) throw new SandboxError(`Sekret ${k} zawiera znak nowej linii — niedozwolone w env-file`);
-      }
+    if (this.hasSecrets && this.secretsMode === 'env-file') {
       this.envDir = await mkdtemp(join(tmpdir(), 'vg-env-'));
       const file = join(this.envDir, 'env');
-      const body = Object.entries(secrets)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n');
-      await writeFile(file, body, { mode: 0o600 });
+      await writeFile(file, this.secretsBody(), { mode: 0o600 });
       args.push('--env-file', file);
     }
     for (const [k, v] of Object.entries(this.config.env ?? {})) args.push('-e', `${k}=${v}`);
@@ -63,6 +87,18 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     } catch (cause) {
       throw new SandboxError(`Nie udało się uruchomić kontenera ${this.name}`, { cause });
     }
+
+    if (this.hasSecrets && this.secretsMode === 'tmpfs') {
+      // Write the secrets file via stdin (umask 077) so the value never appears in argv.
+      const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
+        reject: false,
+        input: this.secretsBody(),
+      });
+      if (write.exitCode !== 0) {
+        await this.destroy();
+        throw new SandboxError(`Nie udało się zapisać sekretów do tmpfs: ${write.stderr}`);
+      }
+    }
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
@@ -70,7 +106,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
     if (options.input !== undefined) args.push('-i');
-    args.push(this.name, 'sh', '-lc', command);
+    args.push(this.name, 'sh', '-lc', this.wrap(command));
     const result = await execa('docker', args, {
       reject: false,
       ...(options.input !== undefined ? { input: options.input } : {}),
@@ -84,7 +120,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
-    args.push(this.name, 'sh', '-lc', command);
+    args.push(this.name, 'sh', '-lc', this.wrap(command));
     const child = execa('docker', args, {
       reject: false,
       ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
