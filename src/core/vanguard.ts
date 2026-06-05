@@ -97,9 +97,12 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
     // Sync working files back without ever overwriting the worktree's .git linkage (R1/B3).
     const staging = join(opts.localRepoPath, '.vanguard', 'staging', opts.taskId);
     await mkdir(staging, { recursive: true });
-    await sandbox.copyFileOut(WORKDIR, staging);
-    await cp(staging, wt.path, { recursive: true, force: true, filter: (src) => !GIT_PATH.test(src) });
-    await rm(staging, { recursive: true, force: true });
+    try {
+      await sandbox.copyFileOut(WORKDIR, staging);
+      await cp(staging, wt.path, { recursive: true, force: true, filter: (src) => !GIT_PATH.test(src) });
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
 
     const diff = await wm.diff(wt.path);
 
@@ -110,7 +113,7 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
     }
 
     const preserved = await wm.isDirty(wt.path);
-    const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'completed';
+    const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'incomplete';
 
     const result: RunResult = {
       taskId: opts.taskId,
