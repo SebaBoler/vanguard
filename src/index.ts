@@ -26,3 +26,5 @@ export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
 export type { Stage, StageContext, StageResult, Pipeline } from './pipeline/pipeline.js';
+export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from './core/gc.js';
+export type { ContainerInfo, ContainerLister, ContainerRemover } from './core/gc.js';
