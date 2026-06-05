@@ -58,7 +58,7 @@ export interface RunDeps {
 async function resolveHome(sandbox: IsolatedSandboxProvider): Promise<string> {
   const res = await sandbox.exec('printf %s "$HOME"');
   const home = res.stdout.trim();
-  if (home === '') throw new SandboxError('Nie udało się ustalić $HOME w sandboxie');
+  if (home === '') throw new SandboxError('Could not resolve $HOME in the sandbox');
   return home;
 }
 
@@ -175,10 +175,10 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 
 /** Destroy the sandbox and remove the worktree unless it has uncommitted changes. */
 export async function disposeContext(ctx: RunContext): Promise<void> {
-  await ctx.sandbox.destroy().catch((error: unknown) => ctx.log.warn({ error }, 'destroy sandbox nie powiódł się'));
+  await ctx.sandbox.destroy().catch((error: unknown) => ctx.log.warn({ error }, 'failed to destroy sandbox'));
   const dirty = await ctx.wm.isDirty(ctx.worktreePath).catch(() => true);
   if (!dirty) {
-    await ctx.wm.remove(ctx.worktreePath).catch((error: unknown) => ctx.log.warn({ error }, 'remove worktree nie powiódł się'));
+    await ctx.wm.remove(ctx.worktreePath).catch((error: unknown) => ctx.log.warn({ error }, 'failed to remove worktree'));
   }
 }
 

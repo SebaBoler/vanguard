@@ -158,7 +158,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       const src = isDir ? `${hostPath}/.` : hostPath;
       await execa('docker', ['cp', src, `${this.name}:${sandboxPath}`]);
     } catch (cause) {
-      throw new SandboxError(`copyIn nie powiódł się: ${hostPath} -> ${sandboxPath}`, { cause });
+      throw new SandboxError(`copyIn failed: ${hostPath} -> ${sandboxPath}`, { cause });
     }
   }
 
@@ -170,7 +170,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       const src = isDir ? `${this.name}:${sandboxPath}/.` : `${this.name}:${sandboxPath}`;
       await execa('docker', ['cp', src, hostPath]);
     } catch (cause) {
-      throw new SandboxError(`copyFileOut nie powiódł się: ${sandboxPath} -> ${hostPath}`, { cause });
+      throw new SandboxError(`copyFileOut failed: ${sandboxPath} -> ${hostPath}`, { cause });
     }
   }
 

@@ -11,7 +11,7 @@ export function programmaticJudge(predicate: Predicate): Judge {
     judge: async ({ testCase, output }): Promise<EvalVerdict> => {
       const result = predicate(testCase, output);
       if (typeof result === 'boolean') {
-        return { passed: result, score: result ? 1 : 0, reason: result ? 'OK' : 'Predykat zwrócił false' };
+        return { passed: result, score: result ? 1 : 0, reason: result ? 'OK' : 'Predicate returned false' };
       }
       return result;
     },
@@ -34,11 +34,11 @@ export function llmJudge(complete: Complete): Judge {
   return {
     judge: async ({ testCase, output }): Promise<EvalVerdict> => {
       const prompt = buildXmlPrompt({
-        role: 'Jesteś rygorystycznym sędzią oceniającym wynik agenta.',
+        role: 'You are a strict judge evaluating an agent output.',
         guidelines:
-          'Oceń, czy wynik spełnia oczekiwanie. Zwróć JSON w tagu <verdict> z polami passed (bool), score (0..1), reason (string).',
-        context: `Rodzaj przypadku: ${testCase.kind}\nWejście: ${testCase.input}\nOczekiwanie: ${testCase.expectation ?? '(brak — oceń sensowność)'}`,
-        task: `Wynik agenta:\n${output}\n\nZwróć ocenę jako <verdict>{...}</verdict>.`,
+          'Judge whether the output meets the expectation. Return JSON in a <verdict> tag with fields passed (bool), score (0..1), reason (string).',
+        context: `Case kind: ${testCase.kind}\nInput: ${testCase.input}\nExpectation: ${testCase.expectation ?? '(none — judge reasonableness)'}`,
+        task: `Agent output:\n${output}\n\nReturn the verdict as <verdict>{...}</verdict>.`,
       });
       const text = await complete(prompt);
       return extractJson(text, 'verdict', verdictSchema);

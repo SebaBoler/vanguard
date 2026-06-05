@@ -15,12 +15,12 @@ import {
 } from '../src/index.js';
 
 /**
- * Pełna pętla Vanguard z GitHub Issue jako JEDYNYM źródłem prawdy (bez Linear).
- * GitHub Issue = wejście, GitHub PR = review. Wszystko w jednym repo.
+ * Full Vanguard loop with a GitHub Issue as the ONLY source of truth (no Linear).
+ * GitHub Issue = input, GitHub PR = review. Everything in one repo.
  *
- * Wymaga: obrazu vanguard-sandbox (docker/build.sh), zalogowanego `gh`, uwierzytelnienia w env
- * (CLAUDE_CODE_OAUTH_TOKEN — subskrypcja, domyślnie — albo ANTHROPIC_API_KEY — API),
- * i uruchomienia z klona docelowego repo (origin = to repo).
+ * Requires: the vanguard-sandbox image (docker/build.sh), an authenticated `gh`, authentication in
+ * the env (CLAUDE_CODE_OAUTH_TOKEN — subscription, default — or ANTHROPIC_API_KEY — API),
+ * and running from a clone of the target repo (origin = this repo).
  *
  *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Claude/oauth-token") \
  *     pnpm tsx examples/from-github-issue.ts 123
@@ -28,18 +28,18 @@ import {
 async function main(): Promise<void> {
   const issueRef = process.argv[2];
   if (issueRef === undefined) {
-    throw new Error('Podaj numer issue: pnpm tsx examples/from-github-issue.ts <numer>');
+    throw new Error('Provide an issue number: pnpm tsx examples/from-github-issue.ts <number>');
   }
   const auth = authFromEnv();
   if (auth === undefined) {
-    throw new Error('Ustaw CLAUDE_CODE_OAUTH_TOKEN (subskrypcja) lub ANTHROPIC_API_KEY (API) przed uruchomieniem.');
+    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
   }
 
   const repoPath = process.env.REPO_PATH ?? process.cwd();
   const repoSlug = process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
 
   const task = await new GitHubTaskFetcher(repoSlug).fetch(issueRef);
-  console.log(`Zadanie: ${task.id} — ${task.title}`);
+  console.log(`Task: ${task.id} — ${task.title}`);
 
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
@@ -63,26 +63,26 @@ async function main(): Promise<void> {
 
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
     if (!commit.committed) {
-      console.log('Brak zmian do commita — kończę bez PR.');
+      console.log('No changes to commit — finishing without a PR.');
       return;
     }
 
     const pr = await publishForReview(ctx, {
       title: task.title,
-      body: `Automatyczna realizacja ${task.id} przez Vanguard.\n\n${task.description}`,
+      body: `Automated implementation of ${task.id} by Vanguard.\n\n${task.description}`,
       draft: true,
     });
-    console.log(`PR do review: ${pr.prUrl}`);
+    console.log(`PR for review: ${pr.prUrl}`);
   } finally {
     await disposeContext(ctx);
   }
 }
 
-/** Wyciąga slug owner/repo z origin remote. */
+/** Extracts the owner/repo slug from the origin remote. */
 async function detectRepoSlug(cwd: string): Promise<string> {
   const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd });
   const match = stdout.trim().match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (match?.[1] === undefined) throw new Error(`Nie rozpoznano repo z origin: ${stdout.trim()}`);
+  if (match?.[1] === undefined) throw new Error(`Could not detect repo from origin: ${stdout.trim()}`);
   return match[1];
 }
 
