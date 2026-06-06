@@ -59,6 +59,7 @@ export {
 } from './runners/linear.js';
 export {
   runGithubIssue,
+  runGithubProject,
   githubDepsFromEnv,
   detectRepoSlug,
   type RunGithubIssueDeps,

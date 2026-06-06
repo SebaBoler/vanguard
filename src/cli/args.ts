@@ -4,13 +4,14 @@ export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean }
   | {
       kind: 'run';
-      source: 'linear' | 'github';
+      source: 'linear' | 'github' | 'project';
       id: string;
       parent: boolean;
       repoPath: string;
       concurrency: number;
       skillsDir?: string;
       repoSlug?: string;
+      label?: string;
     }
   | { kind: 'help' };
 
@@ -38,9 +39,11 @@ export function parseCli(argv: string[], cwd: string): Command {
         // run
         linear: { type: 'string' },
         github: { type: 'string' },
+        project: { type: 'string' },
         parent: { type: 'boolean' },
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
+        label: { type: 'string' },
         concurrency: { type: 'string' },
         help: { type: 'boolean' },
       },
@@ -67,20 +70,24 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'run') {
-    const linear = typeof values.linear === 'string' ? values.linear : undefined;
-    const github = typeof values.github === 'string' ? values.github : undefined;
+    const sources: Array<['linear' | 'github' | 'project', string]> = [];
+    if (typeof values.linear === 'string') sources.push(['linear', values.linear]);
+    if (typeof values.github === 'string') sources.push(['github', values.github]);
+    if (typeof values.project === 'string') sources.push(['project', values.project]);
     // Exactly one source is required.
-    if ((linear === undefined) === (github === undefined)) return { kind: 'help' };
+    const picked = sources[0];
+    if (sources.length !== 1 || picked === undefined) return { kind: 'help' };
     const concurrency = Number(values.concurrency);
     return {
       kind: 'run',
-      source: linear !== undefined ? 'linear' : 'github',
-      id: (linear ?? github) as string,
+      source: picked[0],
+      id: picked[1],
       parent: values.parent === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(typeof values.label === 'string' ? { label: values.label } : {}),
     };
   }
 
@@ -97,11 +104,13 @@ Commands:
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)
     --github <owner/repo#n> Run a GitHub issue
+    --project <number>     Run every issue on a GitHub Projects v2 board (one run + PR each)
     --parent               (Linear) fan the issue's sub-tasks out, one run + PR each
+    --label <name>         (project) only run board items with this label
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
-    --concurrency <n>      (parent) max sub-tasks at once (default: 2)
+    --concurrency <n>      (parent/project) max tasks at once (default: 2)
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)

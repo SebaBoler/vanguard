@@ -1,14 +1,17 @@
 import { execa } from 'execa';
 import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
+import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { ClaudeCodeProvider } from '../agents/claude-code.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
+import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
 export interface RunGithubIssueDeps {
@@ -61,6 +64,23 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
   } finally {
     await disposeContext(ctx);
   }
+}
+
+/**
+ * Run every issue on a GitHub Projects v2 board (optionally filtered by label) as its own run + PR,
+ * concurrently and with failure isolation. The owner defaults to the repo slug's owner.
+ */
+export async function runGithubProject(
+  deps: RunGithubIssueDeps,
+  opts: { projectNumber: number; owner?: string; label?: string; concurrency?: number },
+): Promise<{ tasks: Task[]; outcomes: FanOutOutcome<Task, RunGithubIssueResult>[] }> {
+  const owner = opts.owner ?? (deps.repoSlug.split('/')[0] as string);
+  const fetcher = new GitHubProjectFetcher({ owner, projectNumber: opts.projectNumber, repo: deps.repoSlug });
+  const tasks = await fetcher.list(opts.label !== undefined ? { labels: [opts.label] } : undefined);
+  const outcomes = await fanOut(tasks, (task) => runGithubIssue(task.id, deps), {
+    ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+  });
+  return { tasks, outcomes };
 }
 
 /** Read the run dependencies from the environment (+ flag overrides), resolving the repo slug from origin. */

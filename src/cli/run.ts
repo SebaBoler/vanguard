@@ -1,8 +1,9 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
-import { runGithubIssue, githubDepsFromEnv } from '../runners/github.js';
+import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { AgentAuth } from '../agents/auth.js';
+import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { Command } from './args.js';
 
 type RunCommand = Extract<Command, { kind: 'run' }>;
@@ -11,6 +12,8 @@ type RunCommand = Extract<Command, { kind: 'run' }>;
 export async function runCommand(cmd: RunCommand): Promise<void> {
   if (cmd.source === 'linear') {
     await runLinear(cmd);
+  } else if (cmd.source === 'project') {
+    await runProject(cmd);
   } else {
     await runGithub(cmd);
   }
@@ -45,6 +48,42 @@ async function runLinear(cmd: RunCommand): Promise<void> {
   }
   const { parent, outcomes } = await runLinearParent(cmd.id, deps, { concurrency: cmd.concurrency });
   console.log(`Parent: ${parent.id} — ${parent.title} (${parent.children.length} sub-tasks)`);
+  reportFanOut(outcomes, parent.children.length);
+}
+
+async function runGithub(cmd: RunCommand): Promise<void> {
+  if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
+  requireAuth();
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  const result = await runGithubIssue(cmd.id, deps);
+  report(result.task.id, result.prUrl);
+}
+
+async function runProject(cmd: RunCommand): Promise<void> {
+  const projectNumber = Number(cmd.id);
+  if (!Number.isInteger(projectNumber) || projectNumber < 1) {
+    throw new Error(`--project expects a board number, got "${cmd.id}".`);
+  }
+  requireAuth();
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  const { tasks, outcomes } = await runGithubProject(deps, {
+    projectNumber,
+    concurrency: cmd.concurrency,
+    ...(cmd.label !== undefined ? { label: cmd.label } : {}),
+  });
+  console.log(`Project ${projectNumber} (${deps.repoSlug}): ${tasks.length} task(s)`);
+  reportFanOut(outcomes, tasks.length);
+}
+
+function report(id: string, prUrl: string | undefined): void {
+  console.log(prUrl !== undefined ? `PR for review: ${prUrl} (linked back onto ${id})` : `No changes — no PR for ${id}.`);
+}
+
+/** Print a fan-out summary (one line per task + totals). Shared by --parent and --project. */
+function reportFanOut<I extends { id: string }, T extends { prUrl?: string }>(
+  outcomes: ReadonlyArray<FanOutOutcome<I, T>>,
+  total: number,
+): void {
   let opened = 0;
   let failed = 0;
   for (const outcome of outcomes) {
@@ -56,17 +95,5 @@ async function runLinear(cmd: RunCommand): Promise<void> {
       console.log(`  ${outcome.item.id}: FAILED — ${String(outcome.reason)}`);
     }
   }
-  console.log(`Done: ${opened} PR(s) opened, ${failed} failed, of ${parent.children.length} sub-tasks.`);
-}
-
-async function runGithub(cmd: RunCommand): Promise<void> {
-  if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
-  requireAuth();
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
-  const result = await runGithubIssue(cmd.id, deps);
-  report(result.task.id, result.prUrl);
-}
-
-function report(id: string, prUrl: string | undefined): void {
-  console.log(prUrl !== undefined ? `PR for review: ${prUrl} (linked back onto ${id})` : `No changes — no PR for ${id}.`);
+  console.log(`Done: ${opened} PR(s) opened, ${failed} failed, of ${total}.`);
 }
