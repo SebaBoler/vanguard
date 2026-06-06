@@ -2,6 +2,7 @@ node_modules/
 dist/
 .vanguard/
 *.log
+docker/sbom.spdx.json
 
 # sekrety / zmienne środowiskowe
 .env
