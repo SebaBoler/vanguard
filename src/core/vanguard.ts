@@ -8,6 +8,7 @@ import { captureSession, restoreSession, sessionPath } from '../agents/session-s
 import { cacheEfficiency } from '../agents/provider.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
+import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
 import { SandboxError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
@@ -74,12 +75,14 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
   const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main');
-  await opts.sandbox.start();
-  // From here the sandbox is live: track it so a SIGINT/SIGTERM destroys it, and tear it down if the
-  // rest of provisioning throws (otherwise a failed prepareContext would orphan the container).
+  // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
+  // sandboxes than the host can hold (blocks until a slot frees).
+  await acquireSandboxSlot(opts.sandbox);
   installSignalCleanup();
-  trackSandbox(opts.sandbox);
   try {
+    await opts.sandbox.start();
+    // The sandbox is live now: track it so a SIGINT/SIGTERM destroys it.
+    trackSandbox(opts.sandbox);
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await skills.injectAll(opts.sandbox, home);
@@ -94,8 +97,10 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
       log,
     };
   } catch (error) {
+    // Provisioning failed: untrack, free the slot, and tear down so nothing is orphaned.
     untrackSandbox(opts.sandbox);
     await opts.sandbox.destroy().catch(() => undefined);
+    releaseSandboxSlot(opts.sandbox);
     throw error;
   }
 }
@@ -201,6 +206,9 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 
 /** Destroy the sandbox and remove the worktree unless it has uncommitted changes. */
 export async function disposeContext(ctx: RunContext, opts: { keep?: boolean } = {}): Promise<void> {
+  // Free the host concurrency slot in both cases: a kept sandbox is parked for inspection/resume,
+  // not actively running stages, so it should not count against the live-run budget.
+  releaseSandboxSlot(ctx.sandbox);
   if (opts.keep === true) return; // leave the sandbox + worktree alive for inspection or resume
   untrackSandbox(ctx.sandbox);
   await ctx.sandbox.destroy().catch((error: unknown) => ctx.log.warn({ error }, 'failed to destroy sandbox'));
