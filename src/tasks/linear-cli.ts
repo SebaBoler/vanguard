@@ -72,3 +72,8 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     return tasks;
   }
 }
+
+/** Comment a PR link back onto a Linear issue via the CLI (closes the loop). */
+export async function linkLinearIssue(issueId: string, prUrl: string, runner: LinearCliRunner = defaultRunner): Promise<void> {
+  await runner(['issue', 'comment', 'add', issueId, '--body', `Vanguard opened a PR for review: ${prUrl}`]);
+}

@@ -11,8 +11,8 @@ export interface TaskFilter {
 }
 
 /**
- * Source of work items. Phase-2 impl: LinearTaskFetcher (@linear/sdk, LINEAR_API_KEY)
- * mapping an issue to prompt variables via taskToVariables().
+ * Source of work items. Impl: LinearCliTaskFetcher (the `linear` CLI; auth via
+ * `linear auth login` or LINEAR_API_KEY) mapping an issue to prompt variables via taskToVariables().
  */
 export interface TaskFetcher {
   fetch: (id: string) => Promise<Task>;
