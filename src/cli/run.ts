@@ -1,6 +1,7 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
+import { startEgressProxy } from '../sandbox/egress-proxy.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -16,12 +17,19 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     await pruneWorktrees(cmd.repoPath);
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
-  if (cmd.source === 'linear') {
-    await runLinear(cmd);
-  } else if (cmd.source === 'project') {
-    await runProject(cmd);
-  } else {
-    await runGithub(cmd);
+
+  const proxy = cmd.egress ? await startEgressProxy() : undefined;
+  if (proxy !== undefined) console.log(`egress: sandbox traffic restricted to the allowlist via proxy :${proxy.port}`);
+  try {
+    if (cmd.source === 'linear') {
+      await runLinear(cmd, proxy?.url);
+    } else if (cmd.source === 'project') {
+      await runProject(cmd, proxy?.url);
+    } else {
+      await runGithub(cmd, proxy?.url);
+    }
+  } finally {
+    if (proxy !== undefined) await proxy.close();
   }
 }
 
@@ -33,7 +41,7 @@ function requireAuth(): AgentAuth {
   return auth;
 }
 
-function linearDeps(cmd: RunCommand): RunLinearIssueDeps {
+function linearDeps(cmd: RunCommand, proxyUrl: string | undefined): RunLinearIssueDeps {
   const linearKey = process.env.LINEAR_API_KEY;
   if (linearKey === undefined || linearKey === '') {
     throw new Error('Set LINEAR_API_KEY so the in-sandbox linear CLI can read the issue.');
@@ -42,11 +50,17 @@ function linearDeps(cmd: RunCommand): RunLinearIssueDeps {
   if (skillsDir === undefined) {
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
-  return { auth: requireAuth(), linearKey, skillsDir, repoPath: cmd.repoPath };
+  return {
+    auth: requireAuth(),
+    linearKey,
+    skillsDir,
+    repoPath: cmd.repoPath,
+    ...(proxyUrl !== undefined ? { proxyUrl } : {}),
+  };
 }
 
-async function runLinear(cmd: RunCommand): Promise<void> {
-  const deps = linearDeps(cmd);
+async function runLinear(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
+  const deps = linearDeps(cmd, proxyUrl);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
     report(result.task.id, result.prUrl);
@@ -57,21 +71,23 @@ async function runLinear(cmd: RunCommand): Promise<void> {
   reportFanOut(outcomes, parent.children.length);
 }
 
-async function runGithub(cmd: RunCommand): Promise<void> {
+async function runGithub(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
   if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
   requireAuth();
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
 
-async function runProject(cmd: RunCommand): Promise<void> {
+async function runProject(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
   const projectNumber = Number(cmd.id);
   if (!Number.isInteger(projectNumber) || projectNumber < 1) {
     throw new Error(`--project expects a board number, got "${cmd.id}".`);
   }
   requireAuth();
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

@@ -7,6 +7,7 @@ import { runStages, implementReviewSimplifyStages, commitStage, publishForReview
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
+import { egressEnv } from '../sandbox/egress-proxy.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
@@ -20,6 +21,8 @@ export interface RunLinearIssueDeps {
   linearKey: string;
   repoPath: string;
   skillsDir: string;
+  /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
+  proxyUrl?: string;
 }
 
 export interface RunLinearIssueResult {
@@ -46,6 +49,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
+    ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
   });
 
   const ctx = await prepareContext(

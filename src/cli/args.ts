@@ -8,6 +8,7 @@ export type Command =
       id: string;
       parent: boolean;
       gcBefore: boolean;
+      egress: boolean;
       repoPath: string;
       concurrency: number;
       skillsDir?: string;
@@ -43,6 +44,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         project: { type: 'string' },
         parent: { type: 'boolean' },
         'gc-before': { type: 'boolean' },
+        egress: { type: 'boolean' },
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
         label: { type: 'string' },
@@ -86,6 +88,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       id: picked[1],
       parent: values.parent === true,
       gcBefore: values['gc-before'] === true,
+      egress: values.egress === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -111,6 +114,7 @@ Commands:
     --parent               (Linear) fan the issue's sub-tasks out, one run + PR each
     --label <name>         (project) only run board items with this label
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
+    --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
