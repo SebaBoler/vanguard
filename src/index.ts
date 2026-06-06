@@ -30,6 +30,8 @@ export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
 export { LinearTaskFetcher, createLinearTaskFetcher, linkLinearIssue } from './tasks/linear.js';
 export type { LinearClientLike, LinearIssueLike, LinearLabelNode, LinearCommentClient } from './tasks/linear.js';
+export { LinearCliTaskFetcher } from './tasks/linear-cli.js';
+export type { LinearCliRunner, LinearCliOptions } from './tasks/linear-cli.js';
 export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner } from './tasks/github.js';
 export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { GitHubProjectFetcher } from './tasks/github-project.js';
