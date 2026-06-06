@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { WorktreeError } from '../core/errors.js';
 
@@ -7,15 +8,22 @@ export interface Worktree {
   branch: string;
 }
 
+/** Short, unique-per-run id so re-running the same task never collides on an existing branch/path. */
+const defaultRunId = (): string => randomUUID().slice(0, 8);
+
 export class WorktreeManager {
   constructor(
     private readonly repoPath: string,
     private readonly baseDir: string = join(repoPath, '.vanguard', 'worktrees'),
+    private readonly newRunId: () => string = defaultRunId,
   ) {}
 
   async create(taskId: string, baseBranch: string = 'main'): Promise<Worktree> {
-    const branch = `vanguard/${taskId}`;
-    const path = join(this.baseDir, taskId);
+    // Append a unique run id: disposeContext removes the worktree but not the branch, and a prior
+    // run also leaves a remote branch, so reusing `vanguard/<taskId>` collides on re-run.
+    const name = `${taskId}-${this.newRunId()}`;
+    const branch = `vanguard/${name}`;
+    const path = join(this.baseDir, name);
     try {
       await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
       return { path, branch };
