@@ -29,6 +29,7 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     title: issue.title,
     description: issue.body ?? '',
     labels: issue.labels.map((label) => label.name),
+    children: [], // the gh issue mapping does not fetch sub-issues
   };
 }
 
