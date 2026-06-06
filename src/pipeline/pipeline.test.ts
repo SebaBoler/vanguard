@@ -13,6 +13,8 @@ import {
   defaultSystemPrompt,
   publishForReview,
   planImplementReviewStages,
+  planImplementAdversaryStages,
+  adversarySystemPrompt,
 } from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
@@ -182,6 +184,19 @@ describe('planImplementReviewStages', () => {
     expect(stages[1]?.model).toBe('sonnet');
     expect(stages[2]?.model).toBe('sonnet');
     expect(stages.every((s) => (s.systemPrompt ?? '').includes('<tradeoffs>'))).toBe(true);
+  });
+});
+
+describe('planImplementAdversaryStages', () => {
+  it('runs plan/implement/adversary/repair with a red-team adversary on a different model', () => {
+    const stages = planImplementAdversaryStages();
+    expect(stages.map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
+    const adversary = stages[2];
+    expect(adversary?.model).toBe('opus');
+    expect(stages[1]?.model).toBe('sonnet');
+    expect(adversary?.systemPrompt).toContain('Adversarial');
+    expect(adversary?.systemPrompt).not.toContain('senior software engineer');
+    expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
   });
 });
 

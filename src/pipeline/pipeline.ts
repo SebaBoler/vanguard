@@ -246,6 +246,66 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
   return stages.map((stage) => ({ systemPrompt, ...stage }));
 }
 
+/** Red-team system prompt for the adversarial reviewer (reports only, never edits). */
+export function adversarySystemPrompt(): string {
+  return [
+    '<role>Adversarial security and performance reviewer. Assume the change is guilty until proven safe.</role>',
+    '<policy>You never edit files. You only report findings. Prefer false positives over missed vulnerabilities.</policy>',
+    '<guidelines>Hunt for: injection, secret or PII exposure, auth/authz gaps, unsafe deserialization, path traversal, ReDoS, N+1 and quadratic patterns, unbounded growth, race conditions. Verify each claim against the diff.</guidelines>',
+    '<tradeoffs>A missed vulnerability is far more costly than a false positive; when unsure, report it.</tradeoffs>',
+  ].join('\n');
+}
+
+/**
+ * Plan (opus) -> implement (sonnet) -> adversary (opus, red-team, reports <findings>) -> repair (sonnet).
+ * The adversary runs on a different model than the implementer and only reports; the repairer fixes
+ * from the findings via {{PREVIOUS_FINAL}}.
+ */
+export function planImplementAdversaryStages(): PipelineStage[] {
+  const systemPrompt = defaultSystemPrompt();
+  const stages: PipelineStage[] = [
+    {
+      name: 'planner',
+      model: 'opus',
+      effort: 'high',
+      maxTurns: 10,
+      resumePrevious: false,
+      systemPrompt,
+      promptTemplate:
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
+    },
+    {
+      name: 'implementer',
+      model: 'sonnet',
+      maxTurns: 30,
+      resumePrevious: false,
+      systemPrompt,
+      promptTemplate:
+        'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+    },
+    {
+      name: 'adversary',
+      model: 'opus',
+      effort: 'high',
+      maxTurns: 12,
+      resumePrevious: false,
+      systemPrompt: adversarySystemPrompt(),
+      promptTemplate:
+        'Review the diff below. Emit ONLY <findings>{...}</findings> matching the schema (severity low|medium|high|critical, kind security|perf|correctness|style, title, evidence), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+    },
+    {
+      name: 'repairer',
+      model: 'sonnet',
+      maxTurns: 20,
+      resumePrevious: false,
+      systemPrompt,
+      promptTemplate:
+        'Apply targeted fixes for these findings, highest severity first; fix only what is listed:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+    },
+  ];
+  return stages;
+}
+
 export type CommandRunner = (file: string, args: string[], cwd: string) => Promise<string>;
 
 const defaultRunner: CommandRunner = async (file: string, args: string[], cwd: string): Promise<string> =>
