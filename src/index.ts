@@ -26,7 +26,7 @@ export { renderPrompt } from './context/prompt-engine.js';
 export { extractTag, extractJson, hasTerminationSignal } from './structured/extract.js';
 export { DockerSandboxProvider } from './sandbox/docker.js';
 export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
-export type { Task, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
+export type { Task, SubTask, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
 export { LinearCliTaskFetcher, linkLinearIssue } from './tasks/linear-cli.js';
 export type { LinearCliRunner, LinearCliOptions } from './tasks/linear-cli.js';

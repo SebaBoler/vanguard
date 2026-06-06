@@ -20,7 +20,7 @@ describe('GitHubProjectFetcher', () => {
     const fetcher = new GitHubProjectFetcher({ owner: 'SebaBoler', projectNumber: 1, repo: 'SebaBoler/vanguard', gh: fakeGh() });
     const tasks = await fetcher.list();
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toEqual({ id: 'SebaBoler/vanguard#5', title: 'A', description: 'ba', labels: ['bug'] });
+    expect(tasks[0]).toEqual({ id: 'SebaBoler/vanguard#5', title: 'A', description: 'ba', labels: ['bug'], children: [] });
   });
 
   it('fetches a single issue by id', async () => {

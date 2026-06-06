@@ -66,6 +66,7 @@ export class GitHubProjectFetcher implements TaskFetcher {
         title: content.title ?? '',
         description: content.body ?? '',
         labels: content.labels ?? [],
+        children: [], // Projects v2 item content does not carry sub-issues
       });
     }
     // filter.state is intentionally not applied here: Projects v2 boards organise items by their own

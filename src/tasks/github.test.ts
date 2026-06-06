@@ -11,7 +11,7 @@ function fakeGh(): GhRunner {
 describe('GitHubTaskFetcher', () => {
   it('maps an issue to a Task (id = repo#number)', async () => {
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
-    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'] });
+    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'], children: [] });
   });
 
   it('accepts a repo#number reference', async () => {

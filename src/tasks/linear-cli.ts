@@ -8,23 +8,29 @@ export type LinearCliRunner = (args: string[]) => Promise<string>;
 const defaultRunner: LinearCliRunner = async (args: string[]): Promise<string> => (await execa('linear', args)).stdout;
 
 // Verified against linear-cli 2.0: `issue view <id> --json` returns a single issue WITH a
-// description but no labels; `issue query --json` returns { nodes: [...] } WITH labels.nodes but
-// no description. So fetch() uses view (description) and list() uses query (labels).
+// description and children.nodes (sub-issues) but no labels; `issue query --json` returns
+// { nodes: [...] } WITH labels.nodes but no description/children. So fetch() uses view
+// (description + children) and list() uses query (labels).
 interface LinearCliIssue {
   id?: string;
   identifier?: string;
   title?: string;
   description?: string | null;
   labels?: { nodes?: Array<{ name?: string }> };
+  children?: { nodes?: Array<{ identifier?: string; id?: string; title?: string }> };
 }
 
 function toTask(issue: LinearCliIssue): Task {
   const labels = (issue.labels?.nodes ?? []).map((label) => label.name ?? '').filter((name) => name !== '');
+  const children = (issue.children?.nodes ?? [])
+    .map((child) => ({ id: child.identifier ?? child.id ?? '', title: child.title ?? '' }))
+    .filter((child) => child.id !== '');
   return {
     id: issue.identifier ?? issue.id ?? '',
     title: issue.title ?? '',
     description: issue.description ?? '',
     labels,
+    children,
   };
 }
 
