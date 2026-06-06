@@ -21,6 +21,8 @@ export interface RunGithubIssueDeps {
   repoSlug: string;
   /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
   proxyUrl?: string;
+  /** When set, join the sandbox to this docker network (the hard egress enclave). */
+  network?: string;
 }
 
 export interface RunGithubIssueResult {
@@ -44,6 +46,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     cpus: 2,
     pidsLimit: 512,
     ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
+    ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
   const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox });

@@ -1,7 +1,7 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
-import { startEgressProxy } from '../sandbox/egress-proxy.js';
+import { startEgressEnclave } from '../sandbox/egress-network.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -18,18 +18,18 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  const proxy = cmd.egress ? await startEgressProxy() : undefined;
-  if (proxy !== undefined) console.log(`egress: sandbox traffic restricted to the allowlist via proxy :${proxy.port}`);
+  const enclave = cmd.egress ? await startEgressEnclave() : undefined;
+  if (enclave !== undefined) console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
   try {
     if (cmd.source === 'linear') {
-      await runLinear(cmd, proxy?.url);
+      await runLinear(cmd, enclave?.proxyUrl, enclave?.network);
     } else if (cmd.source === 'project') {
-      await runProject(cmd, proxy?.url);
+      await runProject(cmd, enclave?.proxyUrl, enclave?.network);
     } else {
-      await runGithub(cmd, proxy?.url);
+      await runGithub(cmd, enclave?.proxyUrl, enclave?.network);
     }
   } finally {
-    if (proxy !== undefined) await proxy.close();
+    if (enclave !== undefined) await enclave.destroy();
   }
 }
 
@@ -41,7 +41,7 @@ function requireAuth(): AgentAuth {
   return auth;
 }
 
-function linearDeps(cmd: RunCommand, proxyUrl: string | undefined): RunLinearIssueDeps {
+function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): RunLinearIssueDeps {
   const linearKey = process.env.LINEAR_API_KEY;
   if (linearKey === undefined || linearKey === '') {
     throw new Error('Set LINEAR_API_KEY so the in-sandbox linear CLI can read the issue.');
@@ -56,11 +56,12 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined): RunLinearIss
     skillsDir,
     repoPath: cmd.repoPath,
     ...(proxyUrl !== undefined ? { proxyUrl } : {}),
+    ...(network !== undefined ? { network } : {}),
   };
 }
 
-async function runLinear(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
-  const deps = linearDeps(cmd, proxyUrl);
+async function runLinear(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
+  const deps = linearDeps(cmd, proxyUrl, network);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
     report(result.task.id, result.prUrl);
@@ -71,16 +72,17 @@ async function runLinear(cmd: RunCommand, proxyUrl: string | undefined): Promise
   reportFanOut(outcomes, parent.children.length);
 }
 
-async function runGithub(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
+async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
   if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
   requireAuth();
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
+  if (network !== undefined) deps.network = network;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
 
-async function runProject(cmd: RunCommand, proxyUrl: string | undefined): Promise<void> {
+async function runProject(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
   const projectNumber = Number(cmd.id);
   if (!Number.isInteger(projectNumber) || projectNumber < 1) {
     throw new Error(`--project expects a board number, got "${cmd.id}".`);
@@ -88,6 +90,7 @@ async function runProject(cmd: RunCommand, proxyUrl: string | undefined): Promis
   requireAuth();
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
+  if (network !== undefined) deps.network = network;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

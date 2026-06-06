@@ -57,4 +57,6 @@ export interface SandboxConfig {
   memoryMb?: number;
   cpus?: number;
   pidsLimit?: number;
+  /** Join this docker network instead of the default bridge (e.g. an internal egress enclave). */
+  network?: string;
 }
