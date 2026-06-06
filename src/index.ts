@@ -15,6 +15,7 @@ export type {
   AgentTurn,
   AgentUsage,
 } from './agents/provider.js';
+export { cacheEfficiency } from './agents/provider.js';
 export { ClaudeCodeProvider } from './agents/claude-code.js';
 export { authSecrets, authFromEnv, SUBSCRIPTION_ENV, API_ENV } from './agents/auth.js';
 export type { AgentAuth } from './agents/auth.js';

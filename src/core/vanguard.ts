@@ -5,6 +5,7 @@ import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
 import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
+import { cacheEfficiency } from '../agents/provider.js';
 import { createLogger } from './logger.js';
 import { SandboxError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
@@ -178,7 +179,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       finalText,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(diff !== '' ? { diff } : {}),
-      ...(usage !== undefined ? { usage } : {}),
+      ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
     };
     return result;
