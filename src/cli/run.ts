@@ -1,5 +1,6 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
+import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -10,6 +11,11 @@ type RunCommand = Extract<Command, { kind: 'run' }>;
 
 /** Dispatch `vanguard run` to the right source runner, assembling deps from env + flags. */
 export async function runCommand(cmd: RunCommand): Promise<void> {
+  if (cmd.gcBefore) {
+    const reaped = await reapContainers(dockerContainerLister(), dockerContainerRemover());
+    await pruneWorktrees(cmd.repoPath);
+    console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
+  }
   if (cmd.source === 'linear') {
     await runLinear(cmd);
   } else if (cmd.source === 'project') {
