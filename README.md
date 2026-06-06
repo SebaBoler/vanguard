@@ -90,6 +90,27 @@ try {
 
 `examples/from-github-issue.ts` runs this whole loop from a GitHub issue.
 
+## Skills
+
+Vanguard supports Claude Code skills (the `SKILL.md`-per-directory format used by collections like [obra/superpowers](https://github.com/obra/superpowers), [mattpocock/skills](https://github.com/mattpocock/skills), and [cursor-team-kit](https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills)). Point a registry at a directory of skills and Vanguard injects the whole set into the agent's `~/.claude/skills` inside the sandbox. The agent auto-discovers and selects the relevant ones at runtime, so there is no per-run list to maintain.
+
+```ts
+import { skillRegistryFromDirectory, run } from 'vanguard';
+
+// Clone a skills collection into ./skills (each subdir with a SKILL.md is one skill).
+const skills = await skillRegistryFromDirectory('./skills');
+await run(opts, { skills });
+```
+
+For targeted injection instead of the whole set, construct `new SkillRegistry({ id: '/host/path' })` and call `inject(['id'], sandbox)`.
+
+## Models
+
+Choose the model per stage with `model` (`'opus'`, `'sonnet'`, `'haiku'`, or a full id), and reasoning depth with `effort`. Two presets:
+
+- `fastStages()` - a single low-effort `haiku` pass: cheap and quick, still on the subscription via the CLI.
+- `planImplementReviewStages()` - plan on `opus` (high effort, emits a `<plan>`), then implement and review on `sonnet`. The capable model plans; the cheaper one executes.
+
 ## Security
 
 The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo.
