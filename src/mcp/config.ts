@@ -6,7 +6,13 @@ const MCP_DIR = '/workspace/.vanguard/mcp';
 const SERVER_FILE = `${MCP_DIR}/typecheck-server.mjs`;
 const CONFIG_FILE = `${MCP_DIR}/mcp.json`;
 
-export const MCP_TOOL_NAMES = [`mcp__${MCP_SERVER_NAME}__typecheck`, `mcp__${MCP_SERVER_NAME}__run_tests`];
+export const MCP_TOOL_NAMES = [
+  `mcp__${MCP_SERVER_NAME}__typecheck`,
+  `mcp__${MCP_SERVER_NAME}__run_tests`,
+  `mcp__${MCP_SERVER_NAME}__search_knowledge`,
+  `mcp__${MCP_SERVER_NAME}__generate_edge_tests`,
+  `mcp__${MCP_SERVER_NAME}__profile`,
+];
 
 export interface McpServerSpec {
   command: string;
@@ -35,13 +41,16 @@ export interface InjectedMcp {
  */
 export async function injectMcpServer(
   sandbox: IsolatedSandboxProvider,
-  options: { typecheckCmd?: string; testCmd?: string } = {},
+  options: { typecheckCmd?: string; testCmd?: string; knowledgeDir?: string; profileCmd?: string; edgeTestCmd?: string } = {},
 ): Promise<InjectedMcp> {
   await sandbox.exec(`mkdir -p ${MCP_DIR}`);
   await sandbox.copyIn(serverScriptPath(), SERVER_FILE);
   const env: Record<string, string> = {};
   if (options.typecheckCmd !== undefined) env.MCP_TYPECHECK_CMD = options.typecheckCmd;
   if (options.testCmd !== undefined) env.MCP_TEST_CMD = options.testCmd;
+  if (options.knowledgeDir !== undefined) env.MCP_KNOWLEDGE_DIR = options.knowledgeDir;
+  if (options.profileCmd !== undefined) env.MCP_PROFILE_CMD = options.profileCmd;
+  if (options.edgeTestCmd !== undefined) env.MCP_EDGETEST_CMD = options.edgeTestCmd;
   const config = buildMcpConfig({
     [MCP_SERVER_NAME]: {
       command: 'node',

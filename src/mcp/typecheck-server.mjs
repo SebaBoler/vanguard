@@ -16,12 +16,40 @@ const TOOLS = [
     description: 'Run the project test suite and return its output and exit code.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
+  {
+    name: 'search_knowledge',
+    description: 'Search the project docs/knowledge base for a query before writing code.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Text to search for' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'generate_edge_tests',
+    description: 'Return the current diff (or a configured command output) as context for writing edge-case tests.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'profile',
+    description: 'Run the configured performance benchmark and return its output.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
 ];
 
-const COMMANDS = {
-  typecheck: process.env.MCP_TYPECHECK_CMD ?? 'pnpm typecheck',
-  run_tests: process.env.MCP_TEST_CMD ?? 'pnpm test',
-};
+function commandFor(name, args) {
+  if (name === 'typecheck') return process.env.MCP_TYPECHECK_CMD ?? 'pnpm typecheck';
+  if (name === 'run_tests') return process.env.MCP_TEST_CMD ?? 'pnpm test';
+  if (name === 'profile') return process.env.MCP_PROFILE_CMD ?? 'echo "set MCP_PROFILE_CMD to a benchmark command"';
+  if (name === 'generate_edge_tests') return process.env.MCP_EDGETEST_CMD ?? 'git --no-pager diff';
+  if (name === 'search_knowledge') {
+    const dir = process.env.MCP_KNOWLEDGE_DIR ?? 'docs';
+    const query = String(args?.query ?? '').replace(/'/g, "'\\''");
+    return `grep -rni -- '${query}' '${dir}' || true`;
+  }
+  return undefined;
+}
 
 function runCommand(command) {
   return new Promise((resolve) => {
@@ -56,7 +84,7 @@ export async function handleRequest(req, run = runCommand) {
   }
   if (method === 'tools/call') {
     const name = params?.name;
-    const command = COMMANDS[name];
+    const command = commandFor(name, params?.arguments);
     if (command === undefined) {
       return { jsonrpc: '2.0', id, error: { code: -32602, message: `Unknown tool: ${name}` } };
     }

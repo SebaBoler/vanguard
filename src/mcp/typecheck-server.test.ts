@@ -12,10 +12,23 @@ describe('mcp typecheck-server handleRequest', () => {
     expect(result.protocolVersion).toBe('2025-06-18');
   });
 
-  it('lists the typecheck and run_tests tools', async () => {
+  it('lists all tools', async () => {
     const res = await handleRequest({ method: 'tools/list', id: 2 });
     const names = (res.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
-    expect(names).toEqual(['typecheck', 'run_tests']);
+    expect(names).toEqual(['typecheck', 'run_tests', 'search_knowledge', 'generate_edge_tests', 'profile']);
+  });
+
+  it('search_knowledge greps the knowledge dir for the query', async () => {
+    let seen = '';
+    const run = async (command: string): Promise<{ code: number; out: string }> => {
+      seen = command;
+      return { code: 0, out: 'docs/x.md:1:match' };
+    };
+    const res = await handleRequest({ method: 'tools/call', id: 9, params: { name: 'search_knowledge', arguments: { query: 'sandbox' } } }, run);
+    expect(seen).toContain('grep');
+    expect(seen).toContain('sandbox');
+    const result = res.result as { content: Array<{ text: string }> };
+    expect(result.content[0]?.text).toContain('match');
   });
 
   it('runs a tool via tools/call and reports the exit code', async () => {
