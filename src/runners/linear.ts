@@ -1,20 +1,17 @@
-import {
-  LinearCliTaskFetcher,
-  linkLinearIssue,
-  taskToVariables,
-  DockerSandboxProvider,
-  ClaudeCodeProvider,
-  prepareContext,
-  runStages,
-  implementReviewSimplifyStages,
-  commitStage,
-  publishForReview,
-  disposeContext,
-  authFromEnv,
-  authSecrets,
-  skillRegistryFromDirectory,
-} from '../src/index.js';
-import type { PipelineStage, Task, AgentAuth } from '../src/index.js';
+import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
+import { taskToVariables } from '../tasks/fetcher.js';
+import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { ClaudeCodeProvider } from '../agents/claude-code.js';
+import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { fanOut } from '../pipeline/fan-out.js';
+import { authFromEnv, authSecrets } from '../agents/auth.js';
+import { skillRegistryFromDirectory } from '../context/skill-registry.js';
+import type { RunContext } from '../core/vanguard.js';
+import type { PipelineStage } from '../pipeline/pipeline.js';
+import type { Task, SubTask } from '../tasks/fetcher.js';
+import type { AgentAuth } from '../agents/auth.js';
+import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps {
@@ -34,7 +31,7 @@ export interface RunLinearIssueResult {
  * Run one Linear issue end to end: the agent reads it from inside the sandbox via the injected
  * linear-cli skill, runs the canonical implement/review/simplify pipeline, opens a draft GitHub PR,
  * and comments the PR link back onto the issue. Each call provisions its own sandbox, so callers can
- * fan several out concurrently (see examples/from-linear-parent.ts).
+ * fan several out concurrently (see runLinearParent).
  */
 export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps): Promise<RunLinearIssueResult> {
   const [task, skills] = await Promise.all([
@@ -59,19 +56,26 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
       agent: new ClaudeCodeProvider(),
       variables: { ...taskToVariables(task), ISSUE: issueRef },
     });
-    const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
-    if (!commit.committed) return { task };
-
-    const pr = await publishForReview(ctx, {
-      title: `${task.title} (${task.id})`,
-      body: `Automated implementation of ${task.id} by Vanguard.`,
-      draft: true,
-    });
-    await linkLinearIssue(task.id, pr.prUrl);
-    return { task, prUrl: pr.prUrl };
+    const prUrl = await commitAndPublish(ctx, task);
+    if (prUrl === undefined) return { task };
+    await linkLinearIssue(task.id, prUrl);
+    return { task, prUrl };
   } finally {
     await disposeContext(ctx);
   }
+}
+
+/** Fan a Linear parent issue out into one independent run (and PR) per sub-issue. */
+export async function runLinearParent(
+  parentRef: string,
+  deps: RunLinearIssueDeps,
+  opts: { concurrency?: number } = {},
+): Promise<{ parent: Task; outcomes: FanOutOutcome<SubTask, RunLinearIssueResult>[] }> {
+  const parent = await new LinearCliTaskFetcher().fetch(parentRef);
+  const outcomes = await fanOut(parent.children, (child) => runLinearIssue(child.id, deps), {
+    ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+  });
+  return { parent, outcomes };
 }
 
 /** Read the run dependencies from the environment, throwing actionable errors when one is missing. */
@@ -89,6 +93,18 @@ export function linearDepsFromEnv(): RunLinearIssueDeps {
     throw new Error('Set SKILLS_DIR to a directory of skills (e.g. a clone of schpet/linear-cli /skills).');
   }
   return { auth, linearKey, skillsDir, repoPath: process.env.REPO_PATH ?? process.cwd() };
+}
+
+/** Commit the agent's work and open a draft PR; returns the PR url, or undefined when nothing changed. */
+async function commitAndPublish(ctx: RunContext, task: Task): Promise<string | undefined> {
+  const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
+  if (!commit.committed) return undefined;
+  const pr = await publishForReview(ctx, {
+    title: `${task.title} (${task.id})`,
+    body: `Automated implementation of ${task.id} by Vanguard.`,
+    draft: true,
+  });
+  return pr.prUrl;
 }
 
 /**

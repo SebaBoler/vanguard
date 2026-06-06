@@ -32,4 +32,33 @@ describe('parseCli', () => {
     expect(parseCli(['gc', '--help'], '/work').kind).toBe('help');
     expect(parseCli(['gc', '--bogus-flag'], '/work').kind).toBe('help');
   });
+
+  it('parses a linear run with parent fan-out', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--parent', '--skills', '/s', '--concurrency', '3'], '/work')).toEqual({
+      kind: 'run',
+      source: 'linear',
+      id: 'TES-1',
+      parent: true,
+      repoPath: '/work',
+      concurrency: 3,
+      skillsDir: '/s',
+    });
+  });
+
+  it('parses a github run with an explicit repo slug and defaults', () => {
+    expect(parseCli(['run', '--github', 'o/r#5', '--github-repo', 'o/r'], '/work')).toEqual({
+      kind: 'run',
+      source: 'github',
+      id: 'o/r#5',
+      parent: false,
+      repoPath: '/work',
+      concurrency: 2,
+      repoSlug: 'o/r',
+    });
+  });
+
+  it('returns help when run has no source or both sources', () => {
+    expect(parseCli(['run'], '/work').kind).toBe('help');
+    expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');
+  });
 });

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import { parseCli, USAGE } from './args.js';
 import { runGc } from './gc.js';
+import { runCommand } from './run.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
   if (command.kind === 'help') {
     console.log(USAGE);
+    return;
+  }
+  if (command.kind === 'run') {
+    await runCommand(command);
     return;
   }
   const report = await runGc(command);
