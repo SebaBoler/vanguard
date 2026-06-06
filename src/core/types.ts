@@ -40,4 +40,5 @@ export interface RunResult {
   finalText: string;
   usage?: AgentUsage;
   costUsd?: number;
+  cacheEfficiency?: number;
 }

@@ -133,4 +133,16 @@ describe('vanguard.run', () => {
     await disposeContext(ctx, { keep: true });
     expect(wasDestroyed()).toBe(false);
   });
+
+  it('reports cacheEfficiency from agent usage', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const agent = fakeAgent([{ text: 'x' }], {
+      finalText: 'x',
+      turns: 1,
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 300 },
+    });
+    const res = await run({ taskId: 'ce', localRepoPath: repo, promptTemplate: 'p', sandbox, agent }, { worktrees: wm });
+    expect(res.cacheEfficiency).toBeCloseTo(0.75);
+  });
 });

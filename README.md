@@ -111,6 +111,8 @@ Choose the model per stage with `model` (`'opus'`, `'sonnet'`, `'haiku'`, or a f
 - `fastStages()` - a single low-effort `haiku` pass: cheap and quick, still on the subscription via the CLI.
 - `planImplementReviewStages()` - plan on `opus` (high effort, emits a `<plan>`), then implement and review on `sonnet`. The capable model plans; the cheaper one executes.
 
+Runs reuse the session and keep a stable prompt prefix to maximize Anthropic prompt caching; `RunResult.cacheEfficiency` reports the cached fraction of input tokens.
+
 ## Security
 
 The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo.

@@ -24,6 +24,12 @@ export interface AgentUsage {
   cacheReadInputTokens: number;
 }
 
+/** Fraction of input tokens served from cache (0..1); a proxy for prompt-cache effectiveness. */
+export function cacheEfficiency(usage: AgentUsage): number {
+  const total = usage.inputTokens + usage.cacheReadInputTokens;
+  return total === 0 ? 0 : usage.cacheReadInputTokens / total;
+}
+
 export interface AgentTurn {
   text: string;
   sessionId?: string;
