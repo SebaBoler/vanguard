@@ -106,6 +106,21 @@ await run(opts, { skills });
 
 For targeted injection instead of the whole set, construct `new SkillRegistry({ id: '/host/path' })` and call `inject(['id'], sandbox)`.
 
+### Example: the linear-cli skill
+
+[schpet/linear-cli](https://github.com/schpet/linear-cli) ships a skill at `skills/linear-cli/` that teaches the agent to drive the `linear` CLI directly. The sandbox image already includes the `linear` CLI, so you only inject the skill and forward `LINEAR_API_KEY`:
+
+```bash
+git clone --depth 1 https://github.com/schpet/linear-cli /tmp/linear-cli
+```
+```ts
+const skills = await skillRegistryFromDirectory('/tmp/linear-cli/skills'); // registers the linear-cli skill
+const sandbox = new DockerSandboxProvider({ secrets: { ...authSecrets(auth), LINEAR_API_KEY: process.env.LINEAR_API_KEY! } });
+await run({ ...opts, sandbox }, { skills });
+```
+
+The agent then auto-discovers the skill and can read or update Linear from inside the sandbox.
+
 ## Models
 
 Choose the model per stage with `model` (`'opus'`, `'sonnet'`, `'haiku'`, or a full id), and reasoning depth with `effort`. Two presets:
