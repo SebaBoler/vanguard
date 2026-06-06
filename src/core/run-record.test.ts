@@ -44,6 +44,18 @@ describe('persistRunRecord', () => {
     expect(line).toMatchObject({ evt: 'run_complete', taskId: 'TES-1', exitReason: 'completed', costUsd: 0.05, inputTokens: 100 });
   });
 
+  it('writes a sibling transcript.log and keeps the transcript out of the JSON', async () => {
+    const file = await persistRunRecord(
+      repo,
+      { ...result, transcript: '{"type":"result"}\n' },
+      { timestamp: '2026-06-06T10:00:00.000Z' },
+    );
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    expect(record.transcript).toBeUndefined();
+    const log = await readFile(file.replace(/\.json$/, '.transcript.log'), 'utf8');
+    expect(log).toBe('{"type":"result"}\n');
+  });
+
   it('labels a stage in the filename and appends one metric line per call', async () => {
     await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:00:00.000Z', label: 'implementer' });
     const file = await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:01:00.000Z', label: 'reviewer' });

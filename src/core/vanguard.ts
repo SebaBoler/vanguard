@@ -149,6 +149,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     let sessionId = input.resumeSessionId;
     let usage: AgentUsage | undefined;
     let costUsd: number | undefined;
+    let transcript: string | undefined;
 
     for (;;) {
       const next = await gen.next();
@@ -158,6 +159,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
         if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
         usage = next.value.usage;
         costUsd = next.value.costUsd;
+        transcript = next.value.transcript;
         break;
       }
       if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
@@ -197,6 +199,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(diff !== '' ? { diff } : {}),
       ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(transcript !== undefined ? { transcript } : {}),
     };
     return result;
   } finally {
