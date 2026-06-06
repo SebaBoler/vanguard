@@ -6,6 +6,7 @@ import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import {
   runStages,
+  runBudgetedStages,
   commitStage,
   generateEvaluateRepairStages,
   implementReviewSimplifyStages,
@@ -16,6 +17,7 @@ import {
   planImplementAdversaryStages,
   adversarySystemPrompt,
 } from './pipeline.js';
+import type { PipelineStage } from './pipeline.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -53,6 +55,7 @@ function makeSandbox(): IsolatedSandboxProvider {
     },
     exists: async (): Promise<boolean> => true,
     destroy: async (): Promise<void> => {},
+    shellCommand: (): string => 'docker exec -it vg-fake bash',
   } as unknown as IsolatedSandboxProvider;
 }
 
@@ -86,6 +89,45 @@ describe('runStages', () => {
     expect(received[0]?.resumeSessionId).toBeUndefined();
     expect(received[1]?.resumeSessionId).toBe('sess');
     expect(received[1]?.prompt).toContain('feature.txt');
+    await disposeContext(ctx);
+  });
+});
+
+describe('runBudgetedStages', () => {
+  function costingAgent(costUsd: number): AgentProvider {
+    return {
+      name: 'cost',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd };
+      },
+    };
+  }
+  const threeStages: PipelineStage[] = [
+    { name: 'a', promptTemplate: 'a' },
+    { name: 'b', promptTemplate: 'b' },
+    { name: 'c', promptTemplate: 'c' },
+  ];
+
+  it('freezes to budget_exceeded before the stage that would exceed the limit', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'bud', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.03), maxCostUsd: 0.05 });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(2);
+      expect(result.spentUsd).toBeCloseTo(0.06);
+      expect(result.shellCommand).toContain('docker exec -it');
+    }
+    await disposeContext(ctx, { keep: true });
+  });
+
+  it('completes when under budget', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'bud2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.01), maxCostUsd: 1 });
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') expect(result.outcomes).toHaveLength(3);
     await disposeContext(ctx);
   });
 });
