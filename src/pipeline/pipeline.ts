@@ -39,23 +39,41 @@ export interface RunStagesOptions {
   agent: AgentProvider;
   variables?: Record<string, string>;
   signal?: AbortSignal;
+  maxCostUsd?: number;
 }
 
 /**
- * Run stages sequentially over one shared context. Chains the agent session stage-to-stage
- * and exposes the previous stage's diff as {{PREVIOUS_DIFF}} (substituted after command
- * expansion, so backticks inside a diff never trigger sandbox commands).
+ * Run stages sequentially over one shared context, enforcing a cumulative cost ceiling
+ * (default $5). Chains the agent session stage-to-stage and exposes the previous stage's diff as
+ * {{PREVIOUS_DIFF}} (substituted after command expansion, so backticks inside a diff never trigger
+ * sandbox commands). Before each stage, if the cost spent so far has reached maxCostUsd, it stops
+ * and returns a frozen `budget_exceeded` result with the outcomes so far; the caller keeps the
+ * context alive and may resume with a higher limit.
  */
-export async function runStages(
+export async function runBudgetedStages(
   ctx: RunContext,
   stages: PipelineStage[],
   opts: RunStagesOptions,
-): Promise<StageOutcome[]> {
+): Promise<PipelineResult> {
+  const maxCostUsd = opts.maxCostUsd ?? 5;
   const outcomes: StageOutcome[] = [];
   let previous: RunResult | undefined;
   let prevName = '';
   let sessionId: string | undefined;
+  let spentUsd = 0;
   for (const stage of stages) {
+    if (spentUsd >= maxCostUsd) {
+      return {
+        status: 'frozen',
+        reason: 'budget_exceeded',
+        taskId: ctx.taskId,
+        worktreePath: ctx.worktreePath,
+        branch: ctx.branch,
+        shellCommand: ctx.sandbox.shellCommand(),
+        spentUsd,
+        outcomes,
+      };
+    }
     const resume = stage.resumePrevious ?? true;
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
@@ -78,8 +96,19 @@ export async function runStages(
     previous = result;
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
+    spentUsd += result.costUsd ?? 0;
   }
-  return outcomes;
+  return { status: 'completed', outcomes };
+}
+
+/** Run stages with no budget ceiling, returning just the outcomes (unchanged behaviour). */
+export async function runStages(
+  ctx: RunContext,
+  stages: PipelineStage[],
+  opts: RunStagesOptions,
+): Promise<StageOutcome[]> {
+  const result = await runBudgetedStages(ctx, stages, { ...opts, maxCostUsd: Number.POSITIVE_INFINITY });
+  return result.outcomes;
 }
 
 /**
