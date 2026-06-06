@@ -7,20 +7,19 @@ export type LinearCliRunner = (args: string[]) => Promise<string>;
 
 const defaultRunner: LinearCliRunner = async (args: string[]): Promise<string> => (await execa('linear', args)).stdout;
 
-// NOTE: the linear-cli --json schema is not officially documented; this mapper is tolerant and
-// should be confirmed against real `linear issue query --json` output, then tightened.
+// Verified against linear-cli 2.0: `issue view <id> --json` returns a single issue WITH a
+// description but no labels; `issue query --json` returns { nodes: [...] } WITH labels.nodes but
+// no description. So fetch() uses view (description) and list() uses query (labels).
 interface LinearCliIssue {
   id?: string;
   identifier?: string;
   title?: string;
   description?: string | null;
-  labels?: Array<string | { name?: string }>;
+  labels?: { nodes?: Array<{ name?: string }> };
 }
 
 function toTask(issue: LinearCliIssue): Task {
-  const labels = (issue.labels ?? [])
-    .map((label) => (typeof label === 'string' ? label : (label.name ?? '')))
-    .filter((name) => name !== '');
+  const labels = (issue.labels?.nodes ?? []).map((label) => label.name ?? '').filter((name) => name !== '');
   return {
     id: issue.identifier ?? issue.id ?? '',
     title: issue.title ?? '',
@@ -29,13 +28,13 @@ function toTask(issue: LinearCliIssue): Task {
   };
 }
 
-function parseIssues(stdout: string): LinearCliIssue[] {
+function parseIssueList(stdout: string): LinearCliIssue[] {
   const data: unknown = JSON.parse(stdout);
   if (Array.isArray(data)) return data as LinearCliIssue[];
   if (data !== null && typeof data === 'object') {
-    const obj = data as { issues?: unknown; nodes?: unknown };
-    if (Array.isArray(obj.issues)) return obj.issues as LinearCliIssue[];
+    const obj = data as { nodes?: unknown; issues?: unknown };
     if (Array.isArray(obj.nodes)) return obj.nodes as LinearCliIssue[];
+    if (Array.isArray(obj.issues)) return obj.issues as LinearCliIssue[];
   }
   return [];
 }
@@ -45,7 +44,7 @@ export interface LinearCliOptions {
   linear?: LinearCliRunner;
 }
 
-/** Fetches Linear issues via the `linear` CLI (lighter than the SDK; needs `linear auth login`). */
+/** Fetches Linear issues via the `linear` CLI (lighter than the SDK; needs `linear auth login` or LINEAR_API_KEY). */
 export class LinearCliTaskFetcher implements TaskFetcher {
   constructor(private readonly options: LinearCliOptions = {}) {}
 
@@ -53,19 +52,19 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     return this.options.linear ?? defaultRunner;
   }
 
+  /** `issue view <id> --json` (includes the description; labels are not returned by view). */
   async fetch(id: string): Promise<Task> {
-    const teamArgs = this.options.team !== undefined ? ['--team', this.options.team] : [];
-    const args = ['issue', 'query', '--search', id, '--json', ...teamArgs];
-    const issues = parseIssues(await this.run(args));
-    const match = issues.find((issue) => (issue.identifier ?? issue.id) === id) ?? issues[0];
-    if (match === undefined) throw new VanguardError(`Linear issue not found: ${id}`);
-    return toTask(match);
+    const issue = JSON.parse(await this.run(['issue', 'view', id, '--json'])) as LinearCliIssue;
+    if (issue.identifier === undefined && issue.id === undefined) {
+      throw new VanguardError(`Linear issue not found: ${id}`);
+    }
+    return toTask(issue);
   }
 
+  /** `issue query --json` (includes labels; description is not returned by query). */
   async list(filter?: TaskFilter): Promise<Task[]> {
-    const teamArgs = this.options.team !== undefined ? ['--team', this.options.team] : [];
-    const args = ['issue', 'query', '--json', '--limit', '0', ...teamArgs];
-    const tasks = parseIssues(await this.run(args)).map(toTask);
+    const scope = this.options.team !== undefined ? ['--team', this.options.team] : ['--all-teams'];
+    const tasks = parseIssueList(await this.run(['issue', 'query', ...scope, '--json', '--limit', '0'])).map(toTask);
     const wanted = filter?.labels;
     if (wanted !== undefined && wanted.length > 0) {
       return tasks.filter((task) => wanted.some((label) => task.labels.includes(label)));
