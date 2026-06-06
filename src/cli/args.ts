@@ -7,6 +7,7 @@ export type Command =
       source: 'linear' | 'github' | 'project';
       id: string;
       parent: boolean;
+      gcBefore: boolean;
       repoPath: string;
       concurrency: number;
       skillsDir?: string;
@@ -41,6 +42,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         github: { type: 'string' },
         project: { type: 'string' },
         parent: { type: 'boolean' },
+        'gc-before': { type: 'boolean' },
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
         label: { type: 'string' },
@@ -83,6 +85,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       source: picked[0],
       id: picked[1],
       parent: values.parent === true,
+      gcBefore: values['gc-before'] === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -107,6 +110,7 @@ Commands:
     --project <number>     Run every issue on a GitHub Projects v2 board (one run + PR each)
     --parent               (Linear) fan the issue's sub-tasks out, one run + PR each
     --label <name>         (project) only run board items with this label
+    --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)

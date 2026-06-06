@@ -39,6 +39,7 @@ describe('parseCli', () => {
       source: 'linear',
       id: 'TES-1',
       parent: true,
+      gcBefore: false,
       repoPath: '/work',
       concurrency: 3,
       skillsDir: '/s',
@@ -51,6 +52,7 @@ describe('parseCli', () => {
       source: 'github',
       id: 'o/r#5',
       parent: false,
+      gcBefore: false,
       repoPath: '/work',
       concurrency: 2,
       repoSlug: 'o/r',
@@ -63,11 +65,17 @@ describe('parseCli', () => {
       source: 'project',
       id: '7',
       parent: false,
+      gcBefore: false,
       repoPath: '/work',
       concurrency: 2,
       repoSlug: 'o/r',
       label: 'todo',
     });
+  });
+
+  it('parses --gc-before', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--gc-before'], '/work');
+    expect(cmd.kind === 'run' && cmd.gcBefore).toBe(true);
   });
 
   it('returns help when run has no source or more than one source', () => {
