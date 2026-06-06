@@ -15,6 +15,7 @@ function buildArgs(input: AgentRunInput): string[] {
   const args = ['--print', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions'];
   if (input.effort !== undefined) args.push('--effort', input.effort);
   if (input.maxTurns !== undefined) args.push('--max-turns', String(input.maxTurns));
+  if (input.maxBudgetUsd !== undefined) args.push('--max-budget-usd', String(input.maxBudgetUsd));
   if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
   if (input.forkSession === true) args.push('--fork-session');
   if (input.systemPrompt !== undefined) args.push('--append-system-prompt', input.systemPrompt);
