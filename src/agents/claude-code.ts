@@ -97,7 +97,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     if (!parsedAny) throw new AgentError(`Agent produced no parseable output (exit ${res.exitCode}): ${detail()}`);
     if (!sawResult) throw new AgentError(`Agent exited without a result (exit ${res.exitCode}): ${detail()}`);
 
-    const output: AgentRunOutput = { finalText, turns };
+    const output: AgentRunOutput = { finalText, turns, transcript: res.stdout };
     if (sessionId !== undefined) output.sessionId = sessionId;
     if (usage !== undefined) output.usage = usage;
     if (costUsd !== undefined) output.costUsd = costUsd;

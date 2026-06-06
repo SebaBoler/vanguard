@@ -22,8 +22,8 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const taskDir = join(runsDir, result.taskId);
   await mkdir(taskDir, { recursive: true });
 
-  const { diff, ...meta } = result;
-  void diff; // omitted from the record on purpose
+  const { diff, transcript, ...meta } = result;
+  void diff; // omitted from the record on purpose (the PR carries it)
   const record = {
     ...meta,
     timestamp,
@@ -31,9 +31,12 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
   const suffix = opts.label !== undefined ? `-${opts.label}` : '';
-  const fileName = `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}.json`;
-  const file = join(taskDir, fileName);
+  const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
+  const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
+  if (transcript !== undefined && transcript !== '') {
+    await writeFile(`${base}.transcript.log`, transcript);
+  }
 
   const metric = {
     evt: 'run_complete',

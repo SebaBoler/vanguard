@@ -41,6 +41,8 @@ export interface AgentRunOutput {
   turns: number;
   usage?: AgentUsage;
   costUsd?: number;
+  /** Raw agent output (e.g. the stream-json), persisted as the run transcript. */
+  transcript?: string;
 }
 
 export interface AgentProvider {

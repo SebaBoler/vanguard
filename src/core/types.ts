@@ -41,4 +41,6 @@ export interface RunResult {
   usage?: AgentUsage;
   costUsd?: number;
   cacheEfficiency?: number;
+  /** Raw agent output (stream-json), persisted as the run transcript; omitted from run.json. */
+  transcript?: string;
 }
