@@ -23,6 +23,8 @@ export interface RunLinearIssueDeps {
   skillsDir: string;
   /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
   proxyUrl?: string;
+  /** When set, join the sandbox to this docker network (the hard egress enclave). */
+  network?: string;
 }
 
 export interface RunLinearIssueResult {
@@ -50,6 +52,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     cpus: 2,
     pidsLimit: 512,
     ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
+    ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
   const ctx = await prepareContext(

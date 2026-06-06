@@ -49,6 +49,7 @@ export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
 export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
 export { startEgressProxy, egressEnv, isAllowed, DEFAULT_EGRESS_ALLOWLIST, type EgressProxy } from './sandbox/egress-proxy.js';
+export { startEgressEnclave, type EgressEnclave } from './sandbox/egress-network.js';
 export { persistRunRecord, persistStageOutcomes, type PersistOptions } from './core/run-record.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
 export {

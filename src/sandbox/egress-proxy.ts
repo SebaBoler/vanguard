@@ -28,9 +28,18 @@ export interface EgressProxy {
   close: () => Promise<void>;
 }
 
-/** Sandbox env that routes HTTP(S) through the egress proxy (localhost stays direct). */
+/**
+ * Sandbox env that routes HTTP(S) through the egress proxy (localhost stays direct). NODE_USE_ENV_PROXY
+ * makes Node 24's fetch/undici honor the proxy too, so the agent's own API traffic is covered in the
+ * hard (internal-network) enclave, not just shell tools.
+ */
 export function egressEnv(proxyUrl: string): Record<string, string> {
-  return { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: 'localhost,127.0.0.1' };
+  return {
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    NO_PROXY: 'localhost,127.0.0.1',
+    NODE_USE_ENV_PROXY: '1',
+  };
 }
 
 /**
