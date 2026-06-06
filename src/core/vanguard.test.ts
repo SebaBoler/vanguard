@@ -125,4 +125,12 @@ describe('vanguard.run', () => {
     await disposeContext(ctx);
     expect(wasDestroyed()).toBe(true);
   });
+
+  it('keeps the sandbox alive when disposeContext is told to keep it', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox, wasDestroyed } = makeSandbox();
+    const ctx = await prepareContext({ taskId: 'keep', localRepoPath: repo, sandbox }, { worktrees: wm });
+    await disposeContext(ctx, { keep: true });
+    expect(wasDestroyed()).toBe(false);
+  });
 });

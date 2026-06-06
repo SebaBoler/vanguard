@@ -96,4 +96,9 @@ describe('DockerSandboxProvider secret validation', () => {
       /Invalid secret name/,
     );
   });
+
+  it('builds an interactive shell command', () => {
+    const sb = new DockerSandboxProvider({ image: 'alpine:3.20' });
+    expect(sb.shellCommand()).toMatch(/^docker exec -it vg-.* bash$/);
+  });
 });

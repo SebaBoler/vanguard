@@ -22,6 +22,19 @@ export interface StageOutcome {
   result: RunResult;
 }
 
+export interface FrozenRun {
+  status: 'frozen';
+  reason: 'needs_human' | 'budget_exceeded';
+  taskId: string;
+  worktreePath: string;
+  branch: string;
+  shellCommand: string;
+  spentUsd: number;
+  outcomes: StageOutcome[];
+}
+
+export type PipelineResult = { status: 'completed'; outcomes: StageOutcome[] } | FrozenRun;
+
 export interface RunStagesOptions {
   agent: AgentProvider;
   variables?: Record<string, string>;
