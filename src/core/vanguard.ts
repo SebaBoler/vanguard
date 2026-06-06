@@ -7,6 +7,7 @@ import { hasTerminationSignal } from '../structured/extract.js';
 import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
 import { cacheEfficiency } from '../agents/provider.js';
 import { createLogger } from './logger.js';
+import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { SandboxError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
@@ -74,19 +75,29 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const skills = deps.skills ?? new SkillRegistry({});
   const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main');
   await opts.sandbox.start();
-  const home = await resolveHome(opts.sandbox);
-  await opts.sandbox.copyIn(wt.path, WORKDIR);
-  await skills.injectAll(opts.sandbox, home);
-  return {
-    taskId: opts.taskId,
-    sandbox: opts.sandbox,
-    worktreePath: wt.path,
-    branch: wt.branch,
-    home,
-    localRepoPath: opts.localRepoPath,
-    wm,
-    log,
-  };
+  // From here the sandbox is live: track it so a SIGINT/SIGTERM destroys it, and tear it down if the
+  // rest of provisioning throws (otherwise a failed prepareContext would orphan the container).
+  installSignalCleanup();
+  trackSandbox(opts.sandbox);
+  try {
+    const home = await resolveHome(opts.sandbox);
+    await opts.sandbox.copyIn(wt.path, WORKDIR);
+    await skills.injectAll(opts.sandbox, home);
+    return {
+      taskId: opts.taskId,
+      sandbox: opts.sandbox,
+      worktreePath: wt.path,
+      branch: wt.branch,
+      home,
+      localRepoPath: opts.localRepoPath,
+      wm,
+      log,
+    };
+  } catch (error) {
+    untrackSandbox(opts.sandbox);
+    await opts.sandbox.destroy().catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
@@ -191,6 +202,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 /** Destroy the sandbox and remove the worktree unless it has uncommitted changes. */
 export async function disposeContext(ctx: RunContext, opts: { keep?: boolean } = {}): Promise<void> {
   if (opts.keep === true) return; // leave the sandbox + worktree alive for inspection or resume
+  untrackSandbox(ctx.sandbox);
   await ctx.sandbox.destroy().catch((error: unknown) => ctx.log.warn({ error }, 'failed to destroy sandbox'));
   const dirty = await ctx.wm.isDirty(ctx.worktreePath).catch(() => true);
   if (!dirty) {

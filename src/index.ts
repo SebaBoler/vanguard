@@ -46,6 +46,7 @@ export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, Comm
 export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
+export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
 export {
   reapRemoteBranches,
