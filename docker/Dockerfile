@@ -1,7 +1,8 @@
 # Vanguard sandbox image: node + git + the claude and linear CLIs, non-root user.
 # Single stage so the global npm bins and their node_modules stay consistent (the linear-cli
 # launcher resolves a sibling binary, which breaks when bins are copied across build stages).
-FROM node:24-bookworm-slim
+# Pinned by digest for a reproducible, tamper-evident base (the tag is kept for readability).
+FROM node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf
 ARG CLAUDE_CLI_VERSION=2.1.165
 ARG LINEAR_CLI_VERSION=latest
 
