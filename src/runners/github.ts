@@ -6,6 +6,7 @@ import { ClaudeCodeProvider } from '../agents/claude-code.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
+import { persistStageOutcomes } from '../core/run-record.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 
@@ -40,17 +41,21 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
 
   const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox });
   try {
-    await runStages(ctx, implementReviewSimplifyStages(), {
+    const outcomes = await runStages(ctx, implementReviewSimplifyStages(), {
       agent: new ClaudeCodeProvider(),
       variables: taskToVariables(task),
     });
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
-    if (!commit.committed) return { task };
+    if (!commit.committed) {
+      await persistStageOutcomes(deps.repoPath, outcomes);
+      return { task };
+    }
     const pr = await publishForReview(ctx, {
       title: `${task.title} (${task.id})`,
       body: `Automated implementation of ${task.id} by Vanguard.`,
       draft: true,
     });
+    await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
     await linkPullRequest(deps.repoSlug, issueRef, pr.prUrl);
     return { task, prUrl: pr.prUrl };
   } finally {

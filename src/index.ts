@@ -48,6 +48,7 @@ export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
 export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
+export { persistRunRecord, persistStageOutcomes, type PersistOptions } from './core/run-record.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
 export {
   runLinearIssue,

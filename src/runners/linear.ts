@@ -6,6 +6,7 @@ import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
+import { persistStageOutcomes } from '../core/run-record.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
@@ -52,11 +53,12 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     { skills },
   );
   try {
-    await runStages(ctx, stages(), {
+    const outcomes = await runStages(ctx, stages(), {
       agent: new ClaudeCodeProvider(),
       variables: { ...taskToVariables(task), ISSUE: issueRef },
     });
     const prUrl = await commitAndPublish(ctx, task);
+    await persistStageOutcomes(deps.repoPath, outcomes, prUrl);
     if (prUrl === undefined) return { task };
     await linkLinearIssue(task.id, prUrl);
     return { task, prUrl };
