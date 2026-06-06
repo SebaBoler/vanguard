@@ -4,7 +4,7 @@ import type { VanguardLogger } from './logger.js';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-export type ExitReason = 'completed' | 'incomplete' | 'maxTurns' | 'timeout' | 'error';
+export type ExitReason = 'completed' | 'incomplete' | 'maxTurns' | 'timeout' | 'error' | 'needs_human' | 'budget_exceeded';
 
 export interface RunOptions {
   taskId: string;

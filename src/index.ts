@@ -38,6 +38,7 @@ export { runStages, implementReviewSimplifyStages, generateEvaluateRepairStages,
 export { buildXmlPrompt } from './context/xml-prompt.js';
 export type { XmlPromptSections } from './context/xml-prompt.js';
 export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome, PublishOptions, PublishOutcome, CommandRunner } from './pipeline/pipeline.js';
+export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
 export { runEvals } from './evals/run-evals.js';
 export type { RunEvalsOptions } from './evals/run-evals.js';

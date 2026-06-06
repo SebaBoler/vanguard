@@ -37,6 +37,8 @@ export interface IsolatedSandboxProvider {
   exists: (sandboxPath: string) => Promise<boolean>;
   /** Tear down (rm container / kill VM). Safe to call multiple times. */
   destroy: () => Promise<void>;
+  /** Host command that opens an interactive shell into the live sandbox (for HITL). */
+  shellCommand: () => string;
 }
 
 export interface SandboxConfig {

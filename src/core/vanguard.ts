@@ -188,7 +188,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
 }
 
 /** Destroy the sandbox and remove the worktree unless it has uncommitted changes. */
-export async function disposeContext(ctx: RunContext): Promise<void> {
+export async function disposeContext(ctx: RunContext, opts: { keep?: boolean } = {}): Promise<void> {
+  if (opts.keep === true) return; // leave the sandbox + worktree alive for inspection or resume
   await ctx.sandbox.destroy().catch((error: unknown) => ctx.log.warn({ error }, 'failed to destroy sandbox'));
   const dirty = await ctx.wm.isDirty(ctx.worktreePath).catch(() => true);
   if (!dirty) {

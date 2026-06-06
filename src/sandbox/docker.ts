@@ -192,6 +192,10 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     return result.exitCode === 0;
   }
 
+  shellCommand(): string {
+    return `docker exec -it ${this.name} bash`;
+  }
+
   async destroy(): Promise<void> {
     await execa('docker', ['rm', '-f', this.name], { reject: false });
     this.started = false;

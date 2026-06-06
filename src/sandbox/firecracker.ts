@@ -52,6 +52,10 @@ export class FirecrackerSandboxProvider implements IsolatedSandboxProvider {
     throw new NotImplementedError('FirecrackerSandboxProvider.exists is not implemented yet (infra phase)');
   }
 
+  shellCommand(): string {
+    return `ssh agent@<firecracker-guest-ip>  # configure the VM network to attach a shell`;
+  }
+
   async destroy(): Promise<void> {
     // No VM is booted yet, so teardown is a no-op until the boot path exists.
   }
