@@ -91,6 +91,7 @@ describe('ClaudeCodeProvider', () => {
       mcpConfig: '/workspace/mcp.json',
       allowedTools: ['Read', 'Bash'],
       model: 'haiku',
+      maxBudgetUsd: 0.5,
     });
     for await (const turn of gen) void turn;
     expect(captured).toContain('--append-system-prompt');
@@ -98,5 +99,7 @@ describe('ClaudeCodeProvider', () => {
     expect(captured).toContain('--strict-mcp-config');
     expect(captured).toContain('--allowed-tools');
     expect(captured).toContain('--model');
+    expect(captured).toContain('--max-budget-usd');
+    expect(captured).toContain('0.5');
   });
 });
