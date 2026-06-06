@@ -47,6 +47,7 @@ export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
 export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
+export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
 export {
   runLinearIssue,
