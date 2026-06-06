@@ -15,7 +15,7 @@
   not a wrapper around another tool.
 </p>
 
-Status: Phase 1 (core engine) and Phase 2 (task sources, pipeline, evals) are implemented and tested.
+Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested.
 
 ## How it works
 
@@ -33,7 +33,8 @@ The agent runs inside the sandbox. The host owns all file sync (`copyIn` / `copy
 - **Worktree** (`WorktreeManager`): one git worktree per task. Cleanup keeps a worktree that still has uncommitted changes.
 - **Agent** (`AgentProvider`): `ClaudeCodeProvider` runs the in-sandbox `claude` CLI (effort levels, stream-json, usage and cost). `PiProvider` is a Phase 2 stub.
 - **Context**: a prompt engine (`{{KEY}}` placeholders and `` !`cmd` `` expansion run in the sandbox), `buildXmlPrompt` for XML-tagged prompts, and `SkillRegistry` for injecting tools.
-- **Pipeline**: `runStages` chains stages over one shared worktree and session. Built-in stage sets: Implementer/Reviewer/Simplifier and Generate/Evaluate/Repair. `commitStage` and `publishForReview` are the Merger.
+- **Pipeline**: `runStages` chains stages over one shared worktree and session. Built-in stage sets: Implementer/Reviewer/Simplifier, Generate/Evaluate/Repair, and Plan/Implement/Adversary (a red-team reviewer that reports `<findings>` without editing). `commitStage` and `publishForReview` are the Merger.
+- **Guardrails**: `runBudgetedStages` enforces a hard cost ceiling and freezes the run (`budget_exceeded`) for resume after a raise; `runJudgedRepair` freezes to `needs_human` after three rejected repairs, leaving the sandbox live for `shellCommand()` entry.
 - **Evals**: `runEvals` scores cases (control, edge, refusal) with a programmatic or LLM judge.
 
 ## Quick start
@@ -41,7 +42,7 @@ The agent runs inside the sandbox. The host owns all file sync (`copyIn` / `copy
 ```bash
 pnpm install
 pnpm build
-docker/build.sh                 # builds vanguard-sandbox (node + git + claude CLI)
+docker/build.sh                 # builds vanguard-sandbox (node + git + claude + linear CLIs)
 ```
 
 Run the smoke example against a throwaway repo:
