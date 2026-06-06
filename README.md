@@ -62,6 +62,8 @@ const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitH
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
 
+`LinearCliTaskFetcher` is a lighter, CLI-based alternative to the SDK fetcher (uses the `linear` CLI from schpet/linear-cli; run `linear auth login` first). The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
+
 ## Auth
 
 Subscription is the default and draws on your Claude plan credits. The API key is the alternative and bills the Developer Platform. Vanguard injects exactly one secret into the sandbox, so billing is unambiguous.
