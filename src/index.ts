@@ -46,6 +46,16 @@ export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
+export {
+  reapRemoteBranches,
+  gitRemoteBranchLister,
+  ghMergedPrChecker,
+  gitRemoteBranchRemover,
+  type RemoteBranchInfo,
+  type RemoteBranchLister,
+  type MergedChecker,
+  type RemoteBranchRemover,
+} from './core/gc.js';
 export { runEvals } from './evals/run-evals.js';
 export type { RunEvalsOptions } from './evals/run-evals.js';
 export { buildMcpConfig, injectMcpServer, serverScriptPath, MCP_SERVER_NAME, MCP_TOOL_NAMES } from './mcp/config.js';
