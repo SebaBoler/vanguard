@@ -57,8 +57,22 @@ describe('parseCli', () => {
     });
   });
 
-  it('returns help when run has no source or both sources', () => {
+  it('parses a project run with a label filter', () => {
+    expect(parseCli(['run', '--project', '7', '--github-repo', 'o/r', '--label', 'todo'], '/work')).toEqual({
+      kind: 'run',
+      source: 'project',
+      id: '7',
+      parent: false,
+      repoPath: '/work',
+      concurrency: 2,
+      repoSlug: 'o/r',
+      label: 'todo',
+    });
+  });
+
+  it('returns help when run has no source or more than one source', () => {
     expect(parseCli(['run'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');
+    expect(parseCli(['run', '--github', 'A', '--project', '3'], '/work').kind).toBe('help');
   });
 });
