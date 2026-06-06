@@ -1,0 +1,77 @@
+import { execa } from 'execa';
+import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
+import { taskToVariables } from '../tasks/fetcher.js';
+import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { ClaudeCodeProvider } from '../agents/claude-code.js';
+import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { authFromEnv, authSecrets } from '../agents/auth.js';
+import type { Task } from '../tasks/fetcher.js';
+import type { AgentAuth } from '../agents/auth.js';
+
+/** Everything needed to run a single GitHub issue end to end. */
+export interface RunGithubIssueDeps {
+  auth: AgentAuth;
+  repoPath: string;
+  repoSlug: string;
+}
+
+export interface RunGithubIssueResult {
+  task: Task;
+  /** Absent when the agent produced no changes (no PR opened). */
+  prUrl?: string;
+}
+
+/**
+ * Run one GitHub issue end to end: fetch via `gh`, run the canonical implement/review/simplify
+ * pipeline (the issue title/body go in as variables — no skill needed), open a draft PR, and comment
+ * the PR link back onto the issue. GitHub is both the source and the review surface.
+ */
+export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps): Promise<RunGithubIssueResult> {
+  const task = await new GitHubTaskFetcher(deps.repoSlug).fetch(issueRef);
+
+  const sandbox = new DockerSandboxProvider({
+    image: 'vanguard-sandbox:latest',
+    secrets: authSecrets(deps.auth),
+    memoryMb: 2048,
+    cpus: 2,
+    pidsLimit: 512,
+  });
+
+  const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox });
+  try {
+    await runStages(ctx, implementReviewSimplifyStages(), {
+      agent: new ClaudeCodeProvider(),
+      variables: taskToVariables(task),
+    });
+    const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
+    if (!commit.committed) return { task };
+    const pr = await publishForReview(ctx, {
+      title: `${task.title} (${task.id})`,
+      body: `Automated implementation of ${task.id} by Vanguard.`,
+      draft: true,
+    });
+    await linkPullRequest(deps.repoSlug, issueRef, pr.prUrl);
+    return { task, prUrl: pr.prUrl };
+  } finally {
+    await disposeContext(ctx);
+  }
+}
+
+/** Read the run dependencies from the environment (+ flag overrides), resolving the repo slug from origin. */
+export async function githubDepsFromEnv(repoPath: string, repoSlug?: string): Promise<RunGithubIssueDeps> {
+  const auth = authFromEnv();
+  if (auth === undefined) {
+    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
+  }
+  const slug = repoSlug ?? process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
+  return { auth, repoPath, repoSlug: slug };
+}
+
+/** Extract the owner/repo slug from the origin remote. */
+export async function detectRepoSlug(cwd: string): Promise<string> {
+  const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd });
+  const match = stdout.trim().match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (match?.[1] === undefined) throw new Error(`Could not detect repo from origin: ${stdout.trim()}`);
+  return match[1];
+}

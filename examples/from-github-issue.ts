@@ -1,28 +1,13 @@
-import { execa } from 'execa';
-import {
-  GitHubTaskFetcher,
-  taskToVariables,
-  DockerSandboxProvider,
-  ClaudeCodeProvider,
-  prepareContext,
-  runStages,
-  implementReviewSimplifyStages,
-  commitStage,
-  publishForReview,
-  disposeContext,
-  authFromEnv,
-  authSecrets,
-} from '../src/index.js';
+import { runGithubIssue, githubDepsFromEnv } from '../src/runners/github.js';
 
 /**
- * Full Vanguard loop with a GitHub Issue as the ONLY source of truth (no Linear).
- * GitHub Issue = input, GitHub PR = review. Everything in one repo.
+ * Full Vanguard loop with a GitHub Issue as the ONLY source of truth (no Linear): issue = input,
+ * draft PR = review, everything in one repo. (Same logic as `vanguard run --github`.)
  *
- * Requires: the vanguard-sandbox image (docker/build.sh), an authenticated `gh`, authentication in
- * the env (CLAUDE_CODE_OAUTH_TOKEN — subscription, default — or ANTHROPIC_API_KEY — API),
- * and running from a clone of the target repo (origin = this repo).
+ * Requires: the vanguard-sandbox image (docker/build.sh), an authenticated `gh`, auth in the env
+ * (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY), and running from a clone of the target repo.
  *
- *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Claude/oauth-token") \
+ *   CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Personal/Claude OAuth/credential") \
  *     pnpm tsx examples/from-github-issue.ts 123
  */
 async function main(): Promise<void> {
@@ -30,60 +15,15 @@ async function main(): Promise<void> {
   if (issueRef === undefined) {
     throw new Error('Provide an issue number: pnpm tsx examples/from-github-issue.ts <number>');
   }
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
-
   const repoPath = process.env.REPO_PATH ?? process.cwd();
-  const repoSlug = process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
-
-  const task = await new GitHubTaskFetcher(repoSlug).fetch(issueRef);
-  console.log(`Task: ${task.id} — ${task.title}`);
-
-  const sandbox = new DockerSandboxProvider({
-    image: 'vanguard-sandbox:latest',
-    secrets: authSecrets(auth),
-    memoryMb: 2048,
-    cpus: 2,
-    pidsLimit: 512,
-  });
-
-  const taskId = `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
-  const ctx = await prepareContext({ taskId, localRepoPath: repoPath, sandbox });
-  try {
-    const outcomes = await runStages(ctx, implementReviewSimplifyStages(), {
-      agent: new ClaudeCodeProvider(),
-      variables: taskToVariables(task),
-    });
-    for (const outcome of outcomes) {
-      const { completed, turns, costUsd } = outcome.result;
-      console.log(`  ${outcome.name}: completed=${completed} turns=${turns} cost=$${costUsd ?? 0}`);
-    }
-
-    const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
-    if (!commit.committed) {
-      console.log('No changes to commit — finishing without a PR.');
-      return;
-    }
-
-    const pr = await publishForReview(ctx, {
-      title: task.title,
-      body: `Automated implementation of ${task.id} by Vanguard.\n\n${task.description}`,
-      draft: true,
-    });
-    console.log(`PR for review: ${pr.prUrl}`);
-  } finally {
-    await disposeContext(ctx);
-  }
-}
-
-/** Extracts the owner/repo slug from the origin remote. */
-async function detectRepoSlug(cwd: string): Promise<string> {
-  const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd });
-  const match = stdout.trim().match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (match?.[1] === undefined) throw new Error(`Could not detect repo from origin: ${stdout.trim()}`);
-  return match[1];
+  const deps = await githubDepsFromEnv(repoPath, process.env.GITHUB_REPO);
+  const result = await runGithubIssue(issueRef, deps);
+  console.log(`Task: ${result.task.id} — ${result.task.title}`);
+  console.log(
+    result.prUrl === undefined
+      ? 'No changes to commit — finishing without a PR.'
+      : `PR for review: ${result.prUrl}`,
+  );
 }
 
 main().catch((error: unknown) => {

@@ -2,10 +2,21 @@ import { parseArgs } from 'node:util';
 
 export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean }
+  | {
+      kind: 'run';
+      source: 'linear' | 'github';
+      id: string;
+      parent: boolean;
+      repoPath: string;
+      concurrency: number;
+      skillsDir?: string;
+      repoSlug?: string;
+    }
   | { kind: 'help' };
 
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_HOURS = 6;
+const DEFAULT_CONCURRENCY = 2;
 
 /**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
@@ -19,10 +30,18 @@ export function parseCli(argv: string[], cwd: string): Command {
       args: argv,
       allowPositionals: true,
       options: {
+        // gc
         repo: { type: 'string' },
         'max-age-hours': { type: 'string' },
         remote: { type: 'string' },
         'dry-run': { type: 'boolean' },
+        // run
+        linear: { type: 'string' },
+        github: { type: 'string' },
+        parent: { type: 'boolean' },
+        skills: { type: 'string' },
+        'github-repo': { type: 'string' },
+        concurrency: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -32,28 +51,63 @@ export function parseCli(argv: string[], cwd: string): Command {
     return { kind: 'help' };
   }
 
-  if (values.help === true || positionals[0] !== 'gc') return { kind: 'help' };
+  if (values.help === true) return { kind: 'help' };
+  const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 
-  const hours = Number(values['max-age-hours']);
-  const maxAgeMs = (Number.isFinite(hours) && hours >= 0 ? hours : DEFAULT_MAX_AGE_HOURS) * HOUR_MS;
-  return {
-    kind: 'gc',
-    repoPath: typeof values.repo === 'string' ? values.repo : cwd,
-    maxAgeMs,
-    dryRun: values['dry-run'] === true,
-    ...(typeof values.remote === 'string' ? { remoteRepo: values.remote } : {}),
-  };
+  if (positionals[0] === 'gc') {
+    const hours = Number(values['max-age-hours']);
+    const maxAgeMs = (Number.isFinite(hours) && hours >= 0 ? hours : DEFAULT_MAX_AGE_HOURS) * HOUR_MS;
+    return {
+      kind: 'gc',
+      repoPath,
+      maxAgeMs,
+      dryRun: values['dry-run'] === true,
+      ...(typeof values.remote === 'string' ? { remoteRepo: values.remote } : {}),
+    };
+  }
+
+  if (positionals[0] === 'run') {
+    const linear = typeof values.linear === 'string' ? values.linear : undefined;
+    const github = typeof values.github === 'string' ? values.github : undefined;
+    // Exactly one source is required.
+    if ((linear === undefined) === (github === undefined)) return { kind: 'help' };
+    const concurrency = Number(values.concurrency);
+    return {
+      kind: 'run',
+      source: linear !== undefined ? 'linear' : 'github',
+      id: (linear ?? github) as string,
+      parent: values.parent === true,
+      repoPath,
+      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+    };
+  }
+
+  return { kind: 'help' };
 }
 
 export const USAGE = `vanguard <command>
 
 Commands:
-  gc    Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
-        remote vanguard/* branches.
+  run    Run an agent on a task and open a draft PR for review.
+  gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
+         remote vanguard/* branches.
+
+  run options (exactly one source):
+    --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)
+    --github <owner/repo#n> Run a GitHub issue
+    --parent               (Linear) fan the issue's sub-tasks out, one run + PR each
+    --repo <path>          Local git repo to work in (default: cwd)
+    --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
+    --github-repo <o/r>    GitHub repo slug (default: detected from origin)
+    --concurrency <n>      (parent) max sub-tasks at once (default: 2)
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
     --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
+
+Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear).
 `;

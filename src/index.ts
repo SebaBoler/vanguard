@@ -48,6 +48,20 @@ export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
 export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
+export {
+  runLinearIssue,
+  runLinearParent,
+  linearDepsFromEnv,
+  type RunLinearIssueDeps,
+  type RunLinearIssueResult,
+} from './runners/linear.js';
+export {
+  runGithubIssue,
+  githubDepsFromEnv,
+  detectRepoSlug,
+  type RunGithubIssueDeps,
+  type RunGithubIssueResult,
+} from './runners/github.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
 export {
   reapRemoteBranches,
