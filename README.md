@@ -55,14 +55,14 @@ CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Vault/Anthropic/token") pnpm tsx example
 `TaskFetcher` abstracts the source, so one deployment uses a single source of truth.
 
 ```ts
-const fetcher = createLinearTaskFetcher(process.env.LINEAR_API_KEY!);   // Linear
+const fetcher = new LinearCliTaskFetcher({ team: 'ENG' });          // Linear (via the linear CLI)
 const fetcher = new GitHubTaskFetcher('owner/repo');                    // GitHub Issues
 const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitHub Projects v2
 ```
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
 
-`LinearCliTaskFetcher` is a lighter, CLI-based alternative to the SDK fetcher (uses the `linear` CLI from schpet/linear-cli; run `linear auth login` first). The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
+`LinearCliTaskFetcher` drives Linear entirely through the `linear` CLI (from schpet/linear-cli; authenticate with `linear auth login` or set `LINEAR_API_KEY`), covering fetch/list/comment with no SDK dependency. The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
 
 ## Auth
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LinearCliTaskFetcher } from './linear-cli.js';
+import { LinearCliTaskFetcher, linkLinearIssue } from './linear-cli.js';
 import type { LinearCliRunner } from './linear-cli.js';
 
 function runner(payload: unknown): LinearCliRunner {
@@ -27,5 +27,17 @@ describe('LinearCliTaskFetcher', () => {
 
   it('throws when the issue is not found', async () => {
     await expect(new LinearCliTaskFetcher({ linear: runner({}) }).fetch('TES-99')).rejects.toThrow(/not found/);
+  });
+});
+
+describe('linkLinearIssue', () => {
+  it('adds a PR-link comment via the CLI', async () => {
+    let seen: string[] = [];
+    await linkLinearIssue('TES-1', 'https://example/pr/1', async (args) => {
+      seen = args;
+      return '';
+    });
+    expect(seen).toEqual(expect.arrayContaining(['issue', 'comment', 'add', 'TES-1', '--body']));
+    expect(seen.join(' ')).toContain('https://example/pr/1');
   });
 });
