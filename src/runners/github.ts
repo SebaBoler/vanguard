@@ -9,6 +9,7 @@ import { runStages, implementReviewSimplifyStages, commitStage, publishForReview
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
+import { egressEnv } from '../sandbox/egress-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
@@ -18,6 +19,8 @@ export interface RunGithubIssueDeps {
   auth: AgentAuth;
   repoPath: string;
   repoSlug: string;
+  /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
+  proxyUrl?: string;
 }
 
 export interface RunGithubIssueResult {
@@ -40,6 +43,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
+    ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
   });
 
   const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox });

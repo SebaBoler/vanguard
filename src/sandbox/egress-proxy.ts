@@ -28,6 +28,11 @@ export interface EgressProxy {
   close: () => Promise<void>;
 }
 
+/** Sandbox env that routes HTTP(S) through the egress proxy (localhost stays direct). */
+export function egressEnv(proxyUrl: string): Record<string, string> {
+  return { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: 'localhost,127.0.0.1' };
+}
+
 /**
  * A forward proxy that only tunnels HTTPS CONNECT to allowlisted domains (others get 403). Phase 1
  * (soft) egress control: point the sandbox's HTTPS_PROXY at this. It does not block a sandbox that

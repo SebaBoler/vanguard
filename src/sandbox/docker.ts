@@ -78,6 +78,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   async start(): Promise<void> {
     if (this.started) return;
     const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`];
+    // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
+    // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
+    args.push('--add-host', 'host.docker.internal:host-gateway');
     if (this.config.memoryMb !== undefined) args.push('--memory', `${this.config.memoryMb}m`);
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
     if (this.config.pidsLimit !== undefined) args.push('--pids-limit', String(this.config.pidsLimit));
