@@ -3,6 +3,7 @@ dist/
 .vanguard/
 *.log
 docker/sbom.spdx.json
+package-lock.json
 
 # sekrety / zmienne środowiskowe
 .env

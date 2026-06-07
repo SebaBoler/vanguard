@@ -186,6 +186,15 @@ describe('generateEvaluateRepairStages', () => {
   });
 });
 
+describe('implementReviewSimplifyStages', () => {
+  it('runs reviewer and simplifier in a fresh context (independent review)', () => {
+    const byName = Object.fromEntries(implementReviewSimplifyStages().map((s) => [s.name, s]));
+    expect(byName.implementer?.resumePrevious).toBeUndefined(); // implementer keeps the default
+    expect(byName.reviewer?.resumePrevious).toBe(false);
+    expect(byName.simplifier?.resumePrevious).toBe(false);
+  });
+});
+
 describe('fastStages', () => {
   it('is a single low-effort implementer on a fast model', () => {
     const stages = fastStages();

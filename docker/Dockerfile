@@ -11,8 +11,9 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates openssh-client xz-utils \
  && rm -rf /var/lib/apt/lists/*
 
-# claude runs the agent; linear lets the agent use the linear-cli skill from inside the sandbox.
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} @schpet/linear-cli@${LINEAR_CLI_VERSION}
+# claude runs the agent; linear lets it use the linear-cli skill; pnpm lets it run the project's
+# typecheck/tests from inside the sandbox before finishing.
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} @schpet/linear-cli@${LINEAR_CLI_VERSION} pnpm
 
 RUN groupadd -g 10001 agent \
  && useradd -m -u 10001 -g agent -s /bin/bash agent \
