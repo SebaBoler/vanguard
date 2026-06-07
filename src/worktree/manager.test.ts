@@ -39,6 +39,28 @@ describe('WorktreeManager', () => {
     expect(second.branch).toBe('vanguard/dup-r2');
   });
 
+  it('reuse: true returns the same branch on a second call (live worktree)', async () => {
+    const first = await wm.create('iter', 'main', { reuse: true });
+    expect(first.branch).toBe('vanguard/iter-r1');
+    const second = await wm.create('iter', 'main', { reuse: true });
+    expect(second.branch).toBe('vanguard/iter-r1');
+    expect(second.path).toBe(first.path);
+  });
+
+  it('reuse: true recreates worktree on the same branch after removal', async () => {
+    const first = await wm.create('iter2', 'main', { reuse: true });
+    await wm.remove(first.path);
+    const second = await wm.create('iter2', 'main', { reuse: true });
+    expect(second.branch).toBe(first.branch);
+    expect(second.path).toBe(first.path);
+  });
+
+  it('default mode still creates unique branches even when reuse branch exists', async () => {
+    await wm.create('dup2', 'main', { reuse: true });
+    const second = await wm.create('dup2', 'main');
+    expect(second.branch).toBe('vanguard/dup2-r2');
+  });
+
   it('detects uncommitted changes', async () => {
     const wt = await wm.create('task-2', 'main');
     await writeFile(join(wt.path, 'new.txt'), 'x');
