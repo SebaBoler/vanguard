@@ -17,11 +17,13 @@ export type Command =
     }
   | {
       kind: 'watch';
+      source: 'linear' | 'github';
       label: string;
       team?: string;
-      triggerState: string;
-      claimedState: string;
-      reviewState: string;
+      triggerState?: string;
+      claimedState?: string;
+      reviewState?: string;
+      repoSlug?: string;
       repoPath: string;
       skillsDir?: string;
       concurrency: number;
@@ -56,6 +58,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         linear: { type: 'string' },
         github: { type: 'string' },
         project: { type: 'string' },
+        source: { type: 'string' },
         parent: { type: 'boolean' },
         'gc-before': { type: 'boolean' },
         egress: { type: 'boolean' },
@@ -124,17 +127,19 @@ export function parseCli(argv: string[], cwd: string): Command {
     const concurrency = Number(values.concurrency);
     return {
       kind: 'watch',
+      source: values.source === 'github' ? 'github' : 'linear',
       label: values.label,
-      triggerState: typeof values['trigger-state'] === 'string' ? values['trigger-state'] : 'unstarted',
-      claimedState: typeof values['claimed-state'] === 'string' ? values['claimed-state'] : 'In Progress',
-      reviewState: typeof values['review-state'] === 'string' ? values['review-state'] : 'In Review',
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
       egress: values.egress === true,
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
+      ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
+      ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
+      ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
     };
   }
 
@@ -149,12 +154,15 @@ Commands:
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
 
-  watch options (Linear; trigger = state + label):
-    --label <name>         Required: only issues with this label are picked
-    --team <KEY>           Limit to a Linear team
-    --trigger-state <type> State type to poll: unstarted/started/... (default: unstarted)
-    --claimed-state <name> Move here on claim so re-polls skip it (default: "In Progress")
-    --review-state <name>  Move here after a PR opens (default: "In Review")
+  watch options (trigger = state/label + label):
+    --source <linear|github>  Task source (default: linear)
+    --label <name>         Required: only items with this label are picked
+    --team <KEY>           (linear) limit to a team
+    --github-repo <o/r>    (github) repo slug (default: detected from origin)
+    --trigger-state <type> (linear) state type to poll (default: unstarted)
+    --claimed-state <x>    Marker on claim so re-polls skip it (linear: state, default "In Progress";
+                           github: label, default "vanguard:running")
+    --review-state <x>     Marker after a PR opens (linear: "In Review"; github: "vanguard:review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
 

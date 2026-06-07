@@ -33,13 +33,16 @@ export { LinearCliTaskFetcher, linkLinearIssue, setLinearState, commentLinearIss
 export {
   watchOnce,
   watchLinear,
+  watchGithub,
   linearWatchPrimitives,
+  githubIssueWatchPrimitives,
   type WatchPrimitives,
   type WatchTick,
   type WatchLinearOptions,
+  type WatchGithubOptions,
 } from './runners/watch.js';
 export type { LinearCliRunner, LinearCliOptions } from './tasks/linear-cli.js';
-export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner } from './tasks/github.js';
+export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner, commentGithubIssue, editGithubLabels } from './tasks/github.js';
 export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { GitHubProjectFetcher } from './tasks/github-project.js';
 export type { GitHubProjectFetcherOptions } from './tasks/github-project.js';
