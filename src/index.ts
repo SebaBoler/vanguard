@@ -57,6 +57,8 @@ export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, Comm
 export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
+export { forkAndSelect } from './pipeline/fork-select.js';
+export type { ForkSelectOptions, ForkSelectResult, ForkVariant } from './pipeline/fork-select.js';
 export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
 export { startEgressProxy, egressEnv, isAllowed, DEFAULT_EGRESS_ALLOWLIST, type EgressProxy } from './sandbox/egress-proxy.js';
