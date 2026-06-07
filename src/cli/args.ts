@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 
 export type Command =
-  | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean }
+  | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean; abandoned: boolean }
   | {
       kind: 'run';
       source: 'linear' | 'github' | 'project';
@@ -54,6 +54,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'max-age-hours': { type: 'string' },
         remote: { type: 'string' },
         'dry-run': { type: 'boolean' },
+        abandoned: { type: 'boolean' },
         // run
         linear: { type: 'string' },
         github: { type: 'string' },
@@ -93,6 +94,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       repoPath,
       maxAgeMs,
       dryRun: values['dry-run'] === true,
+      abandoned: values.abandoned === true,
       ...(typeof values.remote === 'string' ? { remoteRepo: values.remote } : {}),
     };
   }
@@ -184,6 +186,7 @@ Commands:
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
     --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
+    --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear).
 `;

@@ -8,16 +8,20 @@ describe('parseCli', () => {
       repoPath: '/work',
       maxAgeMs: 6 * 60 * 60 * 1000,
       dryRun: false,
+      abandoned: false,
     });
   });
 
   it('parses gc options', () => {
-    expect(parseCli(['gc', '--repo', '/r', '--max-age-hours', '2', '--remote', 'o/r', '--dry-run'], '/work')).toEqual({
+    expect(
+      parseCli(['gc', '--repo', '/r', '--max-age-hours', '2', '--remote', 'o/r', '--dry-run', '--abandoned'], '/work'),
+    ).toEqual({
       kind: 'gc',
       repoPath: '/r',
       maxAgeMs: 2 * 60 * 60 * 1000,
       remoteRepo: 'o/r',
       dryRun: true,
+      abandoned: true,
     });
   });
 

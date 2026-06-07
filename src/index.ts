@@ -83,10 +83,13 @@ export {
   reapRemoteBranches,
   gitRemoteBranchLister,
   ghMergedPrChecker,
+  ghAbandonedPrChecker,
   gitRemoteBranchRemover,
   type RemoteBranchInfo,
   type RemoteBranchLister,
   type MergedChecker,
+  type AbandonedChecker,
+  type ReapBranchOpts,
   type RemoteBranchRemover,
 } from './core/gc.js';
 export { runEvals } from './evals/run-evals.js';

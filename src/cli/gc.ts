@@ -9,6 +9,7 @@ import {
   reapRemoteBranches,
   gitRemoteBranchLister,
   ghMergedPrChecker,
+  ghAbandonedPrChecker,
   gitRemoteBranchRemover,
 } from '../core/gc.js';
 
@@ -17,6 +18,8 @@ export interface GcCliOptions {
   maxAgeMs: number;
   remoteRepo?: string;
   dryRun: boolean;
+  /** Also delete branches whose PR is closed-unmerged (not just merged). */
+  abandoned: boolean;
 }
 
 export interface GcReport {
@@ -51,6 +54,7 @@ export async function runGc(opts: GcCliOptions): Promise<GcReport> {
       ghMergedPrChecker(opts.repoPath, opts.remoteRepo),
       opts.dryRun ? noop : gitRemoteBranchRemover(opts.repoPath),
       opts.maxAgeMs,
+      opts.abandoned ? { abandoned: true, isAbandoned: ghAbandonedPrChecker(opts.repoPath, opts.remoteRepo) } : undefined,
     );
   }
   return { containers, networks, branches };
