@@ -21,8 +21,9 @@ async function main(): Promise<void> {
   const report = await runGc(command);
   const tag = command.dryRun ? ' (dry-run)' : '';
   const remote = command.remoteRepo !== undefined ? `, ${report.branches.length} merged remote branch(es)` : '';
-  console.log(`Reaped ${report.containers.length} container(s)${remote}${tag}.`);
+  console.log(`Reaped ${report.containers.length} container(s), ${report.networks.length} egress network(s)${remote}${tag}.`);
   if (report.containers.length > 0) console.log(`  containers: ${report.containers.join(', ')}`);
+  if (report.networks.length > 0) console.log(`  networks: ${report.networks.join(', ')}`);
   if (report.branches.length > 0) console.log(`  branches: ${report.branches.join(', ')}`);
 }
 

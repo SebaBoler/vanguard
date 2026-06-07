@@ -2,13 +2,15 @@ import {
   reapContainers,
   dockerContainerLister,
   dockerContainerRemover,
+  reapEgressNetworks,
+  dockerEgressNetworkLister,
+  dockerEgressNetworkRemover,
   pruneWorktrees,
   reapRemoteBranches,
   gitRemoteBranchLister,
   ghMergedPrChecker,
   gitRemoteBranchRemover,
 } from '../core/gc.js';
-import type { ContainerRemover, RemoteBranchRemover } from '../core/gc.js';
 
 export interface GcCliOptions {
   repoPath: string;
@@ -19,11 +21,11 @@ export interface GcCliOptions {
 
 export interface GcReport {
   containers: string[];
+  networks: string[];
   branches: string[];
 }
 
-const noopContainerRemover: ContainerRemover = async () => undefined;
-const noopBranchRemover: RemoteBranchRemover = async () => undefined;
+const noop = async (): Promise<void> => undefined;
 
 /**
  * Reap stale sandbox containers, prune worktree admin entries, and (when remoteRepo is set) delete
@@ -33,8 +35,12 @@ const noopBranchRemover: RemoteBranchRemover = async () => undefined;
 export async function runGc(opts: GcCliOptions): Promise<GcReport> {
   const containers = await reapContainers(
     dockerContainerLister(),
-    opts.dryRun ? noopContainerRemover : dockerContainerRemover(),
+    opts.dryRun ? noop : dockerContainerRemover(),
     opts.maxAgeMs,
+  );
+  const networks = await reapEgressNetworks(
+    dockerEgressNetworkLister(),
+    opts.dryRun ? noop : dockerEgressNetworkRemover(),
   );
   if (!opts.dryRun) await pruneWorktrees(opts.repoPath);
 
@@ -43,9 +49,9 @@ export async function runGc(opts: GcCliOptions): Promise<GcReport> {
     branches = await reapRemoteBranches(
       gitRemoteBranchLister(opts.repoPath),
       ghMergedPrChecker(opts.repoPath, opts.remoteRepo),
-      opts.dryRun ? noopBranchRemover : gitRemoteBranchRemover(opts.repoPath),
+      opts.dryRun ? noop : gitRemoteBranchRemover(opts.repoPath),
       opts.maxAgeMs,
     );
   }
-  return { containers, branches };
+  return { containers, networks, branches };
 }
