@@ -1,8 +1,12 @@
 import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tasks/linear-cli.js';
+import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue } from '../tasks/github.js';
 import { runLinearIssue } from './linear.js';
+import { runGithubIssue } from './github.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import type { RunLinearIssueDeps } from './linear.js';
+import type { RunGithubIssueDeps } from './github.js';
 import type { LinearCliRunner } from '../tasks/linear-cli.js';
+import type { GhRunner } from '../tasks/github.js';
 
 export interface WatchPrimitives {
   /** List issues currently ready to run (trigger state + label). */
@@ -104,9 +108,15 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Poll Linear on an interval, running each newly-ready issue. Stops on signal or after one pass (once). */
-export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) => void = console.log): Promise<void> {
-  const primitives = linearWatchPrimitives(opts);
+interface LoopControls {
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Poll on an interval, running each newly-ready item. Stops on signal or after one pass (once). */
+async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log: (msg: string) => void): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
   for (;;) {
     if (opts.signal?.aborted === true) return;
@@ -115,4 +125,42 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
+}
+
+/** Poll Linear and run each newly-ready issue. */
+export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) => void = console.log): Promise<void> {
+  await runWatchLoop(linearWatchPrimitives(opts), opts, log);
+}
+
+export interface WatchGithubOptions {
+  deps: RunGithubIssueDeps;
+  /** Trigger label: open issues with this label are picked. */
+  label: string;
+  /** Label added on claim (and the trigger label removed) so re-polls skip it, e.g. 'vanguard:running'. */
+  claimedLabel: string;
+  /** Label added after a PR opens, e.g. 'vanguard:review'. */
+  reviewLabel: string;
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+  gh?: GhRunner;
+}
+
+/** GitHub-issue primitives: trigger by label, claim/review by swapping labels (issues have no states). */
+export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimitives {
+  const repo = opts.deps.repoSlug;
+  const fetcher = new GitHubTaskFetcher(repo, opts.gh);
+  return {
+    listReady: async () => (await fetcher.list({ labels: [opts.label] })).map((task) => ({ id: task.id })),
+    claim: (id) => editGithubLabels(repo, id, { remove: [opts.label], add: [opts.claimedLabel] }, opts.gh),
+    runOne: (id) => runGithubIssue(id, opts.deps),
+    review: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, opts.gh),
+    onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, opts.gh),
+  };
+}
+
+/** Poll GitHub Issues and run each newly-ready (labeled) issue. */
+export async function watchGithub(opts: WatchGithubOptions, log: (msg: string) => void = console.log): Promise<void> {
+  await runWatchLoop(githubIssueWatchPrimitives(opts), opts, log);
 }

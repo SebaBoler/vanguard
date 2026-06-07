@@ -55,12 +55,33 @@ export class GitHubTaskFetcher implements TaskFetcher {
 }
 
 /** Comment a PR link back onto the source GitHub issue (closes the loop). */
+export async function commentGithubIssue(
+  repo: string,
+  issueRef: string,
+  body: string,
+  gh: GhRunner = defaultGhRunner,
+): Promise<void> {
+  await gh(['issue', 'comment', issueNumber(issueRef), '--repo', repo, '--body', body]);
+}
+
 export async function linkPullRequest(
   repo: string,
   issueRef: string,
   prUrl: string,
   gh: GhRunner = defaultGhRunner,
 ): Promise<void> {
-  const number = issueNumber(issueRef);
-  await gh(['issue', 'comment', number, '--repo', repo, '--body', `Vanguard opened a PR for review: ${prUrl}`]);
+  await commentGithubIssue(repo, issueRef, `Vanguard opened a PR for review: ${prUrl}`, gh);
+}
+
+/** Add/remove labels on a GitHub issue (used to claim/advance it in the watch loop). */
+export async function editGithubLabels(
+  repo: string,
+  issueRef: string,
+  labels: { add?: string[]; remove?: string[] },
+  gh: GhRunner = defaultGhRunner,
+): Promise<void> {
+  const args = ['issue', 'edit', issueNumber(issueRef), '--repo', repo];
+  for (const label of labels.add ?? []) args.push('--add-label', label);
+  for (const label of labels.remove ?? []) args.push('--remove-label', label);
+  if (args.length > 4) await gh(args);
 }
