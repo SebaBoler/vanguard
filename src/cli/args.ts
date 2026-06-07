@@ -9,6 +9,7 @@ export type Command =
       parent: boolean;
       gcBefore: boolean;
       egress: boolean;
+      reuse?: boolean;
       repoPath: string;
       concurrency: number;
       skillsDir?: string;
@@ -63,6 +64,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         parent: { type: 'boolean' },
         'gc-before': { type: 'boolean' },
         egress: { type: 'boolean' },
+        reuse: { type: 'boolean' },
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
         label: { type: 'string' },
@@ -117,6 +119,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      ...(values.reuse === true ? { reuse: true } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
@@ -176,6 +179,7 @@ Commands:
     --label <name>         (project) only run board items with this label
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
+    --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)

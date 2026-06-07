@@ -57,6 +57,7 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: stri
     repoPath: cmd.repoPath,
     ...(proxyUrl !== undefined ? { proxyUrl } : {}),
     ...(network !== undefined ? { network } : {}),
+    ...(cmd.reuse === true ? { reuse: true } : {}),
   };
 }
 
@@ -78,6 +79,7 @@ async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network:
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
+  if (cmd.reuse === true) deps.reuse = true;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }

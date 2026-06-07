@@ -25,6 +25,8 @@ export interface RunLinearIssueDeps {
   proxyUrl?: string;
   /** When set, join the sandbox to this docker network (the hard egress enclave). */
   network?: string;
+  /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
+  reuse?: boolean;
 }
 
 export interface RunLinearIssueResult {
@@ -56,7 +58,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
   });
 
   const ctx = await prepareContext(
-    { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox },
+    { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) },
     { skills },
   );
   try {

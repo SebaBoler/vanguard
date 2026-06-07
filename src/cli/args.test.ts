@@ -85,6 +85,16 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && cmd.gcBefore).toBe(true);
   });
 
+  it('parses --reuse', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--reuse'], '/work');
+    expect(cmd.kind === 'run' && cmd.reuse).toBe(true);
+  });
+
+  it('omits reuse when --reuse is not passed', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'reuse' in cmd).toBe(false);
+  });
+
   it('parses a linear watch with defaults and a required label', () => {
     expect(parseCli(['watch', '--label', 'vanguard', '--team', 'TES'], '/work')).toEqual({
       kind: 'watch',

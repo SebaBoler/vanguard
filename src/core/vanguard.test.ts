@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -124,6 +124,16 @@ describe('vanguard.run', () => {
     expect(wasDestroyed()).toBe(false);
     await disposeContext(ctx);
     expect(wasDestroyed()).toBe(true);
+  });
+
+  it('passes PrepareOptions.reuse to WorktreeManager.create', async () => {
+    const wm = new WorktreeManager(repo);
+    const spy = vi.spyOn(wm, 'create');
+    const { sandbox } = makeSandbox();
+    const ctx = await prepareContext({ taskId: 'reuse-test', localRepoPath: repo, sandbox, reuse: true }, { worktrees: wm });
+    await disposeContext(ctx);
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0]?.[2]).toEqual({ reuse: true });
   });
 
   it('keeps the sandbox alive when disposeContext is told to keep it', async () => {
