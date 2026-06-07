@@ -95,6 +95,77 @@ mkdir -p /tmp/vg-skills && cp -r /tmp/linear-cli/skills/. /tmp/vg-skills/ && cp 
 
 ## Operational
 
-- `vanguard gc --remote <owner/repo>` on a timer (cron / Synology Task Scheduler) reaps stale
-  sandboxes, worktrees, and merged branches.
 - Run records + metrics land in `<repo>/.vanguard/runs/` (mounted volume) for the AFK trace.
+
+## Garbage collection
+
+`vanguard gc` reaps stale sandbox containers, prunes git worktree admin entries, and (with
+`--remote`) deletes merged remote `vanguard/*` branches. Run it on a timer so resources don't
+accumulate over time.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--repo <path>` | cwd | Git repo to prune worktrees and reap branches in |
+| `--max-age-hours <n>` | 6 | Only reap resources older than n hours |
+| `--remote <owner/repo>` | — | Also delete merged remote `vanguard/*` branches (needs `gh`) |
+| `--dry-run` | — | Report what would be reaped without removing anything |
+
+### cron
+
+**`/etc/cron.d/vanguard-gc`** (system-wide; note the username field required by this format):
+
+```cron
+# Run gc every 4 hours. Adjust the repo path and owner/repo slug to match your setup.
+0 */4 * * *  root  vanguard gc --remote owner/repo --repo /work/repo
+```
+
+Or add to your user crontab with `crontab -e` (no username field in this format):
+
+```cron
+0 */4 * * *  vanguard gc --remote owner/repo --repo /work/repo
+```
+
+On Synology, use **Task Scheduler** (Control Panel → Task Scheduler → Create → Scheduled Task →
+User-defined script) and set the schedule to repeat every 4 hours. Use the same command as the
+`crontab -e` form above (no username field).
+
+### systemd timer
+
+Create two unit files in `/etc/systemd/system/`:
+
+**`/etc/systemd/system/vanguard-gc.service`**
+
+```ini
+[Unit]
+Description=Vanguard garbage collection
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the binary path, owner/repo slug, and repo path. Use the full path (systemd needs it).
+ExecStart=/usr/local/bin/vanguard gc --remote owner/repo --repo /work/repo
+```
+
+**`/etc/systemd/system/vanguard-gc.timer`**
+
+```ini
+[Unit]
+Description=Run vanguard gc every 4 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=4h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable and start:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now vanguard-gc.timer
+systemctl list-timers vanguard-gc.timer   # verify next trigger
+```
