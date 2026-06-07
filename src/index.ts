@@ -34,12 +34,15 @@ export {
   watchOnce,
   watchLinear,
   watchGithub,
+  watchGithubProject,
   linearWatchPrimitives,
   githubIssueWatchPrimitives,
+  githubProjectWatchPrimitives,
   type WatchPrimitives,
   type WatchTick,
   type WatchLinearOptions,
   type WatchGithubOptions,
+  type WatchGithubProjectOptions,
 } from './runners/watch.js';
 export type { LinearCliRunner, LinearCliOptions } from './tasks/linear-cli.js';
 export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner, commentGithubIssue, editGithubLabels } from './tasks/github.js';

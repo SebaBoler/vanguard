@@ -17,8 +17,11 @@ export type Command =
     }
   | {
       kind: 'watch';
-      source: 'linear' | 'github';
-      label: string;
+      source: 'linear' | 'github' | 'project';
+      /** Required for linear/github; optional for project (label-filter on the board). */
+      label?: string;
+      /** Project number; required when source === 'project'. */
+      projectNumber?: number;
       team?: string;
       triggerState?: string;
       claimedState?: string;
@@ -124,18 +127,24 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'watch') {
-    if (typeof values.label !== 'string') return { kind: 'help' }; // a trigger label is required
+    const source = values.source === 'github' ? 'github' : values.source === 'project' ? 'project' : 'linear';
+    // label is required for linear/github; optional (label-filter) for project
+    if (source !== 'project' && typeof values.label !== 'string') return { kind: 'help' };
+    // project number is required when source === 'project'
+    const projectNumber = typeof values.project === 'string' ? Number(values.project) : undefined;
+    if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) return { kind: 'help' };
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
     return {
       kind: 'watch',
-      source: values.source === 'github' ? 'github' : 'linear',
-      label: values.label,
+      source,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
       egress: values.egress === true,
+      ...(typeof values.label === 'string' ? { label: values.label } : {}),
+      ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
       ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
       ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
@@ -157,16 +166,21 @@ Commands:
          remote vanguard/* branches.
 
   watch options (trigger = state/label + label):
-    --source <linear|github>  Task source (default: linear)
-    --label <name>         Required: only items with this label are picked
+    --source <linear|github|project>  Task source (default: linear)
+    --label <name>         Required for linear/github; optional label-filter for project
     --team <KEY>           (linear) limit to a team
-    --github-repo <o/r>    (github) repo slug (default: detected from origin)
-    --trigger-state <type> (linear) state type to poll (default: unstarted)
-    --claimed-state <x>    Marker on claim so re-polls skip it (linear: state, default "In Progress";
-                           github: label, default "vanguard:running")
-    --review-state <x>     Marker after a PR opens (linear: "In Review"; github: "vanguard:review")
+    --github-repo <o/r>    (github/project) repo slug (default: detected from origin)
+    --project <number>     (project) GitHub Projects v2 project number (required with --source project)
+    --trigger-state <x>    Status option name for ready items (project default: "Todo";
+                           linear: state type, default "unstarted")
+    --claimed-state <x>    Status/label set on claim (project default: "In Progress";
+                           linear: state default "In Progress"; github: label "vanguard:running")
+    --review-state <x>     Status/label set after a PR opens (project default: "In Review";
+                           linear: "In Review"; github: "vanguard:review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
+    Note (project): Status option names must match the project's Status field exactly.
+      Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)

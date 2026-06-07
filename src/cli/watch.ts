@@ -1,4 +1,4 @@
-import { watchLinear, watchGithub } from '../runners/watch.js';
+import { watchLinear, watchGithub, watchGithubProject } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { startEgressEnclave } from '../sandbox/egress-network.js';
 import { authFromEnv } from '../agents/auth.js';
@@ -22,12 +22,13 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 
   const enclave = cmd.egress ? await startEgressEnclave() : undefined;
   if (enclave !== undefined) console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
-  console.log(
-    `watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items labeled "${cmd.label}". Ctrl-C to stop.`,
-  );
+  const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
+  console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
   try {
     if (cmd.source === 'linear') {
       await watchLinearSource(cmd, auth, enclave, controller.signal);
+    } else if (cmd.source === 'project') {
+      await watchGithubProjectSource(cmd, auth, enclave, controller.signal);
     } else {
       await watchGithubSource(cmd, auth, enclave, controller.signal);
     }
@@ -50,6 +51,7 @@ async function watchLinearSource(
   if (skillsDir === undefined) {
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
+  if (cmd.label === undefined) throw new Error('--label is required for linear watch source');
   await watchLinear({
     deps: {
       auth,
@@ -70,23 +72,51 @@ async function watchLinearSource(
   });
 }
 
-async function watchGithubSource(
-  cmd: WatchCommand,
-  auth: AgentAuth,
-  enclave: EgressEnclave | undefined,
-  signal: AbortSignal,
-): Promise<void> {
+async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, enclave: EgressEnclave | undefined) {
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   deps.auth = auth;
   if (enclave !== undefined) {
     deps.proxyUrl = enclave.proxyUrl;
     deps.network = enclave.network;
   }
+  return deps;
+}
+
+async function watchGithubSource(
+  cmd: WatchCommand,
+  auth: AgentAuth,
+  enclave: EgressEnclave | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  if (cmd.label === undefined) throw new Error('--label is required for github watch source');
+  const deps = await buildGithubDeps(cmd, auth, enclave);
   await watchGithub({
     deps,
     label: cmd.label,
     claimedLabel: cmd.claimedState ?? 'vanguard:running',
     reviewLabel: cmd.reviewState ?? 'vanguard:review',
+    concurrency: cmd.concurrency,
+    intervalMs: cmd.intervalMs,
+    once: cmd.once,
+    signal,
+  });
+}
+
+async function watchGithubProjectSource(
+  cmd: WatchCommand,
+  auth: AgentAuth,
+  enclave: EgressEnclave | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  if (cmd.projectNumber === undefined) throw new Error('--project <number> is required for project watch source');
+  const deps = await buildGithubDeps(cmd, auth, enclave);
+  await watchGithubProject({
+    deps,
+    projectNumber: cmd.projectNumber,
+    triggerStatus: cmd.triggerState ?? 'Todo',
+    claimedStatus: cmd.claimedState ?? 'In Progress',
+    reviewStatus: cmd.reviewState ?? 'In Review',
+    ...(cmd.label !== undefined ? { label: cmd.label } : {}),
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
