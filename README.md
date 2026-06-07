@@ -146,4 +146,4 @@ Node 24+, pnpm, Vitest, ESM with NodeNext. Tests are co-located as `*.test.ts`. 
 
 ## Autonomous loop
 
-`vanguard watch --label vanguard` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with the label). To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).
+`vanguard watch --label vanguard` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with the label). Each run implements, then **reviews and simplifies its own diff in a fresh, independent context** using the bundled `skills/` (code-review + simplify) injected into the sandbox. To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).

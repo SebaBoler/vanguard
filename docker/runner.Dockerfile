@@ -19,8 +19,12 @@ WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile && pnpm build
 
-# Preset the linear-cli skill so --skills is optional.
-RUN git clone --depth 1 https://github.com/schpet/linear-cli /opt/linear-cli
-ENV SKILLS_DIR=/opt/linear-cli/skills
+# Assemble the skills the factory injects into every sandbox: linear-cli (read Linear) + this repo's
+# code-review and simplify skills (so the review/simplify stages are skill-driven out of the box).
+RUN git clone --depth 1 https://github.com/schpet/linear-cli /opt/linear-cli \
+ && mkdir -p /opt/skills \
+ && cp -r /opt/linear-cli/skills/. /opt/skills/ \
+ && cp -r /app/skills/. /opt/skills/
+ENV SKILLS_DIR=/opt/skills
 
 ENTRYPOINT ["node", "dist/cli/index.js"]
