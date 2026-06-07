@@ -78,7 +78,7 @@ export {
   type RunGithubIssueDeps,
   type RunGithubIssueResult,
 } from './runners/github.js';
-export { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover } from './core/gc.js';
+export { reapContainers, dockerContainerLister, dockerContainerRemover, reapEgressNetworks, dockerEgressNetworkLister, dockerEgressNetworkRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover, type NetworkLister, type NetworkRemover } from './core/gc.js';
 export {
   reapRemoteBranches,
   gitRemoteBranchLister,

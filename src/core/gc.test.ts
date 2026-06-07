@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reapContainers, reapRemoteBranches } from './gc.js';
+import { reapContainers, reapEgressNetworks, reapRemoteBranches } from './gc.js';
 import type { ContainerInfo, RemoteBranchInfo } from './gc.js';
 
 describe('reapContainers', () => {
@@ -26,6 +26,25 @@ describe('reapContainers', () => {
       async () => {},
       1_000,
     );
+    expect(result).toEqual([]);
+  });
+});
+
+describe('reapEgressNetworks', () => {
+  it('removes all listed orphaned networks', async () => {
+    const removed: string[] = [];
+    const result = await reapEgressNetworks(
+      async () => ['vg-egr-abc123', 'vg-egr-def456'],
+      async (name) => {
+        removed.push(name);
+      },
+    );
+    expect(result).toEqual(['vg-egr-abc123', 'vg-egr-def456']);
+    expect(removed).toEqual(['vg-egr-abc123', 'vg-egr-def456']);
+  });
+
+  it('returns empty array when no orphaned networks', async () => {
+    const result = await reapEgressNetworks(async () => [], async () => {});
     expect(result).toEqual([]);
   });
 });

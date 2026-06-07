@@ -56,6 +56,47 @@ export function dockerContainerRemover(): ContainerRemover {
   };
 }
 
+export type NetworkLister = () => Promise<string[]>;
+export type NetworkRemover = (name: string) => Promise<void>;
+
+/**
+ * Remove orphaned vg-egr-* Docker networks (no attached containers). Lister returns only
+ * networks already confirmed to have no containers, so the remover is called on all of them.
+ * Lister/remover are injected so this is unit-testable without Docker. Returns removed names.
+ */
+export async function reapEgressNetworks(lister: NetworkLister, remover: NetworkRemover): Promise<string[]> {
+  const orphans = await lister();
+  await Promise.all(orphans.map(remover));
+  return orphans;
+}
+
+/** Docker-backed lister of vg-egr-* networks that have no attached containers. */
+export function dockerEgressNetworkLister(): NetworkLister {
+  return async (): Promise<string[]> => {
+    const { stdout } = await execa('docker', ['network', 'ls', '--filter', 'name=vg-egr-', '--format', '{{.Name}}']);
+    if (stdout.trim() === '') return [];
+    const names = stdout.split('\n').filter((n) => n.startsWith('vg-egr-'));
+    const results = await Promise.all(
+      names.map(async (name) => {
+        const { stdout: count } = await execa(
+          'docker',
+          ['network', 'inspect', name, '--format', '{{len .Containers}}'],
+          { reject: false },
+        );
+        return count.trim() === '0' ? name : null;
+      }),
+    );
+    return results.filter((name): name is string => name !== null);
+  };
+}
+
+/** Docker-backed remover for egress networks (ignore missing). */
+export function dockerEgressNetworkRemover(): NetworkRemover {
+  return async (name: string): Promise<void> => {
+    await execa('docker', ['network', 'rm', name], { reject: false });
+  };
+}
+
 /** Prune git worktree admin entries whose directories were removed. */
 export async function pruneWorktrees(repoPath: string): Promise<void> {
   await execa('git', ['worktree', 'prune'], { cwd: repoPath, reject: false });
