@@ -81,6 +81,26 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && cmd.gcBefore).toBe(true);
   });
 
+  it('parses watch with defaults and a required label', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--team', 'TES'], '/work')).toEqual({
+      kind: 'watch',
+      label: 'vanguard',
+      team: 'TES',
+      triggerState: 'unstarted',
+      claimedState: 'In Progress',
+      reviewState: 'In Review',
+      repoPath: '/work',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+    });
+  });
+
+  it('watch requires --label', () => {
+    expect(parseCli(['watch'], '/work').kind).toBe('help');
+  });
+
   it('returns help when run has no source or more than one source', () => {
     expect(parseCli(['run'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');

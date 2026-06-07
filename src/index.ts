@@ -29,7 +29,15 @@ export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export { fanOut, type FanOutOutcome, type FanOutOptions } from './pipeline/fan-out.js';
 export type { Task, SubTask, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
-export { LinearCliTaskFetcher, linkLinearIssue } from './tasks/linear-cli.js';
+export { LinearCliTaskFetcher, linkLinearIssue, setLinearState, commentLinearIssue } from './tasks/linear-cli.js';
+export {
+  watchOnce,
+  watchLinear,
+  linearWatchPrimitives,
+  type WatchPrimitives,
+  type WatchTick,
+  type WatchLinearOptions,
+} from './runners/watch.js';
 export type { LinearCliRunner, LinearCliOptions } from './tasks/linear-cli.js';
 export { GitHubTaskFetcher, issueNumber, toTask, defaultGhRunner } from './tasks/github.js';
 export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';

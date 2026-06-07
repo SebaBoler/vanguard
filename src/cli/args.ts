@@ -15,6 +15,20 @@ export type Command =
       repoSlug?: string;
       label?: string;
     }
+  | {
+      kind: 'watch';
+      label: string;
+      team?: string;
+      triggerState: string;
+      claimedState: string;
+      reviewState: string;
+      repoPath: string;
+      skillsDir?: string;
+      concurrency: number;
+      intervalMs: number;
+      once: boolean;
+      egress: boolean;
+    }
   | { kind: 'help' };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -49,6 +63,13 @@ export function parseCli(argv: string[], cwd: string): Command {
         'github-repo': { type: 'string' },
         label: { type: 'string' },
         concurrency: { type: 'string' },
+        // watch
+        team: { type: 'string' },
+        'trigger-state': { type: 'string' },
+        'claimed-state': { type: 'string' },
+        'review-state': { type: 'string' },
+        interval: { type: 'string' },
+        once: { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -97,6 +118,26 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  if (positionals[0] === 'watch') {
+    if (typeof values.label !== 'string') return { kind: 'help' }; // a trigger label is required
+    const interval = Number(values.interval);
+    const concurrency = Number(values.concurrency);
+    return {
+      kind: 'watch',
+      label: values.label,
+      triggerState: typeof values['trigger-state'] === 'string' ? values['trigger-state'] : 'unstarted',
+      claimedState: typeof values['claimed-state'] === 'string' ? values['claimed-state'] : 'In Progress',
+      reviewState: typeof values['review-state'] === 'string' ? values['review-state'] : 'In Review',
+      repoPath,
+      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
+      once: values.once === true,
+      egress: values.egress === true,
+      ...(typeof values.team === 'string' ? { team: values.team } : {}),
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
+    };
+  }
+
   return { kind: 'help' };
 }
 
@@ -104,8 +145,18 @@ export const USAGE = `vanguard <command>
 
 Commands:
   run    Run an agent on a task and open a draft PR for review.
+  watch  Poll Linear and run each newly-ready issue automatically (the AFK factory loop).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
+
+  watch options (Linear; trigger = state + label):
+    --label <name>         Required: only issues with this label are picked
+    --team <KEY>           Limit to a Linear team
+    --trigger-state <type> State type to poll: unstarted/started/... (default: unstarted)
+    --claimed-state <name> Move here on claim so re-polls skip it (default: "In Progress")
+    --review-state <name>  Move here after a PR opens (default: "In Review")
+    --interval <seconds>   Poll interval (default: 60); --once does a single pass
+    --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
 
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)
