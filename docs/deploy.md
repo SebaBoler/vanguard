@@ -28,7 +28,37 @@ the **sandbox image must exist on the host daemon** (build/pull it on the host, 
    arm64; `claude` and `linear` CLIs must have that arch).
 3. A clone of the target repo the agent edits (mounted into the controller, see compose).
 4. Secrets: `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`), `LINEAR_API_KEY` (Linear source),
-   and an authenticated `gh` token for GitHub.
+   and `GH_TOKEN` for GitHub.
+
+## Secrets (no 1Password on the server)
+
+Vanguard reads secrets from **environment variables** — nothing else. 1Password / `op` is only a
+local-dev convenience; it is not part of Vanguard and is not needed (or expected) on a server. On
+Synology or Hetzner you populate the env some other way; the simplest is a root-only `.env` next to
+the compose file:
+
+```bash
+# /opt/vanguard/.env  (chmod 600, gitignored, never committed)
+ANTHROPIC_API_KEY=sk-ant-...      # preferred for AFK (see below)
+LINEAR_API_KEY=lin_api_...
+GH_TOKEN=ghp_...                  # PAT; the runner uses it for gh + git push
+```
+
+`docker compose` reads `${VAR}` from that `.env` into the controller container; Vanguard then forwards
+them into each sandbox over its tmpfs channel (never on the command line). Equivalent options if you
+want more: Docker/Podman **secrets** (mounted as files), systemd **LoadCredential**, or a secrets
+manager (Vault, sops-encrypted file, cloud secret store). On Synology you can also set the vars in
+Container Manager's env UI instead of a file.
+
+**Which token for an always-on factory:** prefer **`ANTHROPIC_API_KEY`** (Developer Platform,
+pay-per-use, add credits at console.anthropic.com) over `CLAUDE_CODE_OAUTH_TOKEN` — the subscription
+token carries a monthly cap that an AFK fleet will hit. `authFromEnv()` uses whichever is set
+(`ANTHROPIC_API_KEY` → API billing; the OAuth token → subscription). `GH_TOKEN` lets `gh` and
+`git push` work non-interactively (the runner can `gh auth setup-git`).
+
+**Strongest isolation (roadmap):** the host LLM proxy — the controller holds the token and injects it
+at the egress gateway, so the sandbox never holds the LLM key at all. Until then the token reaches the
+sandbox via tmpfs (not in `docker inspect`, not on disk).
 
 ## docker-compose.yaml
 
