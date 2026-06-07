@@ -143,3 +143,7 @@ pnpm test
 ```
 
 Node 24+, pnpm, Vitest, ESM with NodeNext. Tests are co-located as `*.test.ts`. Docker integration tests run when Docker is present and skip otherwise.
+
+## Autonomous loop
+
+`vanguard watch --label vanguard` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with the label). To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).

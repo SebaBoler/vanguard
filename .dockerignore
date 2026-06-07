@@ -1,0 +1,7 @@
+node_modules
+dist
+.git
+.vanguard
+*.log
+docker/sbom.spdx.json
+docker/target-repo

@@ -1,0 +1,24 @@
+# Always-on Vanguard watch loop. Template — see docs/deploy.md. Put secrets in a .env next to this
+# file (never commit it). Build the sandbox image on the host first: docker/build.sh.
+services:
+  vanguard-watch:
+    build:
+      context: ..
+      dockerfile: docker/runner.Dockerfile
+    image: vanguard-runner:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # control sibling sandboxes
+      - ./target-repo:/work/repo # a git clone of the repo the agent edits
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      LINEAR_API_KEY: ${LINEAR_API_KEY}
+      GH_TOKEN: ${GH_TOKEN}
+      VANGUARD_MAX_SANDBOXES: "2" # cap to host RAM (NAS: keep low)
+    command:
+      - watch
+      - --label=vanguard
+      - --repo=/work/repo
+      - --interval=120
+      # - --source=github   # GitHub Issues instead of Linear
+      # - --egress          # confine each sandbox to the allowlist
