@@ -61,7 +61,17 @@ Put the secrets in a `.env` next to the compose file (never commit it). Start:
 ## runner image
 
 See `docker/runner.Dockerfile` — node 24 + the docker CLI + git + gh + the linear CLI + the built
-`dist` + the linear-cli skill (so `--skills` is preset). It is the controller, not the sandbox.
+`dist`. It assembles `SKILLS_DIR=/opt/skills` from the linear-cli skill plus this repo's `skills/`
+(code-review + simplify), so the review/simplify stages are skill-driven out of the box — no manual
+`--skills`. It is the controller, not the sandbox.
+
+Running the factory locally (not via the runner image)? Assemble the same skills dir yourself:
+
+```bash
+git clone --depth 1 https://github.com/schpet/linear-cli /tmp/linear-cli
+mkdir -p /tmp/vg-skills && cp -r /tmp/linear-cli/skills/. /tmp/vg-skills/ && cp -r ./skills/. /tmp/vg-skills/
+# then: vanguard watch --label vanguard --skills /tmp/vg-skills ...
+```
 
 ## Synology notes
 
