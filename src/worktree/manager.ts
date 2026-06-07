@@ -75,13 +75,16 @@ export class WorktreeManager {
       .find(Boolean);
     if (!branch) return null;
 
-    // If a live worktree already uses this branch, return it directly.
-    const live = parseWorktreeList(wtOut).find(w => w.branch === `refs/heads/${branch}`);
-    if (live) return { path: live.path, branch };
-
-    // Branch exists but its worktree was removed — recreate the worktree on the existing branch.
+    // Use create()'s own path form: git reports a symlink-resolved path (e.g. /private/var on macOS),
+    // which would not string-equal the join(baseDir, name) that create() returns.
     const name = branch.slice('vanguard/'.length);
     const path = join(this.baseDir, name);
+
+    // If a live worktree already uses this branch, reuse it.
+    const live = parseWorktreeList(wtOut).find((w) => w.branch === `refs/heads/${branch}`);
+    if (live) return { path, branch };
+
+    // Branch exists but its worktree was removed — recreate the worktree on the existing branch.
     try {
       await execa('git', ['worktree', 'add', path, branch], { cwd: this.repoPath });
       return { path, branch };
