@@ -37,7 +37,10 @@ describe('persistRunRecord', () => {
     expect(record.taskId).toBe('TES-1');
     expect(record.costUsd).toBe(0.05);
     expect(record.prUrl).toBe('https://pr/1');
-    expect(record.diff).toBeUndefined(); // diff omitted
+    expect(record.diff).toBeUndefined(); // diff excluded from JSON
+
+    const diffFile = await readFile(file.replace(/\.json$/, '.diff'), 'utf8');
+    expect(diffFile).toBe(result.diff);
 
     const metrics = await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8');
     const line = JSON.parse(metrics.trim());

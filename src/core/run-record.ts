@@ -14,7 +14,8 @@ export interface PersistOptions {
 /**
  * Persist a run's metadata to `.vanguard/runs/<taskId>/<ts>[-label].json` and append one compact
  * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. The
- * (potentially large) diff is omitted — the PR carries it. Returns the written JSON path.
+ * (potentially large) diff is written to a sibling `.diff` file and omitted from the JSON record.
+ * Returns the written JSON path.
  */
 export async function persistRunRecord(localRepoPath: string, result: RunResult, opts: PersistOptions = {}): Promise<string> {
   const timestamp = opts.timestamp ?? new Date().toISOString();
@@ -23,7 +24,6 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   await mkdir(taskDir, { recursive: true });
 
   const { diff, transcript, ...meta } = result;
-  void diff; // omitted from the record on purpose (the PR carries it)
   const record = {
     ...meta,
     timestamp,
@@ -34,9 +34,8 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
-  if (transcript !== undefined && transcript !== '') {
-    await writeFile(`${base}.transcript.log`, transcript);
-  }
+  if (transcript) await writeFile(`${base}.transcript.log`, transcript);
+  if (diff) await writeFile(`${base}.diff`, diff);
 
   const metric = {
     evt: 'run_complete',
