@@ -1,9 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import { persistRunRecord } from './run-record.js';
 import type { RunResult } from './types.js';
+
+const TS = '2026-06-06T10:00:00.000Z';
+
+async function withWorktree(fn: (wt: string) => Promise<void>): Promise<void> {
+  const wt = await mkdtemp(join(tmpdir(), 'vg-wt-'));
+  try {
+    await fn(wt);
+  } finally {
+    await rm(wt, { recursive: true, force: true });
+  }
+}
 
 let repo: string;
 
@@ -30,7 +42,7 @@ const result: RunResult = {
 
 describe('persistRunRecord', () => {
   it('writes a per-run JSON (without the diff) and appends a metric line', async () => {
-    const file = await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:00:00.000Z', prUrl: 'https://pr/1' });
+    const file = await persistRunRecord(repo, result, { timestamp: TS, prUrl: 'https://pr/1' });
     expect(file).toBe(join(repo, '.vanguard', 'runs', 'TES-1', '2026-06-06T10-00-00-000Z.json'));
 
     const record = JSON.parse(await readFile(file, 'utf8'));
@@ -51,7 +63,7 @@ describe('persistRunRecord', () => {
     const file = await persistRunRecord(
       repo,
       { ...result, transcript: '{"type":"result"}\n' },
-      { timestamp: '2026-06-06T10:00:00.000Z' },
+      { timestamp: TS },
     );
     const record = JSON.parse(await readFile(file, 'utf8'));
     expect(record.transcript).toBeUndefined();
@@ -59,8 +71,25 @@ describe('persistRunRecord', () => {
     expect(log).toBe('{"type":"result"}\n');
   });
 
+  it('writes a git bundle when worktreePath has a commit', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const file = await persistRunRecord(repo, { ...result, worktreePath: wt }, { timestamp: TS });
+      await expect(access(file.replace(/\.json$/, '.bundle'))).resolves.toBeUndefined();
+    }),
+  );
+
+  it('does not write a bundle and does not throw when worktreePath has no commits', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      const file = await persistRunRecord(repo, { ...result, worktreePath: wt }, { timestamp: TS });
+      await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+    }),
+  );
+
   it('labels a stage in the filename and appends one metric line per call', async () => {
-    await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:00:00.000Z', label: 'implementer' });
+    await persistRunRecord(repo, result, { timestamp: TS, label: 'implementer' });
     const file = await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:01:00.000Z', label: 'reviewer' });
     expect(file.endsWith('2026-06-06T10-01-00-000Z-reviewer.json')).toBe(true);
 

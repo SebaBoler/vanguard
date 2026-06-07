@@ -1,5 +1,6 @@
-import { mkdir, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { execa } from 'execa';
 import type { RunResult } from './types.js';
 
 export interface PersistOptions {
@@ -36,6 +37,13 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
   if (transcript) await writeFile(`${base}.transcript.log`, transcript);
   if (diff) await writeFile(`${base}.diff`, diff);
+  const bundlePath = `${base}.bundle`;
+  try {
+    await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
+  } catch {
+    // best-effort: remove any partial file git may have opened before it failed
+    await unlink(bundlePath).catch(() => undefined);
+  }
 
   const metric = {
     evt: 'run_complete',
