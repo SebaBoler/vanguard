@@ -130,6 +130,9 @@ export function defaultSystemPrompt(): string {
     '<tradeoffs>',
     'A wrong or sloppy change costs reviewer trust and rework, far more than the few seconds a typecheck or test run takes. An over-large change costs review time and risks regressions. Favor a minimal, verified change over a fast, unverified one.',
     '</tradeoffs>',
+    '<efficiency>',
+    'Spend tokens on the change, not on prose. Read only the files you need, keep reasoning brief, and keep your messages terse — no preamble, no restating the task, no summaries of what you are about to do. Verification still matters; verbosity does not.',
+    '</efficiency>',
   ].join('\n');
 }
 
