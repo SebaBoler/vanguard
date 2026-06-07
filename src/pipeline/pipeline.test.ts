@@ -18,6 +18,7 @@ import {
   adversarySystemPrompt,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
+import type { Complete } from '../evals/judges.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -280,6 +281,40 @@ describe('defaultSystemPrompt', () => {
     const ctx = await prepareContext({ taskId: 'sp', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     await runStages(ctx, [{ name: 's', promptTemplate: 'p', systemPrompt: 'SYS-XYZ' }], { agent });
     expect(received[0]?.systemPrompt).toBe('SYS-XYZ');
+    await disposeContext(ctx);
+  });
+});
+
+describe('runBudgetedStages fork option', () => {
+  it('forks the implementer and the winning diff reaches the reviewer', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+
+    // Variant 0 scores 0.9, variant 1 scores 0.3 — variant 0 wins.
+    let scoreCall = 0;
+    const complete: Complete = async () => {
+      const score = scoreCall++ === 0 ? 0.9 : 0.3;
+      return `<verdict>{"passed":true,"score":${score},"reason":"ok"}</verdict>`;
+    };
+
+    const ctx = await prepareContext(
+      { taskId: 'fork-impl', localRepoPath: repo, sandbox: makeSandbox() },
+      { worktrees: wm },
+    );
+    const result = await runBudgetedStages(
+      ctx,
+      [
+        { name: 'implementer', promptTemplate: 'implement {{TITLE}}' },
+        { name: 'reviewer', resumePrevious: false, promptTemplate: 'review:\n{{PREVIOUS_DIFF}}' },
+      ],
+      { agent: recordingAgent(received), variables: { TITLE: 'X' }, fork: { n: 2, complete } },
+    );
+
+    expect(result.status).toBe('completed');
+    // 2 fork variants + 1 reviewer = 3 agent calls
+    expect(received).toHaveLength(3);
+    // reviewer (3rd call) received the winning variant's diff in its prompt
+    expect(received[2]?.prompt).toContain('feature.txt');
     await disposeContext(ctx);
   });
 });

@@ -1,8 +1,14 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
+import { forkAndSelect } from './fork-select.js';
+import { buildXmlPrompt } from '../context/xml-prompt.js';
+import { extractJson } from '../structured/extract.js';
+import { verdictSchema } from '../evals/judges.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
+import type { Complete } from '../evals/judges.js';
+import type { EvalVerdict } from '../evals/types.js';
 
 export interface PipelineStage {
   name: string;
@@ -35,11 +41,39 @@ export interface FrozenRun {
 
 export type PipelineResult = { status: 'completed'; outcomes: StageOutcome[] } | FrozenRun;
 
+export interface ForkOptions {
+  /** Number of implementation variants to generate. Default 2. */
+  n?: number;
+  /** LLM completion function used to score each variant's diff. Higher score wins. */
+  complete: Complete;
+  /**
+   * Name of the stage to run via forkAndSelect. Defaults to 'implementer'.
+   * If no stage with this name exists in the pipeline, fork is silently ignored.
+   */
+  stageName?: string;
+}
+
 export interface RunStagesOptions {
   agent: AgentProvider;
   variables?: Record<string, string>;
   signal?: AbortSignal;
   maxCostUsd?: number;
+  /** When set, run the implementer stage via forkAndSelect instead of a single pass. */
+  fork?: ForkOptions;
+}
+
+/** Build a scorer that asks the LLM to rate a diff, returning an EvalVerdict. */
+function makeDiffScorer(complete: Complete): (diff: string, result: RunResult) => Promise<EvalVerdict> {
+  return async (diff) => {
+    const prompt = buildXmlPrompt({
+      role: 'You are a strict judge evaluating a code diff.',
+      guidelines:
+        'Rate the quality of the diff. Return JSON in a <verdict> tag with fields: passed (bool), score (0..1, higher is better), reason (string).',
+      task: `Diff:\n${diff || '(empty diff — no changes)'}\n\nReturn the verdict as <verdict>{...}</verdict>.`,
+    });
+    const text = await complete(prompt);
+    return extractJson(text, 'verdict', verdictSchema);
+  };
 }
 
 /**
@@ -81,6 +115,25 @@ export async function runBudgetedStages(
       PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
     };
+
+    if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? 'implementer')) {
+      const forkResult = await forkAndSelect(ctx, stage, {
+        agent: opts.agent,
+        ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
+        score: makeDiffScorer(opts.fork.complete),
+        variables,
+        ...(resume && sessionId !== undefined ? { forkFromSessionId: sessionId } : {}),
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      });
+      const result = forkResult.winner;
+      outcomes.push({ name: stage.name, result });
+      previous = result;
+      prevName = stage.name;
+      if (result.sessionId !== undefined) sessionId = result.sessionId;
+      for (const v of forkResult.variants) spentUsd += v.result.costUsd ?? 0;
+      continue;
+    }
+
     const result = await runAgent(ctx, {
       promptTemplate: stage.promptTemplate,
       agent: opts.agent,
