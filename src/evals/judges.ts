@@ -20,7 +20,7 @@ export function programmaticJudge(predicate: Predicate): Judge {
 
 export type Complete = (prompt: string) => Promise<string>;
 
-const verdictSchema = z.object({
+export const verdictSchema = z.object({
   passed: z.boolean(),
   score: z.number().min(0).max(1),
   reason: z.string(),
