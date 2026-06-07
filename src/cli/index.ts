@@ -2,6 +2,7 @@
 import { parseCli, USAGE } from './args.js';
 import { runGc } from './gc.js';
 import { runCommand } from './run.js';
+import { watchCommand } from './watch.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
@@ -11,6 +12,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'run') {
     await runCommand(command);
+    return;
+  }
+  if (command.kind === 'watch') {
+    await watchCommand(command);
     return;
   }
   const report = await runGc(command);

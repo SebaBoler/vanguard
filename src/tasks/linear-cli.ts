@@ -67,10 +67,12 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     return toTask(issue);
   }
 
-  /** `issue query --json` (includes labels; description is not returned by query). */
+  /** `issue query --json` (includes labels; description is not returned by query). filter.state is a
+   * Linear state TYPE (triage/backlog/unstarted/started/completed/canceled); labels are matched here. */
   async list(filter?: TaskFilter): Promise<Task[]> {
     const scope = this.options.team !== undefined ? ['--team', this.options.team] : ['--all-teams'];
-    const tasks = parseIssueList(await this.run(['issue', 'query', ...scope, '--json', '--limit', '0'])).map(toTask);
+    const stateArgs = filter?.state !== undefined ? ['--state', filter.state] : [];
+    const tasks = parseIssueList(await this.run(['issue', 'query', ...scope, ...stateArgs, '--json', '--limit', '0'])).map(toTask);
     const wanted = filter?.labels;
     if (wanted !== undefined && wanted.length > 0) {
       return tasks.filter((task) => wanted.some((label) => task.labels.includes(label)));
@@ -79,7 +81,17 @@ export class LinearCliTaskFetcher implements TaskFetcher {
   }
 }
 
+/** Move a Linear issue to a workflow state (by name or type), e.g. to claim it ("In Progress"). */
+export async function setLinearState(issueId: string, state: string, runner: LinearCliRunner = defaultRunner): Promise<void> {
+  await runner(['issue', 'update', issueId, '--state', state]);
+}
+
+/** Add a freeform comment to a Linear issue (e.g. to report a failed run). */
+export async function commentLinearIssue(issueId: string, body: string, runner: LinearCliRunner = defaultRunner): Promise<void> {
+  await runner(['issue', 'comment', 'add', issueId, '--body', body]);
+}
+
 /** Comment a PR link back onto a Linear issue via the CLI (closes the loop). */
 export async function linkLinearIssue(issueId: string, prUrl: string, runner: LinearCliRunner = defaultRunner): Promise<void> {
-  await runner(['issue', 'comment', 'add', issueId, '--body', `Vanguard opened a PR for review: ${prUrl}`]);
+  await commentLinearIssue(issueId, `Vanguard opened a PR for review: ${prUrl}`, runner);
 }
