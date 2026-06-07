@@ -77,6 +77,28 @@ ANTHROPIC_API_KEY=...          # API billing instead
 
 See `.env.example`. `authFromEnv()` prefers the subscription token; `authSecrets(auth)` maps the choice to the single env var the sandbox receives.
 
+### Local secrets (two ways)
+
+Vanguard reads everything from env vars (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, `LINEAR_API_KEY`, `GH_TOKEN`). Locally, populate them however you like:
+
+**Plain env / `.env`:**
+
+```bash
+cp .env.example .env && $EDITOR .env       # fill in the keys (gitignored)
+set -a; . ./.env; set +a                    # load into the shell
+node dist/cli/index.js watch --label vanguard --repo . --skills ./skills
+```
+
+**1Password (`op`), no plaintext on disk** — read each secret inline per run, so it never lands in a file or shell history:
+
+```bash
+LINEAR_API_KEY=$(op read "op://Personal/Linear API/credential") \
+CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Personal/Claude OAuth/credential") \
+  node dist/cli/index.js run --linear TES-1 --repo . --skills ./skills
+```
+
+`op` (1Password CLI) needs `op signin` or the desktop app integration; its sessions can expire between calls, so prefer reading the secrets in the same command that uses them. On a server there is no 1Password — see [docs/deploy.md](docs/deploy.md#secrets-no-1password-on-the-server).
+
 ## End to end
 
 ```ts
