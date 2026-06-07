@@ -23,6 +23,8 @@ export interface RunGithubIssueDeps {
   proxyUrl?: string;
   /** When set, join the sandbox to this docker network (the hard egress enclave). */
   network?: string;
+  /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
+  reuse?: boolean;
 }
 
 export interface RunGithubIssueResult {
@@ -49,7 +51,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
-  const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox });
+  const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) });
   try {
     const outcomes = await runStages(ctx, implementReviewSimplifyStages(), {
       agent: new ClaudeCodeProvider(),

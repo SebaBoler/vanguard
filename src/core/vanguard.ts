@@ -26,6 +26,7 @@ export interface PrepareOptions {
   taskId: string;
   localRepoPath: string;
   baseBranch?: string;
+  reuse?: boolean;
   skills?: string[];
   sandbox: IsolatedSandboxProvider;
   logger?: VanguardLogger;
@@ -76,7 +77,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
-  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main');
+  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', opts.reuse !== undefined ? { reuse: opts.reuse } : {});
   // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
   // sandboxes than the host can hold (blocks until a slot frees).
   await acquireSandboxSlot(opts.sandbox);
@@ -236,6 +237,7 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
       localRepoPath: opts.localRepoPath,
       sandbox: opts.sandbox,
       ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
+      ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
       ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
       ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     },

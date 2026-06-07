@@ -10,6 +10,7 @@ export interface RunOptions {
   taskId: string;
   localRepoPath: string;
   baseBranch?: string;
+  reuse?: boolean;
   promptTemplate: string;
   variables?: Record<string, string>;
   skills?: string[];
