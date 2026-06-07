@@ -18,7 +18,9 @@ import type { VanguardLogger } from './logger.js';
 const WORKDIR = '/workspace';
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TURNS = 6;
-const GIT_PATH = /(^|[\\/])\.git([\\/]|$)/;
+// Skip on copy-back: .git (a linked worktree's .git is a file pointer; copying it corrupts the
+// worktree) and node_modules (gitignored, huge, and its .bin symlinks make fs.cp throw EINVAL).
+const COPY_BACK_SKIP = /(^|[\\/])(\.git|node_modules)([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
@@ -171,7 +173,12 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     await mkdir(staging, { recursive: true });
     try {
       await ctx.sandbox.copyFileOut(WORKDIR, staging);
-      await cp(staging, ctx.worktreePath, { recursive: true, force: true, filter: (src) => !GIT_PATH.test(src) });
+      await cp(staging, ctx.worktreePath, {
+        recursive: true,
+        force: true,
+        verbatimSymlinks: true,
+        filter: (src) => !COPY_BACK_SKIP.test(src),
+      });
     } finally {
       await rm(staging, { recursive: true, force: true });
     }
