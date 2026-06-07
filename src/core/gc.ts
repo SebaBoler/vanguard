@@ -109,7 +109,12 @@ export interface RemoteBranchInfo {
 
 export type RemoteBranchLister = () => Promise<RemoteBranchInfo[]>;
 export type MergedChecker = (branch: string) => Promise<boolean>;
+export type AbandonedChecker = (branch: string) => Promise<boolean>;
 export type RemoteBranchRemover = (branch: string) => Promise<void>;
+
+export type ReapBranchOpts =
+  | { abandoned?: false; isAbandoned?: never }
+  | { abandoned: true; isAbandoned: AbandonedChecker };
 
 const PR_CHECK_CONCURRENCY = 8;
 
@@ -127,17 +132,24 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
  * branch, so they accumulate). A branch is reaped only when it is older than maxAgeMs AND its PR was
  * MERGED — a branch that was never merged (closed/abandoned, or still under review with no PR yet) is
  * always kept. The merged check runs only for aged candidates, bounded to a small concurrency.
- * Lister/checker/remover are injected so this is unit-testable without git/gh. Returns removed names.
+ * When opts.abandoned is true (opts.isAbandoned is required by the type), branches with a
+ * closed-unmerged PR are also reaped. Lister/checker/remover are injected so this is unit-testable without git/gh.
+ * Returns removed names.
  */
 export async function reapRemoteBranches(
   lister: RemoteBranchLister,
   isMerged: MergedChecker,
   remover: RemoteBranchRemover,
   maxAgeMs: number = DEFAULT_MAX_AGE_MS,
+  opts?: ReapBranchOpts,
 ): Promise<string[]> {
   const aged = (await lister()).filter((branch) => branch.ageMs > maxAgeMs);
   const names = (
-    await mapLimit(aged, PR_CHECK_CONCURRENCY, async (branch) => ((await isMerged(branch.name)) ? branch.name : null))
+    await mapLimit(aged, PR_CHECK_CONCURRENCY, async (branch) => {
+      if (await isMerged(branch.name)) return branch.name;
+      if (opts?.abandoned && (await opts.isAbandoned(branch.name))) return branch.name;
+      return null;
+    })
   ).filter((name): name is string => name !== null);
   await Promise.all(names.map(remover));
   return names;
@@ -171,10 +183,10 @@ export function gitRemoteBranchLister(
   };
 }
 
-/** gh-backed merged-PR checker. Conservative: on any gh error it reports NOT merged, so the branch is kept. */
-export function ghMergedPrChecker(repoPath: string, repoSlug?: string): MergedChecker {
+/** Shared gh pr-list check. Conservative: on any gh error returns false so the branch is kept. */
+function ghPrChecker(state: 'merged' | 'closed', repoPath: string, repoSlug?: string) {
   return async (branch: string): Promise<boolean> => {
-    const args = ['pr', 'list', '--head', branch, '--state', 'merged', '--json', 'number'];
+    const args = ['pr', 'list', '--head', branch, '--state', state, '--json', 'number'];
     if (repoSlug !== undefined) args.push('--repo', repoSlug);
     const result = await execa('gh', args, { cwd: repoPath, reject: false });
     if (result.exitCode !== 0) return false;
@@ -184,6 +196,16 @@ export function ghMergedPrChecker(repoPath: string, repoSlug?: string): MergedCh
       return false;
     }
   };
+}
+
+/** gh-backed merged-PR checker. Conservative: on any gh error it reports NOT merged, so the branch is kept. */
+export function ghMergedPrChecker(repoPath: string, repoSlug?: string): MergedChecker {
+  return ghPrChecker('merged', repoPath, repoSlug);
+}
+
+/** gh-backed closed-unmerged-PR checker. Conservative: on any gh error it reports NOT abandoned, so the branch is kept. */
+export function ghAbandonedPrChecker(repoPath: string, repoSlug?: string): AbandonedChecker {
+  return ghPrChecker('closed', repoPath, repoSlug);
 }
 
 /** Git-backed remover that deletes the branch on the remote (ignores missing). */

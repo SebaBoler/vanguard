@@ -83,4 +83,62 @@ describe('reapRemoteBranches', () => {
     expect(result).toEqual([]);
     expect(checked).toEqual([]);
   });
+
+  describe('abandoned mode', () => {
+    it('reaps aged branches with a closed-unmerged PR when abandoned=true', async () => {
+      const branches: RemoteBranchInfo[] = [
+        { name: 'vanguard/old-abandoned', ageMs: 10_000 },
+        { name: 'vanguard/old-open', ageMs: 10_000 },
+      ];
+      const removed: string[] = [];
+      const result = await reapRemoteBranches(
+        async () => branches,
+        async () => false,
+        async (name) => { removed.push(name); },
+        1_000,
+        { abandoned: true, isAbandoned: async (name) => name === 'vanguard/old-abandoned' },
+      );
+      expect(result).toEqual(['vanguard/old-abandoned']);
+      expect(removed).toEqual(['vanguard/old-abandoned']);
+    });
+
+    it('does not reap fresh branches even when abandoned=true', async () => {
+      const checked: string[] = [];
+      const result = await reapRemoteBranches(
+        async () => [{ name: 'vanguard/fresh-abandoned', ageMs: 5 }],
+        async () => false,
+        async () => {},
+        1_000,
+        { abandoned: true, isAbandoned: async (name) => { checked.push(name); return true; } },
+      );
+      expect(result).toEqual([]);
+      expect(checked).toEqual([]);
+    });
+
+    it('reaps both merged and abandoned aged branches when abandoned=true', async () => {
+      const branches: RemoteBranchInfo[] = [
+        { name: 'vanguard/merged', ageMs: 10_000 },
+        { name: 'vanguard/abandoned', ageMs: 10_000 },
+        { name: 'vanguard/open', ageMs: 10_000 },
+      ];
+      const result = await reapRemoteBranches(
+        async () => branches,
+        async (name) => name === 'vanguard/merged',
+        async () => {},
+        1_000,
+        { abandoned: true, isAbandoned: async (name) => name === 'vanguard/abandoned' },
+      );
+      expect(result).toEqual(['vanguard/merged', 'vanguard/abandoned']);
+    });
+
+    it('does not reap closed-unmerged branches when abandoned flag is absent', async () => {
+      const result = await reapRemoteBranches(
+        async () => [{ name: 'vanguard/abandoned', ageMs: 10_000 }],
+        async () => false,
+        async () => {},
+        1_000,
+      );
+      expect(result).toEqual([]);
+    });
+  });
 });
