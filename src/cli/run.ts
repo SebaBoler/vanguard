@@ -60,6 +60,7 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: stri
     ...(cmd.reuse === true ? { reuse: true } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
   };
 }
 
@@ -84,6 +85,7 @@ async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network:
   if (cmd.reuse === true) deps.reuse = true;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -99,6 +101,7 @@ async function runProject(cmd: RunCommand, proxyUrl: string | undefined, network
   if (network !== undefined) deps.network = network;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

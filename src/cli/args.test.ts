@@ -112,6 +112,16 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && 'reviewProvider' in cmd).toBe(false);
   });
 
+  it('parses --fork into forkN (>=2)', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--fork', '3'], '/work');
+    expect(cmd.kind === 'run' && cmd.forkN).toBe(3);
+  });
+
+  it('ignores --fork below 2 or non-numeric', () => {
+    expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', '1'], '/work')).toBe(false);
+    expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', 'x'], '/work')).toBe(false);
+  });
+
   it('returns help for an unknown provider name', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work').kind).toBe('help');

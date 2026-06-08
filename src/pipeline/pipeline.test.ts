@@ -16,6 +16,7 @@ import {
   planImplementReviewStages,
   planImplementAdversaryStages,
   adversarySystemPrompt,
+  sandboxComplete,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
@@ -108,6 +109,27 @@ describe('runStages', () => {
     );
     expect(def).toHaveLength(1); // implementer on the default provider only
     expect(review).toHaveLength(1); // reviewer routed to its own provider
+    await disposeContext(ctx);
+  });
+});
+
+describe('sandboxComplete', () => {
+  it('runs the agent one-shot in /tmp and returns its finalText', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'sc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    let seen: AgentRunInput | undefined;
+    const agent: AgentProvider = {
+      name: 'scorer',
+      async *run(inp: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        seen = inp;
+        return { finalText: '<verdict>{"passed":true,"score":0.9,"reason":"ok"}</verdict>', turns: 1 };
+      },
+    };
+    const complete = sandboxComplete(ctx, agent);
+    const text = await complete('rate this diff');
+    expect(text).toContain('"score":0.9');
+    expect(seen?.workdir).toBe('/tmp'); // scored off-worktree so a stray write can't touch the code
+    expect(seen?.maxTurns).toBe(1);
     await disposeContext(ctx);
   });
 });
