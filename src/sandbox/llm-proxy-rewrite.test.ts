@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeAnthropicBeta, upstreamAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.js';
+import { mergeAnthropicBeta, upstreamAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
 
 describe('mergeAnthropicBeta', () => {
   it('appends the oauth beta and dedupes, preserving request betas', () => {

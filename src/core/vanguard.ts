@@ -6,6 +6,7 @@ import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
 import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
 import { cacheEfficiency } from '../agents/provider.js';
+import { stageMetric } from './run-metric.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
@@ -48,6 +49,8 @@ export interface RunContext {
 export interface StageInput {
   promptTemplate: string;
   agent: AgentProvider;
+  /** Stage name, used to scope structured lifecycle logs. */
+  stageName?: string;
   variables?: Record<string, string>;
   effort?: ReasoningEffort;
   maxTurns?: number;
@@ -91,7 +94,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await skills.injectAll(opts.sandbox, home);
-    return {
+    const ctx: RunContext = {
       taskId: opts.taskId,
       sandbox: opts.sandbox,
       worktreePath: wt.path,
@@ -101,6 +104,8 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
       wm,
       log,
     };
+    ctx.log.info({ taskId: opts.taskId }, 'run start');
+    return ctx;
   } catch (error) {
     // Provisioning failed: untrack, free the slot, and tear down so nothing is orphaned.
     untrackSandbox(opts.sandbox);
@@ -112,6 +117,11 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
 export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunResult> {
+  const startedAt = Date.now();
+  ctx.log.info(
+    { taskId: ctx.taskId, ...(input.stageName !== undefined ? { stage: input.stageName } : {}) },
+    'stage start',
+  );
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -168,6 +178,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
         break;
       }
       if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
+      // DEBUG-ONLY: this line logs raw model output (`text`) and may contain task content; it must
+      // stay at debug level. Never log prompts or secrets, and never raise this to info.
       ctx.log.debug({ taskId: ctx.taskId, text: next.value.text }, 'agent turn');
     }
     const completed = hasTerminationSignal(finalText);
@@ -197,6 +209,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     const preserved = await ctx.wm.isDirty(ctx.worktreePath);
     const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'incomplete';
 
+    const durationMs = Date.now() - startedAt;
+
     const result: RunResult = {
       taskId: ctx.taskId,
       completed,
@@ -205,12 +219,15 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       worktreePath: ctx.worktreePath,
       worktreePreserved: preserved,
       finalText,
+      durationMs,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(diff !== '' ? { diff } : {}),
       ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(transcript !== undefined ? { transcript } : {}),
     };
+    // Stage-complete logs ONLY the flat stageMetric (no finalText/diff/transcript/prompt/secrets).
+    ctx.log.info(stageMetric(result, input.stageName), 'stage complete');
     return result;
   } finally {
     clearTimeout(timer);

@@ -2,6 +2,7 @@ import { mkdir, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { RunResult } from './types.js';
+import { stageMetric } from './run-metric.js';
 
 export interface PersistOptions {
   /** ISO timestamp; defaults to now. Injected for deterministic tests. */
@@ -48,16 +49,7 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const metric = {
     evt: 'run_complete',
     ts: timestamp,
-    taskId: result.taskId,
-    ...(opts.label !== undefined ? { stage: opts.label } : {}),
-    exitReason: result.exitReason,
-    completed: result.completed,
-    turns: result.turns,
-    costUsd: result.costUsd ?? 0,
-    cacheEfficiency: result.cacheEfficiency ?? 0,
-    inputTokens: result.usage?.inputTokens ?? 0,
-    outputTokens: result.usage?.outputTokens ?? 0,
-    cacheReadInputTokens: result.usage?.cacheReadInputTokens ?? 0,
+    ...stageMetric(result, opts.label),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);

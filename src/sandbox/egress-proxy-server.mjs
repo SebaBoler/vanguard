@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Standalone zero-dep CONNECT proxy for the egress enclave sidecar. Only tunnels HTTPS CONNECT to
-// allowlisted domains (others 403). ALLOW (comma-separated) and PORT come from env. The host-side
-// equivalent lives in egress-proxy.ts; keep the allow semantics (exact or subdomain) in sync.
+// allowlisted domains (others 403). ALLOW (comma-separated) and PORT come from env. The allow
+// semantics (exact or subdomain) are imported from the shared `egress-allow.mjs`, which the host
+// `docker cp`'s next to this file — the SAME module egress-proxy.ts uses, so the two never drift.
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { isAllowed } from './egress-allow.mjs';
 
 const ALLOW = (process.env.ALLOW ?? '')
   .split(',')
@@ -11,7 +13,7 @@ const ALLOW = (process.env.ALLOW ?? '')
   .filter((s) => s !== '');
 const PORT = Number(process.env.PORT ?? '8080');
 
-const allowed = (host) => ALLOW.some((domain) => host === domain || host.endsWith(`.${domain}`));
+const allowed = (host) => isAllowed(host, ALLOW);
 
 createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTTPS CONNECT.'))
   .on('connect', (req, clientSocket, head) => {

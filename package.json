@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "build": "tsc && cp src/mcp/typecheck-server.mjs dist/mcp/typecheck-server.mjs && cp src/sandbox/egress-proxy-server.mjs dist/sandbox/egress-proxy-server.mjs && cp src/sandbox/llm-proxy-server.mjs dist/sandbox/llm-proxy-server.mjs",
+    "build": "tsc && cp src/mcp/typecheck-server.mjs dist/mcp/typecheck-server.mjs && cp src/sandbox/egress-proxy-server.mjs dist/sandbox/egress-proxy-server.mjs && cp src/sandbox/egress-allow.mjs dist/sandbox/egress-allow.mjs && cp src/sandbox/llm-proxy-server.mjs dist/sandbox/llm-proxy-server.mjs && cp src/sandbox/llm-proxy-rewrite.mjs dist/sandbox/llm-proxy-rewrite.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "tsx",
     "sbom": "bash docker/sbom.sh",

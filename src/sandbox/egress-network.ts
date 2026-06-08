@@ -7,6 +7,9 @@ import { DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
 const PROXY_PORT = 8080;
 // Resolves to dist/sandbox/egress-proxy-server.mjs (built) or src/... (tsx) — next to this module.
 const PROXY_SCRIPT = fileURLToPath(new URL('./egress-proxy-server.mjs', import.meta.url));
+// Shared allow logic the server imports via a relative `./egress-allow.mjs`; cp'd into the SAME
+// /tmp dir so that relative import resolves inside the container.
+const PROXY_LOGIC = fileURLToPath(new URL('./egress-allow.mjs', import.meta.url));
 
 export interface EgressEnclave {
   /** Internal docker network the sandbox must join (no route to the internet, only to the proxy). */
@@ -39,6 +42,8 @@ export async function startEgressEnclave(opts: { allowlist?: readonly string[]; 
     await execa('docker', ['run', '-d', '--name', proxy, '--label', `vanguard.runId=${id}`, image, 'sleep', 'infinity']);
     await execa('docker', ['network', 'connect', network, proxy]);
     await execa('docker', ['cp', PROXY_SCRIPT, `${proxy}:/tmp/egress-proxy.mjs`]);
+    // The shared logic must sit next to the server so its relative import resolves.
+    await execa('docker', ['cp', PROXY_LOGIC, `${proxy}:/tmp/egress-allow.mjs`]);
     await execa('docker', [
       'exec',
       '-d',
