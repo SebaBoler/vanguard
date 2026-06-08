@@ -42,6 +42,8 @@ export interface RunResult {
   usage?: AgentUsage;
   costUsd?: number;
   cacheEfficiency?: number;
+  /** Wall-clock duration of the agent run, in milliseconds. */
+  durationMs?: number;
   /** Raw agent output (stream-json), persisted as the run transcript; omitted from run.json. */
   transcript?: string;
 }

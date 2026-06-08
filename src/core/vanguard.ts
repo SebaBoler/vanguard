@@ -112,6 +112,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
 export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunResult> {
+  const startedAt = Date.now();
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -197,6 +198,8 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     const preserved = await ctx.wm.isDirty(ctx.worktreePath);
     const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'incomplete';
 
+    const durationMs = Date.now() - startedAt;
+
     const result: RunResult = {
       taskId: ctx.taskId,
       completed,
@@ -205,6 +208,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       worktreePath: ctx.worktreePath,
       worktreePreserved: preserved,
       finalText,
+      durationMs,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(diff !== '' ? { diff } : {}),
       ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
