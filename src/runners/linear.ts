@@ -7,6 +7,7 @@ import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxCom
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
+import { summarizeOutcomes } from '../core/run-summary.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
@@ -81,6 +82,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
       variables: { ...taskToVariables(task), ISSUE: issueRef },
       ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
+    console.log(summarizeOutcomes(outcomes));
     const prUrl = await commitAndPublish(ctx, task);
     await persistStageOutcomes(deps.repoPath, outcomes, prUrl);
     if (prUrl === undefined) return { task };

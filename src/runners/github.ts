@@ -9,6 +9,7 @@ import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxCom
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
+import { summarizeOutcomes } from '../core/run-summary.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
@@ -73,6 +74,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
       variables: taskToVariables(task),
       ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
+    console.log(summarizeOutcomes(outcomes));
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
     if (!commit.committed) {
       await persistStageOutcomes(deps.repoPath, outcomes);
