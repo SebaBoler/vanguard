@@ -171,6 +171,11 @@ describe('parseCli', () => {
     expect(parseCli(['watch'], '/work').kind).toBe('help');
   });
 
+  it('parses stats with defaults and flags', () => {
+    expect(parseCli(['stats'], '/work')).toEqual({ kind: 'stats', repoPath: '/work', json: false });
+    expect(parseCli(['stats', '--repo', '/r', '--json'], '/work')).toEqual({ kind: 'stats', repoPath: '/r', json: true });
+  });
+
   it('returns help when run has no source or more than one source', () => {
     expect(parseCli(['run'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');
