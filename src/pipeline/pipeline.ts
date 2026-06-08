@@ -281,6 +281,11 @@ export function withStageProvider(
   return stages.map((stage) => (stage.name === stageName ? { ...stage, provider } : stage));
 }
 
+/** Set `model` on one named stage (default: all stages when stageName is omitted). */
+export function withStageModel(stages: PipelineStage[], model: string, stageName?: string): PipelineStage[] {
+  return stages.map((stage) => (stageName === undefined || stage.name === stageName ? { ...stage, model } : stage));
+}
+
 /**
  * Plan with the most capable model, then implement and review with a faster one. The planner
  * (opus, high effort) emits a <plan>; the implementer and reviewer run on sonnet to cut cost and

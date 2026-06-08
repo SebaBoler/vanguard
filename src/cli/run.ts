@@ -69,6 +69,8 @@ function linearDeps(
     ...(cmd.reuse === true ? { reuse: true } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
   };
 }
@@ -106,6 +108,8 @@ async function runGithub(
   if (cmd.reuse === true) deps.reuse = true;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
@@ -128,6 +132,8 @@ async function runProject(
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,

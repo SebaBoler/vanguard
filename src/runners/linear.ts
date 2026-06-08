@@ -3,7 +3,7 @@ import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
@@ -37,6 +37,10 @@ export interface RunLinearIssueDeps extends ProviderChoice {
   reuse?: boolean;
   /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
   forkN?: number;
+  /** Model for the implementer/simplifier stages (default: provider's default). */
+  providerModel?: string;
+  /** Model for the review stage (default: provider's default). */
+  reviewModel?: string;
 }
 
 export interface RunLinearIssueResult {
@@ -76,7 +80,9 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     { skills },
   );
   try {
-    const pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
+    let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
+    if (deps.providerModel !== undefined) pipeline = withStageModel(pipeline, deps.providerModel);
+    if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
     const outcomes = await runStages(ctx, pipeline, {
       agent: agents.agent,
       variables: { ...taskToVariables(task), ISSUE: issueRef },
