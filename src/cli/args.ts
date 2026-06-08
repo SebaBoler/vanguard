@@ -21,6 +21,10 @@ export type Command =
       label?: string;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
+      /** Model for the implementer/simplifier stages (default: provider's default). */
+      providerModel?: string;
+      /** Model for the review stage (default: provider's default). */
+      reviewModel?: string;
       /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
       forkN?: number;
     }
@@ -46,6 +50,10 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
+      /** Model for the implementer/simplifier stages (default: provider's default). */
+      providerModel?: string;
+      /** Model for the review stage (default: provider's default). */
+      reviewModel?: string;
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'help' };
@@ -96,6 +104,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
+        // model selection per stage (run + watch)
+        'provider-model': { type: 'string' },
+        'review-model': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // stats
@@ -164,6 +175,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
   }
 
@@ -195,6 +208,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
   }
 
@@ -226,6 +241,8 @@ Commands:
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
     --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
     --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
+    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
+    --review-model <m>       Model for the review stage (default: provider's default)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -245,6 +262,8 @@ Commands:
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
     --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
     --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
+    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
+    --review-model <m>       Model for the review stage (default: provider's default)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
 
   gc options:

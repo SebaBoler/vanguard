@@ -17,6 +17,7 @@ import {
   planImplementAdversaryStages,
   adversarySystemPrompt,
   sandboxComplete,
+  withStageModel,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
@@ -289,6 +290,31 @@ describe('planImplementAdversaryStages', () => {
     expect(adversary?.systemPrompt).toContain('Adversarial');
     expect(adversary?.systemPrompt).not.toContain('senior software engineer');
     expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
+  });
+});
+
+describe('withStageModel', () => {
+  const stages: import('./pipeline.js').PipelineStage[] = [
+    { name: 'implementer', promptTemplate: 'impl' },
+    { name: 'reviewer', promptTemplate: 'review' },
+    { name: 'simplifier', promptTemplate: 'simplify' },
+  ];
+
+  it('sets model on every stage when stageName is omitted', () => {
+    const result = withStageModel(stages, 'opus');
+    expect(result.every((s) => s.model === 'opus')).toBe(true);
+  });
+
+  it('sets model only on the named stage and leaves others untouched', () => {
+    const result = withStageModel(stages, 'haiku', 'reviewer');
+    expect(result.find((s) => s.name === 'reviewer')?.model).toBe('haiku');
+    expect(result.find((s) => s.name === 'implementer')?.model).toBeUndefined();
+    expect(result.find((s) => s.name === 'simplifier')?.model).toBeUndefined();
+  });
+
+  it('does not mutate the original stages array', () => {
+    withStageModel(stages, 'sonnet');
+    expect(stages[0]?.model).toBeUndefined();
   });
 });
 

@@ -137,6 +137,24 @@ describe('parseCli', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work').kind).toBe('help');
   });
 
+  it('parses --provider-model and --review-model on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--provider-model', 'opus', '--review-model', 'haiku'], '/work');
+    expect(cmd.kind === 'run' && cmd.providerModel).toBe('opus');
+    expect(cmd.kind === 'run' && cmd.reviewModel).toBe('haiku');
+  });
+
+  it('omits providerModel and reviewModel when flags are absent', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'providerModel' in cmd).toBe(false);
+    expect(cmd.kind === 'run' && 'reviewModel' in cmd).toBe(false);
+  });
+
+  it('parses --provider-model and --review-model on watch', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard', '--provider-model', 'sonnet', '--review-model', 'haiku'], '/work');
+    expect(cmd.kind === 'watch' && cmd.providerModel).toBe('sonnet');
+    expect(cmd.kind === 'watch' && cmd.reviewModel).toBe('haiku');
+  });
+
   it('parses a linear watch with defaults and a required label', () => {
     expect(parseCli(['watch', '--label', 'vanguard', '--team', 'TES'], '/work')).toEqual({
       kind: 'watch',

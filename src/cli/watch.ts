@@ -62,6 +62,8 @@ async function watchLinearSource(
       ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+      ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+      ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     },
     label: cmd.label,
     triggerState: cmd.triggerState ?? 'unstarted',
@@ -85,6 +87,8 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, ctx: SandboxC
   if (ctx.llmProxy !== undefined) deps.llmProxy = ctx.llmProxy;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   return deps;
 }
 
