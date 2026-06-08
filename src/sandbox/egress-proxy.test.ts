@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { request } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { isAllowed, startEgressProxy, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
+import { isAllowed, startEgressProxy, egressEnv, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
 
 describe('isAllowed', () => {
   it('allows exact domains and subdomains, denies look-alikes', () => {
@@ -12,6 +12,32 @@ describe('isAllowed', () => {
     expect(isAllowed('github.com.evil.com', ['github.com'])).toBe(false);
     expect(isAllowed('evilgithub.com', ['github.com'])).toBe(false);
     expect(isAllowed('exfiltrate.me', DEFAULT_EGRESS_ALLOWLIST)).toBe(false);
+  });
+});
+
+describe('egressEnv', () => {
+  it('keeps NO_PROXY at localhost,127.0.0.1 and routes proxy vars (backward compatible)', () => {
+    const url = 'http://host.docker.internal:1234';
+    const env = egressEnv(url);
+    expect(env.NO_PROXY).toBe('localhost,127.0.0.1');
+    expect(env.HTTP_PROXY).toBe(url);
+    expect(env.HTTPS_PROXY).toBe(url);
+    expect(env.NODE_USE_ENV_PROXY).toBe('1');
+  });
+
+  it('appends extra noProxy hosts', () => {
+    const env = egressEnv('http://host.docker.internal:1234', { noProxy: ['vg-llm-abc'] });
+    expect(env.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-abc');
+  });
+});
+
+describe('allowlistWithout', () => {
+  it('drops exact host matches and keeps the other defaults', () => {
+    const result = allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com');
+    expect(result).not.toContain('api.anthropic.com');
+    expect(result).toContain('api.linear.app');
+    expect(result).toContain('github.com');
+    expect(result).toContain('registry.npmjs.org');
   });
 });
 

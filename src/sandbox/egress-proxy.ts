@@ -33,13 +33,18 @@ export interface EgressProxy {
  * makes Node 24's fetch/undici honor the proxy too, so the agent's own API traffic is covered in the
  * hard (internal-network) enclave, not just shell tools.
  */
-export function egressEnv(proxyUrl: string): Record<string, string> {
+export function egressEnv(proxyUrl: string, opts: { noProxy?: readonly string[] } = {}): Record<string, string> {
   return {
     HTTP_PROXY: proxyUrl,
     HTTPS_PROXY: proxyUrl,
-    NO_PROXY: 'localhost,127.0.0.1',
+    NO_PROXY: ['localhost', '127.0.0.1', ...(opts.noProxy ?? [])].join(','),
     NODE_USE_ENV_PROXY: '1',
   };
+}
+
+/** Returns the allowlist minus exact matches of `host` (e.g. drop api.anthropic.com when a trusted sidecar owns it). */
+export function allowlistWithout(list: readonly string[], host: string): string[] {
+  return list.filter((entry) => entry !== host);
 }
 
 /**
