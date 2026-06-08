@@ -1,9 +1,9 @@
 import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
-import { ClaudeCodeProvider } from '../agents/claude-code.js';
+import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
@@ -13,10 +13,11 @@ import type { RunContext } from '../core/vanguard.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
+import type { ProviderChoice } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single Linear issue end to end. */
-export interface RunLinearIssueDeps {
+export interface RunLinearIssueDeps extends ProviderChoice {
   auth: AgentAuth;
   linearKey: string;
   repoPath: string;
@@ -47,9 +48,11 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     skillRegistryFromDirectory(deps.skillsDir),
   ]);
 
+  const agents = selectAgents(deps);
+
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
-    secrets: { ...authSecrets(deps.auth), LINEAR_API_KEY: deps.linearKey },
+    secrets: { ...authSecrets(deps.auth), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
@@ -62,8 +65,9 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     { skills },
   );
   try {
-    const outcomes = await runStages(ctx, stages(), {
-      agent: new ClaudeCodeProvider(),
+    const pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
+    const outcomes = await runStages(ctx, pipeline, {
+      agent: agents.agent,
       variables: { ...taskToVariables(task), ISSUE: issueRef },
     });
     const prUrl = await commitAndPublish(ctx, task);

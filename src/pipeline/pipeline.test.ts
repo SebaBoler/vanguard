@@ -92,6 +92,24 @@ describe('runStages', () => {
     expect(received[1]?.prompt).toContain('feature.txt');
     await disposeContext(ctx);
   });
+
+  it('runs a stage on its own provider when stage.provider is set (cross-provider review)', async () => {
+    const wm = new WorktreeManager(repo);
+    const def: AgentRunInput[] = [];
+    const review: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'xp', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runStages(
+      ctx,
+      [
+        { name: 'implementer', promptTemplate: 'do' },
+        { name: 'reviewer', promptTemplate: 'review', provider: recordingAgent(review) },
+      ],
+      { agent: recordingAgent(def), variables: {} },
+    );
+    expect(def).toHaveLength(1); // implementer on the default provider only
+    expect(review).toHaveLength(1); // reviewer routed to its own provider
+    await disposeContext(ctx);
+  });
 });
 
 describe('runBudgetedStages', () => {

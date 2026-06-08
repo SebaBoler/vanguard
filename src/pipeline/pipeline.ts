@@ -21,6 +21,8 @@ export interface PipelineStage {
   systemPrompt?: string;
   /** Resume the previous stage's session so this stage keeps context. Default true. */
   resumePrevious?: boolean;
+  /** Run this stage on a specific provider instead of RunStagesOptions.agent (cross-provider review). */
+  provider?: AgentProvider;
 }
 
 export interface StageOutcome {
@@ -109,6 +111,7 @@ export async function runBudgetedStages(
       };
     }
     const resume = stage.resumePrevious ?? true;
+    const agent = stage.provider ?? opts.agent;
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
       PREVIOUS_DIFF: previous?.diff ?? '',
@@ -118,7 +121,7 @@ export async function runBudgetedStages(
 
     if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? 'implementer')) {
       const forkResult = await forkAndSelect(ctx, stage, {
-        agent: opts.agent,
+        agent,
         ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
         score: makeDiffScorer(opts.fork.complete),
         variables,
@@ -136,7 +139,7 @@ export async function runBudgetedStages(
 
     const result = await runAgent(ctx, {
       promptTemplate: stage.promptTemplate,
-      agent: opts.agent,
+      agent,
       variables,
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
@@ -236,6 +239,19 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));
+}
+
+/**
+ * Route one named stage (default 'reviewer') to a different provider, leaving the rest on the
+ * pipeline's default agent. This is the cross-provider review toggle: the implementer stays on the
+ * main provider while the reviewer runs on an independent one to catch different classes of bugs.
+ */
+export function withStageProvider(
+  stages: PipelineStage[],
+  provider: AgentProvider,
+  stageName = 'reviewer',
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, provider } : stage));
 }
 
 /**

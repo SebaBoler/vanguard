@@ -3,19 +3,20 @@ import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
 import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
-import { ClaudeCodeProvider } from '../agents/claude-code.js';
+import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
 import { egressEnv } from '../sandbox/egress-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
+import type { ProviderChoice } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
-export interface RunGithubIssueDeps {
+export interface RunGithubIssueDeps extends ProviderChoice {
   auth: AgentAuth;
   repoPath: string;
   repoSlug: string;
@@ -41,9 +42,11 @@ export interface RunGithubIssueResult {
 export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps): Promise<RunGithubIssueResult> {
   const task = await new GitHubTaskFetcher(deps.repoSlug).fetch(issueRef);
 
+  const agents = selectAgents(deps);
+
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
-    secrets: authSecrets(deps.auth),
+    secrets: { ...authSecrets(deps.auth), ...agents.secrets },
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
@@ -53,8 +56,10 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
 
   const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) });
   try {
-    const outcomes = await runStages(ctx, implementReviewSimplifyStages(), {
-      agent: new ClaudeCodeProvider(),
+    const base = implementReviewSimplifyStages();
+    const pipeline = agents.reviewAgent !== undefined ? withStageProvider(base, agents.reviewAgent) : base;
+    const outcomes = await runStages(ctx, pipeline, {
+      agent: agents.agent,
       variables: taskToVariables(task),
     });
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });

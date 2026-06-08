@@ -1,4 +1,6 @@
 import { parseArgs } from 'node:util';
+import { isProviderName } from '../agents/registry.js';
+import type { ProviderName } from '../agents/registry.js';
 
 export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean; abandoned: boolean }
@@ -15,6 +17,8 @@ export type Command =
       skillsDir?: string;
       repoSlug?: string;
       label?: string;
+      provider?: ProviderName;
+      reviewProvider?: ProviderName;
     }
   | {
       kind: 'watch';
@@ -34,6 +38,8 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
+      provider?: ProviderName;
+      reviewProvider?: ProviderName;
     }
   | { kind: 'help' };
 
@@ -79,6 +85,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        // provider selection (run + watch)
+        provider: { type: 'string' },
+        'review-provider': { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -90,6 +99,14 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   if (values.help === true) return { kind: 'help' };
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
+
+  // Provider flags (run + watch). An unknown provider name resolves to help.
+  const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
+  const reviewProviderRaw = typeof values['review-provider'] === 'string' ? values['review-provider'] : undefined;
+  if (providerRaw !== undefined && !isProviderName(providerRaw)) return { kind: 'help' };
+  if (reviewProviderRaw !== undefined && !isProviderName(reviewProviderRaw)) return { kind: 'help' };
+  const provider: ProviderName | undefined = providerRaw;
+  const reviewProvider: ProviderName | undefined = reviewProviderRaw;
 
   if (positionals[0] === 'gc') {
     const hours = Number(values['max-age-hours']);
@@ -126,6 +143,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
     };
   }
 
@@ -154,6 +173,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
     };
   }
 
@@ -182,6 +203,8 @@ Commands:
                            linear: "In Review"; github: "vanguard:review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
+    --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -198,6 +221,8 @@ Commands:
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
+    --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
@@ -206,5 +231,6 @@ Commands:
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
 
-Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear).
+Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
+     CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor).
 `;
