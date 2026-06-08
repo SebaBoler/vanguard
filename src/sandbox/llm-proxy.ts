@@ -28,7 +28,19 @@ export interface LlmProxy {
   url: string;
   /** Per-run nonce the sandbox presents as ANTHROPIC_AUTH_TOKEN; the proxy validates it. */
   nonce: string;
+  /** Sidecar container name (the `vg-llm-<id>` host inside the url) — also the NO_PROXY entry. */
+  host: string;
   destroy: () => Promise<void>;
+}
+
+/** The per-source LLM-proxy wiring threaded into a runner when `--llm-proxy` is active. */
+export interface LlmProxyDep {
+  /** Proxy URL the sandbox uses as ANTHROPIC_BASE_URL. */
+  url: string;
+  /** Per-run nonce the sandbox presents as ANTHROPIC_AUTH_TOKEN. */
+  nonce: string;
+  /** Sidecar container name (added to NO_PROXY so the sandbox reaches it directly). */
+  host: string;
 }
 
 /**
@@ -77,7 +89,7 @@ export async function startLlmProxy(opts: {
       'node',
       '/tmp/llm-proxy.mjs',
     ]);
-    return { url: `http://${name}:${PROXY_PORT}`, nonce, destroy: teardown };
+    return { url: `http://${name}:${PROXY_PORT}`, nonce, host: name, destroy: teardown };
   } catch (cause) {
     await teardown();
     throw new SandboxError(`Failed to start llm proxy ${id}`, { cause });

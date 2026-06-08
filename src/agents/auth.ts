@@ -12,6 +12,13 @@ export function authSecrets(auth: AgentAuth): Record<string, string> {
   return { [API_ENV]: auth.apiKey };
 }
 
+/** Map an AgentAuth to the single-secret shape startLlmProxy wants (subscription token / api key). */
+export function llmProxyAuth(auth: AgentAuth): { mode: 'subscription' | 'api'; secret: string } {
+  return auth.mode === 'subscription'
+    ? { mode: 'subscription', secret: auth.token }
+    : { mode: 'api', secret: auth.apiKey };
+}
+
 /** Resolve auth from the environment, preferring the subscription token (Vanguard default). */
 export function authFromEnv(env: NodeJS.ProcessEnv = process.env): AgentAuth | undefined {
   const token = env[SUBSCRIPTION_ENV];

@@ -9,7 +9,8 @@ import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxCom
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
-import { egressEnv } from '../sandbox/egress-proxy.js';
+import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
+import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice } from '../agents/registry.js';
@@ -28,7 +29,7 @@ export interface RunGithubIssueDeps extends ProviderChoice {
    * When set, route Claude through a trusted LLM-proxy sidecar: the real Anthropic credential stays
    * out of the sandbox, which authenticates with the per-run nonce against the proxy host instead.
    */
-  llmProxy?: { url: string; nonce: string; host: string };
+  llmProxy?: LlmProxyDep;
   /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
   reuse?: boolean;
   /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
@@ -51,6 +52,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
 
   const agents = selectAgents(deps);
 
+  const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy);
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
@@ -58,17 +60,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
-    ...(deps.llmProxy !== undefined && deps.proxyUrl !== undefined
-      ? {
-          env: {
-            ...egressEnv(deps.proxyUrl, { noProxy: [deps.llmProxy.host] }),
-            ANTHROPIC_BASE_URL: deps.llmProxy.url,
-            ANTHROPIC_AUTH_TOKEN: deps.llmProxy.nonce,
-          },
-        }
-      : deps.proxyUrl !== undefined
-        ? { env: egressEnv(deps.proxyUrl) }
-        : {}),
+    ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 

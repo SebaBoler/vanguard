@@ -19,6 +19,8 @@ describe('startLlmProxy', () => {
       docker: d.run,
     });
     expect(proxy.url).toMatch(/^http:\/\/vg-llm-.*:\d+$/);
+    expect(proxy.host).toMatch(/^vg-llm-/);
+    expect(proxy.url).toContain(proxy.host);
     expect(proxy.nonce.length).toBeGreaterThanOrEqual(16);
     const flat = d.calls.flatMap((c) => c.args).join(' ');
     expect(flat).not.toContain('OAT-SECRET'); // never on argv

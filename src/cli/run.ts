@@ -1,25 +1,15 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
-import { startEgressEnclave } from '../sandbox/egress-network.js';
-import { startLlmProxy } from '../sandbox/llm-proxy.js';
-import { allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from '../sandbox/egress-proxy.js';
+import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
-import type { LlmProxy } from '../sandbox/llm-proxy.js';
+import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { Command } from './args.js';
 
 type RunCommand = Extract<Command, { kind: 'run' }>;
-
-/** Per-source deps share this LLM-proxy shape (sidecar url + nonce + host) when `--llm-proxy` is active. */
-type LlmProxyDep = { url: string; nonce: string; host: string };
-
-/** Map an AgentAuth to the single-secret shape startLlmProxy wants (subscription token / api key). */
-function llmProxyAuth(auth: AgentAuth): { mode: 'subscription' | 'api'; secret: string } {
-  return auth.mode === 'subscription' ? { mode: 'subscription', secret: auth.token } : { mode: 'api', secret: auth.apiKey };
-}
 
 /** Dispatch `vanguard run` to the right source runner, assembling deps from env + flags. */
 export async function runCommand(cmd: RunCommand): Promise<void> {
@@ -29,35 +19,19 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to Anthropic.
-  const enclave =
-    cmd.egress || cmd.llmProxy === true
-      ? await startEgressEnclave(
-          cmd.llmProxy === true ? { allowlist: allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com') } : {},
-        )
-      : undefined;
-  if (enclave !== undefined) console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
-
-  let llmProxy: LlmProxy | undefined;
-  let llmProxyDep: LlmProxyDep | undefined;
-  if (cmd.llmProxy === true && enclave !== undefined) {
-    llmProxy = await startLlmProxy({ network: enclave.network, auth: llmProxyAuth(requireAuth()) });
-    llmProxyDep = { url: llmProxy.url, nonce: llmProxy.nonce, host: new URL(llmProxy.url).hostname };
-    console.log('llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.');
-  }
+  const auth = requireAuth();
+  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth });
 
   try {
     if (cmd.source === 'linear') {
-      await runLinear(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
+      await runLinear(cmd, auth, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else if (cmd.source === 'project') {
-      await runProject(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
+      await runProject(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else {
-      await runGithub(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
+      await runGithub(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     }
   } finally {
-    // Destroy the llm-proxy before the enclave (it lives on the enclave's network).
-    if (llmProxy !== undefined) await llmProxy.destroy();
-    if (enclave !== undefined) await enclave.destroy();
+    await ctx.destroy();
   }
 }
 
@@ -71,6 +45,7 @@ function requireAuth(): AgentAuth {
 
 function linearDeps(
   cmd: RunCommand,
+  auth: AgentAuth,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
@@ -84,7 +59,7 @@ function linearDeps(
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
   return {
-    auth: requireAuth(),
+    auth,
     linearKey,
     skillsDir,
     repoPath: cmd.repoPath,
@@ -100,11 +75,12 @@ function linearDeps(
 
 async function runLinear(
   cmd: RunCommand,
+  auth: AgentAuth,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
-  const deps = linearDeps(cmd, proxyUrl, network, llmProxy);
+  const deps = linearDeps(cmd, auth, proxyUrl, network, llmProxy);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
     report(result.task.id, result.prUrl);
