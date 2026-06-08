@@ -1,5 +1,6 @@
 import { stageMetric } from './run-metric.js';
 import { cacheEfficiency } from '../agents/provider.js';
+import { alignTable } from './table.js';
 import type { RunResult } from './types.js';
 
 /** A single stage's outcome, as produced by the pipeline. */
@@ -8,48 +9,14 @@ export interface SummaryOutcome {
   result: RunResult;
 }
 
-interface Row {
-  stage: string;
-  exit: string;
-  turns: string;
-  input: string;
-  output: string;
-  cacheRead: string;
-  cachePct: string;
-  cost: string;
-  duration: string;
-}
-
-const HEADERS: Row = {
-  stage: 'stage',
-  exit: 'exit',
-  turns: 'turns',
-  input: 'in',
-  output: 'out',
-  cacheRead: 'cacheR',
-  cachePct: 'cache%',
-  cost: '$cost',
-  duration: 'time',
-};
-
-const COLUMNS: ReadonlyArray<keyof Row> = [
-  'stage',
-  'exit',
-  'turns',
-  'input',
-  'output',
-  'cacheRead',
-  'cachePct',
-  'cost',
-  'duration',
-];
-
-function seconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
-}
+const HEADER = ['stage', 'exit', 'turns', 'in', 'out', 'cacheR', 'cache%', '$cost', 'time'];
 
 function pct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
+}
+
+function seconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 /**
@@ -65,7 +32,7 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
   let totalDurationMs = 0;
   let totalTurns = 0;
 
-  const stageRows: Row[] = outcomes.map(({ name, result }) => {
+  const stageRows: string[][] = outcomes.map(({ name, result }) => {
     const m = stageMetric(result, name);
     totalCost += m.costUsd;
     totalInput += m.inputTokens;
@@ -73,38 +40,30 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
     totalCacheRead += m.cacheReadInputTokens;
     totalDurationMs += m.durationMs;
     totalTurns += m.turns;
-    return {
-      stage: name,
-      exit: m.exitReason,
-      turns: String(m.turns),
-      input: String(m.inputTokens),
-      output: String(m.outputTokens),
-      cacheRead: String(m.cacheReadInputTokens),
-      cachePct: pct(m.cacheEfficiency),
-      cost: m.costUsd.toFixed(4),
-      duration: seconds(m.durationMs),
-    };
+    return [
+      name,
+      m.exitReason,
+      String(m.turns),
+      String(m.inputTokens),
+      String(m.outputTokens),
+      String(m.cacheReadInputTokens),
+      pct(m.cacheEfficiency),
+      m.costUsd.toFixed(4),
+      seconds(m.durationMs),
+    ];
   });
 
-  const totalRow: Row = {
-    stage: 'TOTAL',
-    exit: '',
-    turns: String(totalTurns),
-    input: String(totalInput),
-    output: String(totalOutput),
-    cacheRead: String(totalCacheRead),
-    cachePct: pct(cacheEfficiency({ inputTokens: totalInput, outputTokens: totalOutput, cacheReadInputTokens: totalCacheRead })),
-    cost: totalCost.toFixed(4),
-    duration: seconds(totalDurationMs),
-  };
+  const totalRow = [
+    'TOTAL',
+    '',
+    String(totalTurns),
+    String(totalInput),
+    String(totalOutput),
+    String(totalCacheRead),
+    pct(cacheEfficiency({ inputTokens: totalInput, outputTokens: totalOutput, cacheReadInputTokens: totalCacheRead })),
+    totalCost.toFixed(4),
+    seconds(totalDurationMs),
+  ];
 
-  const allRows: Row[] = [HEADERS, ...stageRows, totalRow];
-  const widths = new Map<keyof Row, number>(
-    COLUMNS.map((col) => [col, Math.max(...allRows.map((row) => row[col].length))]),
-  );
-
-  const formatRow = (row: Row): string =>
-    COLUMNS.map((col) => row[col].padEnd(widths.get(col) ?? 0)).join('  ').trimEnd();
-
-  return allRows.map(formatRow).join('\n');
+  return alignTable([HEADER, ...stageRows, totalRow]);
 }

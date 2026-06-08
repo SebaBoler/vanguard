@@ -47,6 +47,7 @@ export type Command =
       provider?: ProviderName;
       reviewProvider?: ProviderName;
     }
+  | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'help' };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -97,6 +98,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-provider': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
+        // stats
+        json: { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -116,6 +119,10 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (reviewProviderRaw !== undefined && !isProviderName(reviewProviderRaw)) return { kind: 'help' };
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
+
+  if (positionals[0] === 'stats') {
+    return { kind: 'stats', repoPath, json: values.json === true };
+  }
 
   if (positionals[0] === 'gc') {
     const hours = Number(values['max-age-hours']);
@@ -199,6 +206,7 @@ export const USAGE = `vanguard <command>
 Commands:
   run    Run an agent on a task and open a draft PR for review.
   watch  Poll Linear and run each newly-ready issue automatically (the AFK factory loop).
+  stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
 
@@ -245,6 +253,10 @@ Commands:
     --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
+
+  stats options:
+    --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to read (default: cwd)
+    --json                 Emit the aggregated report as JSON instead of tables
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
      CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor).
