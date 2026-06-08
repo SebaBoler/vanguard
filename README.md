@@ -10,12 +10,24 @@
 </p>
 
 <p align="center">
-  An autonomous "software factory": take a task, run a Claude Code agent in an isolated sandbox on its
-  own <code>git worktree</code>, and produce a reviewable branch and PR. A standalone TypeScript framework,
-  not a wrapper around another tool.
+  A self-improving software factory: take a task (Linear / GitHub), run a Claude Code agent in an
+  isolated Docker sandbox on its own <code>git worktree</code>, and get back a reviewed, verifiable
+  pull request. When the agent fails, you fix the <em>harness</em> — the prompt, the skill, the tool,
+  the limit — not the agent's output, so the same failure can't happen twice. A standalone TypeScript
+  framework, not a wrapper around another tool.
 </p>
 
-Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested.
+Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested. Runs autonomously (AFK) as a `watch` loop; deployed always-on on Docker (Synology / Hetzner / any host).
+
+## Design philosophy
+
+Vanguard treats autonomous coding as an engineering system, not a prompt-and-pray script. Five principles separate it from "run an agent in a loop":
+
+- **Harness over code.** Every agent failure is a *harness* failure. Instead of hand-fixing the agent's output, you fix the instruction, skill, tool, or sandbox limit so the system is immune to that failure class next time. Real cases this codebase hardened against: a macOS worktree-path mismatch, a dangling-symlink copy-back crash, and a Synology kernel with no CPU CFS scheduler — each became a permanent fix, not a one-off patch.
+- **Trade-off reasoning.** System prompts state the *business cost* of decisions — a wrong or sloppy change costs reviewer trust and rework far more than the seconds a typecheck or test run takes — so the model spends "effort" (adaptive thinking) where it matters and escalates when it should, via the `<tradeoffs>` section of the default system prompt.
+- **Token-efficiency by construction.** Sessions are captured to the host and resumed/forked to reuse cached context instead of paying twice for it; `cacheReadInputTokens` and a derived `cacheEfficiency` are first-class on every `RunResult` and tracked per stage. Real runs sit at 97–99% cache, which is what makes always-on AFK economical.
+- **Evals-first.** A judge-scored eval suite over control (ambiguous), edge, and refusal/hand-off cases guards against regressions when a model or prompt changes — pass rate and verdict score, not subjective vibes.
+- **Verifiable run artifacts.** Every run leaves an auditable trail under `.vanguard/runs/`: a per-stage transcript, a **git bundle of the exact changes**, the diff, and one `run_complete` metric line (cost, tokens, cache efficiency, duration, exit reason). `vanguard stats` rolls it up across the fleet. This is what makes an AFK-generated PR trustworthy. *(On the roadmap: cryptographic SHA-256 attestation of test logs and visual proofs for UI changes; a retrospective memory that learns across runs.)*
 
 ## How it works
 
