@@ -64,6 +64,32 @@ export interface RunStagesOptions {
   fork?: ForkOptions;
 }
 
+/** Sandbox dir for the fork scorer: a throwaway cwd so any stray write never touches the worktree. */
+const SCORER_WORKDIR = '/tmp';
+
+/**
+ * A Complete backed by a one-shot agent run in the shared sandbox, used to score fork variants. Runs
+ * the given provider (provider-agnostic) with maxTurns 1 in /tmp — the diff to rate is supplied
+ * entirely in the prompt, so the scorer needs no worktree access and any stray file write lands in a
+ * throwaway dir, never the code under review. Lets `run --fork` score variants without a host LLM SDK.
+ */
+export function sandboxComplete(ctx: RunContext, agent: AgentProvider, signal?: AbortSignal): Complete {
+  return async (prompt: string): Promise<string> => {
+    const gen = agent.run({
+      prompt,
+      sandbox: ctx.sandbox,
+      workdir: SCORER_WORKDIR,
+      home: ctx.home,
+      maxTurns: 1,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    for (;;) {
+      const next = await gen.next();
+      if (next.done) return next.value.finalText;
+    }
+  };
+}
+
 /** Build a scorer that asks the LLM to rate a diff, returning an EvalVerdict. */
 function makeDiffScorer(complete: Complete): (diff: string, result: RunResult) => Promise<EvalVerdict> {
   return async (diff) => {

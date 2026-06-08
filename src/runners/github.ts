@@ -5,7 +5,7 @@ import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
@@ -26,6 +26,8 @@ export interface RunGithubIssueDeps extends ProviderChoice {
   network?: string;
   /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
   reuse?: boolean;
+  /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
+  forkN?: number;
 }
 
 export interface RunGithubIssueResult {
@@ -61,6 +63,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     const outcomes = await runStages(ctx, pipeline, {
       agent: agents.agent,
       variables: taskToVariables(task),
+      ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
     if (!commit.committed) {

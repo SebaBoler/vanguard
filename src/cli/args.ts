@@ -19,6 +19,8 @@ export type Command =
       label?: string;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
+      /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
+      forkN?: number;
     }
   | {
       kind: 'watch';
@@ -88,6 +90,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
+        // fork-and-select (run)
+        fork: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -130,6 +134,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     const picked = sources[0];
     if (sources.length !== 1 || picked === undefined) return { kind: 'help' };
     const concurrency = Number(values.concurrency);
+    const forkN = Number(values.fork);
     return {
       kind: 'run',
       source: picked[0],
@@ -139,6 +144,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      ...(Number.isFinite(forkN) && forkN >= 2 ? { forkN: Math.floor(forkN) } : {}),
       ...(values.reuse === true ? { reuse: true } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
@@ -223,6 +229,7 @@ Commands:
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
     --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
     --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
+    --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
