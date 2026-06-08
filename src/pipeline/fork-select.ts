@@ -64,6 +64,7 @@ export async function forkAndSelect(
     const input: StageInput = {
       promptTemplate: stage.promptTemplate,
       agent: opts.agent,
+      stageName: stage.name,
       variables: opts.variables ?? {},
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),

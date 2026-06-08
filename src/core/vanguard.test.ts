@@ -8,6 +8,32 @@ import { WorktreeManager } from '../worktree/manager.js';
 import type { RunOptions } from './types.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
+import type { VanguardLogger } from './logger.js';
+
+interface LogEntry {
+  obj: Record<string, unknown>;
+  msg: string;
+}
+
+interface CaptureLogger {
+  logger: VanguardLogger;
+  entries: LogEntry[];
+}
+
+/** A Pino-shaped logger that records every call so tests can assert on emitted lifecycle logs. */
+function captureLogger(): CaptureLogger {
+  const entries: LogEntry[] = [];
+  const record = (obj: Record<string, unknown>, msg: string): void => {
+    entries.push({ obj, msg });
+  };
+  const logger = {
+    info: record,
+    warn: record,
+    error: record,
+    debug: record,
+  } as unknown as VanguardLogger;
+  return { logger, entries };
+}
 
 let repo: string;
 
@@ -154,5 +180,38 @@ describe('vanguard.run', () => {
     });
     const res = await run({ taskId: 'ce', localRepoPath: repo, promptTemplate: 'p', sandbox, agent }, { worktrees: wm });
     expect(res.cacheEfficiency).toBeCloseTo(0.75);
+  });
+
+  it('emits a stage complete info log carrying metric fields and no secret content', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const { logger, entries } = captureLogger();
+    const agent = fakeAgent([{ text: 'secret model output' }], {
+      finalText: 'secret model output',
+      turns: 1,
+      usage: { inputTokens: 5, outputTokens: 2, cacheReadInputTokens: 0 },
+      costUsd: 0.01,
+    });
+    const ctx = await prepareContext(
+      { taskId: 'log-1', localRepoPath: repo, sandbox, logger },
+      { worktrees: wm },
+    );
+    await runAgent(ctx, { promptTemplate: 'p', agent, stageName: 'implementer' });
+    await disposeContext(ctx);
+
+    expect(entries.some((e) => e.msg === 'run start')).toBe(true);
+    const start = entries.find((e) => e.msg === 'stage start');
+    expect(start?.obj.stage).toBe('implementer');
+
+    const complete = entries.find((e) => e.msg === 'stage complete');
+    expect(complete).toBeDefined();
+    expect(complete?.obj).toHaveProperty('durationMs');
+    expect(complete?.obj).toHaveProperty('costUsd');
+    expect(complete?.obj.stage).toBe('implementer');
+    // SECRET SAFETY: stage-complete must never carry model output / prompt content.
+    expect(complete?.obj).not.toHaveProperty('finalText');
+    expect(complete?.obj).not.toHaveProperty('diff');
+    expect(complete?.obj).not.toHaveProperty('transcript');
+    expect(JSON.stringify(complete?.obj)).not.toContain('secret model output');
   });
 });

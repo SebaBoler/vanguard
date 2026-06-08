@@ -166,6 +166,7 @@ export async function runBudgetedStages(
     const result = await runAgent(ctx, {
       promptTemplate: stage.promptTemplate,
       agent,
+      stageName: stage.name,
       variables,
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
