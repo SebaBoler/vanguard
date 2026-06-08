@@ -95,6 +95,28 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && 'reuse' in cmd).toBe(false);
   });
 
+  it('parses --provider and --review-provider (cross-provider review)', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--provider', 'claude', '--review-provider', 'codex'], '/work');
+    expect(cmd.kind === 'run' && cmd.provider).toBe('claude');
+    expect(cmd.kind === 'run' && cmd.reviewProvider).toBe('codex');
+  });
+
+  it('parses provider flags on watch too', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard', '--provider', 'codex'], '/work');
+    expect(cmd.kind === 'watch' && cmd.provider).toBe('codex');
+  });
+
+  it('omits provider fields when the flags are absent', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'provider' in cmd).toBe(false);
+    expect(cmd.kind === 'run' && 'reviewProvider' in cmd).toBe(false);
+  });
+
+  it('returns help for an unknown provider name', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work').kind).toBe('help');
+    expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work').kind).toBe('help');
+  });
+
   it('parses a linear watch with defaults and a required label', () => {
     expect(parseCli(['watch', '--label', 'vanguard', '--team', 'TES'], '/work')).toEqual({
       kind: 'watch',

@@ -59,6 +59,8 @@ async function watchLinearSource(
       skillsDir,
       repoPath: cmd.repoPath,
       ...(enclave !== undefined ? { proxyUrl: enclave.proxyUrl, network: enclave.network } : {}),
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
     },
     label: cmd.label,
     triggerState: cmd.triggerState ?? 'unstarted',
@@ -79,6 +81,8 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, enclave: Egre
     deps.proxyUrl = enclave.proxyUrl;
     deps.network = enclave.network;
   }
+  if (cmd.provider !== undefined) deps.provider = cmd.provider;
+  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   return deps;
 }
 

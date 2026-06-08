@@ -58,6 +58,8 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: stri
     ...(proxyUrl !== undefined ? { proxyUrl } : {}),
     ...(network !== undefined ? { network } : {}),
     ...(cmd.reuse === true ? { reuse: true } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
   };
 }
 
@@ -80,6 +82,8 @@ async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network:
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (cmd.reuse === true) deps.reuse = true;
+  if (cmd.provider !== undefined) deps.provider = cmd.provider;
+  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -93,6 +97,8 @@ async function runProject(cmd: RunCommand, proxyUrl: string | undefined, network
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
+  if (cmd.provider !== undefined) deps.provider = cmd.provider;
+  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

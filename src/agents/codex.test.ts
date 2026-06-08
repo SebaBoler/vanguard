@@ -99,6 +99,22 @@ describe('CodexProvider', () => {
     expect(captured.command).toContain('danger-full-access');
   });
 
+  it('logs in with the API key (piped from env, not on argv) before exec', async () => {
+    const commands: string[] = [];
+    const sandbox = {
+      exec: async (command: string): Promise<ExecResult> => {
+        commands.push(command);
+        return { stdout: cannedJsonl, stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const gen = new CodexProvider().run(input(sandbox));
+    for await (const turn of gen) void turn;
+    expect(commands[0]).toContain('codex login --with-api-key');
+    expect(commands[0]).toContain('$OPENAI_API_KEY'); // key read from env, never embedded on the command line
+    expect(commands[1]).toContain('codex');
+    expect(commands[1]).toContain('exec');
+  });
+
   it('includes -m flag when model is specified', async () => {
     const { sandbox, captured } = capturingSandbox();
     const gen = new CodexProvider().run({ prompt: 'p', sandbox, workdir: '/workspace', home: '/root', model: 'o4-mini' });

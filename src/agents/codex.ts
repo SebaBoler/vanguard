@@ -35,14 +35,23 @@ export class CodexProvider implements AgentProvider {
   readonly name = 'codex';
 
   async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+    const sh = input.sandbox.exec.bind(input.sandbox);
+    const execOpts = {
+      cwd: input.workdir,
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    };
+
+    // codex exec authenticates from the auth.json that `codex login` writes, not from the environment
+    // directly. Log in with the API key first, piped from the OPENAI_API_KEY secret inside the sandbox
+    // so the key never reaches the command line or process args. Best-effort: a missing or invalid key
+    // surfaces as an auth failure on the exec below, caught by the graceful-exit guard.
+    await sh('printf %s "$OPENAI_API_KEY" | codex login --with-api-key', execOpts);
+
     const args = buildArgs(input);
     args.push(input.prompt);
     const command = `codex ${args.map(shellQuote).join(' ')}`;
 
-    const res = await input.sandbox.exec(command, {
-      cwd: input.workdir,
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    });
+    const res = await sh(command, execOpts);
 
     let sessionId: string | undefined;
     let finalText = '';
