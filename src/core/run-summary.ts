@@ -1,4 +1,5 @@
 import { stageMetric } from './run-metric.js';
+import { cacheEfficiency } from '../agents/provider.js';
 import type { RunResult } from './types.js';
 
 /** A single stage's outcome, as produced by the pipeline. */
@@ -47,10 +48,8 @@ function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function cachePercent(cacheRead: number, input: number): string {
-  const total = input + cacheRead;
-  if (total === 0) return '0%';
-  return `${Math.round((cacheRead / total) * 100)}%`;
+function pct(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`;
 }
 
 /**
@@ -81,7 +80,7 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
       input: String(m.inputTokens),
       output: String(m.outputTokens),
       cacheRead: String(m.cacheReadInputTokens),
-      cachePct: cachePercent(m.cacheReadInputTokens, m.inputTokens),
+      cachePct: pct(m.cacheEfficiency),
       cost: m.costUsd.toFixed(4),
       duration: seconds(m.durationMs),
     };
@@ -94,7 +93,7 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
     input: String(totalInput),
     output: String(totalOutput),
     cacheRead: String(totalCacheRead),
-    cachePct: cachePercent(totalCacheRead, totalInput),
+    cachePct: pct(cacheEfficiency({ inputTokens: totalInput, outputTokens: totalOutput, cacheReadInputTokens: totalCacheRead })),
     cost: totalCost.toFixed(4),
     duration: seconds(totalDurationMs),
   };
@@ -107,5 +106,5 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
   const formatRow = (row: Row): string =>
     COLUMNS.map((col) => row[col].padEnd(widths.get(col) ?? 0)).join('  ').trimEnd();
 
-  return [formatRow(HEADERS), ...stageRows.map(formatRow), formatRow(totalRow)].join('\n');
+  return allRows.map(formatRow).join('\n');
 }
