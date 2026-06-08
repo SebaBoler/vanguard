@@ -7,6 +7,9 @@ const PROXY_PORT = 8088;
 const SECRET_FILE = '/tmp/llm-proxy-secret';
 // Resolves to dist/sandbox/llm-proxy-server.mjs (built) or src/... (tsx) — next to this module.
 const PROXY_SCRIPT = fileURLToPath(new URL('./llm-proxy-server.mjs', import.meta.url));
+// Shared pure logic the server imports via a relative `./llm-proxy-rewrite.mjs`; cp'd into the SAME
+// /tmp dir so that relative import resolves inside the container.
+const PROXY_LOGIC = fileURLToPath(new URL('./llm-proxy-rewrite.mjs', import.meta.url));
 
 /** Injectable docker runner so the host orchestration is testable without touching real docker. */
 export type DockerRunner = (
@@ -72,6 +75,8 @@ export async function startLlmProxy(opts: {
     await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, image, 'sleep', 'infinity']);
     await docker(['network', 'connect', opts.network, name]);
     await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
+    // The shared logic must sit next to the server so its relative import resolves.
+    await docker(['cp', PROXY_LOGIC, `${name}:/tmp/llm-proxy-rewrite.mjs`]);
     // Write the secret file via stdin (umask 077) so the secret never appears in argv or docker inspect.
     const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\n`;
     const write = await docker(['exec', '-i', name, 'sh', '-c', `umask 077; cat > ${SECRET_FILE}`], { input: secretBody });

@@ -2,25 +2,11 @@ import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { LlmProxyDep } from './llm-proxy.js';
+// Single source of the allow semantics + default allowlist: the same plain-ESM `.mjs` the sidecar
+// imports (see egress-allow.mjs). Re-exported below so existing import sites keep working.
+import { isAllowed, DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
 
-/** Domains the sandbox legitimately needs: the agent, task sources, and package registries. */
-export const DEFAULT_EGRESS_ALLOWLIST: readonly string[] = [
-  'api.anthropic.com',
-  'api.linear.app',
-  'github.com',
-  'api.github.com',
-  'codeload.github.com',
-  'objects.githubusercontent.com',
-  'registry.npmjs.org',
-  'pypi.org',
-  'files.pythonhosted.org',
-];
-
-/** True if host equals an allowlist entry or is a subdomain of one (so `github.com.evil.com` is denied). */
-export function isAllowed(host: string, allowlist: readonly string[]): boolean {
-  const h = host.toLowerCase();
-  return allowlist.some((domain) => h === domain || h.endsWith(`.${domain}`));
-}
+export { isAllowed, DEFAULT_EGRESS_ALLOWLIST };
 
 export interface EgressProxy {
   port: number;

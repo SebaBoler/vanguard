@@ -16,3 +16,4 @@ id_rsa*
 
 # lokalne ustawienia Claude Code (per-maszyna)
 .claude/settings.local.json
+.gstack/

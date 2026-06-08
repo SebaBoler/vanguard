@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Standalone zero-dep LLM reverse-proxy for the host enclave sidecar. Holds the real Anthropic
 // credential (read from a tmpfs file, never argv/env) and swaps it in for a per-run nonce, then
-// forwards to api.anthropic.com. The pure logic lives in llm-proxy-rewrite.ts; keep auth/beta/path
-// semantics in sync with that file.
+// forwards to api.anthropic.com. The pure auth/beta/path/compare logic is imported from the shared
+// `llm-proxy-rewrite.mjs`, which the host `docker cp`'s next to this file — the SAME module the TS
+// app and its tests use, so the two never drift.
 //
 // SECURITY: never log request/response headers, bodies, the secret, or the nonce. Inbound nonce
 // check is constant-time. Locked down to POST /v1/messages and /v1/messages/count_tokens.
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { upstreamAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
 
-const OAUTH_BETA = 'oauth-2025-04-20';
 const UPSTREAM_HOST = 'api.anthropic.com';
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -67,45 +67,6 @@ function parseSecretFile(text) {
   return out;
 }
 
-// --- pure logic mirrored from llm-proxy-rewrite.ts ---
-function betaToString(value) {
-  return Array.isArray(value) ? value.join(',') : value;
-}
-
-function mergeAnthropicBeta(incoming, extra) {
-  const parts = (betaToString(incoming) ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '');
-  if (!parts.includes(extra)) parts.push(extra);
-  return parts.join(',');
-}
-
-function upstreamAuthHeaders(auth, reqHeaders) {
-  const beta = betaToString(reqHeaders['anthropic-beta']);
-  if (auth.mode === 'subscription') {
-    return { authorization: `Bearer ${auth.secret}`, 'anthropic-beta': mergeAnthropicBeta(beta, OAUTH_BETA) };
-  }
-  return { 'x-api-key': auth.secret, ...(beta !== undefined ? { 'anthropic-beta': beta } : {}) };
-}
-
-const ALLOWED = new Set(['/v1/messages', '/v1/messages/count_tokens']);
-function isAllowedLlmPath(method, path) {
-  if ((method ?? '').toUpperCase() !== 'POST') return false;
-  const p = (path ?? '').split('?')[0] ?? '';
-  return ALLOWED.has(p);
-}
-
-function constantTimeEqual(a, b) {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) {
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
-}
-
 const auth = { mode: config.MODE, secret: config.SECRET };
 const expectedAuthorization = `Bearer ${config.NONCE}`;
 
@@ -116,14 +77,17 @@ function finish(req, res, status, started) {
     res.writeHead(status, { 'content-type': 'text/plain' });
   }
   res.end();
-  log(req, status, 0, started);
+  // No upstream body for short-circuit responses → omit the byte figure.
+  log(req, status, null, started);
 }
 
+// `bytes` is the upstream content-length (number) when known, else null → omit the byte figure.
 function log(req, status, bytes, started) {
   const ms = Date.now() - started;
   const path = (req.url ?? '').split('?')[0] ?? '';
   // ONLY method, path, status, byte count, duration — never headers/body/secret/nonce.
-  console.log(`${req.method} ${path} -> ${status} (${bytes}B, ${ms}ms)`);
+  const size = bytes === null ? '' : `${bytes}B, `;
+  console.log(`${req.method} ${path} -> ${status} (${size}${ms}ms)`);
 }
 
 const server = createServer((req, res) => {
@@ -216,16 +180,17 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
     { host: UPSTREAM_HOST, port: 443, method: 'POST', path, headers },
     (upRes) => {
       responded = true;
-      let bytes = 0;
       const outHeaders = {};
       for (const [key, value] of Object.entries(upRes.headers)) {
         if (HOP_BY_HOP.has(key.toLowerCase())) continue;
         if (value !== undefined) outHeaders[key] = value;
       }
+      // Byte count for the access log comes from the upstream content-length when present (no
+      // per-chunk tallying); streaming responses (SSE) have none → omit the figure.
+      const cl = upRes.headers['content-length'];
+      const clNum = Array.isArray(cl) ? Number(cl[0]) : Number(cl);
+      const bytes = cl !== undefined && Number.isFinite(clNum) ? clNum : null;
       res.writeHead(upRes.statusCode ?? 502, outHeaders);
-      upRes.on('data', (chunk) => {
-        bytes += chunk.length;
-      });
       upRes.pipe(res);
       upRes.on('end', () => {
         log(req, upRes.statusCode ?? 502, bytes, started);
