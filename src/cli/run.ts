@@ -2,13 +2,24 @@ import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startEgressEnclave } from '../sandbox/egress-network.js';
+import { startLlmProxy } from '../sandbox/llm-proxy.js';
+import { allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from '../sandbox/egress-proxy.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
+import type { LlmProxy } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { Command } from './args.js';
 
 type RunCommand = Extract<Command, { kind: 'run' }>;
+
+/** Per-source deps share this LLM-proxy shape (sidecar url + nonce + host) when `--llm-proxy` is active. */
+type LlmProxyDep = { url: string; nonce: string; host: string };
+
+/** Map an AgentAuth to the single-secret shape startLlmProxy wants (subscription token / api key). */
+function llmProxyAuth(auth: AgentAuth): { mode: 'subscription' | 'api'; secret: string } {
+  return auth.mode === 'subscription' ? { mode: 'subscription', secret: auth.token } : { mode: 'api', secret: auth.apiKey };
+}
 
 /** Dispatch `vanguard run` to the right source runner, assembling deps from env + flags. */
 export async function runCommand(cmd: RunCommand): Promise<void> {
@@ -18,17 +29,34 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  const enclave = cmd.egress ? await startEgressEnclave() : undefined;
+  // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to Anthropic.
+  const enclave =
+    cmd.egress || cmd.llmProxy === true
+      ? await startEgressEnclave(
+          cmd.llmProxy === true ? { allowlist: allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com') } : {},
+        )
+      : undefined;
   if (enclave !== undefined) console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
+
+  let llmProxy: LlmProxy | undefined;
+  let llmProxyDep: LlmProxyDep | undefined;
+  if (cmd.llmProxy === true && enclave !== undefined) {
+    llmProxy = await startLlmProxy({ network: enclave.network, auth: llmProxyAuth(requireAuth()) });
+    llmProxyDep = { url: llmProxy.url, nonce: llmProxy.nonce, host: new URL(llmProxy.url).hostname };
+    console.log('llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.');
+  }
+
   try {
     if (cmd.source === 'linear') {
-      await runLinear(cmd, enclave?.proxyUrl, enclave?.network);
+      await runLinear(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
     } else if (cmd.source === 'project') {
-      await runProject(cmd, enclave?.proxyUrl, enclave?.network);
+      await runProject(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
     } else {
-      await runGithub(cmd, enclave?.proxyUrl, enclave?.network);
+      await runGithub(cmd, enclave?.proxyUrl, enclave?.network, llmProxyDep);
     }
   } finally {
+    // Destroy the llm-proxy before the enclave (it lives on the enclave's network).
+    if (llmProxy !== undefined) await llmProxy.destroy();
     if (enclave !== undefined) await enclave.destroy();
   }
 }
@@ -41,7 +69,12 @@ function requireAuth(): AgentAuth {
   return auth;
 }
 
-function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): RunLinearIssueDeps {
+function linearDeps(
+  cmd: RunCommand,
+  proxyUrl: string | undefined,
+  network: string | undefined,
+  llmProxy: LlmProxyDep | undefined,
+): RunLinearIssueDeps {
   const linearKey = process.env.LINEAR_API_KEY;
   if (linearKey === undefined || linearKey === '') {
     throw new Error('Set LINEAR_API_KEY so the in-sandbox linear CLI can read the issue.');
@@ -57,6 +90,7 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: stri
     repoPath: cmd.repoPath,
     ...(proxyUrl !== undefined ? { proxyUrl } : {}),
     ...(network !== undefined ? { network } : {}),
+    ...(llmProxy !== undefined ? { llmProxy } : {}),
     ...(cmd.reuse === true ? { reuse: true } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
@@ -64,8 +98,13 @@ function linearDeps(cmd: RunCommand, proxyUrl: string | undefined, network: stri
   };
 }
 
-async function runLinear(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
-  const deps = linearDeps(cmd, proxyUrl, network);
+async function runLinear(
+  cmd: RunCommand,
+  proxyUrl: string | undefined,
+  network: string | undefined,
+  llmProxy: LlmProxyDep | undefined,
+): Promise<void> {
+  const deps = linearDeps(cmd, proxyUrl, network, llmProxy);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
     report(result.task.id, result.prUrl);
@@ -76,12 +115,18 @@ async function runLinear(cmd: RunCommand, proxyUrl: string | undefined, network:
   reportFanOut(outcomes, parent.children.length);
 }
 
-async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
+async function runGithub(
+  cmd: RunCommand,
+  proxyUrl: string | undefined,
+  network: string | undefined,
+  llmProxy: LlmProxyDep | undefined,
+): Promise<void> {
   if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
   requireAuth();
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
+  if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.reuse === true) deps.reuse = true;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
@@ -90,7 +135,12 @@ async function runGithub(cmd: RunCommand, proxyUrl: string | undefined, network:
   report(result.task.id, result.prUrl);
 }
 
-async function runProject(cmd: RunCommand, proxyUrl: string | undefined, network: string | undefined): Promise<void> {
+async function runProject(
+  cmd: RunCommand,
+  proxyUrl: string | undefined,
+  network: string | undefined,
+  llmProxy: LlmProxyDep | undefined,
+): Promise<void> {
   const projectNumber = Number(cmd.id);
   if (!Number.isInteger(projectNumber) || projectNumber < 1) {
     throw new Error(`--project expects a board number, got "${cmd.id}".`);
@@ -99,6 +149,7 @@ async function runProject(cmd: RunCommand, proxyUrl: string | undefined, network
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
+  if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;

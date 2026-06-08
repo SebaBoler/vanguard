@@ -1,12 +1,23 @@
 import { watchLinear, watchGithub, watchGithubProject } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { startEgressEnclave } from '../sandbox/egress-network.js';
+import { startLlmProxy } from '../sandbox/llm-proxy.js';
+import { allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from '../sandbox/egress-proxy.js';
 import { authFromEnv } from '../agents/auth.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { EgressEnclave } from '../sandbox/egress-network.js';
+import type { LlmProxy } from '../sandbox/llm-proxy.js';
 import type { Command } from './args.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
+
+/** Per-source deps share this LLM-proxy shape (sidecar url + nonce + host) when `--llm-proxy` is active. */
+type LlmProxyDep = { url: string; nonce: string; host: string };
+
+/** Map an AgentAuth to the single-secret shape startLlmProxy wants (subscription token / api key). */
+function llmProxyAuth(auth: AgentAuth): { mode: 'subscription' | 'api'; secret: string } {
+  return auth.mode === 'subscription' ? { mode: 'subscription', secret: auth.token } : { mode: 'api', secret: auth.apiKey };
+}
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {
@@ -20,19 +31,36 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  const enclave = cmd.egress ? await startEgressEnclave() : undefined;
+  // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to Anthropic.
+  const enclave =
+    cmd.egress || cmd.llmProxy === true
+      ? await startEgressEnclave(
+          cmd.llmProxy === true ? { allowlist: allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com') } : {},
+        )
+      : undefined;
   if (enclave !== undefined) console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
+
+  let llmProxy: LlmProxy | undefined;
+  let llmProxyDep: LlmProxyDep | undefined;
+  if (cmd.llmProxy === true && enclave !== undefined) {
+    llmProxy = await startLlmProxy({ network: enclave.network, auth: llmProxyAuth(auth) });
+    llmProxyDep = { url: llmProxy.url, nonce: llmProxy.nonce, host: new URL(llmProxy.url).hostname };
+    console.log('llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.');
+  }
+
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
   console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
   try {
     if (cmd.source === 'linear') {
-      await watchLinearSource(cmd, auth, enclave, controller.signal);
+      await watchLinearSource(cmd, auth, enclave, llmProxyDep, controller.signal);
     } else if (cmd.source === 'project') {
-      await watchGithubProjectSource(cmd, auth, enclave, controller.signal);
+      await watchGithubProjectSource(cmd, auth, enclave, llmProxyDep, controller.signal);
     } else {
-      await watchGithubSource(cmd, auth, enclave, controller.signal);
+      await watchGithubSource(cmd, auth, enclave, llmProxyDep, controller.signal);
     }
   } finally {
+    // Destroy the llm-proxy before the enclave (it lives on the enclave's network).
+    if (llmProxy !== undefined) await llmProxy.destroy();
     if (enclave !== undefined) await enclave.destroy();
   }
 }
@@ -41,6 +69,7 @@ async function watchLinearSource(
   cmd: WatchCommand,
   auth: AgentAuth,
   enclave: EgressEnclave | undefined,
+  llmProxy: LlmProxyDep | undefined,
   signal: AbortSignal,
 ): Promise<void> {
   const linearKey = process.env.LINEAR_API_KEY;
@@ -59,6 +88,7 @@ async function watchLinearSource(
       skillsDir,
       repoPath: cmd.repoPath,
       ...(enclave !== undefined ? { proxyUrl: enclave.proxyUrl, network: enclave.network } : {}),
+      ...(llmProxy !== undefined ? { llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
     },
@@ -74,13 +104,19 @@ async function watchLinearSource(
   });
 }
 
-async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, enclave: EgressEnclave | undefined) {
+async function buildGithubDeps(
+  cmd: WatchCommand,
+  auth: AgentAuth,
+  enclave: EgressEnclave | undefined,
+  llmProxy: LlmProxyDep | undefined,
+) {
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
   deps.auth = auth;
   if (enclave !== undefined) {
     deps.proxyUrl = enclave.proxyUrl;
     deps.network = enclave.network;
   }
+  if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   return deps;
@@ -90,10 +126,11 @@ async function watchGithubSource(
   cmd: WatchCommand,
   auth: AgentAuth,
   enclave: EgressEnclave | undefined,
+  llmProxy: LlmProxyDep | undefined,
   signal: AbortSignal,
 ): Promise<void> {
   if (cmd.label === undefined) throw new Error('--label is required for github watch source');
-  const deps = await buildGithubDeps(cmd, auth, enclave);
+  const deps = await buildGithubDeps(cmd, auth, enclave, llmProxy);
   await watchGithub({
     deps,
     label: cmd.label,
@@ -110,10 +147,11 @@ async function watchGithubProjectSource(
   cmd: WatchCommand,
   auth: AgentAuth,
   enclave: EgressEnclave | undefined,
+  llmProxy: LlmProxyDep | undefined,
   signal: AbortSignal,
 ): Promise<void> {
   if (cmd.projectNumber === undefined) throw new Error('--project <number> is required for project watch source');
-  const deps = await buildGithubDeps(cmd, auth, enclave);
+  const deps = await buildGithubDeps(cmd, auth, enclave, llmProxy);
   await watchGithubProject({
     deps,
     projectNumber: cmd.projectNumber,

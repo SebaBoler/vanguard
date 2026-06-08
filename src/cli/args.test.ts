@@ -95,6 +95,16 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && 'reuse' in cmd).toBe(false);
   });
 
+  it('parses --llm-proxy into llmProxy', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--llm-proxy'], '/work');
+    expect(cmd.kind === 'run' && cmd.llmProxy).toBe(true);
+  });
+
+  it('omits llmProxy when --llm-proxy is not passed', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'llmProxy' in cmd).toBe(false);
+  });
+
   it('parses --provider and --review-provider (cross-provider review)', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1', '--provider', 'claude', '--review-provider', 'codex'], '/work');
     expect(cmd.kind === 'run' && cmd.provider).toBe('claude');

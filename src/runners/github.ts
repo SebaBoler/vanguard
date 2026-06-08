@@ -24,6 +24,11 @@ export interface RunGithubIssueDeps extends ProviderChoice {
   proxyUrl?: string;
   /** When set, join the sandbox to this docker network (the hard egress enclave). */
   network?: string;
+  /**
+   * When set, route Claude through a trusted LLM-proxy sidecar: the real Anthropic credential stays
+   * out of the sandbox, which authenticates with the per-run nonce against the proxy host instead.
+   */
+  llmProxy?: { url: string; nonce: string; host: string };
   /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
   reuse?: boolean;
   /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
@@ -48,11 +53,22 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
 
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
-    secrets: { ...authSecrets(deps.auth), ...agents.secrets },
+    // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
+    secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), ...agents.secrets },
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
-    ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
+    ...(deps.llmProxy !== undefined && deps.proxyUrl !== undefined
+      ? {
+          env: {
+            ...egressEnv(deps.proxyUrl, { noProxy: [deps.llmProxy.host] }),
+            ANTHROPIC_BASE_URL: deps.llmProxy.url,
+            ANTHROPIC_AUTH_TOKEN: deps.llmProxy.nonce,
+          },
+        }
+      : deps.proxyUrl !== undefined
+        ? { env: egressEnv(deps.proxyUrl) }
+        : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 

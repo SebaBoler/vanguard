@@ -11,6 +11,8 @@ export type Command =
       parent: boolean;
       gcBefore: boolean;
       egress: boolean;
+      /** Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      llmProxy?: boolean;
       reuse?: boolean;
       repoPath: string;
       concurrency: number;
@@ -40,6 +42,8 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
+      /** Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      llmProxy?: boolean;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
     }
@@ -75,6 +79,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         parent: { type: 'boolean' },
         'gc-before': { type: 'boolean' },
         egress: { type: 'boolean' },
+        'llm-proxy': { type: 'boolean' },
         reuse: { type: 'boolean' },
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
@@ -144,6 +149,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(Number.isFinite(forkN) && forkN >= 2 ? { forkN: Math.floor(forkN) } : {}),
       ...(values.reuse === true ? { reuse: true } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -171,6 +177,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
       egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
@@ -222,6 +229,7 @@ Commands:
     --label <name>         (project) only run board items with this label
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
+    --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude only)
     --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
