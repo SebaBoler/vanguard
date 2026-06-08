@@ -19,8 +19,10 @@ const WORKDIR = '/workspace';
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TURNS = 6;
 // Skip on copy-back: .git (a linked worktree's .git is a file pointer; copying it corrupts the
-// worktree) and node_modules (gitignored, huge, and its .bin symlinks make fs.cp throw EINVAL).
-const COPY_BACK_SKIP = /(^|[\\/])(\.git|node_modules)([\\/]|$)/;
+// worktree), node_modules (gitignored, huge, and its .bin symlinks make fs.cp throw EINVAL), and
+// .claude/skills (plugin-installed symlinks pointing to absolute paths inside the sandbox —
+// copying them yields dangling symlinks that cause Bun's fs.cp to throw ENOENT via stat).
+const COPY_BACK_SKIP = /(^|[\\/])(\.git|node_modules)([\\/]|$)|(^|[\\/])\.claude[\\/]skills([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
