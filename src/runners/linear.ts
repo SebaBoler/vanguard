@@ -7,8 +7,9 @@ import { runStages, implementReviewSimplifyStages, withStageProvider, sandboxCom
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes } from '../core/run-record.js';
-import { egressEnv } from '../sandbox/egress-proxy.js';
+import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
+import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
@@ -26,6 +27,11 @@ export interface RunLinearIssueDeps extends ProviderChoice {
   proxyUrl?: string;
   /** When set, join the sandbox to this docker network (the hard egress enclave). */
   network?: string;
+  /**
+   * When set, route Claude through a trusted LLM-proxy sidecar: the real Anthropic credential stays
+   * out of the sandbox, which authenticates with the per-run nonce against the proxy host instead.
+   */
+  llmProxy?: LlmProxyDep;
   /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
   reuse?: boolean;
   /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
@@ -52,13 +58,15 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
 
   const agents = selectAgents(deps);
 
+  const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy);
   const sandbox = new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
-    secrets: { ...authSecrets(deps.auth), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
+    // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
+    secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
     memoryMb: 2048,
     cpus: 2,
     pidsLimit: 512,
-    ...(deps.proxyUrl !== undefined ? { env: egressEnv(deps.proxyUrl) } : {}),
+    ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
