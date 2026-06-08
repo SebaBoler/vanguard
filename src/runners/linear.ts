@@ -1,6 +1,7 @@
 import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
@@ -68,9 +69,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
     secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
-    memoryMb: 2048,
-    cpus: 2,
-    pidsLimit: 512,
+    ...sandboxResourceLimits(),
     ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });

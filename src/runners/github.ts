@@ -3,6 +3,7 @@ import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
 import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
@@ -62,9 +63,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
     secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), ...agents.secrets },
-    memoryMb: 2048,
-    cpus: 2,
-    pidsLimit: 512,
+    ...sandboxResourceLimits(),
     ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
