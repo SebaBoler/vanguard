@@ -23,11 +23,16 @@ describe('egressEnv', () => {
     expect(env.HTTP_PROXY).toBe(url);
     expect(env.HTTPS_PROXY).toBe(url);
     expect(env.NODE_USE_ENV_PROXY).toBe('1');
+    // lowercase + npm/pnpm proxy so registry access works under the hard enclave
+    expect(env.https_proxy).toBe(url);
+    expect(env.npm_config_https_proxy).toBe(url);
+    expect(env.npm_config_proxy).toBe(url);
   });
 
-  it('appends extra noProxy hosts', () => {
+  it('appends extra noProxy hosts (both cases)', () => {
     const env = egressEnv('http://host.docker.internal:1234', { noProxy: ['vg-llm-abc'] });
     expect(env.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-abc');
+    expect(env.no_proxy).toBe('localhost,127.0.0.1,vg-llm-abc');
   });
 });
 
