@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
+import type { VerificationResult } from '../pipeline/verify.js';
 
 export interface PersistOptions {
   /** ISO timestamp; defaults to now. Injected for deterministic tests. */
@@ -52,6 +53,35 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
     ...stageMetric(result, opts.label),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
+  await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+  return file;
+}
+
+export interface PersistVerificationOptions {
+  /** ISO timestamp; defaults to now. Injected for deterministic tests. */
+  timestamp?: string;
+}
+
+/**
+ * Persist a verification proof to `.vanguard/runs/<taskId>/<ts>.proof.json` and append one compact
+ * metric line `{ evt: 'verify', ts, taskId, passed, exitCode, sha256 }` to `metrics.jsonl`.
+ */
+export async function persistVerification(
+  localRepoPath: string,
+  taskId: string,
+  result: VerificationResult,
+  opts: PersistVerificationOptions = {},
+): Promise<string> {
+  const timestamp = opts.timestamp ?? new Date().toISOString();
+  const runsDir = join(localRepoPath, '.vanguard', 'runs');
+  const taskDir = join(runsDir, taskId);
+  await mkdir(taskDir, { recursive: true });
+
+  const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
+  const file = `${base}.proof.json`;
+  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+
+  const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
   return file;
 }

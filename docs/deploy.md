@@ -80,6 +80,7 @@ GH_TOKEN=ghp_...
 VANGUARD_SANDBOX_CPUS=0        # required: kernel without CFS scheduler
 VANGUARD_SANDBOX_PIDS=0        # silences a harmless pids-limit warning
 VANGUARD_SANDBOX_MEMORY_MB=1536
+# VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
 ```
 
 ### 4. Clone the target repo (the NAS has no git, so use the runner image)
@@ -118,7 +119,7 @@ A Hetzner CX/CPX/CCX box is simpler than Synology: it is amd64, has git, and its
 apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/OWNER/REPO.git /opt/vanguard && cd /opt/vanguard
 git clone https://github.com/OWNER/REPO.git target-repo   # the repo the agent edits
-printf 'CLAUDE_CODE_OAUTH_TOKEN=...\nLINEAR_API_KEY=...\nGH_TOKEN=...\n' > .env && chmod 600 .env
+printf 'CLAUDE_CODE_OAUTH_TOKEN=...\nLINEAR_API_KEY=...\nGH_TOKEN=...\n# VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test\n' > .env && chmod 600 .env
 docker compose -f docker/compose.yaml up -d --build         # builds runner; build the sandbox too
 docker build -t vanguard-sandbox:latest docker/             # sandbox image on the same daemon
 docker compose -f docker/compose.yaml logs -f vanguard-watch

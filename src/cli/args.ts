@@ -27,6 +27,8 @@ export type Command =
       reviewModel?: string;
       /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
       forkN?: number;
+      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
+      verifyCmd?: string;
     }
   | {
       kind: 'watch';
@@ -54,6 +56,8 @@ export type Command =
       providerModel?: string;
       /** Model for the review stage (default: provider's default). */
       reviewModel?: string;
+      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
+      verifyCmd?: string;
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'help' };
@@ -109,6 +113,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-model': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
+        // proof-of-work verification (run + watch)
+        verify: { type: 'string' },
         // stats
         json: { type: 'boolean' },
         help: { type: 'boolean' },
@@ -177,6 +183,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
     };
   }
 
@@ -210,6 +217,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
     };
   }
 
@@ -243,6 +251,7 @@ Commands:
     --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
+    --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -265,6 +274,7 @@ Commands:
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
+    --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
@@ -278,5 +288,6 @@ Commands:
     --json                 Emit the aggregated report as JSON instead of tables
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
-     CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor).
+     CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor);
+     VANGUARD_VERIFY_CMD (verification command for Proof of Work; overridden by --verify).
 `;
