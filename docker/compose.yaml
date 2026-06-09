@@ -1,5 +1,6 @@
-# Always-on Vanguard watch loop. Template — see docs/deploy.md. Put secrets in a .env next to this
-# file (never commit it). Build the sandbox image on the host first: docker/build.sh.
+# Always-on Vanguard watch loop + self-maintenance. Template — see docs/deploy.md. Put secrets in a
+# .env next to this file (never commit it). Load the images on the host first (docker/build.sh, or
+# build elsewhere and `docker save | docker load` — match the host arch, e.g. linux/amd64 for Synology).
 services:
   vanguard-watch:
     build:
@@ -8,18 +9,37 @@ services:
     image: vanguard-runner:latest
     restart: unless-stopped
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # control sibling sandboxes
+      - /var/run/docker.sock:/var/run/docker.sock # control sibling sandboxes + sidecars
       - ./target-repo:/work/repo # a git clone of the repo the agent edits
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY} # preferred for AFK (pay-per-use, no monthly cap)
-      # CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # subscription alternative (monthly cap)
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # subscription (no per-use billing); the default
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}           # API alternative (pay-per-use)
       LINEAR_API_KEY: ${LINEAR_API_KEY}
       GH_TOKEN: ${GH_TOKEN}
-      VANGUARD_MAX_SANDBOXES: "2" # cap to host RAM (NAS: keep low)
+      VANGUARD_MAX_SANDBOXES: "1" # cap to host RAM (1 per ~3GB free; one task at a time on a small NAS)
+      # Per-host sandbox limits. Set CPUS=0 on kernels without the CPU CFS scheduler (e.g. Synology DSM),
+      # where `docker run --cpus` is fatal. "0"/empty omits that flag.
+      # VANGUARD_SANDBOX_CPUS: "0"
+      # VANGUARD_SANDBOX_PIDS: "0"
+      # VANGUARD_SANDBOX_MEMORY_MB: "1536"
     command:
       - watch
+      - --source=linear   # or --source=github
       - --label=vanguard
       - --repo=/work/repo
       - --interval=120
-      # - --source=github   # GitHub Issues instead of Linear
-      # - --egress          # confine each sandbox to the allowlist
+      - --llm-proxy        # hold the Anthropic credential in a trusted sidecar; sandbox gets a per-run nonce (implies egress)
+      # - --team=TES       # (linear) limit to a team
+
+  # Self-maintenance: every 4h refresh the target-repo base (so PRs branch off latest main) and reap
+  # stale sandboxes / worktrees / merged remote branches. Same image; overrides the entrypoint to a loop.
+  vanguard-gc:
+    image: vanguard-runner:latest
+    restart: unless-stopped
+    entrypoint: ["sh", "-c"]
+    command:
+      - 'while true; do git -C /work/repo pull --ff-only 2>&1 | tail -1 || true; node dist/cli/index.js gc --remote OWNER/REPO --repo /work/repo 2>&1 | tail -4 || true; sleep 14400; done'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./target-repo:/work/repo
+    env_file: .env
