@@ -1,3 +1,4 @@
+import { execa } from 'execa';
 import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
@@ -7,12 +8,12 @@ import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes } from '../core/run-record.js';
+import { persistStageOutcomes, persistVerification } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
+import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
-import type { RunContext } from '../core/vanguard.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -42,6 +43,8 @@ export interface RunLinearIssueDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage (default: provider's default). */
   reviewModel?: string;
+  /** Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect). */
+  verifyCmd?: string;
 }
 
 export interface RunLinearIssueResult {
@@ -88,11 +91,31 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
       ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
     console.log(summarizeOutcomes(outcomes));
-    const prUrl = await commitAndPublish(ctx, task);
-    await persistStageOutcomes(deps.repoPath, outcomes, prUrl);
-    if (prUrl === undefined) return { task };
-    await linkLinearIssue(task.id, prUrl);
-    return { task, prUrl };
+
+    const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
+    const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
+
+    const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
+    if (!commit.committed) {
+      await persistStageOutcomes(deps.repoPath, outcomes);
+      if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
+      return { task };
+    }
+    const baseBody = `Automated implementation of ${task.id} by Vanguard.`;
+    const body = verification !== undefined ? `${baseBody}\n\n${proofBlock(verification)}` : baseBody;
+    const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
+    await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
+    if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
+    if (verification !== undefined && !verification.passed) {
+      try {
+        await execa('gh', ['label', 'create', 'vanguard:verify-failed', '--force'], { cwd: deps.repoPath });
+      } catch { /* best-effort */ }
+      try {
+        await execa('gh', ['pr', 'edit', pr.prUrl, '--add-label', 'vanguard:verify-failed'], { cwd: deps.repoPath });
+      } catch { /* best-effort */ }
+    }
+    await linkLinearIssue(task.id, pr.prUrl);
+    return { task, prUrl: pr.prUrl };
   } finally {
     await disposeContext(ctx);
   }
@@ -126,18 +149,6 @@ export function linearDepsFromEnv(): RunLinearIssueDeps {
     throw new Error('Set SKILLS_DIR to a directory of skills (e.g. a clone of schpet/linear-cli /skills).');
   }
   return { auth, linearKey, skillsDir, repoPath: process.env.REPO_PATH ?? process.cwd() };
-}
-
-/** Commit the agent's work and open a draft PR; returns the PR url, or undefined when nothing changed. */
-async function commitAndPublish(ctx: RunContext, task: Task): Promise<string | undefined> {
-  const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
-  if (!commit.committed) return undefined;
-  const pr = await publishForReview(ctx, {
-    title: `${task.title} (${task.id})`,
-    body: `Automated implementation of ${task.id} by Vanguard.`,
-    draft: true,
-  });
-  return pr.prUrl;
 }
 
 /**

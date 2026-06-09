@@ -64,6 +64,7 @@ async function watchLinearSource(
       ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
       ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
       ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+      ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     },
     label: cmd.label,
     triggerState: cmd.triggerState ?? 'unstarted',
@@ -89,6 +90,7 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, ctx: SandboxC
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
+  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   return deps;
 }
 

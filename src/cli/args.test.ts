@@ -199,4 +199,24 @@ describe('parseCli', () => {
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--github', 'A', '--project', '3'], '/work').kind).toBe('help');
   });
+
+  it('parses --verify into verifyCmd on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--verify', 'pnpm test'], '/work');
+    expect(cmd.kind === 'run' && cmd.verifyCmd).toBe('pnpm test');
+  });
+
+  it('omits verifyCmd when --verify is not passed on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'verifyCmd' in cmd).toBe(false);
+  });
+
+  it('parses --verify into verifyCmd on watch', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard', '--verify', 'npm test'], '/work');
+    expect(cmd.kind === 'watch' && cmd.verifyCmd).toBe('npm test');
+  });
+
+  it('omits verifyCmd when --verify is not passed on watch', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard'], '/work');
+    expect(cmd.kind === 'watch' && 'verifyCmd' in cmd).toBe(false);
+  });
 });
