@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { persistRunRecord } from './run-record.js';
+import { persistRunRecord, persistVerification } from './run-record.js';
 import type { RunResult } from './types.js';
 
 const TS = '2026-06-06T10:00:00.000Z';
@@ -87,6 +87,34 @@ describe('persistRunRecord', () => {
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
     }),
   );
+
+  it('persistVerification writes proof.json and metric line', async () => {
+    const verResult = {
+      command: 'pnpm test',
+      exitCode: 0,
+      passed: true,
+      sha256: 'deadbeef'.repeat(8),
+      outputTail: 'all good',
+    };
+    const file = await persistVerification(repo, 'TES-1', verResult, { timestamp: TS });
+    expect(file).toBe(join(repo, '.vanguard', 'runs', 'TES-1', '2026-06-06T10-00-00-000Z.proof.json'));
+
+    const proof = JSON.parse(await readFile(file, 'utf8'));
+    expect(proof.command).toBe('pnpm test');
+    expect(proof.passed).toBe(true);
+    expect(proof.sha256).toBe(verResult.sha256);
+
+    const metrics = await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8');
+    const line = JSON.parse(metrics.trim());
+    expect(line).toMatchObject({
+      evt: 'verify',
+      ts: TS,
+      taskId: 'TES-1',
+      passed: true,
+      exitCode: 0,
+      sha256: verResult.sha256,
+    });
+  });
 
   it('labels a stage in the filename and appends one metric line per call', async () => {
     await persistRunRecord(repo, result, { timestamp: TS, label: 'implementer' });
