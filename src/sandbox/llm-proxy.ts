@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
+import { sidecarMemoryArgs } from './limits.js';
 
 const PROXY_PORT = 8088;
 const SECRET_FILE = '/tmp/llm-proxy-secret';
@@ -72,7 +73,7 @@ export async function startLlmProxy(opts: {
 
   try {
     // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
-    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, image, 'sleep', 'infinity']);
+    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
     await docker(['network', 'connect', opts.network, name]);
     await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
     // The shared logic must sit next to the server so its relative import resolves.

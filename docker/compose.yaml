@@ -8,6 +8,7 @@ services:
       dockerfile: docker/runner.Dockerfile
     image: vanguard-runner:latest
     restart: unless-stopped
+    mem_limit: 1024m # controller orchestrates docker and holds transcript/diff in memory; bound it on a small host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # control sibling sandboxes + sidecars
       - ./target-repo:/work/repo # a git clone of the repo the agent edits
@@ -18,11 +19,13 @@ services:
       GH_TOKEN: ${GH_TOKEN}
       VANGUARD_MAX_SANDBOXES: "1" # cap to host RAM (1 per ~3GB free; one task at a time on a small NAS)
       # VANGUARD_VERIFY_CMD: pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
-      # Per-host sandbox limits. Set CPUS=0 on kernels without the CPU CFS scheduler (e.g. Synology DSM),
-      # where `docker run --cpus` is fatal. "0"/empty omits that flag.
+      # Per-host sandbox + sidecar limits. Set CPUS=0 on kernels without the CPU CFS scheduler (e.g.
+      # Synology DSM), where `docker run --cpus` is fatal. "0"/empty omits that flag. Keep the sandbox
+      # cap below (free RAM minus the other containers); on a 5.6GB NAS use ~2560, not 4096.
       # VANGUARD_SANDBOX_CPUS: "0"
       # VANGUARD_SANDBOX_PIDS: "0"
-      # VANGUARD_SANDBOX_MEMORY_MB: "1536"
+      # VANGUARD_SANDBOX_MEMORY_MB: "2560"
+      # VANGUARD_SIDECAR_MEMORY_MB: "256"  # llm-proxy / egress sidecar cap ("0" to omit)
     command:
       - watch
       - --source=linear   # or --source=github
@@ -37,6 +40,7 @@ services:
   vanguard-gc:
     image: vanguard-runner:latest
     restart: unless-stopped
+    mem_limit: 512m # lightweight git pull + gc loop
     entrypoint: ["sh", "-c"]
     command:
       - 'while true; do git -C /work/repo pull --ff-only 2>&1 | tail -1 || true; node dist/cli/index.js gc --remote OWNER/REPO --repo /work/repo 2>&1 | tail -4 || true; sleep 14400; done'

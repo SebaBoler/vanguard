@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sandboxResourceLimits } from './limits.js';
+import { sandboxResourceLimits, sidecarMemoryArgs } from './limits.js';
 
 describe('sandboxResourceLimits', () => {
   it('uses defaults when no env is set', () => {
@@ -25,5 +25,18 @@ describe('sandboxResourceLimits', () => {
   it('omits a limit on an invalid or empty value', () => {
     expect('memoryMb' in sandboxResourceLimits({ VANGUARD_SANDBOX_MEMORY_MB: '' } as NodeJS.ProcessEnv)).toBe(false);
     expect('pidsLimit' in sandboxResourceLimits({ VANGUARD_SANDBOX_PIDS: 'off' } as NodeJS.ProcessEnv)).toBe(false);
+  });
+});
+
+describe('sidecarMemoryArgs', () => {
+  it('defaults to 256m', () => {
+    expect(sidecarMemoryArgs({})).toEqual(['--memory', '256m']);
+  });
+  it('overrides with VANGUARD_SIDECAR_MEMORY_MB', () => {
+    expect(sidecarMemoryArgs({ VANGUARD_SIDECAR_MEMORY_MB: '128' } as NodeJS.ProcessEnv)).toEqual(['--memory', '128m']);
+  });
+  it('omits the cap on 0 / invalid', () => {
+    expect(sidecarMemoryArgs({ VANGUARD_SIDECAR_MEMORY_MB: '0' } as NodeJS.ProcessEnv)).toEqual([]);
+    expect(sidecarMemoryArgs({ VANGUARD_SIDECAR_MEMORY_MB: 'off' } as NodeJS.ProcessEnv)).toEqual([]);
   });
 });

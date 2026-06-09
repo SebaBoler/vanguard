@@ -25,3 +25,14 @@ export function sandboxResourceLimits(env: NodeJS.ProcessEnv = process.env): San
     ...(pidsLimit !== undefined ? { pidsLimit } : {}),
   };
 }
+
+/**
+ * `docker run` args capping a sidecar's memory (the egress and llm-proxy proxies). Default 256 MB,
+ * overridable with VANGUARD_SIDECAR_MEMORY_MB; "0" (or invalid/empty) omits the cap. These proxies are
+ * small node servers, but an unbounded container can still pressure a small host (e.g. a 5.6 GB NAS).
+ */
+export function sidecarMemoryArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.VANGUARD_SIDECAR_MEMORY_MB;
+  const mb = raw === undefined ? 256 : Number(raw);
+  return Number.isFinite(mb) && mb > 0 ? ['--memory', `${Math.floor(mb)}m`] : [];
+}
