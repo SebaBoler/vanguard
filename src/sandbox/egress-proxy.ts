@@ -21,11 +21,21 @@ export interface EgressProxy {
  * hard (internal-network) enclave, not just shell tools.
  */
 export function egressEnv(proxyUrl: string, opts: { noProxy?: readonly string[] } = {}): Record<string, string> {
+  const noProxy = ['localhost', '127.0.0.1', ...(opts.noProxy ?? [])].join(',');
   return {
     HTTP_PROXY: proxyUrl,
     HTTPS_PROXY: proxyUrl,
-    NO_PROXY: ['localhost', '127.0.0.1', ...(opts.noProxy ?? [])].join(','),
+    // Lowercase variants: some CLIs (curl, git) only read these.
+    http_proxy: proxyUrl,
+    https_proxy: proxyUrl,
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
     NODE_USE_ENV_PROXY: '1',
+    // npm/pnpm route through their own config, not the HTTPS_PROXY env, so set it explicitly. Without
+    // this, `pnpm install` (e.g. the Proof of Work verify command) cannot reach the registry under the
+    // hard egress enclave even though registry.npmjs.org is allowlisted.
+    npm_config_proxy: proxyUrl,
+    npm_config_https_proxy: proxyUrl,
   };
 }
 
