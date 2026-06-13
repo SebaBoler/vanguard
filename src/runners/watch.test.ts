@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { watchOnce, githubProjectWatchPrimitives } from './watch.js';
+import { describe, it, expect, vi } from 'vitest';
+import { watchOnce, githubProjectWatchPrimitives, githubSpecPrimitives, githubIssueWatchPrimitives } from './watch.js';
 import type { WatchPrimitives } from './watch.js';
 import type { GhRunner } from '../tasks/github.js';
+import type { TaskFetcher } from '../tasks/fetcher.js';
 
 describe('watchOnce', () => {
   it('claims, runs, reviews each ready issue and categorizes the outcomes', async () => {
@@ -165,5 +166,107 @@ describe('githubProjectWatchPrimitives', () => {
     expect(commentCall).toContain('1'); // issue number
     const bodyIdx = commentCall?.indexOf('--body') ?? -1;
     expect(commentCall?.[bodyIdx + 1]).toContain('agent exploded');
+  });
+});
+
+/** Build a minimal TaskFetcher stub for spec/agent primitives tests. */
+function makeStubFetcher(listSpy: TaskFetcher['list']): TaskFetcher {
+  return {
+    fetch: vi.fn().mockResolvedValue({
+      id: '1',
+      title: 'T',
+      description: 'D',
+      labels: [],
+      children: [],
+      comments: [],
+    }) as TaskFetcher['fetch'],
+    list: listSpy,
+  };
+}
+
+describe('githubSpecPrimitives ownerLabel', () => {
+  it('listReady requests BOTH ownerLabel and specLabel when ownerLabel is set', async () => {
+    const listSpy: TaskFetcher['list'] = vi.fn().mockResolvedValue([]);
+    const fetcher = makeStubFetcher(listSpy);
+    const primitives = githubSpecPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', fetcher } as never,
+      repoSlug: 'owner/repo',
+      specLabel: 'ready for spec',
+      ownerLabel: 'vanguard',
+      claimedLabel: 'vanguard:speccing',
+      agentLabel: 'ready for agent',
+      needsInfoLabel: 'needs info',
+      gh: vi.fn().mockResolvedValue(''),
+    });
+
+    await primitives.listReady();
+
+    expect(listSpy).toHaveBeenCalledWith({ labels: ['vanguard', 'ready for spec'] });
+  });
+
+  it('listReady requests only specLabel when ownerLabel is absent', async () => {
+    const listSpy: TaskFetcher['list'] = vi.fn().mockResolvedValue([]);
+    const fetcher = makeStubFetcher(listSpy);
+    const primitives = githubSpecPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', fetcher } as never,
+      repoSlug: 'owner/repo',
+      specLabel: 'ready for spec',
+      claimedLabel: 'vanguard:speccing',
+      agentLabel: 'ready for agent',
+      needsInfoLabel: 'needs info',
+      gh: vi.fn().mockResolvedValue(''),
+    });
+
+    await primitives.listReady();
+
+    expect(listSpy).toHaveBeenCalledWith({ labels: ['ready for spec'] });
+  });
+});
+
+describe('githubIssueWatchPrimitives ownerLabel', () => {
+  function makeGhSpy(): GhRunner {
+    // gh issue list returns GitHubIssue[] where labels are objects with a name field
+    return vi.fn().mockResolvedValue(
+      JSON.stringify([{ number: 1, title: 'T', body: '', labels: [{ name: 'vanguard' }, { name: 'ready for agent' }] }]),
+    );
+  }
+
+  it('listReady requests BOTH ownerLabel and label when ownerLabel is set', async () => {
+    const gh = makeGhSpy();
+    const primitives = githubIssueWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      label: 'ready for agent',
+      ownerLabel: 'vanguard',
+      claimedLabel: 'vanguard:running',
+      reviewLabel: 'vanguard:review',
+      gh,
+    });
+
+    await primitives.listReady();
+
+    const firstCall = (gh as ReturnType<typeof vi.fn>).mock.calls[0] as string[][] | undefined;
+    const firstArgs = firstCall?.[0] ?? [];
+    const labelIdx = firstArgs.indexOf('--label');
+    expect(labelIdx).toBeGreaterThan(-1);
+    expect(firstArgs[labelIdx + 1]).toBe('vanguard,ready for agent');
+  });
+
+  it('listReady requests only label when ownerLabel is absent', async () => {
+    const gh = makeGhSpy();
+    const primitives = githubIssueWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      label: 'ready for agent',
+      claimedLabel: 'vanguard:running',
+      reviewLabel: 'vanguard:review',
+      gh,
+    });
+
+    await primitives.listReady();
+
+    const firstCall = (gh as ReturnType<typeof vi.fn>).mock.calls[0] as string[][] | undefined;
+    const firstArgs = firstCall?.[0] ?? [];
+    const labelIdx = firstArgs.indexOf('--label');
+    expect(labelIdx).toBeGreaterThan(-1);
+    expect(firstArgs[labelIdx + 1]).toBe('ready for agent');
   });
 });

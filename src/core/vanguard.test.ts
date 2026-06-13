@@ -182,6 +182,88 @@ describe('vanguard.run', () => {
     expect(res.cacheEfficiency).toBeCloseTo(0.75);
   });
 
+  it('skips copyFileOut and produces no diff when copyBack is false', async () => {
+    const wm = new WorktreeManager(repo);
+    let copyFileOutCalled = false;
+    const sandbox = {
+      id: 'fake',
+      start: async (): Promise<void> => {},
+      exec: async (command: string): Promise<ExecResult> => {
+        if (command.includes('$HOME')) return { stdout: '/root', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      execStream: () => ({
+        stdout: (async function* () {})(),
+        result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+      }),
+      copyIn: async (): Promise<void> => {},
+      copyFileOut: async (): Promise<void> => {
+        copyFileOutCalled = true;
+      },
+      exists: async (): Promise<boolean> => true,
+      destroy: async (): Promise<void> => {},
+    } as unknown as IsolatedSandboxProvider;
+
+    const agent = fakeAgent([{ text: 'noop' }], { finalText: 'noop', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'cb-false', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent, copyBack: false });
+    await disposeContext(ctx);
+
+    expect(copyFileOutCalled).toBe(false);
+    expect(result.diff).toBeUndefined();
+    // Worktree left untouched (clean)
+    expect(result.worktreePreserved).toBe(false);
+  });
+
+  it('calls copyFileOut and captures a diff when copyBack is undefined (default)', async () => {
+    const wm = new WorktreeManager(repo);
+    let copyFileOutCalled = false;
+    const sandbox = {
+      id: 'fake',
+      start: async (): Promise<void> => {},
+      exec: async (command: string): Promise<ExecResult> => {
+        if (command.includes('$HOME')) return { stdout: '/root', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      execStream: () => ({
+        stdout: (async function* () {})(),
+        result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+      }),
+      copyIn: async (): Promise<void> => {},
+      copyFileOut: async (sandboxPath: string, hostPath: string): Promise<void> => {
+        copyFileOutCalled = true;
+        if (sandboxPath === '/workspace') {
+          await mkdir(hostPath, { recursive: true });
+          await writeFile(join(hostPath, 'output.txt'), 'created');
+        }
+      },
+      exists: async (): Promise<boolean> => true,
+      destroy: async (): Promise<void> => {},
+    } as unknown as IsolatedSandboxProvider;
+
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'cb-default', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    expect(copyFileOutCalled).toBe(true);
+    expect(result.diff).toContain('output.txt');
+  });
+
+  it('treats copyBack: true the same as the default (copies out, captures a diff)', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(hostPath, { recursive: true });
+      await writeFile(join(hostPath, 'output.txt'), 'created');
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'cb-true', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent, copyBack: true });
+    await disposeContext(ctx);
+
+    expect(result.diff).toContain('output.txt');
+  });
+
   it('emits a stage complete info log carrying metric fields and no secret content', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox();

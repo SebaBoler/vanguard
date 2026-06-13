@@ -6,9 +6,10 @@ function runner(payload: unknown): LinearCliRunner {
   return async (): Promise<string> => JSON.stringify(payload);
 }
 
-// Real linear-cli 2.0 shapes: `issue view` returns one object with description and
-// children.nodes (sub-issues) but no labels; `issue query` returns { nodes: [...] } with
-// labels.nodes (no description/children).
+// Real linear-cli 2.0 shapes: `issue view` returns one object with description,
+// children.nodes (sub-issues) and comments (by default) but no labels; `issue query` returns
+// { nodes: [...] } with labels.nodes (no description/children). The comments field shape varies
+// (array vs { nodes: [...] }), so it is parsed defensively.
 const viewIssue = {
   identifier: 'TES-1',
   title: 'Test task',
@@ -27,12 +28,38 @@ describe('LinearCliTaskFetcher', () => {
       description: 'the body',
       labels: [],
       children: [{ id: 'TES-2', title: 'Sub one' }],
+      comments: [],
     });
   });
 
   it('defaults children to [] when the issue has none', async () => {
     const task = await new LinearCliTaskFetcher({ linear: runner({ identifier: 'TES-3', title: 'No kids' }) }).fetch('TES-3');
     expect(task.children).toEqual([]);
+  });
+
+  it('defaults comments to [] when the issue has none', async () => {
+    const task = await new LinearCliTaskFetcher({ linear: runner(viewIssue) }).fetch('TES-1');
+    expect(task.comments).toEqual([]);
+  });
+
+  it('maps comments in the { nodes: [...] } connection shape (author from user.name)', async () => {
+    const issue = {
+      identifier: 'TES-1',
+      title: 'Test task',
+      comments: { nodes: [{ body: 'A spec comment', user: { name: 'alice' } }, { body: '' }] },
+    };
+    const task = await new LinearCliTaskFetcher({ linear: runner(issue) }).fetch('TES-1');
+    expect(task.comments).toEqual([{ author: 'alice', body: 'A spec comment' }]);
+  });
+
+  it('maps comments in the array shape (author from author.displayName)', async () => {
+    const issue = {
+      identifier: 'TES-1',
+      title: 'Test task',
+      comments: [{ body: 'Another comment', author: { displayName: 'Bob Builder' } }],
+    };
+    const task = await new LinearCliTaskFetcher({ linear: runner(issue) }).fetch('TES-1');
+    expect(task.comments).toEqual([{ author: 'Bob Builder', body: 'Another comment' }]);
   });
 
   it('lists via issue query, mapping labels.nodes and filtering by label', async () => {

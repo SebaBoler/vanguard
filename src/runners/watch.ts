@@ -2,11 +2,30 @@ import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tas
 import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
 import { runLinearIssue } from './linear.js';
 import { runGithubIssue } from './github.js';
+import { runSpecGenerator } from './spec.js';
+import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
+import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
+import type { RunSpecGeneratorDeps } from './spec.js';
 import type { LinearCliRunner } from '../tasks/linear-cli.js';
 import type { GhRunner } from '../tasks/github.js';
+
+/** Injectable spec generator (the real one boots a sandbox; tests inject a fake). */
+export type GenerateSpec = (id: string, deps: RunSpecGeneratorDeps) => Promise<string>;
+
+/** Clarification comment posted when triage flags a ticket as too vague to proceed. */
+function clarifyMessage(mode: 'spec' | 'agent'): string {
+  return mode === 'spec'
+    ? 'Vanguard could not start: this ticket is too vague to spec. Add a clear description (what and why) and re-trigger.'
+    : 'Vanguard could not start: this ticket lacks acceptance criteria or a spec. Add testable acceptance criteria (or a spec comment) and re-trigger.';
+}
+
+/** Wrap a generated spec so the agent pass and triage recognise it as a spec comment. */
+function specComment(spec: string): string {
+  return `Vanguard tech spec:\n\n<${SPEC_TAG}>\n${spec}\n</${SPEC_TAG}>`;
+}
 
 export interface WatchPrimitives {
   /** List issues currently ready to run (trigger state + label). */
@@ -61,6 +80,61 @@ export async function watchOnce(primitives: WatchPrimitives, opts: { concurrency
   return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped') };
 }
 
+export interface SpecWatchPrimitives {
+  listReady: () => Promise<Array<{ id: string }>>;
+  claim: (id: string) => Promise<void>;
+  /**
+   * Triage + (spec-gen+comment+advance) or (clarify+needs-info). Returns the outcome.
+   * At-least-once: the spec comment may be posted more than once if the advance step fails, but the
+   * isSpecComment guard skips regeneration on retry so a re-run is cheap and posts no duplicate spec.
+   */
+  runSpec: (id: string) => Promise<'advanced' | 'needs_info'>;
+  onFailure: (id: string, error: unknown) => Promise<void>;
+}
+
+export interface SpecTick {
+  /** Triaged ready: spec generated, posted, and advanced to the agent trigger. */
+  advanced: string[];
+  /** Triaged vague: a clarification was requested and the issue moved to needs-info. */
+  needsInfo: string[];
+  failed: string[];
+  /** Could not be claimed (already taken / state moved). */
+  skipped: string[];
+}
+
+type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
+
+/**
+ * One SPEC poll: claim each ready issue (skipping any that can't be claimed), triage it, then either
+ * generate+post a tech spec and advance it to the agent trigger, or request clarification and move it
+ * to needs-info. Mirrors watchOnce structurally (claim-before-run, fan-out, failure isolation) but
+ * with honest spec semantics instead of PR semantics — it never opens a PR.
+ */
+export async function specOnce(primitives: SpecWatchPrimitives, opts: { concurrency?: number } = {}): Promise<SpecTick> {
+  const ready = await primitives.listReady();
+  const results = await fanOut(
+    ready,
+    async (item): Promise<{ id: string; kind: SpecKind }> => {
+      try {
+        await primitives.claim(item.id);
+      } catch {
+        return { id: item.id, kind: 'skipped' };
+      }
+      try {
+        const outcome = await primitives.runSpec(item.id);
+        return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
+      } catch (error) {
+        await primitives.onFailure(item.id, error);
+        return { id: item.id, kind: 'failed' };
+      }
+    },
+    opts,
+  );
+  const ids = (kind: SpecKind): string[] =>
+    results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
+  return { advanced: ids('advanced'), needsInfo: ids('needsInfo'), failed: ids('failed'), skipped: ids('skipped') };
+}
+
 export interface WatchLinearOptions {
   deps: RunLinearIssueDeps;
   label: string;
@@ -70,6 +144,12 @@ export interface WatchLinearOptions {
   claimedState: string;
   /** State NAME after a PR opens, e.g. 'In Review'. */
   reviewState: string;
+  /**
+   * Loop-v1 agent-pass triage gate (optional). When set, runOne first triages the ticket in 'agent'
+   * mode; a vague ticket is commented + moved to this state and NO implement budget is spent (returns
+   * no PR). Absent => behaviour is unchanged (no triage, straight to runLinearIssue).
+   */
+  needsInfoState?: string;
   team?: string;
   concurrency?: number;
   intervalMs?: number;
@@ -85,12 +165,145 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
     ...(opts.linear !== undefined ? { linear: opts.linear } : {}),
   });
   const trigger = opts.triggerState ?? 'unstarted';
+  const needsInfoState = opts.needsInfoState;
   return {
     listReady: () => fetcher.list({ labels: [opts.label], state: trigger }),
     claim: (id) => setLinearState(id, opts.claimedState, opts.linear),
-    runOne: (id) => runLinearIssue(id, opts.deps),
+    runOne:
+      needsInfoState === undefined
+        ? (id) => runLinearIssue(id, opts.deps)
+        : (id) =>
+            triageAgentRun(id, fetcher, (i) => runLinearIssue(i, opts.deps), {
+              comment: (body) => commentLinearIssue(id, body, opts.linear),
+              toNeedsInfo: () => setLinearState(id, needsInfoState, opts.linear),
+            }),
     review: (id) => setLinearState(id, opts.reviewState, opts.linear),
     onFailure: (id, error) => commentLinearIssue(id, `Vanguard run failed: ${String(error)}`, opts.linear),
+  };
+}
+
+export interface WatchLinearSpecOptions {
+  /** Deps for the spec generator (no PR is opened in the spec pass). */
+  deps: RunSpecGeneratorDeps;
+  label: string;
+  /** Linear state TYPE to poll for spec-ready issues (e.g. 'triage'). */
+  specTriggerState?: string;
+  /**
+   * The display NAME of the same state as `specTriggerState` (which is a TYPE). Needed because
+   * `issue update --state` takes a state NAME, not a type — this is the name the issue is reverted to
+   * on failure so a later poll re-picks it. E.g. specTriggerState: 'triage', specTriggerStateName: 'Spec'.
+   */
+  specTriggerStateName: string;
+  /** State NAME to move an issue to on claim, e.g. 'Speccing'. */
+  claimedState: string;
+  /** State NAME after a spec is generated — the agent-pass trigger, e.g. 'Todo'. */
+  agentState: string;
+  /** State NAME when triage flags the ticket as too vague, e.g. 'Needs Info'. */
+  needsInfoState: string;
+  team?: string;
+  linear?: LinearCliRunner;
+  /** Injected for tests so the spec pass runs without a sandbox. Defaults to the real generator. */
+  generateSpec?: GenerateSpec;
+}
+
+/** Actions injected per-source into runSpecCore. */
+interface RunSpecCoreActions {
+  postComment: (body: string) => Promise<void>;
+  advance: () => Promise<void>;
+  toNeedsInfo: () => Promise<void>;
+}
+
+/**
+ * Shared 3-branch spec-run logic used by both Linear and GitHub spec primitives.
+ *
+ * Branch (a) idempotent retry — already Vanguard-specced: advance without regenerating.
+ * Branch (b) triage says needs_info: post clarification comment then move to needs-info.
+ * Branch (c) normal path: generate spec, post it, then advance.
+ *
+ * Call order is preserved: postComment BEFORE advance/toNeedsInfo.
+ */
+async function runSpecCore(
+  task: Task,
+  id: string,
+  deps: RunSpecGeneratorDeps,
+  generate: GenerateSpec,
+  actions: RunSpecCoreActions,
+): Promise<'advanced' | 'needs_info'> {
+  // (a) Idempotent retry: if a Vanguard-generated spec is already posted skip regeneration and just
+  // advance — cheap, no duplicate spec comment / wasted sandbox+LLM.
+  if (task.comments.some((c) => isVanguardSpec(c))) {
+    await actions.advance();
+    return 'advanced';
+  }
+
+  // (b) Triage gate: description too vague to spec.
+  if (assessTaskReadiness(task, 'spec') === 'needs_info') {
+    await actions.postComment(clarifyMessage('spec'));
+    await actions.toNeedsInfo();
+    return 'needs_info';
+  }
+
+  // (c) Normal path: generate, post, advance.
+  const spec = await generate(id, deps);
+  await actions.postComment(specComment(spec));
+  await actions.advance();
+  return 'advanced';
+}
+
+/**
+ * Shared agent-pass triage gate used by both Linear and GitHub issue watch primitives.
+ *
+ * When the needs-info option is set: fetch the task, run assessTaskReadiness in 'agent' mode,
+ * and if vague post the clarification comment and move to needs-info (returns {} so watchOnce
+ * counts this as noChange — no implement budget spent). Otherwise delegate to the real runner.
+ *
+ * When the needs-info option is absent: delegate directly without fetching (behaviour unchanged).
+ */
+async function triageAgentRun(
+  id: string,
+  fetcher: { fetch: (id: string) => Promise<Task> },
+  runner: (id: string) => Promise<{ prUrl?: string }>,
+  action: {
+    comment: (body: string) => Promise<void>;
+    toNeedsInfo: () => Promise<void>;
+  },
+): Promise<{ prUrl?: string }> {
+  const task = await fetcher.fetch(id);
+  if (assessTaskReadiness(task, 'agent') === 'needs_info') {
+    await action.comment(clarifyMessage('agent'));
+    await action.toNeedsInfo();
+    return {}; // no PR -> watchOnce categorises as noChange, no implement budget spent
+  }
+  return runner(id);
+}
+
+/**
+ * Linear SPEC primitives: poll a state+label trigger, triage each issue, then either generate+post a
+ * tech spec and advance the issue to the agent state, or request clarification and move it to
+ * needs-info. On failure the issue is reverted to its spec-trigger state so a later poll retries it.
+ */
+export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPrimitives {
+  const fetcher = new LinearCliTaskFetcher({
+    ...(opts.team !== undefined ? { team: opts.team } : {}),
+    ...(opts.linear !== undefined ? { linear: opts.linear } : {}),
+  });
+  const trigger = opts.specTriggerState ?? 'triage';
+  const generate = opts.generateSpec ?? runSpecGenerator;
+  return {
+    listReady: () => fetcher.list({ labels: [opts.label], state: trigger }),
+    claim: (id) => setLinearState(id, opts.claimedState, opts.linear),
+    runSpec: async (id) => {
+      const task = await fetcher.fetch(id);
+      return runSpecCore(task, id, opts.deps, generate, {
+        postComment: (body) => commentLinearIssue(id, body, opts.linear),
+        advance: () => setLinearState(id, opts.agentState, opts.linear),
+        toNeedsInfo: () => setLinearState(id, opts.needsInfoState, opts.linear),
+      });
+    },
+    onFailure: async (id, error) => {
+      await commentLinearIssue(id, `Vanguard spec failed: ${String(error)}`, opts.linear);
+      await setLinearState(id, opts.specTriggerStateName, opts.linear);
+    },
   };
 }
 
@@ -132,14 +345,76 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
   await runWatchLoop(linearWatchPrimitives(opts), opts, log);
 }
 
+/**
+ * Loop-v1 poll: run the SPEC pass (specOnce over specPrimitives) then the AGENT pass (watchOnce over
+ * agentPrimitives) once per tick. A specced ticket is implemented on the NEXT poll, not the same tick:
+ * the agent pass's listReady is filtered for this tick to exclude any id the spec pass just advanced,
+ * so a freshly-advanced ticket waits one poll — giving a human a window to intervene before it runs.
+ * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
+ */
+export async function runLoopV1(
+  specPrimitives: SpecWatchPrimitives,
+  agentPrimitives: WatchPrimitives,
+  opts: LoopControls,
+  log: (msg: string) => void = console.log,
+): Promise<void> {
+  const intervalMs = opts.intervalMs ?? 60_000;
+  const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
+  for (;;) {
+    if (opts.signal?.aborted === true) return;
+    const spec = await specOnce(specPrimitives, concurrency);
+    log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
+    // Defer same-tick implementation: a ticket the spec pass just advanced is excluded from this
+    // tick's agent listReady, so it is only picked up on the next poll.
+    const justAdvanced = new Set(spec.advanced);
+    const agentThisTick: WatchPrimitives = {
+      ...agentPrimitives,
+      listReady: async () => (await agentPrimitives.listReady()).filter((item) => !justAdvanced.has(item.id)),
+    };
+    const agent = await watchOnce(agentThisTick, concurrency);
+    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
+    if (opts.once === true) return;
+    await delay(intervalMs, opts.signal);
+  }
+}
+
+export interface WatchLinearLoopV1Options {
+  /** SPEC-pass options (state+label trigger, spec-gen, advance to the agent state). */
+  spec: WatchLinearSpecOptions;
+  /** AGENT-pass options. Supply needsInfoState to gate vague tickets out of the implement budget. */
+  agent: WatchLinearOptions;
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Loop v1 over Linear: each poll runs the spec pass then the agent pass. */
+export async function watchLinearLoopV1(opts: WatchLinearLoopV1Options, log: (msg: string) => void = console.log): Promise<void> {
+  await runLoopV1(linearSpecPrimitives(opts.spec), linearWatchPrimitives(opts.agent), opts, log);
+}
+
 export interface WatchGithubOptions {
   deps: RunGithubIssueDeps;
   /** Trigger label: open issues with this label are picked. */
   label: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `label` to be listed
+   * as ready. Absent => only `label` is required (existing single-loop behaviour unchanged).
+   * Used in loop-v1 so the `--label` (e.g. 'vanguard') ownership requirement is enforced even though
+   * the routing labels (agent/spec trigger) already filter the query.
+   */
+  ownerLabel?: string;
   /** Label added on claim (and the trigger label removed) so re-polls skip it, e.g. 'vanguard:running'. */
   claimedLabel: string;
   /** Label added after a PR opens, e.g. 'vanguard:review'. */
   reviewLabel: string;
+  /**
+   * Loop-v1 agent-pass triage gate (optional). When set, runOne first triages the ticket in 'agent'
+   * mode; a vague ticket is commented + swapped to this label (claimed removed) and NO implement budget
+   * is spent (returns no PR). Absent => behaviour is unchanged (no triage, straight to runGithubIssue).
+   */
+  needsInfoLabel?: string;
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
@@ -151,18 +426,97 @@ export interface WatchGithubOptions {
 export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimitives {
   const repo = opts.deps.repoSlug;
   const fetcher = new GitHubTaskFetcher(repo, opts.gh);
+  const needsInfoLabel = opts.needsInfoLabel;
+  const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
   return {
-    listReady: async () => (await fetcher.list({ labels: [opts.label] })).map((task) => ({ id: task.id })),
+    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
     claim: (id) => editGithubLabels(repo, id, { remove: [opts.label], add: [opts.claimedLabel] }, opts.gh),
-    runOne: (id) => runGithubIssue(id, opts.deps),
+    runOne:
+      needsInfoLabel === undefined
+        ? (id) => runGithubIssue(id, opts.deps)
+        : (id) =>
+            triageAgentRun(id, fetcher, (i) => runGithubIssue(i, opts.deps), {
+              comment: (body) => commentGithubIssue(repo, id, body, opts.gh),
+              toNeedsInfo: () => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, opts.gh),
+            }),
     review: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, opts.gh),
     onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, opts.gh),
+  };
+}
+
+export interface WatchGithubSpecOptions {
+  /** Deps for the spec generator (no PR is opened in the spec pass). */
+  deps: RunSpecGeneratorDeps;
+  /** owner/repo the issues live in (the spec deps' fetcher is used to read them). */
+  repoSlug: string;
+  /** Trigger label: open issues with this label are picked for speccing. */
+  specLabel: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `specLabel` to be
+   * listed as ready for the spec pass. Absent => only `specLabel` is required (existing behaviour).
+   * Used in loop-v1 so the `--label` (e.g. 'vanguard') ownership requirement is enforced on top of
+   * the spec-trigger routing label. Claim/advance/needs-info are unaffected — they swap only the
+   * routing labels, leaving the ownership label intact on the issue.
+   */
+  ownerLabel?: string;
+  /** Label added on claim (and the spec label removed) so re-polls skip it, e.g. 'vanguard:speccing'. */
+  claimedLabel: string;
+  /** Label added after a spec is generated — the agent-pass trigger, e.g. 'vanguard'. */
+  agentLabel: string;
+  /** Label added when triage flags the ticket as too vague, e.g. 'vanguard:needs-info'. */
+  needsInfoLabel: string;
+  gh?: GhRunner;
+  /** Injected for tests so the spec pass runs without a sandbox. Defaults to the real generator. */
+  generateSpec?: GenerateSpec;
+}
+
+/**
+ * GitHub-issue SPEC primitives: trigger by label, triage each issue, then either generate+post a tech
+ * spec and swap to the agent label, or request clarification and swap to needs-info. On failure the
+ * trigger label is restored so a later poll retries it. (Issues have no states; everything is labels.)
+ */
+export function githubSpecPrimitives(opts: WatchGithubSpecOptions): SpecWatchPrimitives {
+  const repo = opts.repoSlug;
+  const fetcher = opts.deps.fetcher;
+  const generate = opts.generateSpec ?? runSpecGenerator;
+  const specLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.specLabel] : [opts.specLabel];
+  return {
+    listReady: async () => (await fetcher.list({ labels: specLabels })).map((task) => ({ id: task.id })),
+    claim: (id) => editGithubLabels(repo, id, { remove: [opts.specLabel], add: [opts.claimedLabel] }, opts.gh),
+    runSpec: async (id) => {
+      const task = await fetcher.fetch(id);
+      return runSpecCore(task, id, opts.deps, generate, {
+        postComment: (body) => commentGithubIssue(repo, id, body, opts.gh),
+        advance: () => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.agentLabel] }, opts.gh),
+        toNeedsInfo: () => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.needsInfoLabel] }, opts.gh),
+      });
+    },
+    onFailure: async (id, error) => {
+      await commentGithubIssue(repo, id, `Vanguard spec failed: ${String(error)}`, opts.gh);
+      await editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, opts.gh);
+    },
   };
 }
 
 /** Poll GitHub Issues and run each newly-ready (labeled) issue. */
 export async function watchGithub(opts: WatchGithubOptions, log: (msg: string) => void = console.log): Promise<void> {
   await runWatchLoop(githubIssueWatchPrimitives(opts), opts, log);
+}
+
+export interface WatchGithubLoopV1Options {
+  /** SPEC-pass options (label trigger, spec-gen, swap to the agent label). */
+  spec: WatchGithubSpecOptions;
+  /** AGENT-pass options. Supply needsInfoLabel to gate vague tickets out of the implement budget. */
+  agent: WatchGithubOptions;
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Loop v1 over GitHub Issues: each poll runs the spec pass then the agent pass. */
+export async function watchGithubLoopV1(opts: WatchGithubLoopV1Options, log: (msg: string) => void = console.log): Promise<void> {
+  await runLoopV1(githubSpecPrimitives(opts.spec), githubIssueWatchPrimitives(opts.agent), opts, log);
 }
 
 export interface WatchGithubProjectOptions {

@@ -1,12 +1,21 @@
-import { watchLinear, watchGithub, watchGithubProject } from '../runners/watch.js';
+import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1 } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { authFromEnv } from '../agents/auth.js';
+import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
+import { GitHubTaskFetcher } from '../tasks/github.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { Command } from './args.js';
+import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
+
+// Marker the loop-v1 spec pass moves a claimed ticket to so re-polls skip it.
+// TODO: make configurable via a flag if needed
+const SPEC_CLAIMED_STATE = 'Speccing'; // Linear: state NAME
+// TODO: make configurable via a flag if needed
+const SPEC_CLAIMED_LABEL = 'vanguard:speccing'; // GitHub: label
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {
@@ -52,20 +61,68 @@ async function watchLinearSource(
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
   if (cmd.label === undefined) throw new Error('--label is required for linear watch source');
-  await watchLinear({
-    deps: {
+
+  const agentDeps = {
+    auth,
+    linearKey,
+    skillsDir,
+    repoPath: cmd.repoPath,
+    ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
+    ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+    ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
+  };
+
+  // Loop v1: activated when --spec-state is supplied.
+  if (cmd.specState !== undefined) {
+    if (cmd.specStateName === undefined || cmd.needsInfoState === undefined) {
+      throw new Error('--spec-state-name and --needs-info-state are required with --spec-state for linear loop-v1');
+    }
+    const specDeps: RunSpecGeneratorDeps = {
       auth,
-      linearKey,
-      skillsDir,
       repoPath: cmd.repoPath,
+      fetcher: new LinearCliTaskFetcher({
+        ...(cmd.team !== undefined ? { team: cmd.team } : {}),
+      }),
+      sandboxSecrets: { LINEAR_API_KEY: linearKey },
       ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
       ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-      ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-      ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
-      ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
-      ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
-    },
+      ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+    };
+    await watchLinearLoopV1({
+      spec: {
+        deps: specDeps,
+        label: cmd.label,
+        specTriggerState: cmd.specState,
+        specTriggerStateName: cmd.specStateName,
+        claimedState: cmd.specClaimedState ?? SPEC_CLAIMED_STATE,
+        agentState: cmd.agentState ?? 'Todo',
+        needsInfoState: cmd.needsInfoState,
+        ...(cmd.team !== undefined ? { team: cmd.team } : {}),
+      },
+      agent: {
+        deps: agentDeps,
+        label: cmd.label,
+        triggerState: cmd.triggerState ?? 'unstarted',
+        claimedState: cmd.claimedState ?? 'In Progress',
+        reviewState: cmd.reviewState ?? 'In Review',
+        needsInfoState: cmd.needsInfoState,
+        ...(cmd.team !== undefined ? { team: cmd.team } : {}),
+      },
+      concurrency: cmd.concurrency,
+      intervalMs: cmd.intervalMs,
+      once: cmd.once,
+      signal,
+    });
+    return;
+  }
+
+  await watchLinear({
+    deps: agentDeps,
     label: cmd.label,
     triggerState: cmd.triggerState ?? 'unstarted',
     claimedState: cmd.claimedState ?? 'In Progress',
@@ -100,8 +157,50 @@ async function watchGithubSource(
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
-  if (cmd.label === undefined) throw new Error('--label is required for github watch source');
   const deps = await buildGithubDeps(cmd, auth, ctx);
+
+  // Loop v1: activated when --spec-label is supplied.
+  if (cmd.specLabel !== undefined) {
+    if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
+      throw new Error('--agent-label and --needs-info-label are required with --spec-label for github loop-v1');
+    }
+    const repoSlug = deps.repoSlug;
+    const specDeps: RunSpecGeneratorDeps = {
+      auth,
+      repoPath: cmd.repoPath,
+      fetcher: new GitHubTaskFetcher(repoSlug),
+      ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
+      ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+    };
+    await watchGithubLoopV1({
+      spec: {
+        deps: specDeps,
+        repoSlug,
+        specLabel: cmd.specLabel,
+        claimedLabel: cmd.specClaimedLabel ?? SPEC_CLAIMED_LABEL,
+        agentLabel: cmd.agentLabel,
+        needsInfoLabel: cmd.needsInfoLabel,
+        ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
+      },
+      agent: {
+        deps,
+        label: cmd.agentLabel,
+        claimedLabel: cmd.claimedState ?? 'vanguard:running',
+        reviewLabel: cmd.reviewState ?? 'vanguard:review',
+        needsInfoLabel: cmd.needsInfoLabel,
+        ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
+      },
+      concurrency: cmd.concurrency,
+      intervalMs: cmd.intervalMs,
+      once: cmd.once,
+      signal,
+    });
+    return;
+  }
+
+  if (cmd.label === undefined) throw new Error('--label is required for github watch source');
   await watchGithub({
     deps,
     label: cmd.label,

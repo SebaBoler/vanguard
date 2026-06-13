@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { VanguardError } from '../core/errors.js';
-import type { Task, TaskFetcher, TaskFilter } from './fetcher.js';
+import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
 
 /** Runs the `linear` CLI and returns stdout. Injected for testing. */
 export type LinearCliRunner = (args: string[]) => Promise<string>;
@@ -8,9 +8,22 @@ export type LinearCliRunner = (args: string[]) => Promise<string>;
 const defaultRunner: LinearCliRunner = async (args: string[]): Promise<string> => (await execa('linear', args)).stdout;
 
 // Verified against linear-cli 2.0: `issue view <id> --json` returns a single issue WITH a
-// description and children.nodes (sub-issues) but no labels; `issue query --json` returns
-// { nodes: [...] } WITH labels.nodes but no description/children. So fetch() uses view
-// (description + children) and list() uses query (labels).
+// description, children.nodes (sub-issues) and comments (included by default; `--no-comments`
+// excludes them) but no labels; `issue query --json` returns { nodes: [...] } WITH labels.nodes
+// but no description/children. So fetch() uses view (description + children + comments) and
+// list() uses query (labels). The comments field shape varies (array vs { nodes: [...] }) and
+// author is exposed under user/author with name/displayName, so it is parsed defensively.
+interface LinearCliActor {
+  name?: string;
+  displayName?: string;
+}
+
+interface LinearCliCommentNode {
+  body?: string | null;
+  user?: LinearCliActor;
+  author?: LinearCliActor;
+}
+
 interface LinearCliIssue {
   id?: string;
   identifier?: string;
@@ -18,6 +31,18 @@ interface LinearCliIssue {
   description?: string | null;
   labels?: { nodes?: Array<{ name?: string }> };
   children?: { nodes?: Array<{ identifier?: string; id?: string; title?: string }> };
+  comments?: LinearCliCommentNode[] | { nodes?: LinearCliCommentNode[] };
+}
+
+/** Accepts comments as either an array or a { nodes: [...] } connection; unknown shapes -> []. */
+function parseComments(comments: LinearCliIssue['comments']): TaskComment[] {
+  const nodes = Array.isArray(comments) ? comments : (comments?.nodes ?? []);
+  return nodes
+    .map((node) => ({
+      author: node.user?.name ?? node.user?.displayName ?? node.author?.name ?? node.author?.displayName ?? '',
+      body: node.body ?? '',
+    }))
+    .filter((comment) => comment.body !== ''); // attachment-only comments have no body; skip for v1
 }
 
 function toTask(issue: LinearCliIssue): Task {
@@ -31,6 +56,7 @@ function toTask(issue: LinearCliIssue): Task {
     description: issue.description ?? '',
     labels,
     children,
+    comments: parseComments(issue.comments),
   };
 }
 
