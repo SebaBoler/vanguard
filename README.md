@@ -32,10 +32,17 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 ## How it works
 
 ```
-task source ──> prepareContext ──> runStages (agent loop) ──> commit ──> publish PR ──> dispose
- (Linear /         worktree +        Implementer ->            Merger     (GitHub)       cleanup
-  GitHub)          sandbox           Reviewer -> Simplifier
+task source ──> [Spec loop] ──> [Agent loop] ──> commit ──> publish PR ──> dispose
+ (Linear /      Planner          Implementer        Merger    (GitHub)       cleanup
+  GitHub)       (read-only,      -> Reviewer
+                posts spec,      -> Simplifier
+                advances state)
 ```
+
+**Loop v1 adds a layered two-pass flow before each implementation run:**
+
+1. **Spec pass (Planner)** — Polls the spec-trigger (label or state). Runs triage: rejects vague tickets to needs-info before spending any model budget. If the ticket passes, runs `techSpecStage` (read-only: no code is written), posts the result as a `<tech_spec>` comment, then advances the ticket to the agent-trigger. A freshly-specced ticket is implemented on the **next poll** — the human has a window to review the spec before the agent runs.
+2. **Agent pass (Implementer → Reviewer → Simplifier)** — Polls the agent-trigger. Runs triage again in `agent` mode: rejects tickets that lack acceptance criteria or a spec comment before spending implement budget. If the ticket passes, runs the full stage pipeline and opens a draft PR.
 
 The agent runs inside the sandbox. The host owns all file sync (`copyIn` / `copyFileOut`) and secrets. A run stops when the agent emits `<promise>COMPLETE</promise>`.
 
@@ -223,6 +230,56 @@ Node 24+, pnpm, Vitest, ESM with NodeNext. Tests are co-located as `*.test.ts`. 
 ## Autonomous loop
 
 `vanguard watch --label vanguard` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with the label). Each run implements, then **reviews and simplifies its own diff in a fresh, independent context** using the bundled `skills/` (code-review + simplify) injected into the sandbox. To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).
+
+### Loop v1 — two-pass autonomous pipeline
+
+Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs by source:
+
+**GitHub (routes by LABELS):**
+
+| Label | What happens |
+|---|---|
+| `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. |
+| `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. |
+| `needs info` | Parked. Human updates the ticket and moves it back. |
+
+> **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent`. The spec loop only runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug.
+
+```bash
+# GitHub Loop v1 example
+vanguard watch --source github \
+  --spec-label "ready for spec" \
+  --agent-label "ready for agent" \
+  --needs-info-label "needs info" \
+  --spec-model haiku \
+  --github-repo owner/repo
+```
+
+**Linear (routes by STATES):**
+
+| State condition | What happens |
+|---|---|
+| State TYPE matches `--spec-state` (e.g. `triage`) + label | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + moved to Needs Info state (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue moved to the agent-trigger state (`--agent-state`, default `Todo`). |
+| State TYPE matches `--trigger-state` (default `unstarted`) + label | Agent pass triggers (next poll after spec, or for any pre-specced issue). Triage runs in `agent` mode — vague tickets moved to `--needs-info-state`. Valid tickets: Implementer → Reviewer → Simplifier → draft PR. |
+| Needs Info state | Parked. Human updates the ticket and moves it back. |
+
+```bash
+# Linear Loop v1 example
+vanguard watch --label vanguard \
+  --spec-state triage \
+  --spec-state-name Spec \
+  --needs-info-state "Needs Info" \
+  --agent-state Todo \
+  --spec-model haiku
+```
+
+**Shared behaviour (both sources):**
+
+- Triage is deterministic (`assessTaskReadiness`) and rejects under-specified tickets before spending any model tokens.
+- The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
+- A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
+- The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
+- Adversarial review of external PRs (Adversary stage + evals) is a follow-up, not part of Loop v1.
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 

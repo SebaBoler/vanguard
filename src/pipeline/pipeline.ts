@@ -23,6 +23,8 @@ export interface PipelineStage {
   resumePrevious?: boolean;
   /** Run this stage on a specific provider instead of RunStagesOptions.agent (cross-provider review). */
   provider?: AgentProvider;
+  /** When false, skip syncing sandbox files back to the worktree (read-only stage: no diff). Default true. */
+  copyBack?: boolean;
 }
 
 export interface StageOutcome {
@@ -174,6 +176,7 @@ export async function runBudgetedStages(
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
       ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
     });
     outcomes.push({ name: stage.name, result });
     previous = result;
@@ -441,6 +444,66 @@ export function planImplementAdversaryStages(): PipelineStage[] {
     },
   ];
   return stages;
+}
+
+/** System prompt for the tech-spec stage: strict architect role, read-only, no file edits. */
+export function techSpecSystemPrompt(): string {
+  return [
+    '<role>',
+    'You are a strict software architect producing a technical specification. You do not edit, create, or delete any source files.',
+    '</role>',
+    '<policy>',
+    'Read existing code and documentation to understand the current system. Do not modify source files. Your only output is the technical specification wrapped in <tech_spec>...</tech_spec>.',
+    '</policy>',
+    '<guidelines>',
+    'Research the codebase read-only: read files, inspect interfaces, understand data flows and dependencies. Use all available information to produce a precise, actionable spec. Cover the problem, architecture, acceptance criteria, tests, risks, and performance/scalability.',
+    '</guidelines>',
+    '<tradeoffs>',
+    'An under-specified tech spec causes rework and mis-implementation. A precise spec that does not touch source is far safer than one that guesses and edits. When uncertain about a detail, note it as an open question rather than inventing an answer.',
+    '</tradeoffs>',
+  ].join('\n');
+}
+
+/**
+ * Tech-spec stage: a single read-only stage that researches the codebase and produces a technical
+ * specification wrapped in <tech_spec>...</tech_spec>. Sets copyBack: false — no source files are
+ * modified. Use extractTag(result.finalText, 'tech_spec') to pull the spec out of the outcome.
+ *
+ * Defaults to the same fast model as fastStages() ('haiku') to keep cost low. Override via opts.model.
+ */
+export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
+  return [
+    {
+      name: 'tech-spec',
+      model: opts?.model ?? 'haiku',
+      copyBack: false,
+      resumePrevious: false,
+      maxTurns: 15,
+      systemPrompt: techSpecSystemPrompt(),
+      promptTemplate: [
+        'Task: {{TITLE}}',
+        '',
+        '{{DESCRIPTION}}',
+        '',
+        'Existing discussion on the ticket:',
+        '{{COMMENTS}}',
+        '',
+        'Research the existing codebase read-only (do not edit any files). Produce a technical specification for this task.',
+        '',
+        'The spec MUST include:',
+        '- **Problem** — what exactly needs to be solved and why',
+        '- **Architecture** — components, interfaces, data flows, and integration points',
+        '- **Acceptance Criteria** — precise, testable conditions for done',
+        '- **Tests** — what test cases and scenarios must be covered',
+        '- **Risks** — known unknowns, edge cases, and failure modes',
+        '- **Performance / Scalability** — throughput, latency, and growth considerations',
+        '',
+        'Wrap the complete specification in <tech_spec>...</tech_spec>.',
+        '',
+        'When done, write <promise>COMPLETE</promise>.',
+      ].join('\n'),
+    },
+  ];
 }
 
 export type CommandRunner = (file: string, args: string[], cwd: string) => Promise<string>;

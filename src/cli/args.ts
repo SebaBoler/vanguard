@@ -58,6 +58,28 @@ export type Command =
       reviewModel?: string;
       /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
       verifyCmd?: string;
+      // --- Loop v1 flags ---
+      /** (loop-v1) Cheap model for the spec-generation stage. */
+      specModel?: string;
+      // GitHub loop-v1
+      /** (github loop-v1) Label that triggers the spec pass (issues with this label are specced). */
+      specLabel?: string;
+      /** (github loop-v1) Label the agent pass triggers on (set after spec is generated). */
+      agentLabel?: string;
+      /** (github loop-v1) Label set when a ticket is too vague (e.g. 'needs info'). */
+      needsInfoLabel?: string;
+      // Linear loop-v1
+      /** (linear loop-v1) State TYPE that triggers the spec pass (e.g. 'triage'). */
+      specState?: string;
+      /**
+       * (linear loop-v1) Display NAME of the spec-trigger state — used to revert the issue on
+       * spec-pass failure so the next poll re-picks it (e.g. 'Spec'). Required alongside --spec-state.
+       */
+      specStateName?: string;
+      /** (linear loop-v1) State NAME the spec pass advances to (agent-pass trigger, e.g. 'Todo'). */
+      agentState?: string;
+      /** (linear loop-v1) State NAME for vague tickets that need more info (e.g. 'Needs Info'). */
+      needsInfoState?: string;
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'help' };
@@ -105,6 +127,15 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        // watch loop-v1
+        'spec-label': { type: 'string' },
+        'agent-label': { type: 'string' },
+        'needs-info-label': { type: 'string' },
+        'spec-state': { type: 'string' },
+        'spec-state-name': { type: 'string' },
+        'agent-state': { type: 'string' },
+        'needs-info-state': { type: 'string' },
+        'spec-model': { type: 'string' },
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
@@ -189,11 +220,37 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   if (positionals[0] === 'watch') {
     const source = values.source === 'github' ? 'github' : values.source === 'project' ? 'project' : 'linear';
-    // label is required for linear/github; optional (label-filter) for project
-    if (source !== 'project' && typeof values.label !== 'string') return { kind: 'help' };
     // project number is required when source === 'project'
     const projectNumber = typeof values.project === 'string' ? Number(values.project) : undefined;
     if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) return { kind: 'help' };
+
+    // Detect loop-v1 mode: any spec-trigger flag being present activates it.
+    const specLabel = typeof values['spec-label'] === 'string' ? values['spec-label'] : undefined;
+    const specState = typeof values['spec-state'] === 'string' ? values['spec-state'] : undefined;
+    const isLoopV1 = specLabel !== undefined || specState !== undefined;
+
+    if (isLoopV1) {
+      // Loop v1 validation per source.
+      if (source === 'github') {
+        const agentLabel = typeof values['agent-label'] === 'string' ? values['agent-label'] : undefined;
+        const needsInfoLabel = typeof values['needs-info-label'] === 'string' ? values['needs-info-label'] : undefined;
+        if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
+        // label is optional in github loop-v1 (agent trigger = --agent-label); --label is unused here
+      } else if (source === 'linear') {
+        const specStateName = typeof values['spec-state-name'] === 'string' ? values['spec-state-name'] : undefined;
+        const needsInfoState = typeof values['needs-info-state'] === 'string' ? values['needs-info-state'] : undefined;
+        if (specState === undefined || specStateName === undefined || needsInfoState === undefined) return { kind: 'help' };
+        // --label is still required for linear loop-v1 (the shared label across both passes)
+        if (typeof values.label !== 'string') return { kind: 'help' };
+      } else {
+        // project source does not support loop-v1
+        return { kind: 'help' };
+      }
+    } else {
+      // Existing single-pass validation: label is required for linear/github; optional for project.
+      if (source !== 'project' && typeof values.label !== 'string') return { kind: 'help' };
+    }
+
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
     return {
@@ -218,6 +275,15 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
+      ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(specLabel !== undefined ? { specLabel } : {}),
+      ...(typeof values['agent-label'] === 'string' ? { agentLabel: values['agent-label'] } : {}),
+      ...(typeof values['needs-info-label'] === 'string' ? { needsInfoLabel: values['needs-info-label'] } : {}),
+      ...(specState !== undefined ? { specState } : {}),
+      ...(typeof values['spec-state-name'] === 'string' ? { specStateName: values['spec-state-name'] } : {}),
+      ...(typeof values['agent-state'] === 'string' ? { agentState: values['agent-state'] } : {}),
+      ...(typeof values['needs-info-state'] === 'string' ? { needsInfoState: values['needs-info-state'] } : {}),
     };
   }
 
@@ -228,7 +294,7 @@ export const USAGE = `vanguard <command>
 
 Commands:
   run    Run an agent on a task and open a draft PR for review.
-  watch  Poll Linear and run each newly-ready issue automatically (the AFK factory loop).
+  watch  Poll Linear or GitHub and run each newly-ready issue automatically (the AFK factory loop).
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
@@ -254,6 +320,32 @@ Commands:
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
+
+  watch loop-v1 options (add any spec-trigger flag to activate; spec pass runs first each tick):
+    GitHub loop-v1 (--source github; all three flags required together):
+      --spec-label <name>       Label that triggers the spec pass (e.g. "ready for spec")
+      --agent-label <name>      Label set after spec generation — the agent-pass trigger (e.g. "ready for agent")
+      --needs-info-label <name> Label set when a ticket is too vague for spec or agent (e.g. "needs info")
+      (--label is not used in github loop-v1; --claimed-state / --review-state still apply to the agent pass)
+
+    Linear loop-v1 (--source linear; all three flags required together plus --label):
+      --spec-state <type>       State TYPE that triggers the spec pass (e.g. "triage")
+      --spec-state-name <name>  Display NAME of that state, for failure revert (e.g. "Spec")
+      --needs-info-state <name> State NAME for tickets that are too vague (e.g. "Needs Info")
+      --agent-state <name>      State NAME the spec pass advances to (default: "Todo"); the agent
+                                triggers on the TYPE given by --trigger-state (default: "unstarted")
+      (--label, --trigger-state, --claimed-state, --review-state still apply to the agent pass)
+
+    Shared:
+      --spec-model <m>          Cheap model for the spec-generation stage (e.g. "haiku")
+
+    Example (GitHub):
+      vanguard watch --source github --agent-label "ready for agent" \\
+        --spec-label "ready for spec" --needs-info-label "needs info" --spec-model haiku
+
+    Example (Linear):
+      vanguard watch --label vanguard --spec-state triage --spec-state-name Spec \\
+        --needs-info-state "Needs Info" --spec-model haiku
 
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)

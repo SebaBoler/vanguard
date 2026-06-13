@@ -63,6 +63,12 @@ export interface StageInput {
   allowedTools?: string[];
   model?: string;
   signal?: AbortSignal;
+  /**
+   * When false, skip syncing sandbox files back to the worktree (read-only stage: no diff). Default true.
+   * Intentionally not exposed on the single-stage `run()`/`RunOptions` wrapper: that path always copies
+   * back. The asymmetry is deliberate — do NOT add copyBack to RunOptions.
+   */
+  copyBack?: boolean;
 }
 
 export interface RunDeps {
@@ -113,6 +119,24 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     releaseSandboxSlot(opts.sandbox);
     throw error;
   }
+}
+
+/** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
+async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
+  const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
+  await mkdir(staging, { recursive: true });
+  try {
+    await ctx.sandbox.copyFileOut(WORKDIR, staging);
+    await cp(staging, ctx.worktreePath, {
+      recursive: true,
+      force: true,
+      verbatimSymlinks: true,
+      filter: (src) => !COPY_BACK_SKIP.test(src),
+    });
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+  return ctx.wm.diff(ctx.worktreePath);
 }
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
@@ -184,21 +208,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     }
     const completed = hasTerminationSignal(finalText);
 
-    const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
-    await mkdir(staging, { recursive: true });
-    try {
-      await ctx.sandbox.copyFileOut(WORKDIR, staging);
-      await cp(staging, ctx.worktreePath, {
-        recursive: true,
-        force: true,
-        verbatimSymlinks: true,
-        filter: (src) => !COPY_BACK_SKIP.test(src),
-      });
-    } finally {
-      await rm(staging, { recursive: true, force: true });
-    }
-
-    const diff = await ctx.wm.diff(ctx.worktreePath);
+    const diff = input.copyBack !== false ? await syncSandboxToWorktree(ctx) : '';
 
     if (sessionId !== undefined) {
       const hostDir = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId);

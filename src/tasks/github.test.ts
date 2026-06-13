@@ -11,7 +11,7 @@ function fakeGh(): GhRunner {
 describe('GitHubTaskFetcher', () => {
   it('maps an issue to a Task (id = repo#number)', async () => {
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
-    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'], children: [] });
+    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'], children: [], comments: [] });
   });
 
   it('accepts a repo#number reference', async () => {
@@ -23,6 +23,30 @@ describe('GitHubTaskFetcher', () => {
     const list = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).list();
     expect(list).toHaveLength(1);
     expect(list[0]?.id).toBe('SebaBoler/vanguard#7');
+  });
+
+  it('maps comments from the JSON response into Task.comments', async () => {
+    const issueWithComments = {
+      number: 7,
+      title: 'Bug',
+      body: 'desc',
+      labels: [{ name: 'bug' }],
+      comments: [
+        { author: { login: 'alice' }, body: 'First comment', createdAt: '2024-01-01T00:00:00Z' },
+        { author: { login: 'bob' }, body: 'Second comment', createdAt: '2024-01-02T00:00:00Z' },
+      ],
+    };
+    const gh: GhRunner = async (): Promise<string> => JSON.stringify(issueWithComments);
+    const task = await new GitHubTaskFetcher('SebaBoler/vanguard', gh).fetch('7');
+    expect(task.comments).toEqual([
+      { author: 'alice', body: 'First comment' },
+      { author: 'bob', body: 'Second comment' },
+    ]);
+  });
+
+  it('defaults comments to [] when the issue has no comments field', async () => {
+    const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
+    expect(task.comments).toEqual([]);
   });
 });
 

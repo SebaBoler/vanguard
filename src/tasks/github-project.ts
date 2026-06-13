@@ -40,7 +40,7 @@ export class GitHubProjectFetcher implements TaskFetcher {
   async fetch(id: string): Promise<Task> {
     const hashIndex = id.indexOf('#');
     const repo = hashIndex > 0 && id.slice(0, hashIndex).includes('/') ? id.slice(0, hashIndex) : this.options.repo;
-    const out = await this.gh(['issue', 'view', issueNumber(id), '--repo', repo, '--json', 'number,title,body,labels']);
+    const out = await this.gh(['issue', 'view', issueNumber(id), '--repo', repo, '--json', 'number,title,body,labels,comments']);
     return toTask(repo, JSON.parse(out) as GitHubIssue);
   }
 
@@ -67,6 +67,7 @@ export class GitHubProjectFetcher implements TaskFetcher {
         description: content.body ?? '',
         labels: content.labels ?? [],
         children: [], // Projects v2 item content does not carry sub-issues
+        comments: [], // Projects v2 item-list has no comments; use fetch() for a single issue
       });
     }
     // filter.state is intentionally not applied here: Projects v2 boards organise items by their own

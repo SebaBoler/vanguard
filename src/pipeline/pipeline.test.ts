@@ -18,6 +18,7 @@ import {
   adversarySystemPrompt,
   sandboxComplete,
   withStageModel,
+  techSpecStage,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
@@ -348,6 +349,107 @@ describe('defaultSystemPrompt', () => {
     await runStages(ctx, [{ name: 's', promptTemplate: 'p', systemPrompt: 'SYS-XYZ' }], { agent });
     expect(received[0]?.systemPrompt).toBe('SYS-XYZ');
     await disposeContext(ctx);
+  });
+});
+
+describe('runBudgetedStages copyBack', () => {
+  it('skips copyFileOut for /workspace and produces no diff when stage.copyBack is false', async () => {
+    const wm = new WorktreeManager(repo);
+    let workdirCopyOutCalled = false;
+    const sandbox: IsolatedSandboxProvider = {
+      id: 'fake',
+      start: async (): Promise<void> => {},
+      exec: async (command: string): Promise<ExecResult> =>
+        command.includes('$HOME') ? { stdout: '/root', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 },
+      execStream: () => ({
+        stdout: (async function* (): AsyncIterable<string> {})(),
+        result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+      }),
+      copyIn: async (): Promise<void> => {},
+      copyFileOut: async (sandboxPath: string): Promise<void> => {
+        if (sandboxPath === '/workspace') workdirCopyOutCalled = true;
+      },
+      exists: async (): Promise<boolean> => true,
+      destroy: async (): Promise<void> => {},
+      shellCommand: (): string => 'docker exec -it vg-fake bash',
+    } as unknown as IsolatedSandboxProvider;
+
+    const ctx = await prepareContext({ taskId: 'cb-pipe', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runBudgetedStages(
+      ctx,
+      [{ name: 'spec', promptTemplate: 'describe', copyBack: false }],
+      { agent: recordingAgent([]) },
+    );
+    await disposeContext(ctx);
+
+    expect(workdirCopyOutCalled).toBe(false);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes[0]?.result.diff).toBeUndefined();
+    }
+  });
+});
+
+describe('techSpecStage', () => {
+  it('returns a single-element array with copyBack false and the default haiku model', () => {
+    const stages = techSpecStage();
+    expect(stages).toHaveLength(1);
+    const stage = stages[0];
+    expect(stage?.copyBack).toBe(false);
+    expect(stage?.model).toBe('haiku');
+    expect(stage?.name).toBe('tech-spec');
+  });
+
+  it('overrides the model when opts.model is supplied', () => {
+    const stages = techSpecStage({ model: 'sonnet' });
+    expect(stages[0]?.model).toBe('sonnet');
+  });
+
+  it('promptTemplate references tech_spec tag and COMPLETE signal', () => {
+    const { promptTemplate } = techSpecStage()[0]!;
+    expect(promptTemplate).toContain('tech_spec');
+    expect(promptTemplate).toContain('<promise>COMPLETE</promise>');
+  });
+
+  it('promptTemplate references {{TITLE}} and {{DESCRIPTION}}', () => {
+    const { promptTemplate } = techSpecStage()[0]!;
+    expect(promptTemplate).toContain('{{TITLE}}');
+    expect(promptTemplate).toContain('{{DESCRIPTION}}');
+  });
+
+  it('systemPrompt is read-only: does not mention editing files', () => {
+    const { systemPrompt } = techSpecStage()[0]!;
+    expect(systemPrompt).toBeDefined();
+    expect(systemPrompt).toContain('do not edit');
+    expect(systemPrompt).not.toMatch(/make.*change/i);
+  });
+
+  it('runs read-only: does not call copyFileOut for /workspace', async () => {
+    const wm = new WorktreeManager(repo);
+    let workdirCopyOutCalled = false;
+    const sandbox: IsolatedSandboxProvider = {
+      id: 'fake',
+      start: async (): Promise<void> => {},
+      exec: async (command: string): Promise<ExecResult> =>
+        command.includes('$HOME') ? { stdout: '/root', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 },
+      execStream: () => ({
+        stdout: (async function* (): AsyncIterable<string> {})(),
+        result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+      }),
+      copyIn: async (): Promise<void> => {},
+      copyFileOut: async (sandboxPath: string): Promise<void> => {
+        if (sandboxPath === '/workspace') workdirCopyOutCalled = true;
+      },
+      exists: async (): Promise<boolean> => true,
+      destroy: async (): Promise<void> => {},
+      shellCommand: (): string => 'docker exec -it vg-fake bash',
+    } as unknown as IsolatedSandboxProvider;
+
+    const ctx = await prepareContext({ taskId: 'ts-ro', localRepoPath: repo, sandbox }, { worktrees: wm });
+    await runBudgetedStages(ctx, techSpecStage(), { agent: recordingAgent([]), variables: { TITLE: 'T', DESCRIPTION: 'D' } });
+    await disposeContext(ctx);
+
+    expect(workdirCopyOutCalled).toBe(false);
   });
 });
 

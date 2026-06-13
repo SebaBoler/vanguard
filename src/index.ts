@@ -29,7 +29,7 @@ export { extractTag, extractJson, hasTerminationSignal } from './structured/extr
 export { DockerSandboxProvider } from './sandbox/docker.js';
 export { FirecrackerSandboxProvider } from './sandbox/firecracker.js';
 export { fanOut, type FanOutOutcome, type FanOutOptions } from './pipeline/fan-out.js';
-export type { Task, SubTask, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
+export type { Task, SubTask, TaskComment, TaskFilter, TaskFetcher } from './tasks/fetcher.js';
 export { taskToVariables } from './tasks/fetcher.js';
 export { LinearCliTaskFetcher, linkLinearIssue, setLinearState, commentLinearIssue } from './tasks/linear-cli.js';
 export {

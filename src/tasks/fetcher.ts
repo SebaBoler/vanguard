@@ -4,12 +4,18 @@ export interface SubTask {
   title: string;
 }
 
+export interface TaskComment {
+  author: string;
+  body: string;
+}
+
 export interface Task {
   id: string;
   title: string;
   description: string;
   labels: string[];
   children: SubTask[];
+  comments: TaskComment[];
 }
 
 export interface TaskFilter {
@@ -33,5 +39,6 @@ export function taskToVariables(task: Task): Record<string, string> {
     DESCRIPTION: task.description,
     LABELS: task.labels.join(', '),
     SUBTASKS: task.children.map((child) => `${child.id} ${child.title}`).join('\n'),
+    COMMENTS: task.comments.map((comment) => `${comment.author}: ${comment.body}`).join('\n'),
   };
 }

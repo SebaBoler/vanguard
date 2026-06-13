@@ -1,8 +1,18 @@
 import { execa } from 'execa';
-import type { Task, TaskFetcher, TaskFilter } from './fetcher.js';
+import type { Task, TaskComment, TaskFetcher, TaskFilter } from './fetcher.js';
 
 export interface GitHubLabel {
   name: string;
+}
+
+export interface GitHubCommentAuthor {
+  login: string;
+}
+
+export interface GitHubComment {
+  author: GitHubCommentAuthor | null; // gh returns null for deleted accounts; justifies optional chaining in toTask()
+  body: string;
+  createdAt: string;
 }
 
 export interface GitHubIssue {
@@ -10,6 +20,7 @@ export interface GitHubIssue {
   title: string;
   body: string | null;
   labels: GitHubLabel[];
+  comments?: GitHubComment[];
 }
 
 /** Runs a `gh` subcommand and returns its stdout. Injected so unit tests never call real gh. */
@@ -24,12 +35,17 @@ export function issueNumber(ref: string): string {
 }
 
 export function toTask(repo: string, issue: GitHubIssue): Task {
+  const comments: TaskComment[] = (issue.comments ?? []).map((comment) => ({
+    author: comment.author?.login ?? '',
+    body: comment.body ?? '',
+  }));
   return {
     id: `${repo}#${issue.number}`,
     title: issue.title,
     description: issue.body ?? '',
     labels: issue.labels.map((label) => label.name),
     children: [], // the gh issue mapping does not fetch sub-issues
+    comments,
   };
 }
 
@@ -42,11 +58,12 @@ export class GitHubTaskFetcher implements TaskFetcher {
 
   async fetch(id: string): Promise<Task> {
     const number = issueNumber(id);
-    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels']);
+    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels,comments']);
     return toTask(this.repo, JSON.parse(out) as GitHubIssue);
   }
 
   async list(filter?: TaskFilter): Promise<Task[]> {
+    // comments are not fetched on bulk list() (avoids N+1); only fetch() returns them
     const args = ['issue', 'list', '--repo', this.repo, '--json', 'number,title,body,labels', '--state', filter?.state ?? 'open'];
     if (filter?.labels !== undefined && filter.labels.length > 0) args.push('--label', filter.labels.join(','));
     const out = await this.gh(args);
