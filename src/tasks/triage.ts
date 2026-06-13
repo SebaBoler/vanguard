@@ -26,9 +26,6 @@ const AC_HEADING_RE = /^#{1,6}\s.*acceptance\s+criteria/i;
 /** Regex matching any markdown heading line (`# ...`). */
 const HEADING_RE = /^#{1,6}\s/;
 
-/** Regex matching an Acceptance Criteria heading anywhere in a multiline string. */
-const AC_HEADING_MULTILINE_RE = /^#{1,6}\s.*acceptance\s+criteria/im;
-
 /** Regex matching a checklist or bullet line: `- [ ]`, `- [x]`, `-`, or `*` followed by content. */
 const BULLET_RE = /^(?:-\s*\[[ xX]\]\s*|-\s+|\*\s+)(.*)/;
 
@@ -97,18 +94,6 @@ export function isVanguardSpec(comment: TaskComment): boolean {
 }
 
 /**
- * Determines whether a comment body looks like a spec (broad match).
- *
- * @param comment - The task comment to inspect.
- * @returns `true` when the body contains a `<tech_spec` marker or an
- *   Acceptance-Criteria heading (case-insensitive, multiline); `false` otherwise.
- */
-export function isSpecComment(comment: TaskComment): boolean {
-  const body = comment.body;
-  return body.includes(`<${SPEC_TAG}`) || AC_HEADING_MULTILINE_RE.test(body);
-}
-
-/**
  * Deterministic (no LLM) gate that checks whether a task is ready to be processed.
  *
  * - `spec` mode: requires a non-trivial description (>= MIN_DESCRIPTION_CHARS chars after
@@ -135,7 +120,7 @@ export function assessTaskReadiness(task: Task, mode: 'spec' | 'agent'): Readine
     return 'ok';
   }
 
-  const hasSpecComment = task.comments.some((c) => c.body.trim() !== '' && isSpecComment(c));
+  const hasSpecComment = task.comments.some((c) => c.body.trim() !== '' && (isVanguardSpec(c) || hasRealAcceptanceCriteria(c.body)));
   if (hasSpecComment) {
     return 'ok';
   }

@@ -68,6 +68,11 @@ export type Command =
       agentLabel?: string;
       /** (github loop-v1) Label set when a ticket is too vague (e.g. 'needs info'). */
       needsInfoLabel?: string;
+      /**
+       * (github loop-v1) Label the spec pass moves a claimed ticket to while speccing
+       * (default: 'vanguard:speccing'). Omitted when absent — the default is used.
+       */
+      specClaimedLabel?: string;
       // Linear loop-v1
       /** (linear loop-v1) State TYPE that triggers the spec pass (e.g. 'triage'). */
       specState?: string;
@@ -80,6 +85,11 @@ export type Command =
       agentState?: string;
       /** (linear loop-v1) State NAME for vague tickets that need more info (e.g. 'Needs Info'). */
       needsInfoState?: string;
+      /**
+       * (linear loop-v1) State NAME the spec pass moves a claimed ticket to while speccing
+       * (default: 'Speccing'). Omitted when absent — the default is used.
+       */
+      specClaimedState?: string;
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'help' };
@@ -131,10 +141,12 @@ export function parseCli(argv: string[], cwd: string): Command {
         'spec-label': { type: 'string' },
         'agent-label': { type: 'string' },
         'needs-info-label': { type: 'string' },
+        'spec-claimed-label': { type: 'string' },
         'spec-state': { type: 'string' },
         'spec-state-name': { type: 'string' },
         'agent-state': { type: 'string' },
         'needs-info-state': { type: 'string' },
+        'spec-claimed-state': { type: 'string' },
         'spec-model': { type: 'string' },
         // provider selection (run + watch)
         provider: { type: 'string' },
@@ -235,7 +247,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         const agentLabel = typeof values['agent-label'] === 'string' ? values['agent-label'] : undefined;
         const needsInfoLabel = typeof values['needs-info-label'] === 'string' ? values['needs-info-label'] : undefined;
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
-        // label is optional in github loop-v1 (agent trigger = --agent-label); --label is unused here
+        // --label is the OWNERSHIP label in github loop-v1 (issues must carry it in addition to the
+        // routing label); optional — when absent, no ownership filter is applied
       } else if (source === 'linear') {
         const specStateName = typeof values['spec-state-name'] === 'string' ? values['spec-state-name'] : undefined;
         const needsInfoState = typeof values['needs-info-state'] === 'string' ? values['needs-info-state'] : undefined;
@@ -280,10 +293,12 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(specLabel !== undefined ? { specLabel } : {}),
       ...(typeof values['agent-label'] === 'string' ? { agentLabel: values['agent-label'] } : {}),
       ...(typeof values['needs-info-label'] === 'string' ? { needsInfoLabel: values['needs-info-label'] } : {}),
+      ...(typeof values['spec-claimed-label'] === 'string' ? { specClaimedLabel: values['spec-claimed-label'] } : {}),
       ...(specState !== undefined ? { specState } : {}),
       ...(typeof values['spec-state-name'] === 'string' ? { specStateName: values['spec-state-name'] } : {}),
       ...(typeof values['agent-state'] === 'string' ? { agentState: values['agent-state'] } : {}),
       ...(typeof values['needs-info-state'] === 'string' ? { needsInfoState: values['needs-info-state'] } : {}),
+      ...(typeof values['spec-claimed-state'] === 'string' ? { specClaimedState: values['spec-claimed-state'] } : {}),
     };
   }
 
@@ -323,24 +338,30 @@ Commands:
 
   watch loop-v1 options (add any spec-trigger flag to activate; spec pass runs first each tick):
     GitHub loop-v1 (--source github; all three flags required together):
-      --spec-label <name>       Label that triggers the spec pass (e.g. "ready for spec")
-      --agent-label <name>      Label set after spec generation — the agent-pass trigger (e.g. "ready for agent")
-      --needs-info-label <name> Label set when a ticket is too vague for spec or agent (e.g. "needs info")
-      (--label is not used in github loop-v1; --claimed-state / --review-state still apply to the agent pass)
+      --spec-label <name>        Label that triggers the spec pass (e.g. "ready for spec")
+      --agent-label <name>       Label set after spec generation — the agent-pass trigger (e.g. "ready for agent")
+      --needs-info-label <name>  Label set when a ticket is too vague for spec or agent (e.g. "needs info")
+      --label <name>             OWNERSHIP label: issues must carry this label in addition to the routing label
+                                 (e.g. "vanguard"); optional — when absent, no ownership filter is applied.
+                                 --claimed-state / --review-state still apply to the agent pass.
+      --spec-claimed-label <l>   Label the spec pass moves a claimed issue to while speccing
+                                 (default: "vanguard:speccing"); use this if your workspace uses a different label.
 
     Linear loop-v1 (--source linear; all three flags required together plus --label):
-      --spec-state <type>       State TYPE that triggers the spec pass (e.g. "triage")
-      --spec-state-name <name>  Display NAME of that state, for failure revert (e.g. "Spec")
-      --needs-info-state <name> State NAME for tickets that are too vague (e.g. "Needs Info")
-      --agent-state <name>      State NAME the spec pass advances to (default: "Todo"); the agent
-                                triggers on the TYPE given by --trigger-state (default: "unstarted")
+      --spec-state <type>        State TYPE that triggers the spec pass (e.g. "triage")
+      --spec-state-name <name>   Display NAME of that state, for failure revert (e.g. "Spec")
+      --needs-info-state <name>  State NAME for tickets that are too vague (e.g. "Needs Info")
+      --agent-state <name>       State NAME the spec pass advances to (default: "Todo"); the agent
+                                 triggers on the TYPE given by --trigger-state (default: "unstarted")
+      --spec-claimed-state <s>   State NAME the spec pass moves a claimed issue to while speccing
+                                 (default: "Speccing"); use this if your workspace lacks that state.
       (--label, --trigger-state, --claimed-state, --review-state still apply to the agent pass)
 
     Shared:
-      --spec-model <m>          Cheap model for the spec-generation stage (e.g. "haiku")
+      --spec-model <m>           Cheap model for the spec-generation stage (e.g. "haiku")
 
     Example (GitHub):
-      vanguard watch --source github --agent-label "ready for agent" \\
+      vanguard watch --source github --label vanguard --agent-label "ready for agent" \\
         --spec-label "ready for spec" --needs-info-label "needs info" --spec-model haiku
 
     Example (Linear):

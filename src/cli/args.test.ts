@@ -373,4 +373,115 @@ describe('parseCli', () => {
       ).kind,
     ).toBe('help');
   });
+
+  // --- FIX 1: --label as ownership filter for github loop-v1 ---
+
+  it('parses --label into github loop-v1 when supplied alongside spec/agent/needs-info flags', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--source', 'github',
+        '--label', 'vanguard',
+        '--spec-label', 'ready for spec',
+        '--agent-label', 'ready for agent',
+        '--needs-info-label', 'needs info',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.label).toBe('vanguard');
+      expect(cmd.specLabel).toBe('ready for spec');
+      expect(cmd.agentLabel).toBe('ready for agent');
+    }
+  });
+
+  it('omits label from github loop-v1 when --label is absent (ownership filter off)', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--source', 'github',
+        '--spec-label', 'ready for spec',
+        '--agent-label', 'ready for agent',
+        '--needs-info-label', 'needs info',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('label' in cmd).toBe(false);
+    }
+  });
+
+  // --- FIX 2: --spec-claimed-state and --spec-claimed-label flags ---
+
+  it('parses --spec-claimed-state on linear loop-v1', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--label', 'vanguard',
+        '--spec-state', 'triage',
+        '--spec-state-name', 'Spec',
+        '--needs-info-state', 'Needs Info',
+        '--spec-claimed-state', 'Analyzing',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.specClaimedState).toBe('Analyzing');
+    }
+  });
+
+  it('omits specClaimedState when --spec-claimed-state is absent', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--label', 'vanguard',
+        '--spec-state', 'triage',
+        '--spec-state-name', 'Spec',
+        '--needs-info-state', 'Needs Info',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('specClaimedState' in cmd).toBe(false);
+    }
+  });
+
+  it('parses --spec-claimed-label on github loop-v1', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--source', 'github',
+        '--spec-label', 'ready for spec',
+        '--agent-label', 'ready for agent',
+        '--needs-info-label', 'needs info',
+        '--spec-claimed-label', 'wip:speccing',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.specClaimedLabel).toBe('wip:speccing');
+    }
+  });
+
+  it('omits specClaimedLabel when --spec-claimed-label is absent', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--source', 'github',
+        '--spec-label', 'ready for spec',
+        '--agent-label', 'ready for agent',
+        '--needs-info-label', 'needs info',
+      ],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('specClaimedLabel' in cmd).toBe(false);
+    }
+  });
 });

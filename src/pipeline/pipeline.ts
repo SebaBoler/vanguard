@@ -247,7 +247,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
     {
       name: 'implementer',
       promptTemplate:
-        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
       maxTurns: 30,
     },
     {

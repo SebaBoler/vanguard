@@ -398,6 +398,13 @@ export interface WatchGithubOptions {
   deps: RunGithubIssueDeps;
   /** Trigger label: open issues with this label are picked. */
   label: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `label` to be listed
+   * as ready. Absent => only `label` is required (existing single-loop behaviour unchanged).
+   * Used in loop-v1 so the `--label` (e.g. 'vanguard') ownership requirement is enforced even though
+   * the routing labels (agent/spec trigger) already filter the query.
+   */
+  ownerLabel?: string;
   /** Label added on claim (and the trigger label removed) so re-polls skip it, e.g. 'vanguard:running'. */
   claimedLabel: string;
   /** Label added after a PR opens, e.g. 'vanguard:review'. */
@@ -420,8 +427,9 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
   const repo = opts.deps.repoSlug;
   const fetcher = new GitHubTaskFetcher(repo, opts.gh);
   const needsInfoLabel = opts.needsInfoLabel;
+  const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
   return {
-    listReady: async () => (await fetcher.list({ labels: [opts.label] })).map((task) => ({ id: task.id })),
+    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
     claim: (id) => editGithubLabels(repo, id, { remove: [opts.label], add: [opts.claimedLabel] }, opts.gh),
     runOne:
       needsInfoLabel === undefined
@@ -443,6 +451,14 @@ export interface WatchGithubSpecOptions {
   repoSlug: string;
   /** Trigger label: open issues with this label are picked for speccing. */
   specLabel: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `specLabel` to be
+   * listed as ready for the spec pass. Absent => only `specLabel` is required (existing behaviour).
+   * Used in loop-v1 so the `--label` (e.g. 'vanguard') ownership requirement is enforced on top of
+   * the spec-trigger routing label. Claim/advance/needs-info are unaffected — they swap only the
+   * routing labels, leaving the ownership label intact on the issue.
+   */
+  ownerLabel?: string;
   /** Label added on claim (and the spec label removed) so re-polls skip it, e.g. 'vanguard:speccing'. */
   claimedLabel: string;
   /** Label added after a spec is generated — the agent-pass trigger, e.g. 'vanguard'. */
@@ -463,8 +479,9 @@ export function githubSpecPrimitives(opts: WatchGithubSpecOptions): SpecWatchPri
   const repo = opts.repoSlug;
   const fetcher = opts.deps.fetcher;
   const generate = opts.generateSpec ?? runSpecGenerator;
+  const specLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.specLabel] : [opts.specLabel];
   return {
-    listReady: async () => (await fetcher.list({ labels: [opts.specLabel] })).map((task) => ({ id: task.id })),
+    listReady: async () => (await fetcher.list({ labels: specLabels })).map((task) => ({ id: task.id })),
     claim: (id) => editGithubLabels(repo, id, { remove: [opts.specLabel], add: [opts.claimedLabel] }, opts.gh),
     runSpec: async (id) => {
       const task = await fetcher.fetch(id);

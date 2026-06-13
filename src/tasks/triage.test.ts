@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   assessTaskReadiness,
   hasRealAcceptanceCriteria,
-  isSpecComment,
   isVanguardSpec,
   stripHtmlComments,
   MIN_DESCRIPTION_CHARS,
@@ -149,32 +148,6 @@ describe('isVanguardSpec', () => {
 });
 
 // ---------------------------------------------------------------------------
-// isSpecComment
-// ---------------------------------------------------------------------------
-
-describe('isSpecComment', () => {
-  it('returns true for a comment containing <tech_spec marker', () => {
-    expect(isSpecComment({ author: 'bot', body: '<tech_spec>\ncontent\n</tech_spec>' })).toBe(true);
-  });
-
-  it('returns true for a comment containing an Acceptance heading', () => {
-    expect(isSpecComment({ author: 'bot', body: '## Acceptance Criteria\n- [ ] Something.' })).toBe(true);
-  });
-
-  it('returns false for an ordinary comment', () => {
-    expect(isSpecComment({ author: 'alice', body: 'Looks good to me.' })).toBe(false);
-  });
-
-  it('returns false for an empty comment body', () => {
-    expect(isSpecComment({ author: 'alice', body: '' })).toBe(false);
-  });
-
-  it('returns false for prose mentioning "acceptance" without "criteria"', () => {
-    expect(isSpecComment({ author: 'pm', body: '## Our acceptance rate dropped' })).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // assessTaskReadiness
 // ---------------------------------------------------------------------------
 
@@ -267,5 +240,23 @@ describe('assessTaskReadiness', () => {
     const description = 'This task describes a feature in enough detail for the description gate.';
     const comments = [{ author: 'alice', body: '' }];
     expect(assessTaskReadiness(makeTask({ description, comments }), 'agent')).toBe('needs_info');
+  });
+
+  it('returns needs_info in agent mode when a comment has only an "Acceptance Criteria" heading with no real bullets', () => {
+    const description = 'This task describes a feature in enough detail for the description gate.';
+    const comments = [{ author: 'pm', body: '## Acceptance Criteria' }];
+    expect(assessTaskReadiness(makeTask({ description, comments }), 'agent')).toBe('needs_info');
+  });
+
+  it('returns ok in agent mode when a comment has an Acceptance Criteria heading with real bullets', () => {
+    const description = 'This task describes a feature in enough detail for the description gate.';
+    const comments = [{ author: 'pm', body: '## Acceptance Criteria\n- [ ] The export button generates a valid CSV file.' }];
+    expect(assessTaskReadiness(makeTask({ description, comments }), 'agent')).toBe('ok');
+  });
+
+  it('returns ok in agent mode when a comment contains a <tech_spec> marker', () => {
+    const description = 'This task describes a feature in enough detail for the description gate.';
+    const comments = [{ author: 'vanguard-bot', body: '<tech_spec>\n## Architecture\nUse event sourcing.\n</tech_spec>' }];
+    expect(assessTaskReadiness(makeTask({ description, comments }), 'agent')).toBe('ok');
   });
 });

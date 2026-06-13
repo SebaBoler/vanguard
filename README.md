@@ -237,10 +237,12 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 
 **GitHub (routes by LABELS):**
 
+`--label` (e.g. `vanguard`) is the **ownership** label: an issue is only picked up if it carries it *in addition to* the routing label below. This stops Vanguard from grabbing issues that happen to use `ready for spec`/`ready for agent` for manual triage.
+
 | Label | What happens |
 |---|---|
-| `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. |
-| `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. |
+| `vanguard` + `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. |
+| `vanguard` + `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. |
 | `needs info` | Parked. Human updates the ticket and moves it back. |
 
 > **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent`. The spec loop only runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug.
@@ -248,6 +250,7 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 ```bash
 # GitHub Loop v1 example
 vanguard watch --source github \
+  --label vanguard \
   --spec-label "ready for spec" \
   --agent-label "ready for agent" \
   --needs-info-label "needs info" \
