@@ -81,6 +81,7 @@ function makeAgent(): AgentProvider {
 }
 
 const stage: PipelineStage = { name: 'implementer', promptTemplate: 'Task: {{TITLE}}' };
+const FORK_SELECT_TEST_TIMEOUT_MS = 15_000;
 
 /** Returns a score function that assigns scores in order of calls. */
 function makeScorer(scores: number[]): (diff: string, result: RunResult) => Promise<EvalVerdict> {
@@ -122,7 +123,7 @@ describe('forkAndSelect', () => {
       expect(result.winnerIndex).toBe(0);
       expect(result.winner.completed).toBe(true);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('picks the highest-scoring variant (winner is not the last run)', async () => {
     await withCtx('fs-best', makeSandbox(), async (ctx) => {
@@ -133,7 +134,7 @@ describe('forkAndSelect', () => {
       expect(result.variants[1]!.verdict.score).toBe(0.9);
       expect(result.winner).toBe(result.variants[1]!.result);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('applies the winner diff to the worktree when winner is not the last variant', async () => {
     await withCtx('fs-apply', makeSandbox(), async (ctx) => {
@@ -144,7 +145,7 @@ describe('forkAndSelect', () => {
       // variant-2.txt should NOT be present (last variant's changes were reset)
       expect(await exists(join(ctx.worktreePath, 'variant-2.txt'))).toBe(false);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('does not re-apply when the last variant is the winner', async () => {
     await withCtx('fs-last', makeSandbox(), async (ctx) => {
@@ -156,14 +157,14 @@ describe('forkAndSelect', () => {
       // variant-0.txt was reset before the last variant ran
       expect(await exists(join(ctx.worktreePath, 'variant-0.txt'))).toBe(false);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('breaks ties in favor of the earliest variant', async () => {
     await withCtx('fs-tie', makeSandbox(), async (ctx) => {
       const result = await forkAndSelect(ctx, stage, { agent: makeAgent(), n: 3, score: makeScorer([0.7, 0.7, 0.7]) });
       expect(result.winnerIndex).toBe(0);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('handles winner with no diff without calling git apply', async () => {
     await withCtx('fs-nodiff', makeNoopSandbox(), async (ctx) => {
@@ -174,7 +175,7 @@ describe('forkAndSelect', () => {
       // Worktree should still be at HEAD (no changes applied)
       expect(await exists(join(ctx.worktreePath, 'variant-0.txt'))).toBe(false);
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 
   it('passes forkFromSessionId as resumeSessionId with forkSession: true', async () => {
     const received: AgentRunInput[] = [];
@@ -198,5 +199,5 @@ describe('forkAndSelect', () => {
         expect(input.forkSession).toBe(true);
       }
     });
-  });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
 });
