@@ -12,11 +12,8 @@ import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
 
-// Marker the loop-v1 spec pass moves a claimed ticket to so re-polls skip it.
-// TODO: make configurable via a flag if needed
-const SPEC_CLAIMED_STATE = 'Speccing'; // Linear: state NAME
-// TODO: make configurable via a flag if needed
-const SPEC_CLAIMED_LABEL = 'vanguard:speccing'; // GitHub: label
+const SPEC_CLAIMED_STATE = 'Speccing'; // Linear default; override with --spec-claimed-state.
+const SPEC_CLAIMED_LABEL = 'vanguard:speccing'; // GitHub default; override with --spec-claimed-label.
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {

@@ -2,7 +2,7 @@
 name: Vanguard Task / Agent Implementation
 about: Submit a well-defined task ready for automatic implementation by Vanguard.
 title: "[TASK] "
-labels: vanguard, ready for agent
+labels: ready for agent
 assignees: ''
 ---
 
@@ -26,3 +26,4 @@ assignees: ''
 ### 🤖 Triage Instructions (For Humans):
 * Change the label to `ready for spec` – if this task is just a high-level idea and Vanguard should first research it, prepare an architectural plan, and write a Tech Spec.
 * Leave the label as `ready for agent` – if the task is precisely scoped out and Vanguard should jump straight into the isolated implementation phase and open a Pull Request.
+* Add the `vanguard` label only when your watcher is started with an ownership guard such as `--label vanguard`. Repo-wide GitHub Loop v1.1 can run on `ready for spec` / `ready for agent` alone.
