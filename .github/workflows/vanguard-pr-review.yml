@@ -1,0 +1,57 @@
+name: Vanguard PR Review
+
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: vanguard-pr-review-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'ready for vanguard review' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      # Pobieramy tylko bazę repozytorium — nigdy kod HEAD z PR
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Zbuduj obraz sandboxa
+        run: docker build -t vanguard-sandbox:latest docker/
+
+      - name: Utwórz etykiety routingu
+        run: |
+          gh label create "ready for vanguard review" --repo "$GITHUB_REPOSITORY" --color BFD4F2 --description "Wyzwala recenzję Vanguard" --force
+          gh label create "vanguard:reviewing" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Recenzja Vanguard w toku" --force
+          gh label create "vanguard:reviewed" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Recenzja Vanguard opublikowana" --force
+
+      - name: Preflight
+        run: node dist/cli/index.js doctor-prs --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --repo "$GITHUB_WORKSPACE"
+
+      - name: Recenzja oznaczonych PR
+        run: node dist/cli/index.js watch-prs --once --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --reviewing-label "vanguard:reviewing" --reviewed-label "vanguard:reviewed" --repo "$GITHUB_WORKSPACE" --llm-proxy

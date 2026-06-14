@@ -296,7 +296,7 @@ vanguard watch --loop-v1 --label vanguard \
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
-- External PR review is available as a one-shot `review-pr` command or an always-on `watch-prs` polling loop.
+- External PR review is available as a one-shot `review-pr` command, an always-on `watch-prs` polling loop, or a GitHub Actions label trigger.
 
 Operator logs stay terse and progress-oriented so always-on runs are scannable:
 
@@ -357,6 +357,22 @@ watch-prs: poll -> 1 ready
 watch-prs owner/repo#123: claim -> reviewing
 watch-prs owner/repo#123: reviewed -> marked
 ```
+
+#### GitHub Actions trigger
+
+`.github/workflows/vanguard-pr-review.yml` fires on `pull_request_target` when the `ready for vanguard review` label is applied to a PR, and can also be triggered manually via `workflow_dispatch` to sweep all currently-labeled PRs.
+
+**Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
+
+**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. **Apply the trigger label only to PRs you have vetted — the maintainer-applied label is the trust gate.**
+
+**Behavior:** each label event runs `watch-prs --once`, which reviews all PRs currently carrying the trigger label (not only the just-labeled one). This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
+
+**Re-review:** after new commits land, remove and re-add `ready for vanguard review` to trigger a fresh pass.
+
+**Label setup:** the workflow creates the three routing labels idempotently on every run (`gh label create --force`), so no manual label setup is needed in a fresh repo.
+
+**Relationship to always-on `watch-prs`:** both modes watch the same label; dedupe makes running both safe but redundant — pick one per repo.
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
