@@ -225,6 +225,25 @@ describe('parseCli', () => {
     });
   });
 
+  it('parses watch-prs with an author filter', () => {
+    const cmd = parseCli(
+      [
+        'watch-prs',
+        '--github-repo', 'o/r',
+        '--label', 'ready for vanguard review',
+        '--author', 'SebaBoler',
+      ],
+      '/work',
+    );
+    expect(cmd).toMatchObject({ kind: 'watch-prs', author: 'SebaBoler' });
+  });
+
+  it('omits the author filter when --author is not given', () => {
+    const cmd = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x'], '/work');
+    expect(cmd.kind).toBe('watch-prs');
+    expect((cmd as Extract<typeof cmd, { kind: 'watch-prs' }>).author).toBeUndefined();
+  });
+
   it('requires watch-prs to have an explicit repo and trigger label', () => {
     expect(parseCli(['watch-prs', '--github-repo', 'o/r'], '/work').kind).toBe('help');
     expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');

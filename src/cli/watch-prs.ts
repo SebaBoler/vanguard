@@ -34,6 +34,7 @@ export async function watchPrsCommand(cmd: WatchPrsCommand, deps: WatchPrsComman
     label: cmd.label,
     reviewingLabel: cmd.reviewingLabel,
     reviewedLabel: cmd.reviewedLabel,
+    ...(cmd.author !== undefined ? { author: cmd.author } : {}),
     ...(deps.gh !== undefined ? { gh: deps.gh } : {}),
     reviewOne: (item) =>
       reviewPr({

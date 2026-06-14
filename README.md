@@ -323,7 +323,7 @@ vanguard review-pr https://github.com/owner/repo/pull/123
 vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --review-model gpt-5
 ```
 
-`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
+`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Pass `--author <login>` to restrict the loop to a single author's PRs (self-review-only). Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
 
 ```bash
 vanguard doctor-prs --github-repo owner/repo --label "ready for vanguard review"
@@ -336,6 +336,7 @@ vanguard watch-prs --github-repo owner/repo \
   --label "ready for vanguard review" \
   --reviewing-label "vanguard:reviewing" \
   --reviewed-label "vanguard:reviewed" \
+  --author owner \
   --provider codex \
   --review-model gpt-5
 ```
@@ -364,9 +365,9 @@ watch-prs owner/repo#123: reviewed -> marked
 
 **Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
 
-**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. **Apply the trigger label only to PRs you have vetted — the maintainer-applied label is the trust gate.**
+**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. It is **self-review-only**: the job condition gates on `github.event.pull_request.user.login == 'SebaBoler'` and the review pass runs with `--author SebaBoler`, so only the maintainer's own PRs are ever reviewed — others' PRs are skipped even if labeled.
 
-**Behavior:** each label event runs `watch-prs --once`, which reviews all PRs currently carrying the trigger label (not only the just-labeled one). This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
+**Behavior:** each label event runs `watch-prs --once --author SebaBoler`, which reviews only the maintainer's PRs carrying the trigger label (not someone else's, and not only the just-labeled one). This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
 
 **Re-review:** after new commits land, remove and re-add `ready for vanguard review` to trigger a fresh pass.
 

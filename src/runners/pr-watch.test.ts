@@ -145,6 +145,52 @@ describe('githubPullRequestWatchPrimitives', () => {
     ]);
   });
 
+  it('reviews only the configured author and skips PRs opened by others', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'list') {
+        // The mocked gh ignores --author, so the client-side filter must drop mallory's PR.
+        return JSON.stringify([
+          {
+            number: 20,
+            title: 'Mine',
+            isDraft: false,
+            author: { login: 'SebaBoler' },
+            headRefOid: 'm1',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+          {
+            number: 21,
+            title: 'Theirs',
+            isDraft: false,
+            author: { login: 'mallory' },
+            headRefOid: 't1',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      author: 'SebaBoler',
+      gh,
+      reviewOne: async () => {},
+    });
+
+    const ready = await primitives.listReady();
+
+    expect(ready.map((item) => item.number)).toEqual([20]);
+    // The filter is also pushed down to gh for a smaller payload.
+    expect(calls[0]).toContain('--author');
+    expect(calls[0]).toContain('SebaBoler');
+  });
+
   it('skips a PR when Vanguard already reviewed the same head commit', async () => {
     const calls: string[][] = [];
     const gh: GhRunner = async (args) => {
