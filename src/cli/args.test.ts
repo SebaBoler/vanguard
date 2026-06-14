@@ -230,6 +230,22 @@ describe('parseCli', () => {
     expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
   });
 
+  it('parses doctor-prs with PR review label defaults', () => {
+    expect(parseCli(['doctor-prs', '--github-repo', 'o/r', '--label', 'ready for vanguard review'], '/work')).toEqual({
+      kind: 'doctor-prs',
+      repoSlug: 'o/r',
+      repoPath: '/work',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+    });
+  });
+
+  it('requires doctor-prs to have an explicit repo and trigger label', () => {
+    expect(parseCli(['doctor-prs', '--github-repo', 'o/r'], '/work').kind).toBe('help');
+    expect(parseCli(['doctor-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
+  });
+
   it('omits providerModel and reviewModel when flags are absent', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
     expect(cmd.kind === 'run' && 'providerModel' in cmd).toBe(false);

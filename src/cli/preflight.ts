@@ -4,7 +4,8 @@ import type { Command } from './args.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
 type DoctorCommand = Extract<Command, { kind: 'doctor' }>;
-export type PreflightCommand = WatchCommand | DoctorCommand;
+type DoctorPrsCommand = Extract<Command, { kind: 'doctor-prs' }>;
+export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand;
 
 export type PreflightRunner = (
   cmd: string,
@@ -61,6 +62,7 @@ function unique(values: Array<string | undefined>): string[] {
 }
 
 function githubLabelsFor(cmd: PreflightCommand): string[] {
+  if (cmd.kind === 'doctor-prs') return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
   if (cmd.source !== 'github') return [];
   if (cmd.specLabel !== undefined) {
     return unique([
@@ -136,11 +138,12 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
   checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
 
-  if (cmd.source === 'github' || cmd.source === 'project') {
+  const isGithubBacked = cmd.kind === 'doctor-prs' || cmd.source === 'github' || cmd.source === 'project';
+  if (isGithubBacked) {
     checks.push(await githubAuthOk(run, cmd.repoPath, env));
   }
 
-  if (cmd.source === 'github') {
+  if (cmd.kind === 'doctor-prs' || cmd.source === 'github') {
     const repoSlug = cmd.repoSlug ?? (remote.ok ? repoSlugFromRemote(remote.stdout) : undefined);
     if (repoSlug === undefined) {
       checks.push(check('github labels', false, 'repo unknown'));
@@ -149,7 +152,7 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     }
   }
 
-  if (cmd.source === 'linear') {
+  if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
     checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
     checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
   }
