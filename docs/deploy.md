@@ -1,6 +1,6 @@
 # Deploying the Vanguard watch loop
 
-Run `vanguard watch` always-on so the factory pulls ready Linear or GitHub issues by itself, runs them, and opens PRs. This guide gives three concrete recipes: Synology (step by step, the one that was actually deployed), Hetzner native Docker, and Hetzner with Coolify. All three are the same idea: Docker on Linux, one controller container that starts sibling sandboxes.
+Run `vanguard watch` always-on so the factory pulls ready Linear or GitHub issues by itself, runs them, and opens PRs. Optionally run `vanguard watch-prs` as a second loop so Vanguard reviews external PRs by label. This guide gives three concrete recipes: Synology (step by step, the one that was actually deployed), Hetzner native Docker, and Hetzner with Coolify. All three are the same idea: Docker on Linux, one controller container that starts sibling sandboxes.
 
 ## Architecture (docker-out-of-docker)
 
@@ -9,6 +9,7 @@ Vanguard runs as one long-lived **controller** container. It talks to the host D
 ```
 host docker daemon
  ├─ vanguard-watch        controller: node + docker CLI + git + gh + linear, runs `vanguard watch`
+ ├─ vanguard-watch-prs    optional controller profile, runs `vanguard watch-prs`
  ├─ vanguard-gc           controller image again, loops: refresh target-repo + gc every 4h
  ├─ vg-<uuid>             per-run sandbox (the agent), started as a sibling
  ├─ vg-llm-<id>           per-run llm-proxy sidecar (holds the Anthropic token; sandbox gets a nonce)
@@ -22,7 +23,7 @@ This works without path tricks because the controller copies the worktree into e
 1. Docker. Synology: Container Manager. Hetzner: `apt install docker.io` or Docker CE.
 2. Two images on the host daemon, matching the host CPU architecture: `vanguard-sandbox:latest` and `vanguard-runner:latest`. Build them on the host, or build elsewhere and transfer (see Synology below). Synology and most Hetzner cloud boxes are `x86_64`/`amd64`. An Apple Silicon Mac builds `arm64` by default, which will not run on an amd64 host, so build with `--platform linux/amd64`.
 3. A git clone of the target repo the agent edits, mounted into the controller at `/work/repo`.
-4. Secrets in the environment: `CLAUDE_CODE_OAUTH_TOKEN` (subscription, the default here), `GH_TOKEN` for git push and PRs, and `LINEAR_API_KEY` only when running the Linear source.
+4. Secrets in the environment: `CLAUDE_CODE_OAUTH_TOKEN` (subscription, the default here), `GH_TOKEN` for git push, PRs, labels, and PR reviews, and `LINEAR_API_KEY` only when running the Linear source.
 
 ## Auth: subscription, not API credit
 
@@ -122,6 +123,21 @@ GitHub mode watches the `ready for spec`, `ready for agent`, and `needs info` la
 
 Set the `gc --remote OWNER/REPO` slug to match your repo. Keep `VANGUARD_MAX_SANDBOXES: "1"` on a small NAS.
 
+The same compose file also ships an optional **external PR review loop** under the `pr-review` profile. It watches PRs carrying the trigger label, posts a non-blocking Vanguard review, and marks the PR with `vanguard:reviewed`. Run its preflight first:
+
+```bash
+ssh -p 50022 <user>@<nas-ip> 'cd /volume1/docker/vanguard && sudo /usr/local/bin/docker compose --profile pr-review run --rm vanguard-watch-prs doctor-prs --github-repo=OWNER/REPO --label "ready for vanguard review" --repo=/work/repo'
+```
+
+Then start only the PR-review controller:
+
+```bash
+ssh -p 50022 <user>@<nas-ip> 'cd /volume1/docker/vanguard && sudo /usr/local/bin/docker compose --profile pr-review up -d vanguard-watch-prs'
+ssh -p 50022 <user>@<nas-ip> 'sudo /usr/local/bin/docker logs -f vanguard-vanguard-watch-prs-1'
+```
+
+This service is separate from `vanguard-watch`; keep it disabled if you only want Vanguard to implement tickets. Before enabling it, create the labels from `docker/compose.yaml` in the target repo: `ready for vanguard review`, `vanguard:reviewing`, and `vanguard:reviewed`.
+
 ### 6. Start and verify
 
 ```bash
@@ -129,7 +145,7 @@ ssh -p 50022 <user>@<nas-ip> 'cd /volume1/docker/vanguard && sudo /usr/local/bin
 ssh -p 50022 <user>@<nas-ip> 'sudo /usr/local/bin/docker logs -f vanguard-vanguard-watch-1'
 ```
 
-You should see `watch[linear]: polling every 120s`, followed by terse operator lines such as `spec: poll -> 1 ready` and `spec TES-123: claim -> triage`. To prove the full Loop v1.1 chain in Linear, create a Linear issue in your team, add the `vanguard` label, and move it to the **Spec** state. The spec pass posts a `<tech_spec>` comment and advances the issue to Todo; the next poll runs the agent pass and opens a draft PR. To skip the spec pass for a fully-scoped ticket, put the issue directly in Todo with acceptance criteria or an existing Vanguard spec comment.
+You should see `watch[linear]: polling every 120s`, followed by terse operator lines such as `spec: poll -> 1 ready` and `spec TES-123: claim -> triage`. For the PR review loop, you should see `watch-prs[github]: polling every 120s`. To prove the full Loop v1.1 chain in Linear, create a Linear issue in your team, add the `vanguard` label, and move it to the **Spec** state. The spec pass posts a `<tech_spec>` comment and advances the issue to Todo; the next poll runs the agent pass and opens a draft PR. To skip the spec pass for a fully-scoped ticket, put the issue directly in Todo with acceptance criteria or an existing Vanguard spec comment.
 
 For GitHub smoke tests, create an issue in `OWNER/REPO` with `ready for spec`. The watcher should post a `<tech_spec>` comment and relabel to `ready for agent`; the next poll should open a draft PR. A fully-scoped issue can start directly with `ready for agent`. `needs info` means the issue is parked until a human adds detail and moves it back. See the [GitHub Loop v1.1 smoke test](smoke-tests/github-loop-v1-1.md) for the controlled two-pass `--once` runbook.
 
@@ -164,7 +180,7 @@ Coolify deploys a Docker Compose resource straight from a Git repo, which fits V
 3. The controller needs the host Docker socket. Confirm Coolify allows the `/var/run/docker.sock` bind mount in the compose (some hardened setups block host mounts; you may need to allow it for this resource). Without the socket the controller cannot start sandboxes.
 4. The **sandbox image must be present on the same Docker host** Coolify uses. Coolify builds `vanguard-runner` from the Dockerfile, but not the sandbox. Build or load `vanguard-sandbox:latest` on that host once (SSH in and `docker build -t vanguard-sandbox:latest docker/`, or `docker load`).
 5. Make `docker/target-repo` and `.vanguard/runs` **persistent volumes** in Coolify so the clone and the run records survive redeploys. Seed `docker/target-repo` with a clone the first time (a one-off `docker run` like the Synology step, or an init command).
-6. Deploy. Watch the logs in Coolify for the `watch[...]: polling` line.
+6. Deploy. Watch the logs in Coolify for the `watch[...]: polling` line. To run the optional PR-review loop, enable the compose profile `pr-review` or create a second compose resource for `vanguard-watch-prs`, then preflight it with `doctor-prs`.
 
 Caveats: Coolify redeploys may recreate the controller, which is fine (the watch loop is stateless beyond the mounted volumes). The `vanguard-gc` service runs the same as anywhere. If Coolify refuses the socket mount, fall back to Recipe B (plain compose over SSH) on the same Hetzner box; Coolify can still manage other apps alongside it.
 
