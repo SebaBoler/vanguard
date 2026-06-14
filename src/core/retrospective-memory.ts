@@ -272,6 +272,22 @@ export async function buildRetrospectiveMemory(repoPath: string, opts?: BuildOpt
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
+/** Section heading label for an entry kind. Exhaustive: a new kind is a compile error here. */
+function renderKindLabel(kind: RetrospectiveEntry['kind']): string {
+  switch (kind) {
+    case 'failed_run':
+      return 'FAILED RUN';
+    case 'failed_proof':
+      return 'FAILED PROOF';
+    case 'reviewer_note':
+      return 'REVIEWER NOTE';
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
+
 /** Render a report to deterministic markdown (pure function of the report — no wall-clock timestamp). */
 export function renderRetrospectiveMarkdown(report: RetrospectiveReport): string {
   const lines: string[] = ['# Retrospective Memory', ''];
@@ -282,12 +298,7 @@ export function renderRetrospectiveMarkdown(report: RetrospectiveReport): string
   }
 
   for (const entry of report.entries) {
-    const kindLabel =
-      entry.kind === 'failed_run'
-        ? 'FAILED RUN'
-        : entry.kind === 'failed_proof'
-          ? 'FAILED PROOF'
-          : 'REVIEWER NOTE';
+    const kindLabel = renderKindLabel(entry.kind);
     lines.push(`## [${kindLabel}] ${entry.taskId} @ ${entry.timestamp}`);
     lines.push('');
     lines.push(entry.detail);
@@ -332,6 +343,10 @@ export async function loadRetrospectiveMemory(repoPath: string, opts?: LoadOptio
   if (buf.byteLength <= maxBytes) return content;
   // Walk back to the last valid UTF-8 start byte so we never split a multibyte char.
   let end = maxBytes;
-  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
+  for (;;) {
+    const byte = buf[end];
+    if (end <= 0 || byte === undefined || (byte & 0xc0) !== 0x80) break;
+    end--;
+  }
   return buf.slice(0, end).toString('utf8');
 }

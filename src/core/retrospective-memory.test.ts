@@ -8,6 +8,7 @@ import {
   refreshRetrospectiveMemory,
   writeRetrospectiveMarkdown,
   loadRetrospectiveMemory,
+  redact,
 } from './retrospective-memory.js';
 
 let repo: string;
@@ -405,5 +406,33 @@ describe('buildRetrospectiveMemory – ordering and limit', () => {
     const failedRuns = report.entries.filter((e) => e.kind === 'failed_run');
     expect(failedRuns).toHaveLength(1);
     expect(failedRuns[0]?.taskId).toBe('TES-VALID');
+  });
+});
+
+describe('redact', () => {
+  it('masks a short (8-31 char) token in a key=value assignment that the 32-char pass would miss', () => {
+    const shortSecret = 'abc123DEF456ghi'; // 15 chars: only caught by the key=value / Bearer passes
+    const out = redact(`api_key=${shortSecret} done`);
+    expect(out).not.toContain(shortSecret);
+    expect(out).toContain('***');
+  });
+
+  it('masks a short Bearer token', () => {
+    const shortSecret = 'tok_ABCdef12345'; // 15 chars
+    const out = redact(`Authorization: Bearer ${shortSecret}`);
+    expect(out).not.toContain(shortSecret);
+    expect(out).toContain('***');
+  });
+
+  it('masks a long (32+ char) opaque token with no key prefix', () => {
+    const longSecret = 'ABCDEF0123456789ABCDEF0123456789AB'; // 34 chars
+    const out = redact(`leaked ${longSecret} here`);
+    expect(out).not.toContain(longSecret);
+    expect(out).toContain('***');
+  });
+
+  it('leaves ordinary prose untouched', () => {
+    const text = 'Test failed: expected 200 but got 404';
+    expect(redact(text)).toBe(text);
   });
 });

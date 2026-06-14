@@ -65,8 +65,9 @@ describe('memoryCommand', () => {
       console.log = origLog;
     }
 
-    expect(logs.length).toBeGreaterThan(0);
-    const parsed = JSON.parse(logs[0]!) as { entries: Array<{ taskId: string }> };
+    const firstLine = logs[0];
+    expect(firstLine).toBeDefined();
+    const parsed = JSON.parse(firstLine!) as { entries: Array<{ taskId: string }> };
     expect(parsed.entries.some((e) => e.taskId === 'TES-1')).toBe(true);
 
     // File must also be written in the --json path
