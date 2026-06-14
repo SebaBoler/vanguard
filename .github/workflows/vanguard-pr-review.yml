@@ -20,13 +20,12 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'ready for vanguard review' &&
       github.event.pull_request.draft == false &&
-      github.event.pull_request.user.type != 'Bot')
+      github.event.pull_request.user.login == 'SebaBoler')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      PR_AUTHOR: ${{ github.event.pull_request.user.login || github.actor }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,4 +53,4 @@ jobs:
         run: node dist/cli/index.js doctor-prs --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --repo "$GITHUB_WORKSPACE"
 
       - name: Review labeled PRs
-        run: node dist/cli/index.js watch-prs --once --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --reviewing-label "vanguard:reviewing" --reviewed-label "vanguard:reviewed" --author "$PR_AUTHOR" --repo "$GITHUB_WORKSPACE" --llm-proxy
+        run: node dist/cli/index.js watch-prs --once --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --reviewing-label "vanguard:reviewing" --reviewed-label "vanguard:reviewed" --author SebaBoler --repo "$GITHUB_WORKSPACE" --llm-proxy
