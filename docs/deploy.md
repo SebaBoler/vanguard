@@ -82,6 +82,7 @@ VANGUARD_SANDBOX_CPUS=0        # required: kernel without CFS scheduler
 VANGUARD_SANDBOX_PIDS=0        # silences a harmless pids-limit warning
 VANGUARD_SANDBOX_MEMORY_MB=1536
 # VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
+# VANGUARD_VISUAL_PROOF_CMD=pnpm exec playwright test --project=chromium
 ```
 
 ### 4. Clone the target repo (the NAS has no git, so use the runner image)

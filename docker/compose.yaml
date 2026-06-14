@@ -19,6 +19,7 @@ services:
       GH_TOKEN: ${GH_TOKEN}
       VANGUARD_MAX_SANDBOXES: "1" # cap to host RAM (1 per ~3GB free; one task at a time on a small NAS)
       # VANGUARD_VERIFY_CMD: pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
+      # VANGUARD_VISUAL_PROOF_CMD: pnpm exec playwright test --project=chromium
       # Per-host sandbox + sidecar limits. Set CPUS=0 on kernels without the CPU CFS scheduler (e.g.
       # Synology DSM), where `docker run --cpus` is fatal. "0"/empty omits that flag. Keep the sandbox
       # cap below (free RAM minus the other containers); on a 5.6GB NAS use ~2560, not 4096.
