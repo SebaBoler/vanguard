@@ -289,6 +289,17 @@ vanguard watch --loop-v1 --label vanguard \
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
 - Adversarial review of external PRs (Adversary stage + evals) is a follow-up, not part of Loop v1.
 
+Operator logs stay terse and progress-oriented so always-on runs are scannable:
+
+```text
+spec: poll -> 1 ready
+spec owner/repo#123: advanced -> next poll agent
+watch: poll -> 1 ready
+watch owner/repo#124: pr opened -> review
+```
+
+Normal logs report source, task id, phase, outcome, and next action. Full prompts, diffs, transcripts, and proof details stay in `.vanguard/runs/`.
+
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
 Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metrics.jsonl` (cost, tokens, cache efficiency, duration, exit reason). `vanguard stats` aggregates that into a rollup — per task, per stage, and a grand total — for fleet cost/time visibility (`--json` for machine output).
