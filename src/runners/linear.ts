@@ -5,7 +5,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification } from '../core/run-record.js';
@@ -165,7 +165,11 @@ function stages(): PipelineStage[] {
     'run `linear issue view {{ISSUE}} --json` (the `linear` CLI is installed and LINEAR_API_KEY is set).',
     '',
     'Implement it in the current repo, keeping the change minimal. If the description is too vague to',
-    'write code, add or update NOTES.md summarising the issue instead. When done, write <promise>COMPLETE</promise>.',
+    'write code, add or update NOTES.md summarising the issue instead.',
+    '',
+    retrospectiveMemoryBlock(),
+    '',
+    'When done, write <promise>COMPLETE</promise>.',
     '',
     'Title: {{TITLE}}',
   ].join('\n');

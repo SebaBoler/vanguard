@@ -19,6 +19,7 @@ import {
   sandboxComplete,
   withStageModel,
   techSpecStage,
+  retrospectiveMemoryBlock,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
@@ -450,6 +451,43 @@ describe('techSpecStage', () => {
     await disposeContext(ctx);
 
     expect(workdirCopyOutCalled).toBe(false);
+  });
+});
+
+describe('retrospectiveMemoryBlock', () => {
+  it('returns a string containing the advisory sentence and the placeholder', () => {
+    const block = retrospectiveMemoryBlock();
+    expect(block).toContain('Retrospective memory from prior Vanguard runs');
+    expect(block).toContain('{{RETROSPECTIVE_MEMORY}}');
+    expect(block).toContain('<retrospective_memory>');
+    expect(block).toContain('</retrospective_memory>');
+  });
+});
+
+describe('retrospective memory placeholders', () => {
+  it('implementReviewSimplifyStages implementer prompt contains {{RETROSPECTIVE_MEMORY}} and advisory sentence', () => {
+    const stages = implementReviewSimplifyStages();
+    const implementer = stages.find((s) => s.name === 'implementer');
+    expect(implementer?.promptTemplate).toContain('{{RETROSPECTIVE_MEMORY}}');
+    expect(implementer?.promptTemplate).toContain('Retrospective memory from prior Vanguard runs');
+  });
+
+  it('reviewer stage does NOT contain {{RETROSPECTIVE_MEMORY}}', () => {
+    const stages = implementReviewSimplifyStages();
+    const reviewer = stages.find((s) => s.name === 'reviewer');
+    expect(reviewer?.promptTemplate).not.toContain('{{RETROSPECTIVE_MEMORY}}');
+  });
+
+  it('simplifier stage does NOT contain {{RETROSPECTIVE_MEMORY}}', () => {
+    const stages = implementReviewSimplifyStages();
+    const simplifier = stages.find((s) => s.name === 'simplifier');
+    expect(simplifier?.promptTemplate).not.toContain('{{RETROSPECTIVE_MEMORY}}');
+  });
+
+  it('techSpecStage promptTemplate contains {{RETROSPECTIVE_MEMORY}}', () => {
+    const stages = techSpecStage();
+    expect(stages[0]?.promptTemplate).toContain('{{RETROSPECTIVE_MEMORY}}');
+    expect(stages[0]?.promptTemplate).toContain('Retrospective memory from prior Vanguard runs');
   });
 });
 
