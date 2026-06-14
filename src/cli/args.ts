@@ -157,6 +157,7 @@ export type Command =
       specClaimedState?: string;
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
+  | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
   | { kind: 'help' };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -237,8 +238,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
         verify: { type: 'string' },
-        // stats
+        // stats / memory
         json: { type: 'boolean' },
+        limit: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -261,6 +263,16 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   if (positionals[0] === 'stats') {
     return { kind: 'stats', repoPath, json: values.json === true };
+  }
+
+  if (positionals[0] === 'memory') {
+    const limit = Number(values.limit);
+    return {
+      kind: 'memory',
+      repoPath,
+      ...(Number.isFinite(limit) && limit >= 1 ? { limit: Math.floor(limit) } : {}),
+      json: values.json === true,
+    };
   }
 
   if (positionals[0] === 'gc') {
@@ -492,6 +504,7 @@ Commands:
   watch-prs Poll GitHub PRs by label and run the non-blocking Vanguard review loop.
   doctor-prs Check whether watch-prs can run AFK before any PR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
+  memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
 
@@ -622,6 +635,11 @@ Commands:
   stats options:
     --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to read (default: cwd)
     --json                 Emit the aggregated report as JSON instead of tables
+
+  memory options:
+    --repo <path>          Repo to read run artifacts from (default: cwd)
+    --limit <n>            Max entries to keep in the report (default: 10)
+    --json                 Emit the raw report object as JSON instead of markdown
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.

@@ -6,6 +6,7 @@ import {
   buildRetrospectiveMemory,
   renderRetrospectiveMarkdown,
   refreshRetrospectiveMemory,
+  writeRetrospectiveMarkdown,
   loadRetrospectiveMemory,
 } from './retrospective-memory.js';
 
@@ -353,6 +354,12 @@ describe('loadRetrospectiveMemory', () => {
     const content = await readFile(path, 'utf8');
     expect(content).toContain('TES-R');
     expect(content).toContain('timeout');
+  });
+
+  it('writeRetrospectiveMarkdown writes the given markdown and returns the path', async () => {
+    const path = await writeRetrospectiveMarkdown(repo, '# hello\n');
+    expect(path).toBe(join(repo, '.vanguard', 'memory', 'retrospective.md'));
+    expect(await readFile(path, 'utf8')).toBe('# hello\n');
   });
 });
 

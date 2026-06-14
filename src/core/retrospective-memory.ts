@@ -305,15 +305,20 @@ export function renderRetrospectiveMarkdown(report: RetrospectiveReport): string
 
 // ─── Refresh + Load ───────────────────────────────────────────────────────────
 
-/** Build + render + write `.vanguard/memory/retrospective.md`. Returns the written path. */
-export async function refreshRetrospectiveMemory(repoPath: string, opts?: BuildOptions): Promise<string> {
-  const report = await buildRetrospectiveMemory(repoPath, opts);
-  const markdown = renderRetrospectiveMarkdown(report);
+/** Write pre-rendered markdown to `.vanguard/memory/retrospective.md`. Returns the written path. */
+export async function writeRetrospectiveMarkdown(repoPath: string, markdown: string): Promise<string> {
   const memDir = join(repoPath, '.vanguard', 'memory');
   await mkdir(memDir, { recursive: true });
   const filePath = join(memDir, 'retrospective.md');
   await writeFile(filePath, markdown, 'utf8');
   return filePath;
+}
+
+/** Build + render + write `.vanguard/memory/retrospective.md`. Returns the written path. */
+export async function refreshRetrospectiveMemory(repoPath: string, opts?: BuildOptions): Promise<string> {
+  const report = await buildRetrospectiveMemory(repoPath, opts);
+  const markdown = renderRetrospectiveMarkdown(report);
+  return writeRetrospectiveMarkdown(repoPath, markdown);
 }
 
 /** Read `.vanguard/memory/retrospective.md` capped to maxBytes; returns fallback message when absent/empty. */
