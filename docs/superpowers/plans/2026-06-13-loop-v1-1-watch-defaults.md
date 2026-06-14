@@ -44,7 +44,7 @@
 
 ### Follow-Up: Caveman-Friendly Operator Logs
 
-**Status:** Not part of this v1.1 patch; capture for the next small task.
+**Status:** Implemented in [Operator Logs Implementation Plan](2026-06-14-operator-logs.md).
 
 **Idea:** Vanguard watch logs should read like compact Codex progress updates: short event lines that say what is happening, why it matters, and what happens next. Keep them machine-scannable and terse so `caveman` style output remains useful.
 
