@@ -15,7 +15,7 @@ services:
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN} # subscription (no per-use billing); the default
       # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}           # API alternative (pay-per-use)
-      LINEAR_API_KEY: ${LINEAR_API_KEY}
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-} # required only when --source=linear
       GH_TOKEN: ${GH_TOKEN}
       VANGUARD_MAX_SANDBOXES: "1" # cap to host RAM (1 per ~3GB free; one task at a time on a small NAS)
       # VANGUARD_VERIFY_CMD: pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
@@ -28,12 +28,18 @@ services:
       # VANGUARD_SIDECAR_MEMORY_MB: "256"  # llm-proxy / egress sidecar cap ("0" to omit)
     command:
       - watch
-      - --source=linear   # or --source=github
-      - --label=vanguard
+      - --loop-v1
+      - --source=linear # GitHub mode: change to --source=github, add --github-repo=OWNER/REPO, remove --label unless you want an extra ownership filter.
+      - --label=vanguard # Linear Loop v1.1 ownership label. GitHub Loop v1.1 can route by repo + ready-for-* labels without this.
       - --repo=/work/repo
       - --interval=120
       - --llm-proxy        # hold the Anthropic credential in a trusted sidecar; sandbox gets a per-run nonce (implies egress)
       # - --team=TES       # (linear) limit to a team
+      # - --github-repo=OWNER/REPO       # (github) explicit repo slug for ready-for-spec / ready-for-agent label routing
+      # - --spec-state=triage            # (linear) default state TYPE for spec pass
+      # - --spec-state-name=Spec         # (linear) default state NAME for failure revert
+      # - --needs-info-state=Needs Info  # (linear) default parked state for vague tickets
+      # - --agent-state=Todo             # (linear) default state NAME after spec generation
 
   # Self-maintenance: every 4h refresh the target-repo base (so PRs branch off latest main) and reap
   # stale sandboxes / worktrees / merged remote branches. Same image; overrides the entrypoint to a loop.
@@ -47,4 +53,5 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./target-repo:/work/repo
-    env_file: .env
+    environment:
+      GH_TOKEN: ${GH_TOKEN}

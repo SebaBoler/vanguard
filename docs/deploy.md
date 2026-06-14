@@ -22,7 +22,7 @@ This works without path tricks because the controller copies the worktree into e
 1. Docker. Synology: Container Manager. Hetzner: `apt install docker.io` or Docker CE.
 2. Two images on the host daemon, matching the host CPU architecture: `vanguard-sandbox:latest` and `vanguard-runner:latest`. Build them on the host, or build elsewhere and transfer (see Synology below). Synology and most Hetzner cloud boxes are `x86_64`/`amd64`. An Apple Silicon Mac builds `arm64` by default, which will not run on an amd64 host, so build with `--platform linux/amd64`.
 3. A git clone of the target repo the agent edits, mounted into the controller at `/work/repo`.
-4. Secrets in the environment: `CLAUDE_CODE_OAUTH_TOKEN` (subscription, the default here), `LINEAR_API_KEY` for the Linear source, and `GH_TOKEN` for git push and PRs.
+4. Secrets in the environment: `CLAUDE_CODE_OAUTH_TOKEN` (subscription, the default here), `GH_TOKEN` for git push and PRs, and `LINEAR_API_KEY` only when running the Linear source.
 
 ## Auth: subscription, not API credit
 
@@ -71,7 +71,7 @@ ssh -p 50022 <user>@<nas-ip> 'sudo /usr/local/bin/docker load -i /tmp/vg-images.
 ssh -p 50022 <user>@<nas-ip> 'sudo mkdir -p /volume1/docker/vanguard/target-repo'
 ```
 
-Write `/volume1/docker/vanguard/.env` (root, chmod 600). Use the subscription token and disable `--cpus` (the Synology kernel has no CPU CFS scheduler, so `docker run --cpus` is fatal):
+Write `/volume1/docker/vanguard/.env` (root, chmod 600). Use the subscription token and disable `--cpus` (the Synology kernel has no CPU CFS scheduler, so `docker run --cpus` is fatal). `LINEAR_API_KEY` is needed for the default Linear compose mode; GitHub-only mode can omit it.
 
 ```bash
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
@@ -96,7 +96,31 @@ The credential helper lets `git push` authenticate with `GH_TOKEN` non-interacti
 
 ### 5. compose.yaml
 
-Copy `docker/compose.yaml` from this repo to `/volume1/docker/vanguard/compose.yaml`. It defines two services: `vanguard-watch` (the loop) and `vanguard-gc` (self-maintenance). Set `--team`, `--label`, and the `gc --remote OWNER/REPO` slug to match your setup. Keep `VANGUARD_MAX_SANDBOXES: "1"` on a small NAS.
+Copy `docker/compose.yaml` from this repo to `/volume1/docker/vanguard/compose.yaml`. It defines two services: `vanguard-watch` (the loop) and `vanguard-gc` (self-maintenance). The shipped command runs **Linear Loop v1.1** by default:
+
+```yaml
+command:
+  - watch
+  - --loop-v1
+  - --source=linear
+  - --label=vanguard
+```
+
+This expects a Linear `vanguard` label, a spec state with type `triage` and display name `Spec`, a `Needs Info` state, and a Todo/unstarted agent state. If your workspace uses different state names, uncomment and edit the `--spec-state`, `--spec-state-name`, `--needs-info-state`, and `--agent-state` lines in the compose file. Set `--team` if the Linear token can see multiple teams.
+
+For **GitHub Loop v1.1**, switch the command to repo-scoped routing:
+
+```yaml
+command:
+  - watch
+  - --loop-v1
+  - --source=github
+  - --github-repo=OWNER/REPO
+```
+
+GitHub mode watches the `ready for spec`, `ready for agent`, and `needs info` labels in that repo. It does **not** need `--label=vanguard` by default; add `--label=vanguard` only if you want an extra ownership filter on top of the routing labels.
+
+Set the `gc --remote OWNER/REPO` slug to match your repo. Keep `VANGUARD_MAX_SANDBOXES: "1"` on a small NAS.
 
 ### 6. Start and verify
 
@@ -105,7 +129,9 @@ ssh -p 50022 <user>@<nas-ip> 'cd /volume1/docker/vanguard && sudo /usr/local/bin
 ssh -p 50022 <user>@<nas-ip> 'sudo /usr/local/bin/docker logs -f vanguard-vanguard-watch-1'
 ```
 
-You should see `watch[linear]: polling every 120s`. To prove the whole chain, create a Linear issue in your team, add the `vanguard` label, and move it to a **Todo** (unstarted) state. The next poll claims it, runs it through the sidecar, and opens a draft PR within a few minutes. Backlog state does not trigger; it must be Todo.
+You should see `watch[linear]: polling every 120s`, followed by terse operator lines such as `spec: poll -> 1 ready`. To prove the full Loop v1.1 chain in Linear, create a Linear issue in your team, add the `vanguard` label, and move it to the **Spec** state. The spec pass posts a `<tech_spec>` comment and advances the issue to Todo; the next poll runs the agent pass and opens a draft PR. To skip the spec pass for a fully-scoped ticket, put the issue directly in Todo with acceptance criteria or an existing Vanguard spec comment.
+
+For GitHub smoke tests, create an issue in `OWNER/REPO` with `ready for spec`. The watcher should post a `<tech_spec>` comment and relabel to `ready for agent`; the next poll should open a draft PR. A fully-scoped issue can start directly with `ready for agent`. `needs info` means the issue is parked until a human adds detail and moves it back.
 
 Stop with `sudo /usr/local/bin/docker compose down`.
 
@@ -118,7 +144,7 @@ A Hetzner CX/CPX/CCX box is simpler than Synology: it is amd64, has git, and its
 ```bash
 apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/OWNER/REPO.git /opt/vanguard && cd /opt/vanguard
-git clone https://github.com/OWNER/REPO.git target-repo   # the repo the agent edits
+git clone https://github.com/OWNER/REPO.git docker/target-repo   # the repo the agent edits
 printf 'CLAUDE_CODE_OAUTH_TOKEN=...\nLINEAR_API_KEY=...\nGH_TOKEN=...\n# VANGUARD_VERIFY_CMD=pnpm install --frozen-lockfile && pnpm typecheck && pnpm test\n' > .env && chmod 600 .env
 docker compose -f docker/compose.yaml up -d --build         # builds runner; build the sandbox too
 docker build -t vanguard-sandbox:latest docker/             # sandbox image on the same daemon
@@ -137,7 +163,7 @@ Coolify deploys a Docker Compose resource straight from a Git repo, which fits V
 2. Set the secrets as **environment variables** in the Coolify UI: `CLAUDE_CODE_OAUTH_TOKEN`, `LINEAR_API_KEY`, `GH_TOKEN`. Coolify injects them into the compose `${VAR}` references.
 3. The controller needs the host Docker socket. Confirm Coolify allows the `/var/run/docker.sock` bind mount in the compose (some hardened setups block host mounts; you may need to allow it for this resource). Without the socket the controller cannot start sandboxes.
 4. The **sandbox image must be present on the same Docker host** Coolify uses. Coolify builds `vanguard-runner` from the Dockerfile, but not the sandbox. Build or load `vanguard-sandbox:latest` on that host once (SSH in and `docker build -t vanguard-sandbox:latest docker/`, or `docker load`).
-5. Make `target-repo` and `.vanguard/runs` **persistent volumes** in Coolify so the clone and the run records survive redeploys. Seed `target-repo` with a clone the first time (a one-off `docker run` like the Synology step, or an init command).
+5. Make `docker/target-repo` and `.vanguard/runs` **persistent volumes** in Coolify so the clone and the run records survive redeploys. Seed `docker/target-repo` with a clone the first time (a one-off `docker run` like the Synology step, or an init command).
 6. Deploy. Watch the logs in Coolify for the `watch[...]: polling` line.
 
 Caveats: Coolify redeploys may recreate the controller, which is fine (the watch loop is stateless beyond the mounted volumes). The `vanguard-gc` service runs the same as anywhere. If Coolify refuses the socket mount, fall back to Recipe B (plain compose over SSH) on the same Hetzner box; Coolify can still manage other apps alongside it.
