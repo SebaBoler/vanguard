@@ -305,8 +305,10 @@ preflight: node 24 ok
 preflight: llm auth ok
 preflight: github labels ok
 spec: poll -> 1 ready
+spec owner/repo#123: claim -> triage
 spec owner/repo#123: advanced -> next poll agent
 watch: poll -> 1 ready
+watch owner/repo#124: claim -> running
 watch owner/repo#124: pr opened -> review
 ```
 

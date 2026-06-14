@@ -75,6 +75,7 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
     async (item): Promise<{ id: string; kind: Kind }> => {
       try {
         await primitives.claim(item.id);
+        operatorLog(opts, `${phase} ${item.id}: claim -> running`);
       } catch {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
@@ -140,6 +141,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
     async (item): Promise<{ id: string; kind: SpecKind }> => {
       try {
         await primitives.claim(item.id);
+        operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
       } catch {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
