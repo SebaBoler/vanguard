@@ -11,6 +11,7 @@ import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
+import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
@@ -71,6 +72,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
+  const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
   const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) });
   try {
     const base = implementReviewSimplifyStages();
@@ -79,7 +81,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
     const outcomes = await runStages(ctx, pipeline, {
       agent: agents.agent,
-      variables: taskToVariables(task),
+      variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
       ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
     console.log(summarizeOutcomes(outcomes));
@@ -109,6 +111,9 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     await linkPullRequest(deps.repoSlug, issueRef, pr.prUrl);
     return { task, prUrl: pr.prUrl };
   } finally {
+    await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+      console.error('retrospective memory refresh failed (non-fatal):', err);
+    });
     await disposeContext(ctx);
   }
 }

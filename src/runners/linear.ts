@@ -5,11 +5,12 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
+import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
@@ -77,6 +78,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
 
+  const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
   const ctx = await prepareContext(
     { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) },
     { skills },
@@ -87,7 +89,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
     const outcomes = await runStages(ctx, pipeline, {
       agent: agents.agent,
-      variables: { ...taskToVariables(task), ISSUE: issueRef },
+      variables: { ...taskToVariables(task), ISSUE: issueRef, RETROSPECTIVE_MEMORY: retrospectiveMemory },
       ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
     });
     console.log(summarizeOutcomes(outcomes));
@@ -117,6 +119,9 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     await linkLinearIssue(task.id, pr.prUrl);
     return { task, prUrl: pr.prUrl };
   } finally {
+    await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+      console.error('retrospective memory refresh failed (non-fatal):', err);
+    });
     await disposeContext(ctx);
   }
 }
@@ -165,7 +170,11 @@ function stages(): PipelineStage[] {
     'run `linear issue view {{ISSUE}} --json` (the `linear` CLI is installed and LINEAR_API_KEY is set).',
     '',
     'Implement it in the current repo, keeping the change minimal. If the description is too vague to',
-    'write code, add or update NOTES.md summarising the issue instead. When done, write <promise>COMPLETE</promise>.',
+    'write code, add or update NOTES.md summarising the issue instead.',
+    '',
+    retrospectiveMemoryBlock(),
+    '',
+    'When done, write <promise>COMPLETE</promise>.',
     '',
     'Title: {{TITLE}}',
   ].join('\n');

@@ -394,6 +394,24 @@ describe('parseCli', () => {
     expect(parseCli(['stats', '--repo', '/r', '--json'], '/work')).toEqual({ kind: 'stats', repoPath: '/r', json: true });
   });
 
+  it('parses memory with defaults (no limit field)', () => {
+    expect(parseCli(['memory'], '/work')).toEqual({ kind: 'memory', repoPath: '/work', json: false });
+  });
+
+  it('parses memory with --repo, --limit, and --json', () => {
+    expect(parseCli(['memory', '--repo', '/r', '--limit', '5', '--json'], '/work')).toEqual({
+      kind: 'memory',
+      repoPath: '/r',
+      limit: 5,
+      json: true,
+    });
+  });
+
+  it('falls back to no limit field on invalid --limit for memory', () => {
+    const cmd = parseCli(['memory', '--limit', 'soon'], '/work');
+    expect(cmd.kind === 'memory' && cmd.limit === undefined).toBe(true);
+  });
+
   it('returns help when run has no source or more than one source', () => {
     expect(parseCli(['run'], '/work').kind).toBe('help');
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');

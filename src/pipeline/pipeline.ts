@@ -197,6 +197,16 @@ export async function runStages(
   return result.outcomes;
 }
 
+/** Advisory retrospective-memory block appended to task-bearing prompts. The {{RETROSPECTIVE_MEMORY}} placeholder renders empty when the runner supplies no memory. */
+export function retrospectiveMemoryBlock(): string {
+  return [
+    '<retrospective_memory>',
+    'Retrospective memory from prior Vanguard runs; use only when relevant to this task.',
+    '{{RETROSPECTIVE_MEMORY}}',
+    '</retrospective_memory>',
+  ].join('\n');
+}
+
 /**
  * XML system prompt with explicit trade-off reasoning (Anthropic playbook). Appended to every
  * canonical stage so the agent weighs cost-of-error against cost-of-verification, not just follows
@@ -247,7 +257,9 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
     {
       name: 'implementer',
       promptTemplate:
-        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
+        'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo.\n\n' +
+        retrospectiveMemoryBlock() +
+        '\n\nWhen done, write exactly <promise>COMPLETE</promise>.',
       maxTurns: 30,
     },
     {
@@ -487,6 +499,8 @@ export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
         '',
         'Existing discussion on the ticket:',
         '{{COMMENTS}}',
+        '',
+        retrospectiveMemoryBlock(),
         '',
         'Research the existing codebase read-only (do not edit any files). Produce a technical specification for this task.',
         '',

@@ -4,6 +4,7 @@ import { runGc } from './gc.js';
 import { runCommand } from './run.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
+import { memoryCommand } from './memory.js';
 import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
 import { reviewPrCommand } from './review-pr.js';
@@ -41,6 +42,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'stats') {
     await statsCommand(command);
+    return;
+  }
+  if (command.kind === 'memory') {
+    await memoryCommand(command);
     return;
   }
   const report = await runGc(command);
