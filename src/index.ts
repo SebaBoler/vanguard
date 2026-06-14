@@ -90,6 +90,8 @@ export {
   fetchPullRequestForReview,
   buildPullRequestReviewPrompt,
   buildPullRequestReviewComment,
+  pullRequestReviewMarker,
+  hasPullRequestReviewMarker,
   reviewPullRequest,
 } from './runners/pr-review.js';
 export {

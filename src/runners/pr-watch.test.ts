@@ -111,6 +111,9 @@ describe('githubPullRequestWatchPrimitives', () => {
           },
         ]);
       }
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({ comments: [], reviews: [] });
+      }
       return '';
     };
 
@@ -140,6 +143,43 @@ describe('githubPullRequestWatchPrimitives', () => {
       '--json',
       'number,title,isDraft,author,headRefOid,labels',
     ]);
+  });
+
+  it('skips a PR when Vanguard already reviewed the same head commit', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 12,
+            title: 'Fix auth',
+            isDraft: false,
+            author: { login: 'alice' },
+            headRefOid: 'abc123',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({
+          comments: [{ body: 'Older note.' }],
+          reviews: [{ body: '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->' }],
+        });
+      }
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      gh,
+      reviewOne: async () => {},
+    });
+
+    await expect(primitives.listReady()).resolves.toEqual([]);
+    expect(calls[1]).toEqual(['pr', 'view', '12', '--repo', 'o/r', '--json', 'comments,reviews']);
   });
 
   it('claims, marks reviewed, and restores labels through gh pr edit', async () => {

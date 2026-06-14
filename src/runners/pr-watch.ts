@@ -1,4 +1,5 @@
 import { fanOut } from '../pipeline/fan-out.js';
+import { hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -54,6 +55,15 @@ interface GhPullRequestListItem {
   author?: { login?: string } | string | null;
   headRefOid?: string;
   labels?: Array<{ name?: string } | string>;
+}
+
+interface GhPullRequestReviewBody {
+  body?: string | null;
+}
+
+interface GhPullRequestReviewView {
+  comments?: GhPullRequestReviewBody[];
+  reviews?: GhPullRequestReviewBody[];
 }
 
 type PullRequestWatchKind = 'reviewed' | 'failed' | 'skipped';
@@ -113,6 +123,14 @@ function editPullRequestLabels(
   return gh(args);
 }
 
+async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem): Promise<boolean> {
+  if (item.headRefOid === '') return false;
+  const out = await gh(['pr', 'view', String(item.number), '--repo', item.repoSlug, '--json', 'comments,reviews']);
+  const view = JSON.parse(out) as GhPullRequestReviewView;
+  const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((entry) => entry.body ?? '');
+  return bodies.some((body) => hasPullRequestReviewMarker(body, item.headRefOid));
+}
+
 /**
  * GitHub-backed PR review watch primitives. Label state is the dedup mechanism: a PR leaves the
  * trigger label before review starts, so the same head commit is not reviewed again unless a human or
@@ -121,8 +139,8 @@ function editPullRequestLabels(
 export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOptions): PullRequestWatchPrimitives {
   const gh = opts.gh ?? defaultGhRunner;
   return {
-    listReady: async () =>
-      parsePullRequestList(
+    listReady: async () => {
+      const candidates = parsePullRequestList(
         await gh([
           'pr',
           'list',
@@ -139,7 +157,14 @@ export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOpt
         ]),
         opts.repoSlug,
         opts.label,
-      ),
+      );
+      const ready = await Promise.all(
+        candidates.map(async (item): Promise<PullRequestWatchItem | undefined> =>
+          (await hasExistingReviewForHead(gh, item)) ? undefined : item,
+        ),
+      );
+      return ready.filter((item): item is PullRequestWatchItem => item !== undefined);
+    },
     claim: (item) =>
       editPullRequestLabels(gh, item.repoSlug, item.number, {
         remove: [opts.label],

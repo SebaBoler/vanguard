@@ -12,6 +12,7 @@ export interface PullRequestForReview extends PullRequestReviewTarget {
   url: string;
   author: string;
   headRefName: string;
+  headRefOid: string;
   baseRefName: string;
   diff: string;
 }
@@ -37,6 +38,7 @@ interface GhPullRequestView {
   url?: string;
   author?: { login?: string } | null;
   headRefName?: string;
+  headRefOid?: string;
   baseRefName?: string;
 }
 
@@ -45,6 +47,7 @@ const PR_HASH_RE = /^([^/\s]+\/[^#\s]+)#(\d+)$/;
 const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
+const PR_REVIEW_MARKER_RE = /^<!-- vanguard-pr-review: ([a-fA-F0-9]+) -->$/m;
 
 export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequestReviewTarget {
   const trimmed = ref.trim();
@@ -68,7 +71,7 @@ export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequest
 export async function fetchPullRequestForReview(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<PullRequestForReview> {
   const number = String(target.number);
   const view = JSON.parse(
-    await gh(['pr', 'view', number, '--repo', target.repoSlug, '--json', 'number,title,body,url,author,headRefName,baseRefName']),
+    await gh(['pr', 'view', number, '--repo', target.repoSlug, '--json', 'number,title,body,url,author,headRefName,headRefOid,baseRefName']),
   ) as GhPullRequestView;
   const diff = await gh(['pr', 'diff', number, '--repo', target.repoSlug]);
   return {
@@ -79,6 +82,7 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
     url: view.url ?? `https://github.com/${target.repoSlug}/pull/${target.number}`,
     author: view.author?.login ?? '',
     headRefName: view.headRefName ?? '',
+    headRefOid: view.headRefOid ?? '',
     baseRefName: view.baseRefName ?? '',
     diff,
   };
@@ -93,6 +97,7 @@ export function buildPullRequestReviewPrompt(pr: PullRequestForReview): string {
     `Author: ${pr.author}`,
     `Base: ${pr.baseRefName}`,
     `Head: ${pr.headRefName}`,
+    `Head SHA: ${pr.headRefOid}`,
     '',
     'Description:',
     pr.body.trim() === '' ? '(empty)' : pr.body,
@@ -109,9 +114,19 @@ export function buildPullRequestReviewPrompt(pr: PullRequestForReview): string {
   ].join('\n');
 }
 
-export function buildPullRequestReviewComment(agentText: string): string {
+export function pullRequestReviewMarker(headRefOid: string): string {
+  return `<!-- vanguard-pr-review: ${headRefOid} -->`;
+}
+
+export function hasPullRequestReviewMarker(body: string, headRefOid: string): boolean {
+  const marker = PR_REVIEW_MARKER_RE.exec(body);
+  return marker?.[1] === headRefOid;
+}
+
+export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
   const body = agentText.replace(PROMISE_RE, '').trim();
-  return `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
+  const visible = `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
+  return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
 }
 
 export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> {
@@ -121,7 +136,7 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   const pr = await fetchPullRequestForReview(target, gh);
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: agent -> reviewing`);
   const reviewText = await deps.reviewer(pr);
-  const commentBody = buildPullRequestReviewComment(reviewText);
+  const commentBody = buildPullRequestReviewComment(reviewText, pr.headRefOid);
   await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, '--comment', '--body', commentBody]);
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
   return { pr, commentBody };

@@ -20,6 +20,7 @@ describe('reviewPrCommand', () => {
             url: 'https://github.com/o/r/pull/12',
             author: 'alice',
             headRefName: 'h',
+            headRefOid: 'abc123',
             baseRefName: 'main',
             diff: 'diff',
           },
