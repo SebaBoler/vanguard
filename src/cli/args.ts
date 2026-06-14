@@ -17,6 +17,21 @@ export type Command =
       reviewModel?: string;
     }
   | {
+      kind: 'watch-prs';
+      repoSlug: string;
+      repoPath: string;
+      label: string;
+      reviewingLabel: string;
+      reviewedLabel: string;
+      concurrency: number;
+      intervalMs: number;
+      once: boolean;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      reviewModel?: string;
+    }
+  | {
       kind: 'doctor';
       source: 'linear' | 'github' | 'project';
       label?: string;
@@ -144,6 +159,8 @@ const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
 const DEFAULT_LINEAR_SPEC_STATE = 'triage';
 const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
+const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
+const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 
 /**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
@@ -177,6 +194,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         skills: { type: 'string' },
         'github-repo': { type: 'string' },
         label: { type: 'string' },
+        'reviewing-label': { type: 'string' },
+        'reviewed-label': { type: 'string' },
         concurrency: { type: 'string' },
         // watch
         team: { type: 'string' },
@@ -256,6 +275,29 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+    };
+  }
+
+  if (positionals[0] === 'watch-prs') {
+    const repoSlug = typeof values['github-repo'] === 'string' ? values['github-repo'] : undefined;
+    const label = typeof values.label === 'string' ? values.label : undefined;
+    if (repoSlug === undefined || label === undefined) return { kind: 'help' };
+    const concurrency = Number(values.concurrency);
+    const interval = Number(values.interval);
+    return {
+      kind: 'watch-prs',
+      repoSlug,
+      repoPath,
+      label,
+      reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
+      reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
+      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
+      once: values.once === true,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
@@ -421,6 +463,7 @@ Commands:
   watch  Poll Linear or GitHub and run each newly-ready issue automatically (the AFK factory loop).
   doctor Check whether watch can run AFK before any issue is claimed.
   review-pr Review an existing GitHub PR and post a non-blocking Vanguard review comment.
+  watch-prs Poll GitHub PRs by label and run the non-blocking Vanguard review loop.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
@@ -518,6 +561,20 @@ Commands:
     --provider <claude|codex|cursor>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
+
+  watch-prs options:
+    --github-repo <o/r>    Required repo slug
+    --label <name>         Required trigger label (e.g. "ready for vanguard review")
+    --reviewing-label <l>  Label added while a PR is being reviewed (default: "vanguard:reviewing")
+    --reviewed-label <l>   Label added after review succeeds (default: "vanguard:reviewed")
+    --interval <seconds>   Poll interval (default: 60); --once does a single pass
+    --concurrency <n>      Max PRs reviewed at once (default: 2)
+    --provider <claude|codex|cursor>          Provider used for PR review (default: claude)
+    --review-model <m>     Model for the PR review
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+    Example:
+      vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)

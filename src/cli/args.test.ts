@@ -167,6 +167,69 @@ describe('parseCli', () => {
     });
   });
 
+  it('parses watch-prs with label routing defaults', () => {
+    expect(
+      parseCli(
+        [
+          'watch-prs',
+          '--github-repo', 'o/r',
+          '--label', 'ready for vanguard review',
+          '--provider', 'codex',
+          '--review-model', 'gpt-5',
+          '--interval', '15',
+          '--concurrency', '1',
+          '--once',
+          '--egress',
+        ],
+        '/work',
+      ),
+    ).toEqual({
+      kind: 'watch-prs',
+      repoSlug: 'o/r',
+      repoPath: '/work',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      concurrency: 1,
+      intervalMs: 15000,
+      once: true,
+      egress: true,
+      provider: 'codex',
+      reviewModel: 'gpt-5',
+    });
+  });
+
+  it('parses custom watch-prs state labels', () => {
+    expect(
+      parseCli(
+        [
+          'watch-prs',
+          '--github-repo', 'o/r',
+          '--label', 'needs review',
+          '--reviewing-label', 'robot:reviewing',
+          '--reviewed-label', 'robot:reviewed',
+        ],
+        '/work',
+      ),
+    ).toEqual({
+      kind: 'watch-prs',
+      repoSlug: 'o/r',
+      repoPath: '/work',
+      label: 'needs review',
+      reviewingLabel: 'robot:reviewing',
+      reviewedLabel: 'robot:reviewed',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+    });
+  });
+
+  it('requires watch-prs to have an explicit repo and trigger label', () => {
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r'], '/work').kind).toBe('help');
+    expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
+  });
+
   it('omits providerModel and reviewModel when flags are absent', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
     expect(cmd.kind === 'run' && 'providerModel' in cmd).toBe(false);
