@@ -131,7 +131,7 @@ ssh -p 50022 <user>@<nas-ip> 'sudo /usr/local/bin/docker logs -f vanguard-vangua
 
 You should see `watch[linear]: polling every 120s`, followed by terse operator lines such as `spec: poll -> 1 ready`. To prove the full Loop v1.1 chain in Linear, create a Linear issue in your team, add the `vanguard` label, and move it to the **Spec** state. The spec pass posts a `<tech_spec>` comment and advances the issue to Todo; the next poll runs the agent pass and opens a draft PR. To skip the spec pass for a fully-scoped ticket, put the issue directly in Todo with acceptance criteria or an existing Vanguard spec comment.
 
-For GitHub smoke tests, create an issue in `OWNER/REPO` with `ready for spec`. The watcher should post a `<tech_spec>` comment and relabel to `ready for agent`; the next poll should open a draft PR. A fully-scoped issue can start directly with `ready for agent`. `needs info` means the issue is parked until a human adds detail and moves it back.
+For GitHub smoke tests, create an issue in `OWNER/REPO` with `ready for spec`. The watcher should post a `<tech_spec>` comment and relabel to `ready for agent`; the next poll should open a draft PR. A fully-scoped issue can start directly with `ready for agent`. `needs info` means the issue is parked until a human adds detail and moves it back. See the [GitHub Loop v1.1 smoke test](smoke-tests/github-loop-v1-1.md) for the controlled two-pass `--once` runbook.
 
 Stop with `sudo /usr/local/bin/docker compose down`.
 
