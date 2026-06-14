@@ -296,7 +296,7 @@ vanguard watch --loop-v1 --label vanguard \
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
-- Adversarial review of external PRs (Adversary stage + evals) is a follow-up, not part of Loop v1.
+- External PR review is available as a one-shot `review-pr` command. Webhook/polling around external PRs is the follow-up.
 
 Operator logs stay terse and progress-oriented so always-on runs are scannable:
 
@@ -313,6 +313,24 @@ watch owner/repo#124: pr opened -> review
 ```
 
 Normal logs report source, task id, phase, outcome, and next action. Full prompts, diffs, transcripts, and proof details stay in `.vanguard/runs/`.
+
+### External PR review
+
+`vanguard review-pr` runs an adversarial, read-only review over an existing GitHub PR diff and posts a non-blocking GitHub review comment. It does not edit code, open another PR, or move issue labels.
+
+```bash
+vanguard review-pr https://github.com/owner/repo/pull/123
+vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --review-model gpt-5
+```
+
+Operator logs stay compact:
+
+```text
+review-pr owner/repo#123: fetch -> diff
+review-pr owner/repo#123: agent -> reviewing
+review-pr owner/repo#123: posted -> pr review
+review-pr owner/repo#123: done
+```
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
