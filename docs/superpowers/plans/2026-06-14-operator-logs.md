@@ -52,3 +52,41 @@ spec D: skipped -> already claimed
 - [x] Run `pnpm exec vitest run src/runners/watch.test.ts`.
 - [x] Run `pnpm typecheck`.
 - [x] Run `pnpm test`.
+
+### Task 4: Start-Action Lines
+
+**Files:**
+- Modify: `src/runners/watch.test.ts`
+- Modify: `src/runners/watch.ts`
+- Modify: `README.md`
+
+- [x] Add failing watch test expectations showing an item logs its post-claim start before the final outcome:
+
+```text
+watch A: claim -> running
+watch A: pr opened -> review
+```
+
+- [x] Add failing spec test expectations showing an item logs its post-claim start before triage/spec completion:
+
+```text
+spec A: claim -> triage
+spec A: advanced -> next poll agent
+```
+
+- [x] Implement the minimal runner changes in `watchOnce` and `specOnce`:
+
+```ts
+await primitives.claim(item.id);
+operatorLog(opts, `${phase} ${item.id}: claim -> running`);
+```
+
+```ts
+await primitives.claim(item.id);
+operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
+```
+
+- [x] Update README operator log sample with the new start-action line.
+- [x] Run `pnpm exec vitest run src/runners/watch.test.ts --reporter=dot`.
+- [x] Run `pnpm typecheck`.
+- [x] Run `pnpm test`.

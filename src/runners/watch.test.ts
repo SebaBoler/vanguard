@@ -65,8 +65,11 @@ describe('watchOnce', () => {
 
     expect(logs).toEqual([
       'watch: poll -> 4 ready',
+      'watch A: claim -> running',
       'watch A: pr opened -> review',
+      'watch B: claim -> running',
       'watch B: no change -> idle',
+      'watch C: claim -> running',
       'watch C: failed -> failure noted',
       'watch D: skipped -> already claimed',
     ]);
@@ -93,8 +96,11 @@ describe('specOnce', () => {
 
     expect(logs).toEqual([
       'spec: poll -> 4 ready',
+      'spec A: claim -> triage',
       'spec A: advanced -> next poll agent',
+      'spec B: claim -> triage',
       'spec B: needs info -> waiting human',
+      'spec C: claim -> triage',
       'spec C: failed -> retry later',
       'spec D: skipped -> already claimed',
     ]);
@@ -122,9 +128,11 @@ describe('runLoopV1 operator logs', () => {
 
     expect(logs).toEqual([
       'spec: poll -> 1 ready',
+      'spec A: claim -> triage',
       'spec A: advanced -> next poll agent',
       'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
       'watch: poll -> 1 ready',
+      'watch B: claim -> running',
       'watch B: pr opened -> review',
       'watch: 1 PR(s), 0 no-change, 0 failed, 0 skipped.',
     ]);
