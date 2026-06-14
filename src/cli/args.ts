@@ -23,6 +23,8 @@ export type Command =
       label: string;
       reviewingLabel: string;
       reviewedLabel: string;
+      /** Only review PRs opened by this GitHub login (self-review-only when set). */
+      author?: string;
       concurrency: number;
       intervalMs: number;
       once: boolean;
@@ -204,6 +206,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         label: { type: 'string' },
         'reviewing-label': { type: 'string' },
         'reviewed-label': { type: 'string' },
+        author: { type: 'string' },
         concurrency: { type: 'string' },
         // watch
         team: { type: 'string' },
@@ -305,6 +308,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
       egress: values.egress === true,
+      ...(typeof values.author === 'string' ? { author: values.author } : {}),
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
@@ -590,6 +594,7 @@ Commands:
     --label <name>         Required trigger label (e.g. "ready for vanguard review")
     --reviewing-label <l>  Label added while a PR is being reviewed (default: "vanguard:reviewing")
     --reviewed-label <l>   Label added after review succeeds (default: "vanguard:reviewed")
+    --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --concurrency <n>      Max PRs reviewed at once (default: 2)
     --provider <claude|codex|cursor>          Provider used for PR review (default: claude)

@@ -44,6 +44,8 @@ export interface GitHubPullRequestWatchOptions {
   label: string;
   reviewingLabel: string;
   reviewedLabel: string;
+  /** Only review PRs opened by this GitHub login (self-review-only when set). */
+  author?: string;
   gh?: GhRunner;
   reviewOne: (item: PullRequestWatchItem) => Promise<void>;
 }
@@ -89,7 +91,12 @@ function isAutomationAuthor(login: string): boolean {
   return lower.includes('vanguard') || lower.endsWith('[bot]') || lower === 'github-actions';
 }
 
-function parsePullRequestList(out: string, repoSlug: string, triggerLabel: string): PullRequestWatchItem[] {
+function parsePullRequestList(
+  out: string,
+  repoSlug: string,
+  triggerLabel: string,
+  onlyAuthor?: string,
+): PullRequestWatchItem[] {
   const parsed = JSON.parse(out) as GhPullRequestListItem[];
   return parsed.flatMap((item) => {
     if (item.number === undefined) return [];
@@ -106,6 +113,7 @@ function parsePullRequestList(out: string, repoSlug: string, triggerLabel: strin
     };
     if (pr.isDraft) return [];
     if (isAutomationAuthor(author)) return [];
+    if (onlyAuthor !== undefined && author !== onlyAuthor) return [];
     if (!labels.includes(triggerLabel)) return [];
     return [pr];
   });
@@ -144,24 +152,22 @@ export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOpt
   const gh = opts.gh ?? defaultGhRunner;
   return {
     listReady: async () => {
-      const candidates = parsePullRequestList(
-        await gh([
-          'pr',
-          'list',
-          '--repo',
-          opts.repoSlug,
-          '--state',
-          'open',
-          '--label',
-          opts.label,
-          '--limit',
-          '100',
-          '--json',
-          'number,title,isDraft,author,headRefOid,labels',
-        ]),
+      const listArgs = [
+        'pr',
+        'list',
+        '--repo',
         opts.repoSlug,
+        '--state',
+        'open',
+        '--label',
         opts.label,
-      );
+        ...(opts.author !== undefined ? ['--author', opts.author] : []),
+        '--limit',
+        '100',
+        '--json',
+        'number,title,isDraft,author,headRefOid,labels',
+      ];
+      const candidates = parsePullRequestList(await gh(listArgs), opts.repoSlug, opts.label, opts.author);
       const ready = await Promise.all(
         candidates.map(async (item): Promise<PullRequestWatchItem | undefined> =>
           (await hasExistingReviewForHead(gh, item)) ? undefined : item,

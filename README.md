@@ -296,7 +296,7 @@ vanguard watch --loop-v1 --label vanguard \
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
-- External PR review is available as a one-shot `review-pr` command or an always-on `watch-prs` polling loop.
+- External PR review is available as a one-shot `review-pr` command, an always-on `watch-prs` polling loop, or a GitHub Actions label trigger.
 
 Operator logs stay terse and progress-oriented so always-on runs are scannable:
 
@@ -323,7 +323,7 @@ vanguard review-pr https://github.com/owner/repo/pull/123
 vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --review-model gpt-5
 ```
 
-`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
+`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Pass `--author <login>` to restrict the loop to a single author's PRs (self-review-only). Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
 
 ```bash
 vanguard doctor-prs --github-repo owner/repo --label "ready for vanguard review"
@@ -336,6 +336,7 @@ vanguard watch-prs --github-repo owner/repo \
   --label "ready for vanguard review" \
   --reviewing-label "vanguard:reviewing" \
   --reviewed-label "vanguard:reviewed" \
+  --author owner \
   --provider codex \
   --review-model gpt-5
 ```
@@ -357,6 +358,22 @@ watch-prs: poll -> 1 ready
 watch-prs owner/repo#123: claim -> reviewing
 watch-prs owner/repo#123: reviewed -> marked
 ```
+
+#### GitHub Actions trigger
+
+`.github/workflows/vanguard-pr-review.yml` fires on `pull_request_target` when the `ready for vanguard review` label is applied to a PR, and can also be triggered manually via `workflow_dispatch` to sweep all currently-labeled PRs.
+
+**Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
+
+**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. It is **self-review-only**: the job condition requires `github.event.pull_request.user.login == 'SebaBoler'` and the review pass runs with `--author SebaBoler`, so only the maintainer's own PRs are ever reviewed — another contributor's PR is skipped even if labeled.
+
+**Behavior:** each label event runs `watch-prs --once --author SebaBoler`, which reviews only the maintainer's PRs carrying the trigger label (not another contributor's, and not only the just-labeled one). This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
+
+**Re-review:** after new commits land, remove and re-add `ready for vanguard review` to trigger a fresh pass.
+
+**Label setup:** the workflow creates the three routing labels idempotently on every run (`gh label create --force`), so no manual label setup is needed in a fresh repo.
+
+**Relationship to always-on `watch-prs`:** both modes watch the same label; dedupe makes running both safe but redundant — pick one per repo.
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
