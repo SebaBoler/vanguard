@@ -11,6 +11,7 @@ type MemoryCommand = Extract<Command, { kind: 'memory' }>;
 
 /** Refresh .vanguard/memory/retrospective.md from run artifacts, then print it (or the raw report with --json). */
 export async function memoryCommand(cmd: MemoryCommand): Promise<void> {
+  // exactOptionalPropertyTypes: omit `limit` entirely when absent so the builder default applies.
   const opts = cmd.limit !== undefined ? { limit: cmd.limit } : {};
   if (cmd.json) {
     // Scan once: build the report, then reuse it to write the file (no second scan).

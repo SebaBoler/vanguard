@@ -180,12 +180,6 @@ async function loadReviewerNotes(runsDir: string): Promise<RetrospectiveEntry[]>
     const reviewerFiles = files.filter((f) => f.endsWith('-reviewer.json'));
 
     for (const filename of reviewerFiles) {
-      // Extract timestamp from filename: <sanitized-ts>-reviewer.json
-      // sanitized-ts is the part before the last "-reviewer" suffix
-      const sanitizedTs = filename.slice(0, filename.length - '-reviewer.json'.length);
-      // Convert sanitized timestamp back to approximate ISO form for sorting
-      // We store the sanitized form as-is and use file modification time for ordering
-      // Actually, we recover the ts from the JSON record itself
       try {
         const text = await readFile(join(taskDir, filename), 'utf8');
         const record = JSON.parse(text) as ReviewerRecord;
@@ -193,7 +187,8 @@ async function loadReviewerNotes(runsDir: string): Promise<RetrospectiveEntry[]>
         const note = extractReviewerNote(finalText);
         if (note === null) continue;
 
-        const timestamp = record.timestamp ?? sanitizedTs;
+        // The persisted record always carries its own ISO timestamp; '' only as a defensive fallback.
+        const timestamp = record.timestamp ?? '';
         entries.push({
           kind: 'reviewer_note',
           taskId: record.taskId ?? taskId,
@@ -243,9 +238,8 @@ export async function buildRetrospectiveMemory(repoPath: string, opts?: BuildOpt
       if (proof !== null) {
         const command = redact(proof.command ?? '(unknown command)');
         const exitCode = proof.exitCode ?? evt.exitCode;
-        const rawOutput = proof.outputTail ?? '';
-        const truncatedOutput = truncate(redact(rawOutput), 200);
-        const detail = truncate(`command: ${command} | exitCode: ${exitCode} | output: ${truncatedOutput}`);
+        const output = redact(proof.outputTail ?? '');
+        const detail = truncate(`command: ${command} | exitCode: ${exitCode} | output: ${output}`);
         entries.push({
           kind: 'failed_proof',
           taskId: evt.taskId,
