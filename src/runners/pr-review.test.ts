@@ -35,6 +35,7 @@ describe('fetchPullRequestForReview', () => {
           url: 'https://github.com/o/r/pull/12',
           author: { login: 'alice' },
           headRefName: 'fix-auth',
+          headRefOid: 'abc123',
           baseRefName: 'main',
         });
       }
@@ -52,6 +53,7 @@ describe('fetchPullRequestForReview', () => {
       url: 'https://github.com/o/r/pull/12',
       author: 'alice',
       headRefName: 'fix-auth',
+      headRefOid: 'abc123',
       baseRefName: 'main',
       diff: 'diff --git a/auth.ts b/auth.ts',
     });
@@ -62,7 +64,7 @@ describe('fetchPullRequestForReview', () => {
       '--repo',
       'o/r',
       '--json',
-      'number,title,body,url,author,headRefName,baseRefName',
+      'number,title,body,url,author,headRefName,headRefOid,baseRefName',
     ]);
     expect(calls[1]).toEqual(['pr', 'diff', '12', '--repo', 'o/r']);
   });
@@ -81,6 +83,7 @@ describe('reviewPullRequest', () => {
           url: 'https://github.com/o/r/pull/12',
           author: { login: 'alice' },
           headRefName: 'h',
+          headRefOid: 'def456',
           baseRefName: 'main',
         });
       }
@@ -99,6 +102,7 @@ describe('reviewPullRequest', () => {
 
     expect(reviewer).toHaveBeenCalledWith(expect.objectContaining({ repoSlug: 'o/r', number: 12, diff: 'diff' }));
     expect(result.commentBody).toContain('No blocking findings.');
+    expect(result.commentBody).toContain('<!-- vanguard-pr-review: def456 -->');
     expect(result.commentBody).not.toContain('<promise>');
     const reviewCall = calls.find((args) => args[0] === 'pr' && args[1] === 'review');
     expect(reviewCall).toEqual(['pr', 'review', '12', '--repo', 'o/r', '--comment', '--body', result.commentBody]);
@@ -115,6 +119,7 @@ describe('review prompt and comment formatting', () => {
       url: 'https://github.com/o/r/pull/12',
       author: 'alice',
       headRefName: 'fix-auth',
+      headRefOid: 'abc123',
       baseRefName: 'main',
       diff: 'diff --git a/auth.ts b/auth.ts',
     });
@@ -127,5 +132,11 @@ describe('review prompt and comment formatting', () => {
 
   it('strips completion markers from the posted comment', () => {
     expect(buildPullRequestReviewComment('Looks good.\n<promise>COMPLETE</promise>')).toBe('## Vanguard Review\n\nLooks good.');
+  });
+
+  it('adds a hidden head SHA marker when a head ref oid is supplied', () => {
+    expect(buildPullRequestReviewComment('No blocking findings.\n<promise>COMPLETE</promise>', 'abc123')).toBe(
+      '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->',
+    );
   });
 });

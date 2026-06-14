@@ -576,6 +576,9 @@ Commands:
     Example:
       vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
 
+    Dedupe: successful Vanguard reviews include a hidden head SHA marker; watch-prs skips
+      the same PR commit if the trigger label is re-added accidentally.
+
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)

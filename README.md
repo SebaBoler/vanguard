@@ -323,7 +323,7 @@ vanguard review-pr https://github.com/owner/repo/pull/123
 vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --review-model gpt-5
 ```
 
-`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry.
+`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
 
 ```bash
 vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
@@ -339,7 +339,7 @@ vanguard watch-prs --github-repo owner/repo \
 |---|---|
 | `ready for vanguard review` | Picked up on the next poll. The label is removed and `vanguard:reviewing` is added before the review starts. |
 | `vanguard:reviewing` | Claimed/in progress. Later polls skip it. |
-| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass. |
+| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass; the same commit is deduped by the hidden review marker. |
 
 Operator logs stay compact:
 
