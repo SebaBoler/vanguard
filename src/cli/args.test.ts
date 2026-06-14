@@ -210,6 +210,18 @@ describe('parseCli', () => {
     });
   });
 
+  it('uses safe github loop-v1 defaults for a repo-only doctor command', () => {
+    expect(parseCli(['doctor', '--source', 'github', '--github-repo', 'o/r'], '/work')).toEqual({
+      kind: 'doctor',
+      source: 'github',
+      repoPath: '/work',
+      repoSlug: 'o/r',
+      specLabel: 'ready for spec',
+      agentLabel: 'ready for agent',
+      needsInfoLabel: 'needs info',
+    });
+  });
+
   it('uses loop-v1 defaults with an explicit github ownership label', () => {
     const cmd = parseCli(['watch', '--source', 'github', '--loop-v1', '--label', 'ai', '--github-repo', 'o/r'], '/work');
     expect(cmd.kind).toBe('watch');
@@ -232,6 +244,19 @@ describe('parseCli', () => {
       intervalMs: 60000,
       once: false,
       egress: false,
+      specState: 'triage',
+      specStateName: 'Spec',
+      needsInfoState: 'Needs Info',
+    });
+  });
+
+  it('uses safe linear loop-v1 defaults for doctor when --loop-v1 is supplied', () => {
+    expect(parseCli(['doctor', '--loop-v1', '--team', 'TES'], '/work')).toEqual({
+      kind: 'doctor',
+      source: 'linear',
+      label: 'vanguard',
+      team: 'TES',
+      repoPath: '/work',
       specState: 'triage',
       specStateName: 'Spec',
       needsInfoState: 'Needs Info',
