@@ -48,32 +48,53 @@ export interface WatchTick {
 
 type Kind = 'opened' | 'noChange' | 'failed' | 'skipped';
 
+interface WatchLogOptions {
+  log?: (msg: string) => void;
+  phase?: string;
+}
+
+interface WatchOnceOptions extends WatchLogOptions {
+  concurrency?: number;
+}
+
+function operatorLog(opts: WatchLogOptions, msg: string): void {
+  opts.log?.(msg);
+}
+
 /**
  * One poll: claim each ready issue (skipping any that can't be claimed), run it, then move it to
  * review when a PR opens or report the failure. Pure orchestration over injected primitives, so the
  * claim-before-run ordering and dedup are unit-testable without Linear.
  */
-export async function watchOnce(primitives: WatchPrimitives, opts: { concurrency?: number } = {}): Promise<WatchTick> {
+export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOptions = {}): Promise<WatchTick> {
   const ready = await primitives.listReady();
+  const phase = opts.phase ?? 'watch';
+  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
   const results = await fanOut(
     ready,
     async (item): Promise<{ id: string; kind: Kind }> => {
       try {
         await primitives.claim(item.id);
       } catch {
+        operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
       try {
         const { prUrl } = await primitives.runOne(item.id);
-        if (prUrl === undefined) return { id: item.id, kind: 'noChange' };
+        if (prUrl === undefined) {
+          operatorLog(opts, `${phase} ${item.id}: no change -> idle`);
+          return { id: item.id, kind: 'noChange' };
+        }
         await primitives.review(item.id);
+        operatorLog(opts, `${phase} ${item.id}: pr opened -> review`);
         return { id: item.id, kind: 'opened' };
       } catch (error) {
         await primitives.onFailure(item.id, error);
+        operatorLog(opts, `${phase} ${item.id}: failed -> failure noted`);
         return { id: item.id, kind: 'failed' };
       }
     },
-    opts,
+    opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {},
   );
   const ids = (kind: Kind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
@@ -110,25 +131,35 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
  * to needs-info. Mirrors watchOnce structurally (claim-before-run, fan-out, failure isolation) but
  * with honest spec semantics instead of PR semantics — it never opens a PR.
  */
-export async function specOnce(primitives: SpecWatchPrimitives, opts: { concurrency?: number } = {}): Promise<SpecTick> {
+export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
   const ready = await primitives.listReady();
+  const phase = opts.phase ?? 'spec';
+  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
   const results = await fanOut(
     ready,
     async (item): Promise<{ id: string; kind: SpecKind }> => {
       try {
         await primitives.claim(item.id);
       } catch {
+        operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
       try {
         const outcome = await primitives.runSpec(item.id);
+        operatorLog(
+          opts,
+          outcome === 'advanced'
+            ? `${phase} ${item.id}: advanced -> next poll agent`
+            : `${phase} ${item.id}: needs info -> waiting human`,
+        );
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
       } catch (error) {
         await primitives.onFailure(item.id, error);
+        operatorLog(opts, `${phase} ${item.id}: failed -> retry later`);
         return { id: item.id, kind: 'failed' };
       }
     },
-    opts,
+    opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {},
   );
   const ids = (kind: SpecKind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
@@ -333,7 +364,11 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
   const intervalMs = opts.intervalMs ?? 60_000;
   for (;;) {
     if (opts.signal?.aborted === true) return;
-    const tick = await watchOnce(primitives, { ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}) });
+    const tick = await watchOnce(primitives, {
+      ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      log,
+      phase: 'watch',
+    });
     log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
@@ -362,7 +397,7 @@ export async function runLoopV1(
   const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
   for (;;) {
     if (opts.signal?.aborted === true) return;
-    const spec = await specOnce(specPrimitives, concurrency);
+    const spec = await specOnce(specPrimitives, { ...concurrency, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
     // Defer same-tick implementation: a ticket the spec pass just advanced is excluded from this
     // tick's agent listReady, so it is only picked up on the next poll.
@@ -371,7 +406,7 @@ export async function runLoopV1(
       ...agentPrimitives,
       listReady: async () => (await agentPrimitives.listReady()).filter((item) => !justAdvanced.has(item.id)),
     };
-    const agent = await watchOnce(agentThisTick, concurrency);
+    const agent = await watchOnce(agentThisTick, { ...concurrency, log, phase: 'watch' });
     log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);

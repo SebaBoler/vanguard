@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
-import { watchOnce, githubProjectWatchPrimitives, githubSpecPrimitives, githubIssueWatchPrimitives } from './watch.js';
-import type { WatchPrimitives } from './watch.js';
+import {
+  watchOnce,
+  specOnce,
+  runLoopV1,
+  githubProjectWatchPrimitives,
+  githubSpecPrimitives,
+  githubIssueWatchPrimitives,
+} from './watch.js';
+import type { SpecWatchPrimitives, WatchPrimitives } from './watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { TaskFetcher } from '../tasks/fetcher.js';
 
@@ -37,6 +44,90 @@ describe('watchOnce', () => {
     expect(calls).toContain('review:A');
     expect(calls).not.toContain('review:B'); // no PR -> no review
     expect(calls).toContain('fail:C');
+  });
+
+  it('emits compact operator logs for each watch outcome', async () => {
+    const logs: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+      claim: async (id) => {
+        if (id === 'D') throw new Error('already claimed');
+      },
+      runOne: async (id) => {
+        if (id === 'C') throw new Error('boom');
+        return id === 'B' ? {} : { prUrl: `pr/${id}` };
+      },
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await watchOnce(primitives, { concurrency: 1, log: (msg) => logs.push(msg) });
+
+    expect(logs).toEqual([
+      'watch: poll -> 4 ready',
+      'watch A: pr opened -> review',
+      'watch B: no change -> idle',
+      'watch C: failed -> failure noted',
+      'watch D: skipped -> already claimed',
+    ]);
+  });
+});
+
+describe('specOnce', () => {
+  it('emits compact operator logs for each spec outcome', async () => {
+    const logs: string[] = [];
+    const primitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+      claim: async (id) => {
+        if (id === 'D') throw new Error('already claimed');
+      },
+      runSpec: async (id) => {
+        if (id === 'B') return 'needs_info';
+        if (id === 'C') throw new Error('boom');
+        return 'advanced';
+      },
+      onFailure: async () => {},
+    };
+
+    await specOnce(primitives, { concurrency: 1, log: (msg) => logs.push(msg) });
+
+    expect(logs).toEqual([
+      'spec: poll -> 4 ready',
+      'spec A: advanced -> next poll agent',
+      'spec B: needs info -> waiting human',
+      'spec C: failed -> retry later',
+      'spec D: skipped -> already claimed',
+    ]);
+  });
+});
+
+describe('runLoopV1 operator logs', () => {
+  it('emits spec logs before agent logs while deferring freshly advanced tickets', async () => {
+    const logs: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }],
+      claim: async () => {},
+      runOne: async () => ({ prUrl: 'pr/B' }),
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, concurrency: 1 }, (msg) => logs.push(msg));
+
+    expect(logs).toEqual([
+      'spec: poll -> 1 ready',
+      'spec A: advanced -> next poll agent',
+      'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
+      'watch: poll -> 1 ready',
+      'watch B: pr opened -> review',
+      'watch: 1 PR(s), 0 no-change, 0 failed, 0 skipped.',
+    ]);
   });
 });
 
