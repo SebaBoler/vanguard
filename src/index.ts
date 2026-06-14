@@ -92,6 +92,11 @@ export {
   buildPullRequestReviewComment,
   reviewPullRequest,
 } from './runners/pr-review.js';
+export {
+  githubPullRequestWatchPrimitives,
+  watchPullRequestsOnce,
+  watchPullRequests,
+} from './runners/pr-watch.js';
 export type {
   PullRequestReviewTarget,
   PullRequestForReview,
@@ -99,6 +104,14 @@ export type {
   ReviewPullRequestDeps,
   ReviewPullRequestResult,
 } from './runners/pr-review.js';
+export type {
+  PullRequestWatchItem,
+  PullRequestWatchPrimitives,
+  PullRequestWatchTick,
+  WatchPullRequestsOnceOptions,
+  WatchPullRequestsLoopOptions,
+  GitHubPullRequestWatchOptions,
+} from './runners/pr-watch.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, reapEgressNetworks, dockerEgressNetworkLister, dockerEgressNetworkRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover, type NetworkLister, type NetworkRemover } from './core/gc.js';
 export {
   reapRemoteBranches,

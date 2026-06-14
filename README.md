@@ -296,7 +296,7 @@ vanguard watch --loop-v1 --label vanguard \
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
-- External PR review is available as a one-shot `review-pr` command. Webhook/polling around external PRs is the follow-up.
+- External PR review is available as a one-shot `review-pr` command or an always-on `watch-prs` polling loop.
 
 Operator logs stay terse and progress-oriented so always-on runs are scannable:
 
@@ -323,6 +323,24 @@ vanguard review-pr https://github.com/owner/repo/pull/123
 vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --review-model gpt-5
 ```
 
+`vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry.
+
+```bash
+vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
+vanguard watch-prs --github-repo owner/repo \
+  --label "ready for vanguard review" \
+  --reviewing-label "vanguard:reviewing" \
+  --reviewed-label "vanguard:reviewed" \
+  --provider codex \
+  --review-model gpt-5
+```
+
+| PR label state | What happens |
+|---|---|
+| `ready for vanguard review` | Picked up on the next poll. The label is removed and `vanguard:reviewing` is added before the review starts. |
+| `vanguard:reviewing` | Claimed/in progress. Later polls skip it. |
+| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass. |
+
 Operator logs stay compact:
 
 ```text
@@ -330,6 +348,9 @@ review-pr owner/repo#123: fetch -> diff
 review-pr owner/repo#123: agent -> reviewing
 review-pr owner/repo#123: posted -> pr review
 review-pr owner/repo#123: done
+watch-prs: poll -> 1 ready
+watch-prs owner/repo#123: claim -> reviewing
+watch-prs owner/repo#123: reviewed -> marked
 ```
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
