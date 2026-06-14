@@ -31,6 +31,18 @@ ready for spec -> vanguard:speccing -> ready for agent -> vanguard:running -> va
 
 Create a fresh issue with `ready for spec`. Give it a short goal and measurable acceptance criteria.
 
+Run the AFK readiness check before claiming anything:
+
+```bash
+vanguard doctor --loop-v1 --source github --github-repo OWNER/REPO --repo /path/to/repo
+```
+
+Expected result:
+
+- Every line is `preflight: ... ok`.
+- If any line ends with `-> stop before claim`, fix that dependency first.
+- The issue labels do not change.
+
 Run one controlled poll:
 
 ```bash

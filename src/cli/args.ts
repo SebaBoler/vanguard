@@ -2,8 +2,38 @@ import { parseArgs } from 'node:util';
 import { isProviderName } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 
+type WatchSource = 'linear' | 'github' | 'project';
+
 export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean; abandoned: boolean }
+  | {
+      kind: 'doctor';
+      source: 'linear' | 'github' | 'project';
+      label?: string;
+      projectNumber?: number;
+      team?: string;
+      triggerState?: string;
+      claimedState?: string;
+      reviewState?: string;
+      repoSlug?: string;
+      repoPath: string;
+      skillsDir?: string;
+      provider?: ProviderName;
+      reviewProvider?: ProviderName;
+      providerModel?: string;
+      reviewModel?: string;
+      verifyCmd?: string;
+      specModel?: string;
+      specLabel?: string;
+      agentLabel?: string;
+      needsInfoLabel?: string;
+      specClaimedLabel?: string;
+      specState?: string;
+      specStateName?: string;
+      agentState?: string;
+      needsInfoState?: string;
+      specClaimedState?: string;
+    }
   | {
       kind: 'run';
       source: 'linear' | 'github' | 'project';
@@ -238,8 +268,9 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
-  if (positionals[0] === 'watch') {
-    const source =
+  if (positionals[0] === 'watch' || positionals[0] === 'doctor') {
+    const commandKind = positionals[0];
+    const source: WatchSource =
       values.source === 'github' || (values.source === undefined && typeof values['github-repo'] === 'string')
         ? 'github'
         : values.source === 'project'
@@ -309,15 +340,10 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
-    return {
-      kind: 'watch',
+    type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress' | 'llmProxy'>;
+    const common: WatchCommon = {
       source,
       repoPath,
-      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
-      intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
-      once: values.once === true,
-      egress: values.egress === true,
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(label !== undefined ? { label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
@@ -343,6 +369,20 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(needsInfoState !== undefined ? { needsInfoState } : {}),
       ...(typeof values['spec-claimed-state'] === 'string' ? { specClaimedState: values['spec-claimed-state'] } : {}),
     };
+
+    if (commandKind === 'doctor') {
+      return { kind: 'doctor', ...common };
+    }
+
+    return {
+      kind: 'watch',
+      ...common,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
+      once: values.once === true,
+      egress: values.egress === true,
+    };
   }
 
   return { kind: 'help' };
@@ -353,6 +393,7 @@ export const USAGE = `vanguard <command>
 Commands:
   run    Run an agent on a task and open a draft PR for review.
   watch  Poll Linear or GitHub and run each newly-ready issue automatically (the AFK factory loop).
+  doctor Check whether watch can run AFK before any issue is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
@@ -453,6 +494,11 @@ Commands:
   stats options:
     --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to read (default: cwd)
     --json                 Emit the aggregated report as JSON instead of tables
+
+  doctor options:
+    Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.
+    Example (GitHub): vanguard doctor --source github --github-repo owner/repo
+    Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
      CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor);

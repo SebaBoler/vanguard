@@ -4,6 +4,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { authFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
+import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { Command } from './args.js';
@@ -19,6 +20,10 @@ const SPEC_CLAIMED_LABEL = 'vanguard:speccing'; // GitHub: label
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {
+  const report = await runPreflight(cmd);
+  for (const line of formatPreflightReport(report)) console.log(line);
+  if (!report.ok) throw new Error('preflight failed');
+
   const auth = authFromEnv();
   if (auth === undefined) {
     throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');

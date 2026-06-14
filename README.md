@@ -249,9 +249,14 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 
 ```bash
 # GitHub Loop v1.1 defaults
+vanguard doctor --source github --github-repo owner/repo
 vanguard watch --source github --github-repo owner/repo
 
 # GitHub Loop v1 with custom labels/model
+vanguard doctor --source github --github-repo owner/repo --label vanguard \
+  --spec-label "ready for spec" \
+  --agent-label "ready for agent" \
+  --needs-info-label "needs info"
 vanguard watch --source github --github-repo owner/repo \
   --label vanguard \
   --spec-label "ready for spec" \
@@ -270,9 +275,12 @@ vanguard watch --source github --github-repo owner/repo \
 
 ```bash
 # Linear Loop v1.1 defaults
+vanguard doctor --loop-v1 --label vanguard
 vanguard watch --loop-v1 --label vanguard
 
 # Linear Loop v1 with custom states/model
+vanguard doctor --loop-v1 --label vanguard --spec-state triage --spec-state-name Spec \
+  --needs-info-state "Needs Info" --agent-state Todo
 vanguard watch --loop-v1 --label vanguard \
   --spec-state triage \
   --spec-state-name Spec \
@@ -283,6 +291,7 @@ vanguard watch --loop-v1 --label vanguard \
 
 **Shared behaviour (both sources):**
 
+- `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest`, source auth, GitHub routing labels, and Linear env/skills setup.
 - Triage is deterministic (`assessTaskReadiness`) and rejects under-specified tickets before spending any model tokens.
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
@@ -292,6 +301,9 @@ vanguard watch --loop-v1 --label vanguard \
 Operator logs stay terse and progress-oriented so always-on runs are scannable:
 
 ```text
+preflight: node 24 ok
+preflight: llm auth ok
+preflight: github labels ok
 spec: poll -> 1 ready
 spec owner/repo#123: advanced -> next poll agent
 watch: poll -> 1 ready
