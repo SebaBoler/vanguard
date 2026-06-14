@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { persistRunRecord, persistVerification } from './run-record.js';
+import { persistRunRecord, persistVerification, persistVisualProof } from './run-record.js';
 import type { RunResult } from './types.js';
 
 const TS = '2026-06-06T10:00:00.000Z';
@@ -114,6 +114,57 @@ describe('persistRunRecord', () => {
       exitCode: 0,
       sha256: verResult.sha256,
     });
+  });
+
+  it('persistVisualProof writes visual-proof.json with artifacts and a metric line', async () => {
+    const vpResult = {
+      command: 'pnpm visual-proof',
+      exitCode: 0,
+      passed: true,
+      sha256: 'cafebabe'.repeat(8),
+      outputTail: 'screenshots captured',
+      artifacts: [
+        { path: '/workspace/.vanguard/visual-proof/home.png', sha256: 'aa'.repeat(32), bytes: 1024 },
+        { path: '/workspace/.vanguard/visual-proof/about.png', sha256: 'bb'.repeat(32), bytes: 2048 },
+      ],
+    };
+    const file = await persistVisualProof(repo, 'TES-1', vpResult, { timestamp: TS });
+    expect(file).toBe(join(repo, '.vanguard', 'runs', 'TES-1', '2026-06-06T10-00-00-000Z.visual-proof.json'));
+
+    const proof = JSON.parse(await readFile(file, 'utf8'));
+    expect(proof.command).toBe('pnpm visual-proof');
+    expect(proof.passed).toBe(true);
+    expect(proof.sha256).toBe(vpResult.sha256);
+    expect(proof.artifacts).toHaveLength(2);
+    expect(proof.artifacts[0]).toEqual(vpResult.artifacts[0]);
+    expect(proof.artifacts[1]).toEqual(vpResult.artifacts[1]);
+
+    const metrics = await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8');
+    const line = JSON.parse(metrics.trim());
+    expect(line).toMatchObject({
+      evt: 'visual_proof',
+      ts: TS,
+      taskId: 'TES-1',
+      passed: true,
+      exitCode: 0,
+      sha256: vpResult.sha256,
+      artifacts: 2,
+    });
+  });
+
+  it('persistVisualProof records an artifacts count of 0 when there are no artifacts', async () => {
+    const vpResult = {
+      command: 'pnpm visual-proof',
+      exitCode: 1,
+      passed: false,
+      sha256: 'deadbeef'.repeat(8),
+      outputTail: 'no screenshots',
+      artifacts: [],
+    };
+    await persistVisualProof(repo, 'TES-2', vpResult, { timestamp: TS });
+    const metrics = await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8');
+    const line = JSON.parse(metrics.trim());
+    expect(line).toMatchObject({ evt: 'visual_proof', taskId: 'TES-2', passed: false, exitCode: 1, artifacts: 0 });
   });
 
   it('labels a stage in the filename and appends one metric line per call', async () => {
