@@ -7,6 +7,7 @@ import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistRunRecord } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
+import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { extractTag } from '../structured/extract.js';
 import { VanguardError } from '../core/errors.js';
@@ -98,6 +99,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
 
   const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s)))(secrets);
 
+  const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
   const ctx = await prepareContext(
     {
       taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
@@ -110,7 +112,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const outcomes = await runStages(ctx, techSpecStage(deps.specModel !== undefined ? { model: deps.specModel } : {}), {
       agent,
-      variables: taskToVariables(task),
+      variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
       ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     });
     deps.logger?.info({ taskId: ctx.taskId }, summarizeOutcomes(outcomes));
@@ -132,6 +134,9 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
 
     return spec;
   } finally {
+    await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+      deps.logger?.warn({ err }, 'retrospective memory refresh failed (non-fatal)');
+    });
     await disposeContext(ctx);
   }
 }
