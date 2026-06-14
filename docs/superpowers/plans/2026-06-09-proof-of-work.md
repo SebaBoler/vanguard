@@ -1,8 +1,10 @@
 # Proof of Work (host-driven verification) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [x]` after completion.
 
 **Goal:** After the agent finishes, the *host* (not the agent) runs a verification command inside the sandbox, captures its output, exit code, and a SHA-256 of the output, and stamps a Proof of Work block into the PR body and the run record. The agent cannot fake it. On failure the PR still opens, clearly marked.
+
+**Status:** Implemented and covered by `src/pipeline/verify.test.ts`, `src/core/run-record.test.ts`, runner tests, CLI parser tests, and deploy docs.
 
 **Decisions (locked in brainstorming):**
 - On verify failure: always open the (draft) PR, stamp PASS/FAIL plus proof in the body, and best-effort add a `vanguard:verify-failed` label. Never silently swallow a red result.
@@ -19,7 +21,7 @@
 
 **Files:** Create `src/pipeline/verify.ts`, `src/pipeline/verify.test.ts`; Modify `src/core/run-record.ts` (persist the proof) and `src/core/run-record.test.ts`.
 
-- [ ] **Step 1 (TDD): `src/pipeline/verify.ts`** with three exports. Use the same `sh` alias pattern the providers use (bind the sandbox method to a local) so there is no bare `.exec` call site:
+- [x] **Step 1 (TDD): `src/pipeline/verify.ts`** with three exports. Use the same `sh` alias pattern the providers use (bind the sandbox method to a local) so there is no bare `.exec` call site:
 
 ```ts
 import { createHash } from 'node:crypto';
@@ -104,14 +106,14 @@ export function proofBlock(result: VerificationResult): string {
 }
 ```
 
-- [ ] **Step 2: verify.test.ts** (red then green):
+- [x] **Step 2: verify.test.ts** (red then green):
   - `resolveVerifyCommand`: explicit cmd wins; env wins over auto-detect; auto-detect builds the pnpm/npm command when package.json has test (and typecheck) scripts; returns undefined when no package.json, no test script, or nothing set. Use a temp dir with a written package.json for the auto-detect cases.
   - `runVerification`: with a fake sandbox returning canned stdout/stderr and exitCode, assert `passed`, `exitCode`, a stable `sha256` (hash a known string and compare), and `outputTail` trimming.
   - `proofBlock`: contains PASS or FAIL, the command, the sha256, and a fenced output tail.
 
-- [ ] **Step 3: persist the proof in the run record.** In `src/core/run-record.ts` add `persistVerification(localRepoPath, taskId, result, opts: { timestamp?: string })` that writes `<taskId>/<ts>.proof.json` (the VerificationResult) and appends a metric line `{ evt: 'verify', ts, taskId, passed, exitCode, sha256 }` to `metrics.jsonl`. Test it writes the file and the metric line.
+- [x] **Step 3: persist the proof in the run record.** In `src/core/run-record.ts` add `persistVerification(localRepoPath, taskId, result, opts: { timestamp?: string })` that writes `<taskId>/<ts>.proof.json` (the VerificationResult) and appends a metric line `{ evt: 'verify', ts, taskId, passed, exitCode, sha256 }` to `metrics.jsonl`. Test it writes the file and the metric line.
 
-- [ ] **Step 4:** `pnpm typecheck && pnpm test` green. Commit: `git commit -am "feat: host-driven Proof of Work (verify.ts + zapis proofa)"`.
+- [x] **Step 4:** `pnpm typecheck && pnpm test` green. Commit: `git commit -am "feat: host-driven Proof of Work (verify.ts + zapis proofa)"`.
 
 ---
 
@@ -119,20 +121,20 @@ export function proofBlock(result: VerificationResult): string {
 
 **Files:** Modify `src/runners/linear.ts`, `src/runners/github.ts`, `src/cli/args.ts` (and `args.test.ts`), `src/cli/run.ts`, `src/cli/watch.ts`, `README.md`, `docs/deploy.md`, `docker/compose.yaml`.
 
-- [ ] **Step 1: deps + CLI.** Add `verifyCmd?: string` to `RunLinearIssueDeps` and `RunGithubIssueDeps`. Add a `--verify <cmd>` string flag to args on run and watch (Command members `verifyCmd?: string`, parse, USAGE). Thread `cmd.verifyCmd` into deps in `cli/run.ts` (linear spread, github mutate, project) and `cli/watch.ts` (linear deps object, buildGithubDeps), mirroring `--provider-model`.
+- [x] **Step 1: deps + CLI.** Add `verifyCmd?: string` to `RunLinearIssueDeps` and `RunGithubIssueDeps`. Add a `--verify <cmd>` string flag to args on run and watch (Command members `verifyCmd?: string`, parse, USAGE). Thread `cmd.verifyCmd` into deps in `cli/run.ts` (linear spread, github mutate, project) and `cli/watch.ts` (linear deps object, buildGithubDeps), mirroring `--provider-model`.
 
-- [ ] **Step 2: run verification in the runners.** In `runLinearIssue` and `runGithubIssue`, AFTER `runStages` returns and the work is copied back (the sandbox is still alive), but BEFORE `disposeContext`:
+- [x] **Step 2: run verification in the runners.** In `runLinearIssue` and `runGithubIssue`, AFTER `runStages` returns and the work is copied back (the sandbox is still alive), but BEFORE `disposeContext`:
   ```ts
   const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
   const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
   ```
   Build the PR body as the base text plus `proofBlock(verification)` when present, and pass it to `publishForReview` (which already takes `body`). Keep the commit and publish flow otherwise unchanged (PR always opens). When `verification` exists, call `persistVerification(deps.repoPath, ctx.taskId, verification, ...)`.
 
-- [ ] **Step 3: label on fail (best-effort).** After the PR opens, if `verification` exists and did not pass, add a `vanguard:verify-failed` label: first `gh label create vanguard:verify-failed --force` (ignore errors, it may already exist), then `gh pr edit <prUrl> --add-label vanguard:verify-failed`. Wrap in try/catch and never fail the run because labeling failed. Use the injected runner where one exists, else execa.
+- [x] **Step 3: label on fail (best-effort).** After the PR opens, if `verification` exists and did not pass, add a `vanguard:verify-failed` label: first `gh label create vanguard:verify-failed --force` (ignore errors, it may already exist), then `gh pr edit <prUrl> --add-label vanguard:verify-failed`. Wrap in try/catch and never fail the run because labeling failed. Use the injected runner where one exists, else execa.
 
-- [ ] **Step 4: docs.** README: add a short "Proof of work" note (the host runs the verify command, hashes the output, stamps the PR; `--verify` and `VANGUARD_VERIFY_CMD`; auto-detected for node repos). `docs/deploy.md`: add `VANGUARD_VERIFY_CMD` to the `.env` examples (e.g. `pnpm install --frozen-lockfile && pnpm typecheck && pnpm test`). `docker/compose.yaml`: add a commented `# VANGUARD_VERIFY_CMD:` line. No em-dashes in prose.
+- [x] **Step 4: docs.** README: add a short "Proof of work" note (the host runs the verify command, hashes the output, stamps the PR; `--verify` and `VANGUARD_VERIFY_CMD`; auto-detected for node repos). `docs/deploy.md`: add `VANGUARD_VERIFY_CMD` to the `.env` examples (e.g. `pnpm install --frozen-lockfile && pnpm typecheck && pnpm test`). `docker/compose.yaml`: add a commented `# VANGUARD_VERIFY_CMD:` line. No em-dashes in prose.
 
-- [ ] **Step 5:** `pnpm typecheck && pnpm test` green. Commit: `git commit -am "feat: Proof of Work w runnerach + --verify/env + label na fail + docs"`.
+- [x] **Step 5:** `pnpm typecheck && pnpm test` green. Commit: `git commit -am "feat: Proof of Work w runnerach + --verify/env + label na fail + docs"`.
 
 ---
 
