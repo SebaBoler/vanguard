@@ -41,6 +41,39 @@ services:
       # - --needs-info-state=Needs Info  # (linear) default parked state for vague tickets
       # - --agent-state=Todo             # (linear) default state NAME after spec generation
 
+  # Optional external-PR review loop. It is disabled by default; start it with:
+  #   docker compose --profile pr-review up -d vanguard-watch-prs
+  # Preflight it first with:
+  #   docker compose --profile pr-review run --rm vanguard-watch-prs doctor-prs --github-repo=OWNER/REPO --label="ready for vanguard review" --repo=/work/repo
+  vanguard-watch-prs:
+    profiles: ["pr-review"]
+    image: vanguard-runner:latest
+    restart: unless-stopped
+    mem_limit: 1024m
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./target-repo:/work/repo
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GH_TOKEN: ${GH_TOKEN}
+      VANGUARD_MAX_SANDBOXES: "1"
+      # VANGUARD_SANDBOX_CPUS: "0"
+      # VANGUARD_SANDBOX_PIDS: "0"
+      # VANGUARD_SANDBOX_MEMORY_MB: "2560"
+      # VANGUARD_SIDECAR_MEMORY_MB: "256"
+    command:
+      - watch-prs
+      - --github-repo=OWNER/REPO
+      - --label=ready for vanguard review
+      - --repo=/work/repo
+      - --interval=120
+      - --llm-proxy
+      # - --reviewing-label=vanguard:reviewing
+      # - --reviewed-label=vanguard:reviewed
+      # - --provider=codex
+      # - --review-model=gpt-5
+
   # Self-maintenance: every 4h refresh the target-repo base (so PRs branch off latest main) and reap
   # stale sandboxes / worktrees / merged remote branches. Same image; overrides the entrypoint to a loop.
   vanguard-gc:
