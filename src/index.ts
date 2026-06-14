@@ -85,6 +85,20 @@ export {
   type RunGithubIssueDeps,
   type RunGithubIssueResult,
 } from './runners/github.js';
+export {
+  parsePullRequestRef,
+  fetchPullRequestForReview,
+  buildPullRequestReviewPrompt,
+  buildPullRequestReviewComment,
+  reviewPullRequest,
+} from './runners/pr-review.js';
+export type {
+  PullRequestReviewTarget,
+  PullRequestForReview,
+  PullRequestReviewer,
+  ReviewPullRequestDeps,
+  ReviewPullRequestResult,
+} from './runners/pr-review.js';
 export { reapContainers, dockerContainerLister, dockerContainerRemover, reapEgressNetworks, dockerEgressNetworkLister, dockerEgressNetworkRemover, pruneWorktrees, type ContainerInfo, type ContainerLister, type ContainerRemover, type NetworkLister, type NetworkRemover } from './core/gc.js';
 export {
   reapRemoteBranches,

@@ -7,6 +7,16 @@ type WatchSource = 'linear' | 'github' | 'project';
 export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean; abandoned: boolean }
   | {
+      kind: 'review-pr';
+      prRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      reviewModel?: string;
+    }
+  | {
       kind: 'doctor';
       source: 'linear' | 'github' | 'project';
       label?: string;
@@ -156,6 +166,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         // run
         linear: { type: 'string' },
         github: { type: 'string' },
+        'github-pr': { type: 'string' },
         project: { type: 'string' },
         source: { type: 'string' },
         parent: { type: 'boolean' },
@@ -232,6 +243,21 @@ export function parseCli(argv: string[], cwd: string): Command {
       dryRun: values['dry-run'] === true,
       abandoned: values.abandoned === true,
       ...(typeof values.remote === 'string' ? { remoteRepo: values.remote } : {}),
+    };
+  }
+
+  if (positionals[0] === 'review-pr') {
+    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
+    if (prRef === undefined) return { kind: 'help' };
+    return {
+      kind: 'review-pr',
+      prRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
   }
 
@@ -394,6 +420,7 @@ Commands:
   run    Run an agent on a task and open a draft PR for review.
   watch  Poll Linear or GitHub and run each newly-ready issue automatically (the AFK factory loop).
   doctor Check whether watch can run AFK before any issue is claimed.
+  review-pr Review an existing GitHub PR and post a non-blocking Vanguard review comment.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
@@ -483,6 +510,14 @@ Commands:
     --review-model <m>       Model for the review stage (default: provider's default)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
+
+  review-pr options:
+    <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github-pr <n>        PR number (alternative to positional)
+    --github-repo <o/r>    Required for bare PR numbers
+    --provider <claude|codex|cursor>          Provider used for the PR review (default: claude)
+    --review-model <m>     Model for the PR review
+    --egress --llm-proxy --repo <path>         As for run/watch
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)

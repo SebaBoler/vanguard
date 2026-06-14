@@ -143,6 +143,30 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && cmd.reviewModel).toBe('haiku');
   });
 
+  it('parses review-pr with a GitHub PR URL', () => {
+    expect(
+      parseCli(['review-pr', 'https://github.com/o/r/pull/12', '--repo', '/work', '--provider', 'codex', '--review-model', 'gpt-5'], '/cwd'),
+    ).toEqual({
+      kind: 'review-pr',
+      prRef: 'https://github.com/o/r/pull/12',
+      repoPath: '/work',
+      provider: 'codex',
+      reviewModel: 'gpt-5',
+      egress: false,
+    });
+  });
+
+  it('parses review-pr with --github-pr and --github-repo', () => {
+    expect(parseCli(['review-pr', '--github-pr', '12', '--github-repo', 'o/r', '--llm-proxy'], '/work')).toEqual({
+      kind: 'review-pr',
+      prRef: '12',
+      repoSlug: 'o/r',
+      repoPath: '/work',
+      egress: false,
+      llmProxy: true,
+    });
+  });
+
   it('omits providerModel and reviewModel when flags are absent', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
     expect(cmd.kind === 'run' && 'providerModel' in cmd).toBe(false);

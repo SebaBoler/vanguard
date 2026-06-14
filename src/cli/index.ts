@@ -5,6 +5,7 @@ import { runCommand } from './run.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
 import { doctorCommand } from './doctor.js';
+import { reviewPrCommand } from './review-pr.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
@@ -22,6 +23,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'doctor') {
     await doctorCommand(command);
+    return;
+  }
+  if (command.kind === 'review-pr') {
+    await reviewPrCommand(command);
     return;
   }
   if (command.kind === 'stats') {
