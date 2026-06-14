@@ -4,6 +4,7 @@ import type { Command } from './args.js';
 import type { PreflightRunner } from './preflight.js';
 
 type DoctorCommand = Extract<Command, { kind: 'doctor' }>;
+type DoctorPrsCommand = Extract<Command, { kind: 'doctor-prs' }>;
 
 function githubDoctor(overrides: Partial<DoctorCommand> = {}): DoctorCommand {
   return {
@@ -27,6 +28,18 @@ function makeRunner(labels: string[] = ['ready for spec', 'ready for agent', 'ne
     if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
     if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify(labels.map((name) => ({ name }))) };
     throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+  };
+}
+
+function doctorPrs(overrides: Partial<DoctorPrsCommand> = {}): DoctorPrsCommand {
+  return {
+    kind: 'doctor-prs',
+    repoPath: '/repo',
+    repoSlug: 'owner/repo',
+    label: 'ready for vanguard review',
+    reviewingLabel: 'vanguard:reviewing',
+    reviewedLabel: 'vanguard:reviewed',
+    ...overrides,
   };
 }
 
@@ -87,6 +100,17 @@ describe('runPreflight', () => {
       'preflight: github auth ok',
       'preflight: github labels ok',
     ]);
+  });
+
+  it('checks PR review loop labels before watch-prs can claim a PR', async () => {
+    const report = await runPreflight(doctorPrs(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(['ready for vanguard review', 'vanguard:reviewing']),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain('preflight: github labels missing vanguard:reviewed -> stop before claim');
   });
 
   it('checks Linear API and skills before a Linear loop can run', async () => {

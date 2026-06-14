@@ -32,6 +32,14 @@ export type Command =
       reviewModel?: string;
     }
   | {
+      kind: 'doctor-prs';
+      repoSlug: string;
+      repoPath: string;
+      label: string;
+      reviewingLabel: string;
+      reviewedLabel: string;
+    }
+  | {
       kind: 'doctor';
       source: 'linear' | 'github' | 'project';
       label?: string;
@@ -303,6 +311,20 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  if (positionals[0] === 'doctor-prs') {
+    const repoSlug = typeof values['github-repo'] === 'string' ? values['github-repo'] : undefined;
+    const label = typeof values.label === 'string' ? values.label : undefined;
+    if (repoSlug === undefined || label === undefined) return { kind: 'help' };
+    return {
+      kind: 'doctor-prs',
+      repoSlug,
+      repoPath,
+      label,
+      reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
+      reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
+    };
+  }
+
   if (positionals[0] === 'run') {
     const sources: Array<['linear' | 'github' | 'project', string]> = [];
     if (typeof values.linear === 'string') sources.push(['linear', values.linear]);
@@ -464,6 +486,7 @@ Commands:
   doctor Check whether watch can run AFK before any issue is claimed.
   review-pr Review an existing GitHub PR and post a non-blocking Vanguard review comment.
   watch-prs Poll GitHub PRs by label and run the non-blocking Vanguard review loop.
+  doctor-prs Check whether watch-prs can run AFK before any PR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
@@ -578,6 +601,11 @@ Commands:
 
     Dedupe: successful Vanguard reviews include a hidden head SHA marker; watch-prs skips
       the same PR commit if the trigger label is re-added accidentally.
+
+  doctor-prs options:
+    Uses the same repo and label routing flags as watch-prs, but only runs AFK preflight checks and exits.
+    Example:
+      vanguard doctor-prs --github-repo owner/repo --label "ready for vanguard review"
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)

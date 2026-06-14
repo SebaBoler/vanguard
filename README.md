@@ -326,7 +326,12 @@ vanguard review-pr --github-pr 123 --github-repo owner/repo --provider codex --r
 `vanguard watch-prs` turns that reviewer into a small PR loop. It polls only PRs with an explicit trigger label, skips drafts and Vanguard/bot-authored PRs, swaps labels while reviewing, and restores the trigger label on failure so the next poll can retry. Successful reviews include a hidden `headRefOid` marker, so the loop skips the same commit if the trigger label is re-added accidentally.
 
 ```bash
+vanguard doctor-prs --github-repo owner/repo --label "ready for vanguard review"
 vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
+vanguard doctor-prs --github-repo owner/repo \
+  --label "ready for vanguard review" \
+  --reviewing-label "vanguard:reviewing" \
+  --reviewed-label "vanguard:reviewed"
 vanguard watch-prs --github-repo owner/repo \
   --label "ready for vanguard review" \
   --reviewing-label "vanguard:reviewing" \
