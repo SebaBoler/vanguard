@@ -185,6 +185,59 @@ describe('parseCli', () => {
     });
   });
 
+  it('infers github source when --github-repo is supplied on watch', () => {
+    const cmd = parseCli(['watch', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.source).toBe('github');
+      expect(cmd.repoSlug).toBe('o/r');
+    }
+  });
+
+  it('uses safe github loop-v1 defaults for a repo-only watch command', () => {
+    expect(parseCli(['watch', '--source', 'github', '--github-repo', 'o/r'], '/work')).toEqual({
+      kind: 'watch',
+      source: 'github',
+      repoPath: '/work',
+      repoSlug: 'o/r',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+      specLabel: 'ready for spec',
+      agentLabel: 'ready for agent',
+      needsInfoLabel: 'needs info',
+    });
+  });
+
+  it('uses loop-v1 defaults with an explicit github ownership label', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--loop-v1', '--label', 'ai', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.label).toBe('ai');
+      expect(cmd.specLabel).toBe('ready for spec');
+      expect(cmd.agentLabel).toBe('ready for agent');
+      expect(cmd.needsInfoLabel).toBe('needs info');
+    }
+  });
+
+  it('uses safe linear loop-v1 defaults when --loop-v1 is supplied', () => {
+    expect(parseCli(['watch', '--loop-v1', '--team', 'TES'], '/work')).toEqual({
+      kind: 'watch',
+      source: 'linear',
+      label: 'vanguard',
+      team: 'TES',
+      repoPath: '/work',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+      specState: 'triage',
+      specStateName: 'Spec',
+      needsInfoState: 'Needs Info',
+    });
+  });
+
   it('watch requires --label', () => {
     expect(parseCli(['watch'], '/work').kind).toBe('help');
   });
@@ -320,49 +373,61 @@ describe('parseCli', () => {
     ).toBe('help');
   });
 
-  it('returns help for github loop-v1 when --agent-label is missing', () => {
-    expect(
-      parseCli(
-        ['watch', '--source', 'github', '--spec-label', 'ready for spec', '--needs-info-label', 'needs info'],
-        '/work',
-      ).kind,
-    ).toBe('help');
+  it('defaults github loop-v1 agent label when --agent-label is missing', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'github', '--spec-label', 'ready for spec', '--needs-info-label', 'needs info'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('label' in cmd).toBe(false);
+      expect(cmd.agentLabel).toBe('ready for agent');
+    }
   });
 
-  it('returns help for github loop-v1 when --needs-info-label is missing', () => {
-    expect(
-      parseCli(
-        ['watch', '--source', 'github', '--spec-label', 'ready for spec', '--agent-label', 'ready for agent'],
-        '/work',
-      ).kind,
-    ).toBe('help');
+  it('defaults github loop-v1 needs-info label when --needs-info-label is missing', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'github', '--spec-label', 'ready for spec', '--agent-label', 'ready for agent'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('label' in cmd).toBe(false);
+      expect(cmd.needsInfoLabel).toBe('needs info');
+    }
   });
 
-  it('returns help for linear loop-v1 when --spec-state-name is missing', () => {
-    expect(
-      parseCli(
-        ['watch', '--label', 'vanguard', '--spec-state', 'triage', '--needs-info-state', 'Needs Info'],
-        '/work',
-      ).kind,
-    ).toBe('help');
+  it('defaults linear loop-v1 spec state name when --spec-state-name is missing', () => {
+    const cmd = parseCli(
+      ['watch', '--label', 'vanguard', '--spec-state', 'triage', '--needs-info-state', 'Needs Info'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.specStateName).toBe('Spec');
+    }
   });
 
-  it('returns help for linear loop-v1 when --needs-info-state is missing', () => {
-    expect(
-      parseCli(
-        ['watch', '--label', 'vanguard', '--spec-state', 'triage', '--spec-state-name', 'Spec'],
-        '/work',
-      ).kind,
-    ).toBe('help');
+  it('defaults linear loop-v1 needs-info state when --needs-info-state is missing', () => {
+    const cmd = parseCli(
+      ['watch', '--label', 'vanguard', '--spec-state', 'triage', '--spec-state-name', 'Spec'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.needsInfoState).toBe('Needs Info');
+    }
   });
 
-  it('returns help for linear loop-v1 when --label is missing', () => {
-    expect(
-      parseCli(
-        ['watch', '--spec-state', 'triage', '--spec-state-name', 'Spec', '--needs-info-state', 'Needs Info'],
-        '/work',
-      ).kind,
-    ).toBe('help');
+  it('defaults linear loop-v1 ownership label when --label is missing', () => {
+    const cmd = parseCli(
+      ['watch', '--spec-state', 'triage', '--spec-state-name', 'Spec', '--needs-info-state', 'Needs Info'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect(cmd.label).toBe('vanguard');
+    }
   });
 
   it('returns help when loop-v1 is attempted on project source', () => {
@@ -396,7 +461,7 @@ describe('parseCli', () => {
     }
   });
 
-  it('omits label from github loop-v1 when --label is absent (ownership filter off)', () => {
+  it('omits github loop-v1 ownership label when --label is absent', () => {
     const cmd = parseCli(
       [
         'watch',

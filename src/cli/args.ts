@@ -97,6 +97,13 @@ export type Command =
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_HOURS = 6;
 const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_LOOP_V1_OWNERSHIP_LABEL = 'vanguard';
+const DEFAULT_GITHUB_SPEC_LABEL = 'ready for spec';
+const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
+const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
+const DEFAULT_LINEAR_SPEC_STATE = 'triage';
+const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
+const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
 
 /**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
@@ -137,6 +144,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        'loop-v1': { type: 'boolean' },
         // watch loop-v1
         'spec-label': { type: 'string' },
         'agent-label': { type: 'string' },
@@ -231,37 +239,72 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'watch') {
-    const source = values.source === 'github' ? 'github' : values.source === 'project' ? 'project' : 'linear';
+    const source =
+      values.source === 'github' || (values.source === undefined && typeof values['github-repo'] === 'string')
+        ? 'github'
+        : values.source === 'project'
+          ? 'project'
+          : 'linear';
     // project number is required when source === 'project'
     const projectNumber = typeof values.project === 'string' ? Number(values.project) : undefined;
     if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) return { kind: 'help' };
 
-    // Detect loop-v1 mode: any spec-trigger flag being present activates it.
-    const specLabel = typeof values['spec-label'] === 'string' ? values['spec-label'] : undefined;
-    const specState = typeof values['spec-state'] === 'string' ? values['spec-state'] : undefined;
-    const isLoopV1 = specLabel !== undefined || specState !== undefined;
+    let label = typeof values.label === 'string' ? values.label : undefined;
+    let specLabel = typeof values['spec-label'] === 'string' ? values['spec-label'] : undefined;
+    let agentLabel = typeof values['agent-label'] === 'string' ? values['agent-label'] : undefined;
+    let needsInfoLabel = typeof values['needs-info-label'] === 'string' ? values['needs-info-label'] : undefined;
+    let specState = typeof values['spec-state'] === 'string' ? values['spec-state'] : undefined;
+    let specStateName = typeof values['spec-state-name'] === 'string' ? values['spec-state-name'] : undefined;
+    const agentState = typeof values['agent-state'] === 'string' ? values['agent-state'] : undefined;
+    let needsInfoState = typeof values['needs-info-state'] === 'string' ? values['needs-info-state'] : undefined;
+
+    const hasGithubLoopFlags =
+      specLabel !== undefined ||
+      agentLabel !== undefined ||
+      needsInfoLabel !== undefined ||
+      typeof values['spec-claimed-label'] === 'string';
+    const hasLinearLoopFlags =
+      specState !== undefined ||
+      specStateName !== undefined ||
+      agentState !== undefined ||
+      needsInfoState !== undefined ||
+      typeof values['spec-claimed-state'] === 'string';
+    const repoOnlyGithubLoop =
+      source === 'github' && label === undefined && !hasGithubLoopFlags && !hasLinearLoopFlags;
+    const isLoopV1 = values['loop-v1'] === true || hasGithubLoopFlags || hasLinearLoopFlags || repoOnlyGithubLoop;
+
+    if (isLoopV1 && source === 'github' && hasLinearLoopFlags) return { kind: 'help' };
+    if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) return { kind: 'help' };
+
+    if (isLoopV1 && source === 'github') {
+      specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
+      agentLabel ??= DEFAULT_GITHUB_AGENT_LABEL;
+      needsInfoLabel ??= DEFAULT_GITHUB_NEEDS_INFO_LABEL;
+    } else if (isLoopV1 && source === 'linear') {
+      label ??= DEFAULT_LOOP_V1_OWNERSHIP_LABEL;
+      specState ??= DEFAULT_LINEAR_SPEC_STATE;
+      specStateName ??= DEFAULT_LINEAR_SPEC_STATE_NAME;
+      needsInfoState ??= DEFAULT_LINEAR_NEEDS_INFO_STATE;
+    }
 
     if (isLoopV1) {
       // Loop v1 validation per source.
       if (source === 'github') {
-        const agentLabel = typeof values['agent-label'] === 'string' ? values['agent-label'] : undefined;
-        const needsInfoLabel = typeof values['needs-info-label'] === 'string' ? values['needs-info-label'] : undefined;
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
-        // --label is the OWNERSHIP label in github loop-v1 (issues must carry it in addition to the
-        // routing label); optional — when absent, no ownership filter is applied
+        // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
+        // watches the routing labels directly; explicit --label narrows that further when desired.
       } else if (source === 'linear') {
-        const specStateName = typeof values['spec-state-name'] === 'string' ? values['spec-state-name'] : undefined;
-        const needsInfoState = typeof values['needs-info-state'] === 'string' ? values['needs-info-state'] : undefined;
         if (specState === undefined || specStateName === undefined || needsInfoState === undefined) return { kind: 'help' };
-        // --label is still required for linear loop-v1 (the shared label across both passes)
-        if (typeof values.label !== 'string') return { kind: 'help' };
+        // --label is still the shared ownership label across both passes. Defaults keep the filter,
+        // not a status-only scan over the whole Linear workspace.
+        if (label === undefined) return { kind: 'help' };
       } else {
         // project source does not support loop-v1
         return { kind: 'help' };
       }
     } else {
       // Existing single-pass validation: label is required for linear/github; optional for project.
-      if (source !== 'project' && typeof values.label !== 'string') return { kind: 'help' };
+      if (source !== 'project' && label === undefined) return { kind: 'help' };
     }
 
     const interval = Number(values.interval);
@@ -275,7 +318,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       once: values.once === true,
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
-      ...(typeof values.label === 'string' ? { label: values.label } : {}),
+      ...(label !== undefined ? { label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
       ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
@@ -291,13 +334,13 @@ export function parseCli(argv: string[], cwd: string): Command {
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
       ...(specLabel !== undefined ? { specLabel } : {}),
-      ...(typeof values['agent-label'] === 'string' ? { agentLabel: values['agent-label'] } : {}),
-      ...(typeof values['needs-info-label'] === 'string' ? { needsInfoLabel: values['needs-info-label'] } : {}),
+      ...(agentLabel !== undefined ? { agentLabel } : {}),
+      ...(needsInfoLabel !== undefined ? { needsInfoLabel } : {}),
       ...(typeof values['spec-claimed-label'] === 'string' ? { specClaimedLabel: values['spec-claimed-label'] } : {}),
       ...(specState !== undefined ? { specState } : {}),
-      ...(typeof values['spec-state-name'] === 'string' ? { specStateName: values['spec-state-name'] } : {}),
-      ...(typeof values['agent-state'] === 'string' ? { agentState: values['agent-state'] } : {}),
-      ...(typeof values['needs-info-state'] === 'string' ? { needsInfoState: values['needs-info-state'] } : {}),
+      ...(specStateName !== undefined ? { specStateName } : {}),
+      ...(agentState !== undefined ? { agentState } : {}),
+      ...(needsInfoState !== undefined ? { needsInfoState } : {}),
       ...(typeof values['spec-claimed-state'] === 'string' ? { specClaimedState: values['spec-claimed-state'] } : {}),
     };
   }
@@ -327,6 +370,10 @@ Commands:
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";
                            linear: "In Review"; github: "vanguard:review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
+    --loop-v1              Use Loop v1 defaults (GitHub labels "ready for spec"/"ready for agent"/
+                           "needs info"; Linear ownership label "vanguard", state type "triage",
+                           state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
+                           watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
     --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
     --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
@@ -336,18 +383,18 @@ Commands:
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
-  watch loop-v1 options (add any spec-trigger flag to activate; spec pass runs first each tick):
-    GitHub loop-v1 (--source github; all three flags required together):
+  watch loop-v1 options (add --loop-v1 or any routing flag to activate; spec pass runs first each tick):
+    GitHub loop-v1 (--source github):
       --spec-label <name>        Label that triggers the spec pass (e.g. "ready for spec")
       --agent-label <name>       Label set after spec generation — the agent-pass trigger (e.g. "ready for agent")
       --needs-info-label <name>  Label set when a ticket is too vague for spec or agent (e.g. "needs info")
       --label <name>             OWNERSHIP label: issues must carry this label in addition to the routing label
-                                 (e.g. "vanguard"); optional — when absent, no ownership filter is applied.
+                                 (e.g. "vanguard"; optional for repo-scoped GitHub watch).
                                  --claimed-state / --review-state still apply to the agent pass.
       --spec-claimed-label <l>   Label the spec pass moves a claimed issue to while speccing
                                  (default: "vanguard:speccing"); use this if your workspace uses a different label.
 
-    Linear loop-v1 (--source linear; all three flags required together plus --label):
+    Linear loop-v1 (--source linear):
       --spec-state <type>        State TYPE that triggers the spec pass (e.g. "triage")
       --spec-state-name <name>   Display NAME of that state, for failure revert (e.g. "Spec")
       --needs-info-state <name>  State NAME for tickets that are too vague (e.g. "Needs Info")
@@ -360,13 +407,20 @@ Commands:
     Shared:
       --spec-model <m>           Cheap model for the spec-generation stage (e.g. "haiku")
 
-    Example (GitHub):
-      vanguard watch --source github --label vanguard --agent-label "ready for agent" \\
-        --spec-label "ready for spec" --needs-info-label "needs info" --spec-model haiku
+    Example (GitHub, defaults):
+      vanguard watch --source github --github-repo owner/repo
 
-    Example (Linear):
-      vanguard watch --label vanguard --spec-state triage --spec-state-name Spec \\
-        --needs-info-state "Needs Info" --spec-model haiku
+    Example (GitHub, custom labels/model):
+      vanguard watch --source github --github-repo owner/repo --label vanguard \\
+        --agent-label "ready for agent" --spec-label "ready for spec" \\
+        --needs-info-label "needs info" --spec-model haiku
+
+    Example (Linear, defaults):
+      vanguard watch --loop-v1 --label vanguard
+
+    Example (Linear, custom state names/model):
+      vanguard watch --loop-v1 --label vanguard --spec-state triage --spec-state-name Spec \\
+        --needs-info-state "Needs Info" --agent-state Todo --spec-model haiku
 
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)

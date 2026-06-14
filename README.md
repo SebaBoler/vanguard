@@ -229,7 +229,7 @@ Node 24+, pnpm, Vitest, ESM with NodeNext. Tests are co-located as `*.test.ts`. 
 
 ## Autonomous loop
 
-`vanguard watch --label vanguard` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with the label). Each run implements, then **reviews and simplifies its own diff in a fresh, independent context** using the bundled `skills/` (code-review + simplify) injected into the sandbox. To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).
+`vanguard watch` polls a source for ready items and runs each one by itself (claim → run → PR → move to review): `--source linear` (trigger = state type + label) or `--source github` (open issues with labels). Each run implements, then **reviews and simplifies its own diff in a fresh, independent context** using the bundled `skills/` (code-review + simplify) injected into the sandbox. Loop v1.1 adds safe defaults so GitHub can be started with `vanguard watch --source github --github-repo owner/repo`, and Linear with `vanguard watch --loop-v1 --label vanguard`. To run it always-on in Docker on Synology / Hetzner / any host, see [docs/deploy.md](docs/deploy.md).
 
 ### Loop v1 — two-pass autonomous pipeline
 
@@ -237,25 +237,27 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 
 **GitHub (routes by LABELS):**
 
-`--label` (e.g. `vanguard`) is the **ownership** label: an issue is only picked up if it carries it *in addition to* the routing label below. This stops Vanguard from grabbing issues that happen to use `ready for spec`/`ready for agent` for manual triage.
+`--label` (e.g. `vanguard`) is an optional **ownership** label for GitHub: when supplied, an issue is only picked up if it carries it *in addition to* the routing label below. The short GitHub command does not require it because the repo plus `ready for spec` / `ready for agent` already define the loop lane.
 
-| Label | What happens |
+| Routing label | What happens |
 |---|---|
-| `vanguard` + `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. |
-| `vanguard` + `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. |
+| `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. If `--label` is supplied, the issue must also carry that ownership label. |
+| `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. If `--label` is supplied, the issue must also carry that ownership label. |
 | `needs info` | Parked. Human updates the ticket and moves it back. |
 
 > **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent`. The spec loop only runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug.
 
 ```bash
-# GitHub Loop v1 example
-vanguard watch --source github \
+# GitHub Loop v1.1 defaults
+vanguard watch --source github --github-repo owner/repo
+
+# GitHub Loop v1 with custom labels/model
+vanguard watch --source github --github-repo owner/repo \
   --label vanguard \
   --spec-label "ready for spec" \
   --agent-label "ready for agent" \
   --needs-info-label "needs info" \
-  --spec-model haiku \
-  --github-repo owner/repo
+  --spec-model haiku
 ```
 
 **Linear (routes by STATES):**
@@ -267,8 +269,11 @@ vanguard watch --source github \
 | Needs Info state | Parked. Human updates the ticket and moves it back. |
 
 ```bash
-# Linear Loop v1 example
-vanguard watch --label vanguard \
+# Linear Loop v1.1 defaults
+vanguard watch --loop-v1 --label vanguard
+
+# Linear Loop v1 with custom states/model
+vanguard watch --loop-v1 --label vanguard \
   --spec-state triage \
   --spec-state-name Spec \
   --needs-info-state "Needs Info" \
