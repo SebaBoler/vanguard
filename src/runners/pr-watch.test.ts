@@ -182,6 +182,40 @@ describe('githubPullRequestWatchPrimitives', () => {
     expect(calls[1]).toEqual(['pr', 'view', '12', '--repo', 'o/r', '--json', 'comments,reviews']);
   });
 
+  it('keeps a PR ready when the per-PR dedupe lookup fails', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 12,
+            title: 'Fix auth',
+            isDraft: false,
+            author: { login: 'alice' },
+            headRefOid: 'abc123',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view') throw new Error('temporary gh failure');
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      gh,
+      reviewOne: async () => {},
+    });
+
+    const ready = await primitives.listReady();
+
+    expect(ready.map((item) => item.number)).toEqual([12]);
+    expect(calls[1]).toEqual(['pr', 'view', '12', '--repo', 'o/r', '--json', 'comments,reviews']);
+  });
+
   it('claims, marks reviewed, and restores labels through gh pr edit', async () => {
     const calls: string[][] = [];
     const gh: GhRunner = async (args) => {

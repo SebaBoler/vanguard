@@ -125,10 +125,14 @@ function editPullRequestLabels(
 
 async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem): Promise<boolean> {
   if (item.headRefOid === '') return false;
-  const out = await gh(['pr', 'view', String(item.number), '--repo', item.repoSlug, '--json', 'comments,reviews']);
-  const view = JSON.parse(out) as GhPullRequestReviewView;
-  const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((entry) => entry.body ?? '');
-  return bodies.some((body) => hasPullRequestReviewMarker(body, item.headRefOid));
+  try {
+    const out = await gh(['pr', 'view', String(item.number), '--repo', item.repoSlug, '--json', 'comments,reviews']);
+    const view = JSON.parse(out) as GhPullRequestReviewView;
+    const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((entry) => entry.body ?? '');
+    return bodies.some((body) => hasPullRequestReviewMarker(body, item.headRefOid));
+  } catch {
+    return false;
+  }
 }
 
 /**
