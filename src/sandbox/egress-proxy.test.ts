@@ -2,12 +2,22 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { request } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { isAllowed, startEgressProxy, egressEnv, llmProxySandboxEnv, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
+import {
+  isAllowed,
+  startEgressProxy,
+  egressEnv,
+  llmProxySandboxEnv,
+  allowlistWithout,
+  llmProxyEgressAllowlist,
+  DEFAULT_EGRESS_ALLOWLIST,
+} from './egress-proxy.js';
 import type { LlmProxyDep } from './llm-proxy.js';
 
 describe('isAllowed', () => {
   it('allows exact domains and subdomains, denies look-alikes', () => {
     expect(isAllowed('api.anthropic.com', DEFAULT_EGRESS_ALLOWLIST)).toBe(true);
+    // Direct Codex mode (--egress without --llm-proxy) reaches OpenAI through the proxy.
+    expect(isAllowed('api.openai.com', DEFAULT_EGRESS_ALLOWLIST)).toBe(true);
     expect(isAllowed('codeload.github.com', DEFAULT_EGRESS_ALLOWLIST)).toBe(true);
     expect(isAllowed('sub.github.com', ['github.com'])).toBe(true);
     expect(isAllowed('github.com.evil.com', ['github.com'])).toBe(false);
@@ -82,6 +92,12 @@ describe('llmProxySandboxEnv', () => {
   });
 });
 
+describe('DEFAULT_EGRESS_ALLOWLIST', () => {
+  it('includes api.openai.com so direct Codex (--egress) can reach OpenAI', () => {
+    expect(DEFAULT_EGRESS_ALLOWLIST).toContain('api.openai.com');
+  });
+});
+
 describe('allowlistWithout', () => {
   it('drops exact host matches and keeps the other defaults', () => {
     const result = allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com');
@@ -89,6 +105,25 @@ describe('allowlistWithout', () => {
     expect(result).toContain('api.linear.app');
     expect(result).toContain('github.com');
     expect(result).toContain('registry.npmjs.org');
+  });
+});
+
+describe('llmProxyEgressAllowlist', () => {
+  it('excludes both sidecar-owned upstream hosts but keeps non-upstream hosts', () => {
+    const result = llmProxyEgressAllowlist();
+    expect(result).not.toContain('api.anthropic.com');
+    expect(result).not.toContain('api.openai.com');
+    expect(result).toContain('github.com');
+    expect(result).toContain('registry.npmjs.org');
+    expect(result).toContain('api.linear.app');
+  });
+
+  it('denies the sidecar-owned upstreams via isAllowed but still allows the rest', () => {
+    const result = llmProxyEgressAllowlist();
+    // Regression: the existing Anthropic removal still holds.
+    expect(isAllowed('api.anthropic.com', result)).toBe(false);
+    expect(isAllowed('api.openai.com', result)).toBe(false);
+    expect(isAllowed('github.com', result)).toBe(true);
   });
 });
 

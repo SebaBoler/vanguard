@@ -7,6 +7,8 @@
 /** Domains the sandbox legitimately needs: the agent, task sources, and package registries. */
 export const DEFAULT_EGRESS_ALLOWLIST = [
   'api.anthropic.com',
+  // Codex/OpenAI direct mode (--egress without --llm-proxy) reaches OpenAI through the proxy.
+  'api.openai.com',
   'api.linear.app',
   'github.com',
   'api.github.com',

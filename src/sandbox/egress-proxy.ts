@@ -71,6 +71,15 @@ export function allowlistWithout(list: readonly string[], host: string): string[
   return list.filter((entry) => entry !== host);
 }
 
+/** Upstream API hosts owned by trusted sidecars in --llm-proxy mode — removed from the sandbox allowlist
+ *  (the sidecars reach these directly; the sandbox reaches the sidecars by name via NO_PROXY). */
+export const LLM_PROXY_UPSTREAM_HOSTS = ['api.anthropic.com', 'api.openai.com'] as const;
+
+/** The sandbox egress allowlist under --llm-proxy: the base allowlist minus every sidecar-owned upstream host. */
+export function llmProxyEgressAllowlist(base: readonly string[] = DEFAULT_EGRESS_ALLOWLIST): string[] {
+  return LLM_PROXY_UPSTREAM_HOSTS.reduce<string[]>((list, host) => allowlistWithout(list, host), [...base]);
+}
+
 /**
  * A forward proxy that only tunnels HTTPS CONNECT to allowlisted domains (others get 403). Phase 1
  * (soft) egress control: point the sandbox's HTTPS_PROXY at this. It does not block a sandbox that
