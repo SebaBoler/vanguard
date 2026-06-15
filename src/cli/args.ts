@@ -40,6 +40,8 @@ export type Command =
       label: string;
       reviewingLabel: string;
       reviewedLabel: string;
+      provider?: ProviderName;
+      llmProxy?: boolean;
     }
   | {
       kind: 'doctor';
@@ -68,6 +70,7 @@ export type Command =
       agentState?: string;
       needsInfoState?: string;
       specClaimedState?: string;
+      llmProxy?: boolean;
     }
   | {
       kind: 'run';
@@ -343,6 +346,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       label,
       reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(provider !== undefined ? { provider } : {}),
     };
   }
 
@@ -483,7 +488,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
 
     if (commandKind === 'doctor') {
-      return { kind: 'doctor', ...common };
+      return { kind: 'doctor', ...common, ...(values['llm-proxy'] === true ? { llmProxy: true } : {}) };
     }
 
     return {

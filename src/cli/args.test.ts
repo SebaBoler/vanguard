@@ -265,6 +265,37 @@ describe('parseCli', () => {
     expect(parseCli(['doctor-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
   });
 
+  it('parses doctor with --provider and --llm-proxy', () => {
+    const cmd = parseCli(
+      ['doctor', '--source', 'github', '--github-repo', 'o/r', '--provider', 'codex', '--llm-proxy'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('doctor');
+    if (cmd.kind === 'doctor') {
+      expect(cmd.provider).toBe('codex');
+      expect(cmd.llmProxy).toBe(true);
+    }
+  });
+
+  it('parses doctor-prs with --provider and --llm-proxy', () => {
+    const cmd = parseCli(
+      ['doctor-prs', '--github-repo', 'o/r', '--label', 'ready for vanguard review', '--provider', 'codex', '--llm-proxy'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('doctor-prs');
+    if (cmd.kind === 'doctor-prs') {
+      expect(cmd.provider).toBe('codex');
+      expect(cmd.llmProxy).toBe(true);
+    }
+  });
+
+  it('does not set llmProxy or provider on doctor without those flags (regression)', () => {
+    const cmd = parseCli(['doctor', '--source', 'github', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind).toBe('doctor');
+    expect('llmProxy' in cmd).toBe(false);
+    expect((cmd as Extract<typeof cmd, { kind: 'doctor' }>).provider).toBeUndefined();
+  });
+
   it('omits providerModel and reviewModel when flags are absent', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
     expect(cmd.kind === 'run' && 'providerModel' in cmd).toBe(false);
