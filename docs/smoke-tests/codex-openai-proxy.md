@@ -75,7 +75,7 @@ review-pr OWNER/REPO#PR: done
 - `fetch -> diff` — the PR metadata and unified diff were fetched from GitHub.
 - `agent -> reviewing` — the sandbox started and Codex is running the adversarial review prompt.
 - `posted -> pr review` — the review comment (beginning `## Vanguard Review`) was posted to the PR.
-- `done` — the command exited cleanly.
+- `done` — the `review-pr` command's final line, printed once the CLI has cleaned up and exited.
 
 ### Verifying that the real key never entered the sandbox
 
