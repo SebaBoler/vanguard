@@ -51,7 +51,7 @@ interface ProviderKeyMapping {
  * by authSecrets (subscription token or API key). Codex authenticates with OPENAI_API_KEY (its
  * API-key auth), which we read from the documented CODEX_API_KEY (or OPENAI_API_KEY) on the host.
  */
-const PROVIDER_KEYS: Partial<Record<ProviderName, ProviderKeyMapping>> = {
+export const PROVIDER_KEYS: Partial<Record<ProviderName, ProviderKeyMapping>> = {
   codex: { hostEnv: ['CODEX_API_KEY', 'OPENAI_API_KEY'], sandboxEnv: 'OPENAI_API_KEY', proxyKey: 'codex' },
   cursor: { hostEnv: ['CURSOR_API_KEY'], sandboxEnv: 'CURSOR_API_KEY' },
 };

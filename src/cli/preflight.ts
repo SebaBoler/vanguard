@@ -1,5 +1,8 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
+import { providerSecrets, PROVIDER_KEYS } from '../agents/registry.js';
+import { AgentError } from '../core/errors.js';
+import type { ProviderName } from '../agents/registry.js';
 import type { Command } from './args.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
@@ -112,6 +115,18 @@ async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: strin
   return missing.length === 0 ? check('github labels', true) : check('github labels', false, `missing ${missing.join(', ')}`);
 }
 
+/**
+ * Collect the set of providers that need a host-key check (i.e. non-claude providers that have
+ * a PROVIDER_KEYS entry). Claude is excluded — its auth is already covered by the llm auth check.
+ */
+function collectProviders(cmd: PreflightCommand): ProviderName[] {
+  const candidates: Array<ProviderName | undefined> =
+    cmd.kind === 'doctor-prs'
+      ? [cmd.provider]
+      : [cmd.provider, cmd.reviewProvider];
+  return candidates.filter((name): name is ProviderName => name !== undefined && name in PROVIDER_KEYS);
+}
+
 /** Run AFK-readiness checks before a watch loop can claim work. */
 export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions = {}): Promise<PreflightReport> {
   const env = opts.env ?? process.env;
@@ -127,6 +142,17 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   );
 
   checks.push(authFromEnv(env) !== undefined ? check('llm auth', true) : check('llm auth', false, 'missing'));
+
+  const usedProviders = collectProviders(cmd);
+  if (usedProviders.length > 0) {
+    try {
+      providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true });
+      checks.push(check('provider auth', true));
+    } catch (error) {
+      const message = error instanceof AgentError ? error.message : String(error);
+      checks.push(check('provider auth', false, message));
+    }
+  }
 
   const gitRoot = await runOk(run, cmd.repoPath, 'git', ['rev-parse', '--show-toplevel']);
   const remote = gitRoot.ok ? await runOk(run, cmd.repoPath, 'git', ['remote', 'get-url', 'origin']) : gitRoot;
