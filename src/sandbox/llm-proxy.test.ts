@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { startLlmProxy } from './llm-proxy.js';
+import { startLlmProxy, startProviderProxies } from './llm-proxy.js';
+import { SandboxError } from '../core/errors.js';
 
 function fakeDocker(): { calls: { args: string[]; input?: string }[]; run: (args: string[], opts?: { input?: string }) => Promise<{ exitCode: number; stdout: string; stderr: string }> } {
   const calls: { args: string[]; input?: string }[] = [];
@@ -94,5 +95,37 @@ describe('startLlmProxy', () => {
       startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: run }),
     ).rejects.toThrow(/Failed to start llm proxy/);
     expect(removed.some((a) => a.includes('-f'))).toBe(true);
+  });
+});
+
+describe('startProviderProxies', () => {
+  it('starts no sidecar and no-op destroys when no openaiKey is given', async () => {
+    const d = fakeDocker();
+    const proxies = await startProviderProxies({ network: 'vg-egr-x', docker: d.run });
+    expect(proxies.openai).toBeUndefined();
+    await proxies.destroy();
+    expect(d.calls).toHaveLength(0);
+  });
+
+  it('stands up an OpenAI sidecar with the real key only via stdin and destroys it', async () => {
+    const d = fakeDocker();
+    const proxies = await startProviderProxies({ openaiKey: 'sk-real-codex', network: 'vg-egr-x', docker: d.run });
+    expect(proxies.openai).toBeDefined();
+    expect(proxies.openai?.url).toMatch(/^http:\/\/vg-llm-.*:8088$/);
+    expect(proxies.openai?.host).toMatch(/^vg-llm-/);
+    expect(proxies.openai?.nonce.length).toBeGreaterThanOrEqual(16);
+    // The real key + UPSTREAM=openai travel only via stdin, never argv.
+    expect(d.calls.some((c) => c.input?.includes('UPSTREAM=openai'))).toBe(true);
+    expect(d.calls.some((c) => c.input?.includes('sk-real-codex'))).toBe(true);
+    const flat = d.calls.flatMap((c) => c.args).join(' ');
+    expect(flat).not.toContain('sk-real-codex');
+    await proxies.destroy();
+    expect(d.calls.some((c) => c.args[0] === 'rm' && c.args.includes('-f'))).toBe(true);
+  });
+
+  it('throws SandboxError when an openaiKey is given without a network', async () => {
+    const d = fakeDocker();
+    await expect(startProviderProxies({ openaiKey: 'sk-real-codex', docker: d.run })).rejects.toBeInstanceOf(SandboxError);
+    expect(d.calls).toHaveLength(0);
   });
 });

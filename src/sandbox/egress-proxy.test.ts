@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { request } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import type { AddressInfo } from 'node:net';
-import { isAllowed, startEgressProxy, egressEnv, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
+import { isAllowed, startEgressProxy, egressEnv, llmProxySandboxEnv, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
+import type { LlmProxyDep } from './llm-proxy.js';
 
 describe('isAllowed', () => {
   it('allows exact domains and subdomains, denies look-alikes', () => {
@@ -33,6 +34,51 @@ describe('egressEnv', () => {
     const env = egressEnv('http://host.docker.internal:1234', { noProxy: ['vg-llm-abc'] });
     expect(env.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-abc');
     expect(env.no_proxy).toBe('localhost,127.0.0.1,vg-llm-abc');
+  });
+});
+
+describe('llmProxySandboxEnv', () => {
+  const proxyUrl = 'http://host.docker.internal:1234';
+  const anthropic: LlmProxyDep = { url: 'http://vg-llm-ant:8088', nonce: 'ant-nonce', host: 'vg-llm-ant' };
+  const openai: LlmProxyDep = { url: 'http://vg-llm-oai:8088', nonce: 'oai-nonce', host: 'vg-llm-oai' };
+
+  it('returns undefined in direct mode (no egress proxy)', () => {
+    expect(llmProxySandboxEnv(undefined, anthropic, openai)).toBeUndefined();
+  });
+
+  it('wires both sidecars: both hosts in NO_PROXY, Anthropic + OpenAI vars set', () => {
+    const env = llmProxySandboxEnv(proxyUrl, anthropic, openai);
+    expect(env).toBeDefined();
+    expect(env?.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-ant,vg-llm-oai');
+    expect(env?.ANTHROPIC_BASE_URL).toBe(anthropic.url);
+    expect(env?.ANTHROPIC_AUTH_TOKEN).toBe(anthropic.nonce);
+    expect(env?.OPENAI_API_KEY).toBe(openai.nonce);
+    expect(env?.VANGUARD_OPENAI_BASE_URL).toBe(`${openai.url}/v1`);
+  });
+
+  it('wires the OpenAI sidecar alone: OpenAI vars + host in NO_PROXY, no Anthropic vars', () => {
+    const env = llmProxySandboxEnv(proxyUrl, undefined, openai);
+    expect(env?.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-oai');
+    expect(env?.OPENAI_API_KEY).toBe(openai.nonce);
+    expect(env?.VANGUARD_OPENAI_BASE_URL).toBe(`${openai.url}/v1`);
+    expect(env?.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it('keeps the Anthropic-only behavior unchanged when no OpenAI sidecar is given', () => {
+    const env = llmProxySandboxEnv(proxyUrl, anthropic);
+    expect(env?.NO_PROXY).toBe('localhost,127.0.0.1,vg-llm-ant');
+    expect(env?.ANTHROPIC_BASE_URL).toBe(anthropic.url);
+    expect(env?.ANTHROPIC_AUTH_TOKEN).toBe(anthropic.nonce);
+    expect(env?.OPENAI_API_KEY).toBeUndefined();
+    expect(env?.VANGUARD_OPENAI_BASE_URL).toBeUndefined();
+  });
+
+  it('returns plain egress env when neither sidecar is given (existing behavior)', () => {
+    const env = llmProxySandboxEnv(proxyUrl, undefined);
+    expect(env?.NO_PROXY).toBe('localhost,127.0.0.1');
+    expect(env?.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env?.OPENAI_API_KEY).toBeUndefined();
   });
 });
 

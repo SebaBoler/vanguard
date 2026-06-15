@@ -106,3 +106,43 @@ export async function startLlmProxy(opts: {
     throw new SandboxError(`Failed to start llm proxy ${id}`, { cause });
   }
 }
+
+/** The per-run provider-sidecar handles plus a single teardown for whatever was started. */
+export interface ProviderProxies {
+  /** OpenAI/Codex sidecar dep, present only when a Codex key was proxied. */
+  openai?: LlmProxyDep;
+  /** Tear down every sidecar started here. Safe to call when none were started. */
+  destroy: () => Promise<void>;
+}
+
+/**
+ * Start the per-run provider proxy sidecars implied by the proxied secrets. Currently: an OpenAI
+ * upstream sidecar when `openaiKey` is set (Codex in --llm-proxy mode). The real key reaches the
+ * sidecar only via startLlmProxy's stdin tmpfs delivery — never the sandbox. Requires the enclave
+ * `network`; throws a clear SandboxError if a key is given without one.
+ */
+export async function startProviderProxies(opts: {
+  /** Real OpenAI/Codex key to hold in the sidecar (from SelectedAgents.proxySecrets.codex). */
+  openaiKey?: string;
+  network?: string;
+  image?: string;
+  docker?: DockerRunner;
+}): Promise<ProviderProxies> {
+  if (opts.openaiKey === undefined) {
+    return { destroy: async (): Promise<void> => {} };
+  }
+  if (opts.network === undefined) {
+    throw new SandboxError('OpenAI provider proxy needs the egress enclave network');
+  }
+  const proxy = await startLlmProxy({
+    network: opts.network,
+    auth: { mode: 'api', secret: opts.openaiKey },
+    upstream: 'openai',
+    ...(opts.image !== undefined ? { image: opts.image } : {}),
+    ...(opts.docker !== undefined ? { docker: opts.docker } : {}),
+  });
+  return {
+    openai: { url: proxy.url, nonce: proxy.nonce, host: proxy.host },
+    destroy: (): Promise<void> => proxy.destroy(),
+  };
+}
