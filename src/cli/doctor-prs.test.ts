@@ -55,4 +55,22 @@ describe('doctorPrsCommand', () => {
 
     expect(logs).toContain('preflight: llm auth missing -> stop before claim');
   });
+
+  it('surfaces provider auth failure line when codex key is missing for doctor-prs', async () => {
+    const logs: string[] = [];
+    const codexCmd: DoctorPrsCommand = { ...cmd, provider: 'codex' };
+
+    await expect(
+      doctorPrsCommand(codexCmd, {
+        env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+        nodeVersion: '24.11.1',
+        run: runner,
+        log: (line) => logs.push(line),
+      }),
+    ).rejects.toThrow('preflight failed');
+
+    expect(logs).toContain(
+      'preflight: provider auth Provider "codex" needs CODEX_API_KEY or OPENAI_API_KEY in the environment. -> stop before claim',
+    );
+  });
 });

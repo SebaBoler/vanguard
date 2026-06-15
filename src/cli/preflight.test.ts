@@ -135,4 +135,69 @@ describe('runPreflight', () => {
     expect(formatPreflightReport(report)).toContain('preflight: linear api missing -> stop before claim');
     expect(formatPreflightReport(report)).toContain('preflight: linear skills missing -> stop before claim');
   });
+
+  it('fails provider auth when doctor uses codex but CODEX_API_KEY/OPENAI_API_KEY are absent', async () => {
+    const report = await runPreflight(githubDoctor({ provider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: provider auth Provider "codex" needs CODEX_API_KEY or OPENAI_API_KEY in the environment. -> stop before claim',
+    );
+  });
+
+  it('passes provider auth when doctor uses codex and CODEX_API_KEY is set', async () => {
+    const report = await runPreflight(githubDoctor({ provider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_API_KEY: 'sk-test' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+
+    const providerCheck = report.checks.find((c) => c.name === 'provider auth');
+    expect(providerCheck).toBeDefined();
+    expect(providerCheck?.ok).toBe(true);
+    expect(formatPreflightReport(report)).toContain('preflight: provider auth ok');
+  });
+
+  it('fails provider auth when reviewProvider is cursor but CURSOR_API_KEY is absent', async () => {
+    const report = await runPreflight(githubDoctor({ reviewProvider: 'cursor' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+
+    expect(report.ok).toBe(false);
+    const providerCheck = report.checks.find((c) => c.name === 'provider auth');
+    expect(providerCheck?.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: provider auth Provider "cursor" needs CURSOR_API_KEY in the environment. -> stop before claim',
+    );
+  });
+
+  it('fails provider auth for doctor-prs with codex and llmProxy true when OpenAI key is absent', async () => {
+    const report = await runPreflight(doctorPrs({ provider: 'codex', llmProxy: true }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(['ready for vanguard review', 'vanguard:reviewing', 'vanguard:reviewed']),
+    });
+
+    expect(report.ok).toBe(false);
+    const providerCheck = report.checks.find((c) => c.name === 'provider auth');
+    expect(providerCheck?.ok).toBe(false);
+  });
+
+  it('regression: no-provider doctor report contains no provider auth check', async () => {
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+
+    const providerCheck = report.checks.find((c) => c.name === 'provider auth');
+    expect(providerCheck).toBeUndefined();
+    expect(formatPreflightReport(report)).not.toContain('provider auth');
+  });
 });

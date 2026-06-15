@@ -56,6 +56,11 @@ const PROVIDER_KEYS: Partial<Record<ProviderName, ProviderKeyMapping>> = {
   cursor: { hostEnv: ['CURSOR_API_KEY'], sandboxEnv: 'CURSOR_API_KEY' },
 };
 
+/** Returns true if the named provider requires an explicit API key (i.e. is not Claude). */
+export function requiresApiKey(name: ProviderName): boolean {
+  return name in PROVIDER_KEYS;
+}
+
 /**
  * Collect the API-key secrets for the given providers, read from env and split into two buckets:
  * `sandboxSecrets` (keyed by the env var the provider's CLI reads inside the sandbox) and

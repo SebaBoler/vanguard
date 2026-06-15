@@ -40,6 +40,8 @@ export type Command =
       label: string;
       reviewingLabel: string;
       reviewedLabel: string;
+      provider?: ProviderName;
+      llmProxy?: boolean;
     }
   | {
       kind: 'doctor';
@@ -68,6 +70,7 @@ export type Command =
       agentState?: string;
       needsInfoState?: string;
       specClaimedState?: string;
+      llmProxy?: boolean;
     }
   | {
       kind: 'run';
@@ -343,6 +346,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       label,
       reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(provider !== undefined ? { provider } : {}),
     };
   }
 
@@ -452,7 +457,7 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
-    type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress' | 'llmProxy'>;
+    type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
       repoPath,
@@ -469,6 +474,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
       ...(specLabel !== undefined ? { specLabel } : {}),
@@ -490,7 +496,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'watch',
       ...common,
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
