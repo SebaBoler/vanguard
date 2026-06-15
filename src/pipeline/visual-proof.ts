@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
+import { shellQuote } from '../agents/shell.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 
 export interface VisualProofArtifact {
@@ -83,9 +84,6 @@ export async function runVisualProof(
     artifacts,
   };
 }
-
-/** Wrap a path in single quotes for safe shell interpolation (handles spaces and embedded quotes). */
-const shellQuote = (p: string): string => `'${p.replace(/'/g, `'\\''`)}'`;
 
 /** List + hash allowlisted artifacts under `dir`, hashing each in place. Never throws. */
 async function listArtifacts(sh: SandboxRun, dir: string): Promise<VisualProofArtifact[]> {

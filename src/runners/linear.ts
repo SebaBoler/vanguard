@@ -1,5 +1,5 @@
-import { execa } from 'execa';
 import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
+import { addPrFailureLabel } from '../tasks/github.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -13,7 +13,7 @@ import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
-import { resolveVisualProofCommand, runVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
+import { resolveVisualProofCommand, runVisualProof, visualProofBlock, type VisualProofResult } from '../pipeline/visual-proof.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
@@ -100,7 +100,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
     const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
 
-    let visualProof: Awaited<ReturnType<typeof runVisualProof>> | undefined;
+    let visualProof: VisualProofResult | undefined;
     try {
       const visualProofCmd = await resolveVisualProofCommand(ctx.worktreePath, deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {});
       visualProof = visualProofCmd !== undefined ? await runVisualProof(ctx.sandbox, visualProofCmd) : undefined;
@@ -125,22 +125,8 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
     if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
     if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
-    if (verification !== undefined && !verification.passed) {
-      try {
-        await execa('gh', ['label', 'create', 'vanguard:verify-failed', '--force'], { cwd: deps.repoPath });
-      } catch { /* best-effort */ }
-      try {
-        await execa('gh', ['pr', 'edit', pr.prUrl, '--add-label', 'vanguard:verify-failed'], { cwd: deps.repoPath });
-      } catch { /* best-effort */ }
-    }
-    if (visualProof !== undefined && !visualProof.passed) {
-      try {
-        await execa('gh', ['label', 'create', 'vanguard:visual-proof-failed', '--force'], { cwd: deps.repoPath });
-      } catch { /* best-effort */ }
-      try {
-        await execa('gh', ['pr', 'edit', pr.prUrl, '--add-label', 'vanguard:visual-proof-failed'], { cwd: deps.repoPath });
-      } catch { /* best-effort */ }
-    }
+    if (verification !== undefined && !verification.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:verify-failed');
+    if (visualProof !== undefined && !visualProof.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:visual-proof-failed');
     await linkLinearIssue(task.id, pr.prUrl);
     return { task, prUrl: pr.prUrl };
   } finally {
