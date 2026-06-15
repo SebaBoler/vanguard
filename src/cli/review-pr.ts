@@ -65,7 +65,7 @@ async function runDefaultReviewer(
   // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
   // before prepareContext so the finally below tears them down even if context provisioning throws.
   const providerProxies = await startProviderProxies({
-    ...(agents.proxySecrets.codex !== undefined ? { openaiKey: agents.proxySecrets.codex } : {}),
+    proxySecrets: agents.proxySecrets,
     ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
   });
   try {

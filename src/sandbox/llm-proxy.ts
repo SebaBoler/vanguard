@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
 import { sidecarMemoryArgs } from './limits.js';
+import type { ProviderProxySecrets } from '../agents/registry.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
 
 const PROXY_PORT = 8088;
@@ -116,19 +117,21 @@ export interface ProviderProxies {
 }
 
 /**
- * Start the per-run provider proxy sidecars implied by the proxied secrets. Currently: an OpenAI
- * upstream sidecar when `openaiKey` is set (Codex in --llm-proxy mode). The real key reaches the
- * sidecar only via startLlmProxy's stdin tmpfs delivery — never the sandbox. Requires the enclave
- * `network`; throws a clear SandboxError if a key is given without one.
+ * Start the per-run provider proxy sidecars implied by `proxySecrets` (from SelectedAgents). Currently:
+ * an OpenAI upstream sidecar when a Codex key was proxied (Codex in --llm-proxy mode). This is the one
+ * place that maps a proxied provider key to its sidecar, so adding a future proxyable provider is local
+ * to here. The real key reaches the sidecar only via startLlmProxy's stdin tmpfs delivery — never the
+ * sandbox. Requires the enclave `network`; throws a clear SandboxError if a key is given without one.
  */
 export async function startProviderProxies(opts: {
-  /** Real OpenAI/Codex key to hold in the sidecar (from SelectedAgents.proxySecrets.codex). */
-  openaiKey?: string;
+  /** Proxied provider keys held by sidecars (from SelectedAgents.proxySecrets). */
+  proxySecrets: ProviderProxySecrets;
   network?: string;
   image?: string;
   docker?: DockerRunner;
 }): Promise<ProviderProxies> {
-  if (opts.openaiKey === undefined) {
+  const openaiKey = opts.proxySecrets.codex;
+  if (openaiKey === undefined) {
     return { destroy: async (): Promise<void> => {} };
   }
   if (opts.network === undefined) {
@@ -136,7 +139,7 @@ export async function startProviderProxies(opts: {
   }
   const proxy = await startLlmProxy({
     network: opts.network,
-    auth: { mode: 'api', secret: opts.openaiKey },
+    auth: { mode: 'api', secret: openaiKey },
     upstream: 'openai',
     ...(opts.image !== undefined ? { image: opts.image } : {}),
     ...(opts.docker !== undefined ? { docker: opts.docker } : {}),

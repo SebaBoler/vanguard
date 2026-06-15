@@ -14,7 +14,7 @@ import { VanguardError } from '../core/errors.js';
 import { SPEC_TAG } from '../tasks/triage.js';
 import type { Task, TaskFetcher } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, ProviderProxySecrets } from '../agents/registry.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
@@ -95,21 +95,21 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   // When it is not, run selectAgents to pick the provider and collect its secrets.
   let agent = deps.agent;
   let secrets: Record<string, string> = deps.sandboxSecrets ?? {};
-  // Real OpenAI/Codex key proxied to a sidecar in proxy mode; only set when selectAgents runs (not the
+  // Proxied provider keys (held by sidecars in proxy mode); only set when selectAgents runs (not the
   // injected-agent test path), so injected runs never start a real sidecar.
-  let openaiKey: string | undefined;
+  let proxySecrets: ProviderProxySecrets = {};
   if (agent === undefined) {
     const selected = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
     agent = selected.agent;
     secrets = { ...selected.secrets, ...secrets };
-    openaiKey = selected.proxySecrets.codex;
+    proxySecrets = selected.proxySecrets;
   }
   if (agent === undefined) throw new VanguardError('No agent available for the spec pass');
 
   // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
   // before prepareContext so the finally below tears them down even if context provisioning throws.
   const providerProxies = await startProviderProxies({
-    ...(openaiKey !== undefined ? { openaiKey } : {}),
+    proxySecrets,
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
   try {

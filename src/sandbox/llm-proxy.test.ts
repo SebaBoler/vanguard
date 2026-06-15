@@ -99,9 +99,9 @@ describe('startLlmProxy', () => {
 });
 
 describe('startProviderProxies', () => {
-  it('starts no sidecar and no-op destroys when no openaiKey is given', async () => {
+  it('starts no sidecar and no-op destroys when no codex key is proxied', async () => {
     const d = fakeDocker();
-    const proxies = await startProviderProxies({ network: 'vg-egr-x', docker: d.run });
+    const proxies = await startProviderProxies({ proxySecrets: {}, network: 'vg-egr-x', docker: d.run });
     expect(proxies.openai).toBeUndefined();
     await proxies.destroy();
     expect(d.calls).toHaveLength(0);
@@ -109,7 +109,7 @@ describe('startProviderProxies', () => {
 
   it('stands up an OpenAI sidecar with the real key only via stdin and destroys it', async () => {
     const d = fakeDocker();
-    const proxies = await startProviderProxies({ openaiKey: 'sk-real-codex', network: 'vg-egr-x', docker: d.run });
+    const proxies = await startProviderProxies({ proxySecrets: { codex: 'sk-real-codex' }, network: 'vg-egr-x', docker: d.run });
     expect(proxies.openai).toBeDefined();
     expect(proxies.openai?.url).toMatch(/^http:\/\/vg-llm-.*:8088$/);
     expect(proxies.openai?.host).toMatch(/^vg-llm-/);
@@ -123,9 +123,9 @@ describe('startProviderProxies', () => {
     expect(d.calls.some((c) => c.args[0] === 'rm' && c.args.includes('-f'))).toBe(true);
   });
 
-  it('throws SandboxError when an openaiKey is given without a network', async () => {
+  it('throws SandboxError when a codex key is proxied without a network', async () => {
     const d = fakeDocker();
-    await expect(startProviderProxies({ openaiKey: 'sk-real-codex', docker: d.run })).rejects.toBeInstanceOf(SandboxError);
+    await expect(startProviderProxies({ proxySecrets: { codex: 'sk-real-codex' }, docker: d.run })).rejects.toBeInstanceOf(SandboxError);
     expect(d.calls).toHaveLength(0);
   });
 });
