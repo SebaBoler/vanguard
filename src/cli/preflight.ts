@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { providerSecrets, PROVIDER_KEYS } from '../agents/registry.js';
+import { providerSecrets, requiresApiKey } from '../agents/registry.js';
 import { AgentError } from '../core/errors.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -116,15 +116,15 @@ async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: strin
 }
 
 /**
- * Collect the set of providers that need a host-key check (i.e. non-claude providers that have
- * a PROVIDER_KEYS entry). Claude is excluded — its auth is already covered by the llm auth check.
+ * Collect the set of providers that need a host-key check (i.e. non-claude providers that
+ * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
 function collectProviders(cmd: PreflightCommand): ProviderName[] {
   const candidates: Array<ProviderName | undefined> =
     cmd.kind === 'doctor-prs'
       ? [cmd.provider]
       : [cmd.provider, cmd.reviewProvider];
-  return candidates.filter((name): name is ProviderName => name !== undefined && name in PROVIDER_KEYS);
+  return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
 }
 
 /** Run AFK-readiness checks before a watch loop can claim work. */

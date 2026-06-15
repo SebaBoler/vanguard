@@ -144,12 +144,9 @@ describe('runPreflight', () => {
     });
 
     expect(report.ok).toBe(false);
-    const lines = formatPreflightReport(report);
-    const providerAuthLine = lines.find((l) => l.includes('provider auth'));
-    expect(providerAuthLine).toBeDefined();
-    expect(providerAuthLine).toContain('-> stop before claim');
-    const providerCheck = report.checks.find((c) => c.name === 'provider auth');
-    expect(providerCheck?.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: provider auth Provider "codex" needs CODEX_API_KEY or OPENAI_API_KEY in the environment. -> stop before claim',
+    );
   });
 
   it('passes provider auth when doctor uses codex and CODEX_API_KEY is set', async () => {
