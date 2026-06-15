@@ -47,7 +47,7 @@ const PR_HASH_RE = /^([^/\s]+\/[^#\s]+)#(\d+)$/;
 const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
-const PR_REVIEW_MARKER_RE = /^<!--\s*vanguard-pr-review:\s*([a-fA-F0-9]+)\s*-->$/gm;
+const PR_REVIEW_MARKER_RE = /^<!--[ \t]*vanguard-pr-review:[ \t]*([a-fA-F0-9]+)[ \t]*-->$/gm;
 
 export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequestReviewTarget {
   const trimmed = ref.trim();

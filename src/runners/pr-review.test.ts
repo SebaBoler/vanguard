@@ -166,4 +166,20 @@ describe('review prompt and comment formatting', () => {
 
     expect(hasPullRequestReviewMarker(body, 'feed456')).toBe(false);
   });
+
+  it('rejects a multiline hidden review marker comment', () => {
+    const body = ['<!--', ' vanguard-pr-review: abc123', '-->'].join('\n');
+
+    expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(false);
+  });
+
+  it('still finds a single-line marker after an older marker with the strict regex', () => {
+    const body = [
+      '<!-- vanguard-pr-review: deadbeef -->',
+      'Copied review text.',
+      '<!-- vanguard-pr-review: abc123 -->',
+    ].join('\n');
+
+    expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(true);
+  });
 });
