@@ -46,6 +46,36 @@ describe('startLlmProxy', () => {
     expect(d.calls.some((c) => c.input?.includes('sk-ant-secret'))).toBe(true);
   });
 
+  it('stands up an OpenAI sidecar tagged UPSTREAM=openai with the real key only via stdin', async () => {
+    const d = fakeDocker();
+    const proxy = await startLlmProxy({
+      network: 'vg-egr-x',
+      auth: { mode: 'api', secret: 'sk-real-openai' },
+      upstream: 'openai',
+      docker: d.run,
+    });
+    expect(d.calls.some((c) => c.input?.includes('UPSTREAM=openai'))).toBe(true);
+    // The real key travels only via stdin, never via argv.
+    expect(d.calls.some((c) => c.input?.includes('sk-real-openai'))).toBe(true);
+    const flat = d.calls.flatMap((c) => c.args).join(' ');
+    expect(flat).not.toContain('sk-real-openai');
+    expect(proxy.url).toMatch(/^http:\/\/vg-llm-.*:8088$/);
+    expect(proxy.host).toMatch(/^vg-llm-/);
+    expect(proxy.nonce.length).toBeGreaterThanOrEqual(16);
+    await proxy.destroy();
+    expect(d.calls.some((c) => c.args[0] === 'rm' && c.args.includes('-f'))).toBe(true);
+  });
+
+  it('defaults the upstream to anthropic and tags UPSTREAM=anthropic', async () => {
+    const d = fakeDocker();
+    await startLlmProxy({
+      network: 'vg-egr-x',
+      auth: { mode: 'subscription', secret: 'OAT-SECRET' },
+      docker: d.run,
+    });
+    expect(d.calls.some((c) => c.input?.includes('UPSTREAM=anthropic'))).toBe(true);
+  });
+
   it('returns a random nonce per run', async () => {
     const d = fakeDocker();
     const a = await startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: d.run });

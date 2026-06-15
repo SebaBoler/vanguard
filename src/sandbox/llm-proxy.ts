@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
 import { sidecarMemoryArgs } from './limits.js';
+import type { Upstream } from './llm-proxy-rewrite.mjs';
 
 const PROXY_PORT = 8088;
 const SECRET_FILE = '/tmp/llm-proxy-secret';
@@ -48,20 +49,24 @@ export interface LlmProxyDep {
 }
 
 /**
- * Starts the trusted LLM reverse-proxy sidecar holding the real Anthropic credential. The sidecar
- * runs on the default bridge (has internet) and is also joined to the given internal enclave network
- * so the sandbox can reach it by name. The real secret reaches the sidecar ONLY via stdin into an
- * in-RAM tmpfs file (umask 077) — never via `-e` or argv, so `docker inspect` cannot reveal it. The
- * sandbox authenticates with the returned per-run nonce; the proxy swaps in the real auth upstream.
+ * Starts the trusted LLM reverse-proxy sidecar holding the real provider credential. Serves either
+ * the Anthropic or OpenAI upstream depending on `opts.upstream` (default `'anthropic'`); for OpenAI
+ * the real OpenAI key is the `auth.secret`. The sidecar runs on the default bridge (has internet) and
+ * is also joined to the given internal enclave network so the sandbox can reach it by name. The real
+ * secret reaches the sidecar ONLY via stdin into an in-RAM tmpfs file (umask 077) — never via `-e` or
+ * argv, so `docker inspect` cannot reveal it. The sandbox authenticates with the returned per-run
+ * nonce; the proxy swaps in the real auth upstream.
  */
 export async function startLlmProxy(opts: {
   network: string;
   auth: { mode: 'subscription' | 'api'; secret: string };
+  upstream?: Upstream;
   image?: string;
   docker?: DockerRunner;
 }): Promise<LlmProxy> {
   const docker = opts.docker ?? defaultDocker;
   const image = opts.image ?? 'vanguard-sandbox:latest';
+  const upstream: Upstream = opts.upstream ?? 'anthropic';
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;
   const nonce = randomUUID().replace(/-/g, '');
@@ -79,7 +84,7 @@ export async function startLlmProxy(opts: {
     // The shared logic must sit next to the server so its relative import resolves.
     await docker(['cp', PROXY_LOGIC, `${name}:/tmp/llm-proxy-rewrite.mjs`]);
     // Write the secret file via stdin (umask 077) so the secret never appears in argv or docker inspect.
-    const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\n`;
+    const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\nUPSTREAM=${upstream}\n`;
     const write = await docker(['exec', '-i', name, 'sh', '-c', `umask 077; cat > ${SECRET_FILE}`], { input: secretBody });
     if (write.exitCode !== 0) {
       throw new SandboxError(`Failed to write llm proxy secret: ${write.stderr}`);
