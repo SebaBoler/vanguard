@@ -115,6 +115,49 @@ describe('CodexProvider', () => {
     expect(commands[1]).toContain('exec');
   });
 
+  it('setup command (commands[0]) wires proxy mode without leaking the real key', async () => {
+    const commands: string[] = [];
+    const sandbox = {
+      exec: async (command: string): Promise<ExecResult> => {
+        commands.push(command);
+        return { stdout: cannedJsonl, stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const gen = new CodexProvider().run(input(sandbox));
+    for await (const turn of gen) void turn;
+    const setup = commands[0];
+
+    // branches at runtime on the runner-provided base URL
+    expect(setup).toContain('VANGUARD_OPENAI_BASE_URL');
+    expect(setup).toContain('if [ -n "${VANGUARD_OPENAI_BASE_URL:-}" ]; then');
+
+    // writes config.toml under $CODEX_HOME (falling back to ~/.codex)
+    expect(setup).toContain('mkdir -p "${CODEX_HOME:-$HOME/.codex}"');
+    expect(setup).toContain('> "${CODEX_HOME:-$HOME/.codex}/config.toml"');
+
+    // custom OpenAI-compatible provider config pointed at the sidecar
+    expect(setup).toContain('model_provider = "vanguardproxy"');
+    expect(setup).toContain('wire_api = "responses"');
+    expect(setup).toContain('env_key = "OPENAI_API_KEY"');
+    expect(setup).toContain('base_url = "%s"');
+    expect(setup).toContain('"$VANGUARD_OPENAI_BASE_URL"'); // base url fed via printf %s, expanded in-sandbox
+
+    // literal backslash-n reaches the sandbox so printf interprets the format string
+    expect(setup).toContain('printf \'model_provider = "vanguardproxy"\\n[model_providers.vanguardproxy]');
+
+    // fail-clearly guard when proxy mode is on but the nonce is missing
+    expect(setup).toContain('if [ -z "${OPENAI_API_KEY:-}" ]; then');
+    expect(setup).toContain('exit 1');
+
+    // else branch still serves normal mode in the same single command
+    expect(setup).toContain('codex login --with-api-key');
+
+    // no literal API key: only env-var references are used to carry secrets
+    expect(setup).not.toMatch(/--with-api-key\s+\S*sk-/);
+    expect(setup).not.toContain('sk-');
+    expect(setup).toContain('$OPENAI_API_KEY');
+  });
+
   it('includes -m flag when model is specified', async () => {
     const { sandbox, captured } = capturingSandbox();
     const gen = new CodexProvider().run({ prompt: 'p', sandbox, workdir: '/workspace', home: '/root', model: 'o4-mini' });
