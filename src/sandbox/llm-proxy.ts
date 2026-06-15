@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
 import { sidecarMemoryArgs } from './limits.js';
+import type { ProviderProxySecrets } from '../agents/registry.js';
+import type { Upstream } from './llm-proxy-rewrite.mjs';
 
 const PROXY_PORT = 8088;
 const SECRET_FILE = '/tmp/llm-proxy-secret';
@@ -48,20 +50,24 @@ export interface LlmProxyDep {
 }
 
 /**
- * Starts the trusted LLM reverse-proxy sidecar holding the real Anthropic credential. The sidecar
- * runs on the default bridge (has internet) and is also joined to the given internal enclave network
- * so the sandbox can reach it by name. The real secret reaches the sidecar ONLY via stdin into an
- * in-RAM tmpfs file (umask 077) — never via `-e` or argv, so `docker inspect` cannot reveal it. The
- * sandbox authenticates with the returned per-run nonce; the proxy swaps in the real auth upstream.
+ * Starts the trusted LLM reverse-proxy sidecar holding the real provider credential. Serves either
+ * the Anthropic or OpenAI upstream depending on `opts.upstream` (default `'anthropic'`); for OpenAI
+ * the real OpenAI key is the `auth.secret`. The sidecar runs on the default bridge (has internet) and
+ * is also joined to the given internal enclave network so the sandbox can reach it by name. The real
+ * secret reaches the sidecar ONLY via stdin into an in-RAM tmpfs file (umask 077) — never via `-e` or
+ * argv, so `docker inspect` cannot reveal it. The sandbox authenticates with the returned per-run
+ * nonce; the proxy swaps in the real auth upstream.
  */
 export async function startLlmProxy(opts: {
   network: string;
   auth: { mode: 'subscription' | 'api'; secret: string };
+  upstream?: Upstream;
   image?: string;
   docker?: DockerRunner;
 }): Promise<LlmProxy> {
   const docker = opts.docker ?? defaultDocker;
   const image = opts.image ?? 'vanguard-sandbox:latest';
+  const upstream: Upstream = opts.upstream ?? 'anthropic';
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;
   const nonce = randomUUID().replace(/-/g, '');
@@ -79,7 +85,7 @@ export async function startLlmProxy(opts: {
     // The shared logic must sit next to the server so its relative import resolves.
     await docker(['cp', PROXY_LOGIC, `${name}:/tmp/llm-proxy-rewrite.mjs`]);
     // Write the secret file via stdin (umask 077) so the secret never appears in argv or docker inspect.
-    const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\n`;
+    const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\nUPSTREAM=${upstream}\n`;
     const write = await docker(['exec', '-i', name, 'sh', '-c', `umask 077; cat > ${SECRET_FILE}`], { input: secretBody });
     if (write.exitCode !== 0) {
       throw new SandboxError(`Failed to write llm proxy secret: ${write.stderr}`);
@@ -100,4 +106,46 @@ export async function startLlmProxy(opts: {
     await teardown();
     throw new SandboxError(`Failed to start llm proxy ${id}`, { cause });
   }
+}
+
+/** The per-run provider-sidecar handles plus a single teardown for whatever was started. */
+export interface ProviderProxies {
+  /** OpenAI/Codex sidecar dep, present only when a Codex key was proxied. */
+  openai?: LlmProxyDep;
+  /** Tear down every sidecar started here. Safe to call when none were started. */
+  destroy: () => Promise<void>;
+}
+
+/**
+ * Start the per-run provider proxy sidecars implied by `proxySecrets` (from SelectedAgents). Currently:
+ * an OpenAI upstream sidecar when a Codex key was proxied (Codex in --llm-proxy mode). This is the one
+ * place that maps a proxied provider key to its sidecar, so adding a future proxyable provider is local
+ * to here. The real key reaches the sidecar only via startLlmProxy's stdin tmpfs delivery — never the
+ * sandbox. Requires the enclave `network`; throws a clear SandboxError if a key is given without one.
+ */
+export async function startProviderProxies(opts: {
+  /** Proxied provider keys held by sidecars (from SelectedAgents.proxySecrets). */
+  proxySecrets: ProviderProxySecrets;
+  network?: string;
+  image?: string;
+  docker?: DockerRunner;
+}): Promise<ProviderProxies> {
+  const openaiKey = opts.proxySecrets.codex;
+  if (openaiKey === undefined) {
+    return { destroy: async (): Promise<void> => {} };
+  }
+  if (opts.network === undefined) {
+    throw new SandboxError('OpenAI provider proxy needs the egress enclave network');
+  }
+  const proxy = await startLlmProxy({
+    network: opts.network,
+    auth: { mode: 'api', secret: openaiKey },
+    upstream: 'openai',
+    ...(opts.image !== undefined ? { image: opts.image } : {}),
+    ...(opts.docker !== undefined ? { docker: opts.docker } : {}),
+  });
+  return {
+    openai: { url: proxy.url, nonce: proxy.nonce, host: proxy.host },
+    destroy: (): Promise<void> => proxy.destroy(),
+  };
 }

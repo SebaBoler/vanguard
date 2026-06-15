@@ -76,7 +76,7 @@ export type Command =
       parent: boolean;
       gcBefore: boolean;
       egress: boolean;
-      /** Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      /** Hold the Anthropic (and, with --provider codex, OpenAI) credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       reuse?: boolean;
       repoPath: string;
@@ -115,7 +115,7 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
-      /** Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      /** Hold the Anthropic (and, with --provider codex, OpenAI) credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
@@ -589,7 +589,7 @@ Commands:
     --label <name>         (project) only run board items with this label
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
-    --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude only)
+    --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude + Codex; Cursor stays direct)
     --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
@@ -656,7 +656,9 @@ Commands:
     Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
-     CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor);
+     CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor;
+       under --llm-proxy the Codex/OpenAI key is held by the sidecar and the sandbox gets a nonce,
+       while Cursor's key is still injected directly);
      VANGUARD_VERIFY_CMD (verification command for Proof of Work; overridden by --verify);
      VANGUARD_VISUAL_PROOF_CMD (visual proof command for UI artifacts; overridden by --visual-proof).
 `;

@@ -12,7 +12,7 @@ host docker daemon
  ├─ vanguard-watch-prs    optional controller profile, runs `vanguard watch-prs`
  ├─ vanguard-gc           controller image again, loops: refresh target-repo + gc every 4h
  ├─ vg-<uuid>             per-run sandbox (the agent), started as a sibling
- ├─ vg-llm-<id>           per-run llm-proxy sidecar (holds the Anthropic token; sandbox gets a nonce)
+ ├─ vg-llm-<id>           per-run llm-proxy sidecar (holds the Anthropic — or, for Codex, the OpenAI — token; sandbox gets a nonce)
  └─ vg-egr-<id>           per-run egress proxy sidecar (CONNECT allowlist)
 ```
 
@@ -27,7 +27,7 @@ This works without path tricks because the controller copies the worktree into e
 
 ## Auth: subscription, not API credit
 
-Vanguard reads auth from the environment. `authFromEnv()` prefers `CLAUDE_CODE_OAUTH_TOKEN` (subscription) over `ANTHROPIC_API_KEY` (pay per use). Run on the subscription token: set `CLAUDE_CODE_OAUTH_TOKEN` and leave `ANTHROPIC_API_KEY` unset. With `--llm-proxy` the real token never enters the sandbox at all: a trusted sidecar holds it and the sandbox sees only a per-run nonce.
+Vanguard reads auth from the environment. `authFromEnv()` prefers `CLAUDE_CODE_OAUTH_TOKEN` (subscription) over `ANTHROPIC_API_KEY` (pay per use). Run on the subscription token: set `CLAUDE_CODE_OAUTH_TOKEN` and leave `ANTHROPIC_API_KEY` unset. With `--llm-proxy` the real token never enters the sandbox at all: a trusted sidecar holds it (and the Codex/OpenAI key too when Codex is used) and the sandbox sees only a per-run nonce.
 
 1Password is a local-dev convenience and is not part of Vanguard. On a server you populate the env some other way. The simplest is a root-only `.env` (chmod 600) next to the compose file.
 

@@ -1,6 +1,6 @@
 import { startEgressEnclave } from './egress-network.js';
 import { startLlmProxy } from './llm-proxy.js';
-import { allowlistWithout, DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
+import { llmProxyEgressAllowlist } from './egress-proxy.js';
 import { llmProxyAuth } from '../agents/auth.js';
 import type { LlmProxyDep } from './llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -22,8 +22,9 @@ export interface SandboxContext {
 
 /**
  * Provision the sandbox context once for a command. Builds the egress enclave when `egress` or
- * `llmProxy` is set (dropping api.anthropic.com from the allowlist in llm-proxy mode, so the sandbox
- * has no direct route to Anthropic), and starts the LLM-proxy sidecar on that enclave's network when
+ * `llmProxy` is set (dropping the sidecar-owned upstream hosts — Anthropic and OpenAI — from the
+ * allowlist in llm-proxy mode, so the sandbox has no direct route to those providers), and starts the
+ * LLM-proxy sidecar on that enclave's network when
  * requested — holding the real Claude credential outside the sandbox. With neither flag, no enclave or
  * env is created and `destroy()` is a no-op.
  */
@@ -32,13 +33,14 @@ export async function startSandboxContext(opts: {
   llmProxy: boolean;
   auth: AgentAuth;
 }): Promise<SandboxContext> {
-  // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to Anthropic.
+  // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to the
+  // sidecar-owned upstream providers (Anthropic and OpenAI).
   if (!opts.egress && !opts.llmProxy) {
     return { destroy: async (): Promise<void> => {} };
   }
 
   const enclave = await startEgressEnclave(
-    opts.llmProxy ? { allowlist: allowlistWithout(DEFAULT_EGRESS_ALLOWLIST, 'api.anthropic.com') } : {},
+    opts.llmProxy ? { allowlist: llmProxyEgressAllowlist() } : {},
   );
   console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
 

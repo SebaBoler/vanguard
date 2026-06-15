@@ -14,7 +14,9 @@ RUN apt-get update \
 
 # claude/codex run the agent (selectable via --provider/--review-provider); linear lets the agent use
 # the linear-cli skill; pnpm lets it run the project's typecheck/tests from inside the sandbox before
-# finishing. Codex authenticates with CODEX_API_KEY, forwarded only when codex is selected.
+# finishing. Codex authenticates with CODEX_API_KEY: in direct mode it is forwarded into the sandbox
+# when codex is selected; under --llm-proxy the key is held by a trusted sidecar and the sandbox
+# receives only a per-run nonce.
 RUN npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
     @schpet/linear-cli@${LINEAR_CLI_VERSION} \

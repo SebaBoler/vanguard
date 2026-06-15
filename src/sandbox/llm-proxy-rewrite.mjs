@@ -36,12 +36,26 @@ export function upstreamAuthHeaders(auth, reqHeaders) {
   return { 'x-api-key': auth.secret, ...(beta !== undefined ? { 'anthropic-beta': beta } : {}) };
 }
 
-const ALLOWED = new Set(['/v1/messages', '/v1/messages/count_tokens']);
-/** Only POST to the two Claude Code messages endpoints (query string ignored). */
-export function isAllowedLlmPath(method, path) {
+// Per-upstream POST allowlists (query string ignored, no wildcards).
+const ALLOWED_BY_UPSTREAM = {
+  anthropic: new Set(['/v1/messages', '/v1/messages/count_tokens']),
+  openai: new Set(['/v1/responses']),
+};
+/**
+ * Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored).
+ * anthropic => /v1/messages, /v1/messages/count_tokens. openai => /v1/responses only.
+ */
+export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
   if ((method ?? '').toUpperCase() !== 'POST') return false;
+  const allowed = ALLOWED_BY_UPSTREAM[upstream];
+  if (allowed === undefined) return false;
   const p = (path ?? '').split('?')[0] ?? '';
-  return ALLOWED.has(p);
+  return allowed.has(p);
+}
+
+/** Headers to apply upstream for OpenAI: just Bearer SECRET (no anthropic-beta, no x-api-key). */
+export function openaiAuthHeaders(secret) {
+  return { authorization: `Bearer ${secret}` };
 }
 
 /** Constant-time string compare (length-safe). */

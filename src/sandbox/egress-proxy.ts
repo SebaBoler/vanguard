@@ -43,21 +43,41 @@ export function egressEnv(proxyUrl: string, opts: { noProxy?: readonly string[] 
  * Build the sandbox env for a runner: undefined when there's no egress proxy (direct mode); otherwise
  * the egress proxy vars, plus — when an LLM-proxy sidecar owns Claude — its host in NO_PROXY and the
  * ANTHROPIC_BASE_URL/AUTH_TOKEN that point Claude at the sidecar with the per-run nonce (never the real
- * secret). Single source for the nested ternary the runners used to duplicate.
+ * secret). When an OpenAI provider sidecar is present (Codex in --llm-proxy mode), its host is also
+ * added to NO_PROXY and the sandbox gets OPENAI_API_KEY (the per-run nonce, not the real key) plus
+ * VANGUARD_OPENAI_BASE_URL pointing CodexProvider at the sidecar. Both sidecars are independent; either,
+ * both, or neither may be present alongside the egress proxy. Single source for the nested ternary the
+ * runners used to duplicate.
  */
 export function llmProxySandboxEnv(
   proxyUrl: string | undefined,
   llmProxy: LlmProxyDep | undefined,
+  openaiProxy?: LlmProxyDep,
 ): Record<string, string> | undefined {
   if (proxyUrl === undefined) return undefined;
-  const base = egressEnv(proxyUrl, llmProxy !== undefined ? { noProxy: [llmProxy.host] } : {});
-  if (llmProxy === undefined) return base;
-  return { ...base, ANTHROPIC_BASE_URL: llmProxy.url, ANTHROPIC_AUTH_TOKEN: llmProxy.nonce };
+  const noProxy = [llmProxy?.host, openaiProxy?.host].filter((h): h is string => h !== undefined);
+  const base = egressEnv(proxyUrl, noProxy.length > 0 ? { noProxy } : {});
+  const withAnthropic =
+    llmProxy !== undefined
+      ? { ...base, ANTHROPIC_BASE_URL: llmProxy.url, ANTHROPIC_AUTH_TOKEN: llmProxy.nonce }
+      : base;
+  if (openaiProxy === undefined) return withAnthropic;
+  // The OpenAI nonce is not secret — it only authenticates against the per-run sidecar, never upstream.
+  return { ...withAnthropic, OPENAI_API_KEY: openaiProxy.nonce, VANGUARD_OPENAI_BASE_URL: `${openaiProxy.url}/v1` };
 }
 
 /** Returns the allowlist minus exact matches of `host` (e.g. drop api.anthropic.com when a trusted sidecar owns it). */
 export function allowlistWithout(list: readonly string[], host: string): string[] {
   return list.filter((entry) => entry !== host);
+}
+
+/** Upstream API hosts owned by trusted sidecars in --llm-proxy mode — removed from the sandbox allowlist
+ *  (the sidecars reach these directly; the sandbox reaches the sidecars by name via NO_PROXY). */
+export const LLM_PROXY_UPSTREAM_HOSTS = ['api.anthropic.com', 'api.openai.com'] as const;
+
+/** The sandbox egress allowlist under --llm-proxy: the base allowlist minus every sidecar-owned upstream host. */
+export function llmProxyEgressAllowlist(base: readonly string[] = DEFAULT_EGRESS_ALLOWLIST): string[] {
+  return LLM_PROXY_UPSTREAM_HOSTS.reduce<string[]>((list, host) => allowlistWithout(list, host), [...base]);
 }
 
 /**

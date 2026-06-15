@@ -15,6 +15,7 @@ import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
+import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
@@ -69,69 +70,79 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     skillRegistryFromDirectory(deps.skillsDir),
   ]);
 
-  const agents = selectAgents(deps);
+  const agents = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
 
-  const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy);
-  const sandbox = new DockerSandboxProvider({
-    image: 'vanguard-sandbox:latest',
-    // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
-    secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
-    ...sandboxResourceLimits(),
-    ...(env !== undefined ? { env } : {}),
+  // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
+  // before prepareContext so the finally below tears them down even if context provisioning throws.
+  const providerProxies = await startProviderProxies({
+    proxySecrets: agents.proxySecrets,
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
-
-  const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
-  const ctx = await prepareContext(
-    { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) },
-    { skills },
-  );
   try {
-    let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
-    if (deps.providerModel !== undefined) pipeline = withStageModel(pipeline, deps.providerModel);
-    if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
-    const outcomes = await runStages(ctx, pipeline, {
-      agent: agents.agent,
-      variables: { ...taskToVariables(task), ISSUE: issueRef, RETROSPECTIVE_MEMORY: retrospectiveMemory },
-      ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
+    const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, providerProxies.openai);
+    const sandbox = new DockerSandboxProvider({
+      image: 'vanguard-sandbox:latest',
+      // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
+      secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), LINEAR_API_KEY: deps.linearKey, ...agents.secrets },
+      ...sandboxResourceLimits(),
+      ...(env !== undefined ? { env } : {}),
+      ...(deps.network !== undefined ? { network: deps.network } : {}),
     });
-    console.log(summarizeOutcomes(outcomes));
 
-    const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
-    const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
-
-    const visualProof = await resolveAndRunVisualProof(
-      ctx.sandbox,
-      ctx.worktreePath,
-      deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {},
+    const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    const ctx = await prepareContext(
+      { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) },
+      { skills },
     );
+    try {
+      let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
+      if (deps.providerModel !== undefined) pipeline = withStageModel(pipeline, deps.providerModel);
+      if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
+      const outcomes = await runStages(ctx, pipeline, {
+        agent: agents.agent,
+        variables: { ...taskToVariables(task), ISSUE: issueRef, RETROSPECTIVE_MEMORY: retrospectiveMemory },
+        ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
+      });
+      console.log(summarizeOutcomes(outcomes));
 
-    const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
-    if (!commit.committed) {
-      await persistStageOutcomes(deps.repoPath, outcomes);
+      const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
+      const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
+
+      const visualProof = await resolveAndRunVisualProof(
+        ctx.sandbox,
+        ctx.worktreePath,
+        deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {},
+      );
+
+      const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
+      if (!commit.committed) {
+        await persistStageOutcomes(deps.repoPath, outcomes);
+        if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
+        if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
+        return { task };
+      }
+      const baseBody = `Automated implementation of ${task.id} by Vanguard.`;
+      const body = [
+        baseBody,
+        verification !== undefined ? proofBlock(verification) : undefined,
+        visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
+      ].filter((s): s is string => s !== undefined).join('\n\n');
+      const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
+      await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
       if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
       if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
-      return { task };
+      if (verification !== undefined && !verification.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:verify-failed');
+      if (visualProof !== undefined && !visualProof.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:visual-proof-failed');
+      await linkLinearIssue(task.id, pr.prUrl);
+      return { task, prUrl: pr.prUrl };
+    } finally {
+      await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+        console.error('retrospective memory refresh failed (non-fatal):', err);
+      });
+      await disposeContext(ctx);
     }
-    const baseBody = `Automated implementation of ${task.id} by Vanguard.`;
-    const body = [
-      baseBody,
-      verification !== undefined ? proofBlock(verification) : undefined,
-      visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
-    ].filter((s): s is string => s !== undefined).join('\n\n');
-    const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
-    await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
-    if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
-    if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
-    if (verification !== undefined && !verification.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:verify-failed');
-    if (visualProof !== undefined && !visualProof.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, 'vanguard:visual-proof-failed');
-    await linkLinearIssue(task.id, pr.prUrl);
-    return { task, prUrl: pr.prUrl };
   } finally {
-    await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
-      console.error('retrospective memory refresh failed (non-fatal):', err);
-    });
-    await disposeContext(ctx);
+    await providerProxies.destroy();
   }
 }
 

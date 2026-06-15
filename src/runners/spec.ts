@@ -14,7 +14,8 @@ import { VanguardError } from '../core/errors.js';
 import { SPEC_TAG } from '../tasks/triage.js';
 import type { Task, TaskFetcher } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, ProviderProxySecrets } from '../agents/registry.js';
+import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -59,8 +60,12 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
 }
 
 /** Build the default Docker sandbox for the spec pass — same shape as the issue runners. */
-function defaultSandboxFactory(deps: RunSpecGeneratorDeps, secrets: Record<string, string>): IsolatedSandboxProvider {
-  const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy);
+function defaultSandboxFactory(
+  deps: RunSpecGeneratorDeps,
+  secrets: Record<string, string>,
+  openaiProxy: LlmProxyDep | undefined,
+): IsolatedSandboxProvider {
+  const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, openaiProxy);
   return new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
@@ -90,53 +95,67 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   // When it is not, run selectAgents to pick the provider and collect its secrets.
   let agent = deps.agent;
   let secrets: Record<string, string> = deps.sandboxSecrets ?? {};
+  // Proxied provider keys (held by sidecars in proxy mode); only set when selectAgents runs (not the
+  // injected-agent test path), so injected runs never start a real sidecar.
+  let proxySecrets: ProviderProxySecrets = {};
   if (agent === undefined) {
-    const selected = selectAgents(deps);
+    const selected = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
     agent = selected.agent;
     secrets = { ...selected.secrets, ...secrets };
+    proxySecrets = selected.proxySecrets;
   }
   if (agent === undefined) throw new VanguardError('No agent available for the spec pass');
 
-  const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s)))(secrets);
-
-  const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
-  const ctx = await prepareContext(
-    {
-      taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
-      localRepoPath: deps.repoPath,
-      sandbox,
-      ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-    },
-    deps.contextDeps ?? {},
-  );
+  // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
+  // before prepareContext so the finally below tears them down even if context provisioning throws.
+  const providerProxies = await startProviderProxies({
+    proxySecrets,
+    ...(deps.network !== undefined ? { network: deps.network } : {}),
+  });
   try {
-    const outcomes = await runStages(ctx, techSpecStage(deps.specModel !== undefined ? { model: deps.specModel } : {}), {
-      agent,
-      variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
-      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
-    });
-    deps.logger?.info({ taskId: ctx.taskId }, summarizeOutcomes(outcomes));
+    const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai)))(secrets);
 
-    const specOutcome = outcomes[outcomes.length - 1];
-    if (specOutcome === undefined) {
-      throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
+    const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    const ctx = await prepareContext(
+      {
+        taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
+        localRepoPath: deps.repoPath,
+        sandbox,
+        ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+      },
+      deps.contextDeps ?? {},
+    );
+    try {
+      const outcomes = await runStages(ctx, techSpecStage(deps.specModel !== undefined ? { model: deps.specModel } : {}), {
+        agent,
+        variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
+        ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+      });
+      deps.logger?.info({ taskId: ctx.taskId }, summarizeOutcomes(outcomes));
+
+      const specOutcome = outcomes[outcomes.length - 1];
+      if (specOutcome === undefined) {
+        throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
+      }
+      const spec = extractTag(specOutcome.result.finalText, SPEC_TAG);
+
+      // Fail fast on a missing spec BEFORE persisting, so a found spec is never discarded by a later
+      // persist failure (we still return the spec if extraction succeeded even if persistence throws).
+      if (spec === undefined || spec === '') {
+        throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
+      }
+
+      // techSpecStage always returns exactly one stage; persist that single outcome.
+      await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
+
+      return spec;
+    } finally {
+      await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+        deps.logger?.warn({ err }, 'retrospective memory refresh failed (non-fatal)');
+      });
+      await disposeContext(ctx);
     }
-    const spec = extractTag(specOutcome.result.finalText, SPEC_TAG);
-
-    // Fail fast on a missing spec BEFORE persisting, so a found spec is never discarded by a later
-    // persist failure (we still return the spec if extraction succeeded even if persistence throws).
-    if (spec === undefined || spec === '') {
-      throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
-    }
-
-    // techSpecStage always returns exactly one stage; persist that single outcome.
-    await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
-
-    return spec;
   } finally {
-    await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
-      deps.logger?.warn({ err }, 'retrospective memory refresh failed (non-fatal)');
-    });
-    await disposeContext(ctx);
+    await providerProxies.destroy();
   }
 }

@@ -1,6 +1,7 @@
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
+import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { authFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
@@ -59,30 +60,41 @@ async function runDefaultReviewer(
   auth: AgentAuth,
   sandboxContext: SandboxContext,
 ): Promise<string> {
-  const agents = selectAgents(cmd);
-  const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy);
-  const sandbox = new DockerSandboxProvider({
-    image: 'vanguard-sandbox:latest',
-    secrets: { ...(sandboxContext.llmProxy === undefined ? authSecrets(auth) : {}), ...agents.secrets },
-    ...sandboxResourceLimits(),
-    ...(env !== undefined ? { env } : {}),
+  const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
+
+  // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
+  // before prepareContext so the finally below tears them down even if context provisioning throws.
+  const providerProxies = await startProviderProxies({
+    proxySecrets: agents.proxySecrets,
     ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
   });
-  const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
-  const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox });
   try {
-    const result = await runAgent(ctx, {
-      stageName: 'pr-review',
-      agent: agents.agent,
-      promptTemplate: buildPullRequestReviewPrompt(pr),
-      systemPrompt: adversarySystemPrompt(),
-      effort: 'high',
-      maxTurns: 8,
-      copyBack: false,
-      ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
+    const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
+    const sandbox = new DockerSandboxProvider({
+      image: 'vanguard-sandbox:latest',
+      secrets: { ...(sandboxContext.llmProxy === undefined ? authSecrets(auth) : {}), ...agents.secrets },
+      ...sandboxResourceLimits(),
+      ...(env !== undefined ? { env } : {}),
+      ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
     });
-    return result.finalText;
+    const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox });
+    try {
+      const result = await runAgent(ctx, {
+        stageName: 'pr-review',
+        agent: agents.agent,
+        promptTemplate: buildPullRequestReviewPrompt(pr),
+        systemPrompt: adversarySystemPrompt(),
+        effort: 'high',
+        maxTurns: 8,
+        copyBack: false,
+        ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
+      });
+      return result.finalText;
+    } finally {
+      await disposeContext(ctx);
+    }
   } finally {
-    await disposeContext(ctx);
+    await providerProxies.destroy();
   }
 }

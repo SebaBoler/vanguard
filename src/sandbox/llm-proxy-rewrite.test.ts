@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { mergeAnthropicBeta, upstreamAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
+import {
+  mergeAnthropicBeta,
+  upstreamAuthHeaders,
+  openaiAuthHeaders,
+  isAllowedLlmPath,
+  constantTimeEqual,
+} from './llm-proxy-rewrite.mjs';
 
 describe('mergeAnthropicBeta', () => {
   it('appends the oauth beta and dedupes, preserving request betas', () => {
@@ -46,6 +52,31 @@ describe('isAllowedLlmPath', () => {
     expect(isAllowedLlmPath('GET', '/v1/messages')).toBe(false);
     expect(isAllowedLlmPath('POST', '/v1/models')).toBe(false);
     expect(isAllowedLlmPath('POST', '/v1/complete')).toBe(false);
+  });
+
+  it('defaults to anthropic when no upstream arg is given', () => {
+    expect(isAllowedLlmPath('POST', '/v1/messages', 'anthropic')).toBe(isAllowedLlmPath('POST', '/v1/messages'));
+    expect(isAllowedLlmPath('POST', '/v1/responses')).toBe(false); // anthropic default rejects responses
+    expect(isAllowedLlmPath('POST', '/v1/messages')).toBe(true);
+  });
+
+  it('openai: allows only POST /v1/responses (query ignored)', () => {
+    expect(isAllowedLlmPath('POST', '/v1/responses', 'openai')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/responses?x=1', 'openai')).toBe(true);
+    expect(isAllowedLlmPath('GET', '/v1/responses', 'openai')).toBe(false);
+    expect(isAllowedLlmPath('POST', '/v1/messages', 'openai')).toBe(false);
+    expect(isAllowedLlmPath('POST', '/v1/chat/completions', 'openai')).toBe(false);
+    expect(isAllowedLlmPath('POST', '/v1/models', 'openai')).toBe(false);
+  });
+});
+
+describe('openaiAuthHeaders', () => {
+  it('returns only a Bearer authorization header', () => {
+    const h = openaiAuthHeaders('sk-openai');
+    expect(h.authorization).toBe('Bearer sk-openai');
+    expect('anthropic-beta' in h).toBe(false);
+    expect('x-api-key' in h).toBe(false);
+    expect(Object.keys(h)).toEqual(['authorization']);
   });
 });
 
