@@ -86,7 +86,9 @@ GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullR
 
 ## Auth
 
-Subscription is the default and draws on your Claude plan credits. The API key is the alternative and bills the Developer Platform. Vanguard injects exactly one secret into the sandbox, so billing is unambiguous.
+Subscription is the default and draws on your Claude plan's usage allowance (no per-token charge — the same pool as interactive Claude Code). The API key is the alternative and bills the Developer Platform per token. Vanguard injects exactly one secret into the sandbox, so billing is unambiguous.
+
+Vanguard runs Claude headless via `claude -p` (`claude --print --output-format stream-json`, see `src/agents/claude-code.ts`). Billing is decided purely by which auth env var is set, not by the CLI mode — `claude -p` consumes the same plan usage as the interactive CLI.
 
 ```bash
 claude setup-token            # once, generates the subscription token
@@ -95,6 +97,8 @@ ANTHROPIC_API_KEY=...          # API billing instead
 ```
 
 See `.env.example`. `authFromEnv()` prefers the subscription token; `authSecrets(auth)` maps the choice to the single env var the sandbox receives.
+
+**Two modes, no third.** Subscription (`CLAUDE_CODE_OAUTH_TOKEN`) draws on your plan's usage; API key (`ANTHROPIC_API_KEY`) bills per token on platform.claude.com. There is no separate credit pool for `claude -p` / Agent SDK usage — Anthropic announced one for 2026-06-15 but postponed it (the 2026-05 announcement was reversed), so headless runs keep consuming normal plan usage exactly like interactive Claude Code.
 
 ### Local secrets (two ways)
 
