@@ -90,6 +90,19 @@ export async function linkPullRequest(
   await commentGithubIssue(repo, issueRef, `Vanguard opened a PR for review: ${prUrl}`, gh);
 }
 
+/**
+ * Best-effort: ensure a label exists and add it to a PR (used to flag failed proofs for triage).
+ * Both steps swallow errors — labeling a draft PR must never block the run.
+ */
+export async function addPrFailureLabel(repoPath: string, prUrl: string, label: string): Promise<void> {
+  try {
+    await execa('gh', ['label', 'create', label, '--force'], { cwd: repoPath });
+  } catch { /* best-effort */ }
+  try {
+    await execa('gh', ['pr', 'edit', prUrl, '--add-label', label], { cwd: repoPath });
+  } catch { /* best-effort */ }
+}
+
 /** Add/remove labels on a GitHub issue (used to claim/advance it in the watch loop). */
 export async function editGithubLabels(
   repo: string,

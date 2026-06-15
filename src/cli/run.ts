@@ -73,6 +73,7 @@ function linearDeps(
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
+    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
   };
 }
 
@@ -113,6 +114,7 @@ async function runGithub(
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
+  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -138,6 +140,7 @@ async function runProject(
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
+  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

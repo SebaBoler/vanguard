@@ -76,6 +76,7 @@ async function watchLinearSource(
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
+    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
   };
 
   // Loop v1: activated when --spec-state is supplied.
@@ -150,6 +151,7 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, ctx: SandboxC
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
+  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
   return deps;
 }
 

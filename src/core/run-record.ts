@@ -4,6 +4,7 @@ import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import type { VerificationResult } from '../pipeline/verify.js';
+import type { VisualProofResult } from '../pipeline/visual-proof.js';
 
 export interface PersistOptions {
   /** ISO timestamp; defaults to now. Injected for deterministic tests. */
@@ -82,6 +83,44 @@ export async function persistVerification(
   await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
 
   const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
+  await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
+  return file;
+}
+
+export interface PersistVisualProofOptions {
+  /** ISO timestamp; defaults to now. Injected for deterministic tests. */
+  timestamp?: string;
+}
+
+/**
+ * Persist a visual proof to `.vanguard/runs/<taskId>/<ts>.visual-proof.json` (the full
+ * `VisualProofResult`, including its artifact manifest) and append one compact metric line
+ * `{ evt: 'visual_proof', ts, taskId, passed, exitCode, sha256, artifacts }` to `metrics.jsonl`.
+ */
+export async function persistVisualProof(
+  localRepoPath: string,
+  taskId: string,
+  result: VisualProofResult,
+  opts: PersistVisualProofOptions = {},
+): Promise<string> {
+  const timestamp = opts.timestamp ?? new Date().toISOString();
+  const runsDir = join(localRepoPath, '.vanguard', 'runs');
+  const taskDir = join(runsDir, taskId);
+  await mkdir(taskDir, { recursive: true });
+
+  const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
+  const file = `${base}.visual-proof.json`;
+  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+
+  const metric = {
+    evt: 'visual_proof',
+    ts: timestamp,
+    taskId,
+    passed: result.passed,
+    exitCode: result.exitCode,
+    sha256: result.sha256,
+    artifacts: result.artifacts.length,
+  };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
   return file;
 }

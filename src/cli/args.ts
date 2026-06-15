@@ -94,6 +94,8 @@ export type Command =
       forkN?: number;
       /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
       verifyCmd?: string;
+      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
+      visualProofCmd?: string;
     }
   | {
       kind: 'watch';
@@ -123,6 +125,8 @@ export type Command =
       reviewModel?: string;
       /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
       verifyCmd?: string;
+      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
+      visualProofCmd?: string;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -238,6 +242,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
         verify: { type: 'string' },
+        'visual-proof': { type: 'string' },
         // stats / memory
         json: { type: 'boolean' },
         limit: { type: 'string' },
@@ -371,6 +376,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
     };
   }
 
@@ -483,6 +489,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     return {
       kind: 'watch',
       ...common,
+      ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
@@ -531,6 +538,7 @@ Commands:
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
+    --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -593,6 +601,7 @@ Commands:
     --review-model <m>       Model for the review stage (default: provider's default)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
+    --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
@@ -648,5 +657,6 @@ Commands:
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
      CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor);
-     VANGUARD_VERIFY_CMD (verification command for Proof of Work; overridden by --verify).
+     VANGUARD_VERIFY_CMD (verification command for Proof of Work; overridden by --verify);
+     VANGUARD_VISUAL_PROOF_CMD (visual proof command for UI artifacts; overridden by --visual-proof).
 `;

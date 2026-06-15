@@ -438,6 +438,32 @@ describe('parseCli', () => {
     expect(cmd.kind === 'watch' && 'verifyCmd' in cmd).toBe(false);
   });
 
+  it('parses --visual-proof into visualProofCmd on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--visual-proof', 'pnpm shot'], '/work');
+    expect(cmd.kind === 'run' && cmd.visualProofCmd).toBe('pnpm shot');
+  });
+
+  it('omits visualProofCmd when --visual-proof is not passed on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(cmd.kind === 'run' && 'visualProofCmd' in cmd).toBe(false);
+  });
+
+  it('parses --visual-proof into visualProofCmd on watch', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard', '--visual-proof', 'npm shot'], '/work');
+    expect(cmd.kind === 'watch' && cmd.visualProofCmd).toBe('npm shot');
+  });
+
+  it('omits visualProofCmd when --visual-proof is not passed on watch', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard'], '/work');
+    expect(cmd.kind === 'watch' && 'visualProofCmd' in cmd).toBe(false);
+  });
+
+  it('does not leak visualProofCmd onto doctor', () => {
+    const cmd = parseCli(['doctor', '--source', 'github', '--github-repo', 'o/r', '--visual-proof', 'pnpm shot'], '/work');
+    expect(cmd.kind).toBe('doctor');
+    expect('visualProofCmd' in cmd).toBe(false);
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {
