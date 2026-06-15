@@ -2,6 +2,10 @@
 
 Use this when you want to prove that Codex (or OpenAI) runs correctly under `--llm-proxy` and that the real API key never enters the sandbox. The test exercises the preflight check, then a live `review-pr` run as the lowest-blast-radius read-only path.
 
+## Current verification status
+
+Codex/OpenAI proxy mode is covered by unit tests and typecheck. The live smoke below is deferred until the OpenAI account has active billing or credits; lack of billing is an environment constraint, not a release blocker for the merged implementation.
+
 ## Prerequisites
 
 - `CODEX_API_KEY` or `OPENAI_API_KEY` is exported on the **host** (not inside any container). Vanguard reads it from the host to hand it to the proxy sidecar; it must never be set inside the sandbox.
@@ -49,6 +53,21 @@ vanguard doctor-prs \
 ```
 
 Expected result: identical to the issue loop preflight above. Both doctor commands go through the same `runPreflight` path, so a passing `provider auth` line here confirms the PR-loop is ready too.
+
+## Zero-cost check when billing is unavailable
+
+If you do not have active OpenAI billing, you can still validate the failure path without making any model call. Run the preflight with no Codex/OpenAI key in the host environment:
+
+```bash
+env -u CODEX_API_KEY -u OPENAI_API_KEY vanguard doctor \
+  --source github \
+  --github-repo OWNER/REPO \
+  --provider codex \
+  --llm-proxy \
+  --repo /path/to/repo
+```
+
+Expected result: the report includes `preflight: provider auth Provider "codex" needs CODEX_API_KEY or OPENAI_API_KEY in the environment. -> stop before claim`. This confirms the readiness gate stops before any paid Codex/OpenAI request can be attempted.
 
 ## Live smoke — read-only PR review
 
