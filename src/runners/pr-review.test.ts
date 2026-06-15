@@ -3,6 +3,7 @@ import {
   buildPullRequestReviewComment,
   buildPullRequestReviewPrompt,
   fetchPullRequestForReview,
+  hasPullRequestReviewMarker,
   parsePullRequestRef,
   reviewPullRequest,
 } from './pr-review.js';
@@ -138,5 +139,31 @@ describe('review prompt and comment formatting', () => {
     expect(buildPullRequestReviewComment('No blocking findings.\n<promise>COMPLETE</promise>', 'abc123')).toBe(
       '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->',
     );
+  });
+
+  it('finds a matching hidden head SHA marker after older markers in the same body', () => {
+    const body = [
+      '## Vanguard Review',
+      '',
+      '<!-- vanguard-pr-review: deadbeef -->',
+      '',
+      'Later copied review text.',
+      '',
+      '<!-- vanguard-pr-review: abc123 -->',
+    ].join('\n');
+
+    expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(true);
+  });
+
+  it('does not match a different hidden head SHA marker', () => {
+    const body = [
+      '## Vanguard Review',
+      '',
+      '<!-- vanguard-pr-review: deadbeef -->',
+      '',
+      '<!-- vanguard-pr-review: abc123 -->',
+    ].join('\n');
+
+    expect(hasPullRequestReviewMarker(body, 'feed456')).toBe(false);
   });
 });
