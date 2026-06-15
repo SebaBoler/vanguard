@@ -110,6 +110,50 @@ async function listArtifacts(sh: SandboxRun, dir: string): Promise<VisualProofAr
   }
 }
 
+/**
+ * Synthetic FAILED result for when a configured visual proof could not be executed (sandbox crash,
+ * cancel, timeout, container failure, ...). exitCode -1 marks "did not run"; the error is recorded in
+ * the output tail and attested. This keeps a requested-but-failed proof visible instead of silently
+ * vanishing.
+ */
+function failedVisualProof(command: string, err: unknown): VisualProofResult {
+  const message = err instanceof Error ? err.message : String(err);
+  const outputTail = `visual proof execution failed: ${message}`
+    .split('\n')
+    .slice(-40)
+    .join('\n')
+    .trimEnd();
+  const sha256 = createHash('sha256').update(outputTail).digest('hex');
+  return { command, exitCode: -1, passed: false, sha256, outputTail, artifacts: [] };
+}
+
+/**
+ * Resolve and run the visual proof for a run. Returns undefined ONLY when no visual proof command is
+ * configured (flag/env both absent). If a command IS configured but resolving or running it throws,
+ * a synthetic FAIL result is returned (never undefined) so a requested proof can never silently
+ * disappear from the PR body, labels, or run record. Never throws.
+ */
+export async function resolveAndRunVisualProof(
+  sandbox: IsolatedSandboxProvider,
+  worktreePath: string,
+  opts: { cmd?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<VisualProofResult | undefined> {
+  let command: string | undefined;
+  try {
+    command = await resolveVisualProofCommand(worktreePath, {
+      ...(opts.cmd !== undefined ? { cmd: opts.cmd } : {}),
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
+    });
+    if (command === undefined) return undefined;
+    return await runVisualProof(sandbox, command, opts.signal !== undefined ? { signal: opts.signal } : {});
+  } catch (err: unknown) {
+    // A command was configured but couldn't be executed — surface it as a FAIL, never as "skipped".
+    if (command === undefined) return undefined;
+    console.error('visual proof execution failed (recorded as FAIL):', err);
+    return failedVisualProof(command, err);
+  }
+}
+
 /** Markdown visual-proof block for the PR body. */
 export function visualProofBlock(result: VisualProofResult): string {
   const status = result.passed ? 'PASS' : 'FAIL';

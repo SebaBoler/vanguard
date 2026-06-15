@@ -4,6 +4,7 @@ import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js
 import {
   resolveVisualProofCommand,
   runVisualProof,
+  resolveAndRunVisualProof,
   visualProofBlock,
 } from './visual-proof.js';
 
@@ -286,6 +287,52 @@ describe('runVisualProof', () => {
     } as unknown as IsolatedSandboxProvider;
     await runVisualProof(sandbox, 'cmd', { signal: controller.signal });
     expect(seenSignal).toBe(controller.signal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveAndRunVisualProof
+// ---------------------------------------------------------------------------
+describe('resolveAndRunVisualProof', () => {
+  it('returns undefined when no command is configured (proof not requested)', async () => {
+    const sandbox = fakeSandbox({ stdout: 'ok', exitCode: 0 });
+    const result = await resolveAndRunVisualProof(sandbox, '/wt', { env: {} });
+    expect(result).toBeUndefined();
+  });
+
+  it('returns the real result when a command is configured and runs', async () => {
+    const sandbox = fakeSandbox({ stdout: 'rendered', exitCode: 0 });
+    const result = await resolveAndRunVisualProof(sandbox, '/wt', { cmd: 'render.sh' });
+    expect(result).toBeDefined();
+    expect(result?.command).toBe('render.sh');
+    expect(result?.passed).toBe(true);
+    expect(result?.exitCode).toBe(0);
+  });
+
+  it('synthesizes a FAIL result (never undefined) when a configured proof throws', async () => {
+    const sandbox = {
+      exec: async (): Promise<ExecResult> => {
+        throw new Error('sandbox container crashed');
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const result = await resolveAndRunVisualProof(sandbox, '/wt', { cmd: 'render.sh' });
+    expect(result).toBeDefined();
+    expect(result?.passed).toBe(false);
+    expect(result?.exitCode).toBe(-1);
+    expect(result?.command).toBe('render.sh');
+    expect(result?.artifacts).toEqual([]);
+    expect(result?.outputTail).toContain('sandbox container crashed');
+    expect(result?.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('stays undefined when not configured even if the sandbox would throw', async () => {
+    const sandbox = {
+      exec: async (): Promise<ExecResult> => {
+        throw new Error('should never be called');
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const result = await resolveAndRunVisualProof(sandbox, '/wt', { env: {} });
+    expect(result).toBeUndefined();
   });
 });
 

@@ -14,7 +14,7 @@ import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
-import { resolveVisualProofCommand, runVisualProof, visualProofBlock, type VisualProofResult } from '../pipeline/visual-proof.js';
+import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -92,13 +92,11 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
     const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
 
-    let visualProof: VisualProofResult | undefined;
-    try {
-      const visualProofCmd = await resolveVisualProofCommand(ctx.worktreePath, deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {});
-      visualProof = visualProofCmd !== undefined ? await runVisualProof(ctx.sandbox, visualProofCmd) : undefined;
-    } catch (err: unknown) {
-      console.error('visual proof failed (non-fatal):', err);
-    }
+    const visualProof = await resolveAndRunVisualProof(
+      ctx.sandbox,
+      ctx.worktreePath,
+      deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {},
+    );
 
     const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
     if (!commit.committed) {

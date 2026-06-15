@@ -413,7 +413,7 @@ Command precedence: `--visual-proof "<cmd>"` flag > `VANGUARD_VISUAL_PROOF_CMD` 
 
 Allowed artifact extensions: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.svg`, `.html`, `.json`.
 
-Visual proof failure never blocks the PR: the PR always opens, and on a non-zero exit the body carries a `FAIL` Visual proof block and a `vanguard:visual-proof-failed` label is added to the PR (best-effort).
+Visual proof failure never blocks the PR: the PR always opens, and on a non-zero exit — or if a configured command can't be executed at all (sandbox crash, cancel, timeout) — the body carries a `FAIL` Visual proof block (a crash is recorded with exit code `-1`) and a `vanguard:visual-proof-failed` label is added to the PR (best-effort). A requested proof is never silently dropped; only when no command is configured is there no block.
 
 ```bash
 vanguard run --github 123 --visual-proof "pnpm exec playwright test --project=chromium"
