@@ -457,7 +457,7 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
-    type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress' | 'llmProxy'>;
+    type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
       repoPath,
@@ -474,6 +474,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
       ...(specLabel !== undefined ? { specLabel } : {}),
@@ -488,14 +489,13 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
 
     if (commandKind === 'doctor') {
-      return { kind: 'doctor', ...common, ...(values['llm-proxy'] === true ? { llmProxy: true } : {}) };
+      return { kind: 'doctor', ...common };
     }
 
     return {
       kind: 'watch',
       ...common,
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,

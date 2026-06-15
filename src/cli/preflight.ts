@@ -1,7 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { providerSecrets, requiresApiKey } from '../agents/registry.js';
-import { AgentError } from '../core/errors.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { Command } from './args.js';
 
@@ -120,10 +119,7 @@ async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: strin
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
 function collectProviders(cmd: PreflightCommand): ProviderName[] {
-  const candidates: Array<ProviderName | undefined> =
-    cmd.kind === 'doctor-prs'
-      ? [cmd.provider]
-      : [cmd.provider, cmd.reviewProvider];
+  const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, cmd.reviewProvider];
   return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
 }
 
@@ -149,7 +145,7 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true });
       checks.push(check('provider auth', true));
     } catch (error) {
-      const message = error instanceof AgentError ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       checks.push(check('provider auth', false, message));
     }
   }
