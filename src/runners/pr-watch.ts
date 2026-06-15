@@ -220,7 +220,12 @@ export async function watchPullRequestsOnce(
         opts.log?.(`${phase} ${id}: reviewed -> marked`);
         return { id, kind: 'reviewed' };
       } catch (error) {
-        await primitives.onFailure(item, error);
+        try {
+          await primitives.onFailure(item, error);
+        } catch (restoreError) {
+          const msg = restoreError instanceof Error ? restoreError.message : String(restoreError);
+          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${msg})`);
+        }
         opts.log?.(`${phase} ${id}: failed -> retry later`);
         return { id, kind: 'failed' };
       }
