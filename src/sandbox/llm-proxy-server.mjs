@@ -10,9 +10,9 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { upstreamAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
+import { upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
 
-const UPSTREAM_HOST = 'api.anthropic.com';
+const UPSTREAM_HOSTS = { anthropic: 'api.anthropic.com', openai: 'api.openai.com' };
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -43,8 +43,21 @@ try {
   process.exit(1);
 }
 const config = parseSecretFile(secretText);
-if ((config.MODE !== 'subscription' && config.MODE !== 'api') || !config.SECRET || !config.NONCE) {
-  console.error('llm-proxy: invalid secret file (need MODE=subscription|api, SECRET, NONCE)');
+// UPSTREAM is optional; default to anthropic so an unmodified sidecar still works.
+// NB: named `upstreamKind` (not `upstream`) to avoid shadowing the per-request `upstream` socket
+// bindings in the request handler / forward() — that shadowing would TDZ-crash on every request.
+const upstreamKind = config.UPSTREAM ?? 'anthropic';
+if (upstreamKind !== 'anthropic' && upstreamKind !== 'openai') {
+  console.error('llm-proxy: invalid secret file (UPSTREAM must be anthropic|openai)');
+  process.exit(1);
+}
+// anthropic auth needs MODE (subscription|api); openai auth is just Bearer SECRET (no MODE required).
+if (upstreamKind === 'anthropic' && config.MODE !== 'subscription' && config.MODE !== 'api') {
+  console.error('llm-proxy: invalid secret file (need MODE=subscription|api for anthropic)');
+  process.exit(1);
+}
+if (!config.SECRET || !config.NONCE) {
+  console.error('llm-proxy: invalid secret file (need SECRET, NONCE)');
   process.exit(1);
 }
 // SECRET/NONCE are placed into HTTP headers; reject control chars to prevent header injection.
@@ -53,6 +66,7 @@ if (CONTROL_CHARS.test(config.SECRET) || CONTROL_CHARS.test(config.NONCE)) {
   console.error('llm-proxy: secret/nonce contains control characters');
   process.exit(1);
 }
+const UPSTREAM_HOST = UPSTREAM_HOSTS[upstreamKind];
 const PORT = Number(process.env.PORT ?? '8088');
 
 function parseSecretFile(text) {
@@ -93,7 +107,7 @@ function log(req, status, bytes, started) {
 const server = createServer((req, res) => {
   const started = Date.now();
 
-  if (!isAllowedLlmPath(req.method, req.url)) {
+  if (!isAllowedLlmPath(req.method, req.url, upstreamKind)) {
     finish(req, res, 404, started);
     req.resume();
     return;
@@ -169,7 +183,9 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
     if (HOP_BY_HOP.has(lower)) continue;
     if (value !== undefined) headers[lower] = value;
   }
-  const applied = upstreamAuthHeaders(auth, req.headers);
+  // anthropic: mode-aware Bearer/x-api-key (+ oauth beta merge); openai: just Bearer SECRET.
+  const applied =
+    upstreamKind === 'openai' ? openaiAuthHeaders(config.SECRET) : upstreamAuthHeaders(auth, req.headers);
   for (const [key, value] of Object.entries(applied)) headers[key] = value;
   headers['content-length'] = String(body.length);
 
@@ -221,4 +237,4 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
   upstream.end(body);
 }
 
-server.listen(PORT, () => console.log(`llm-proxy on ${PORT}; mode=${config.MODE}`));
+server.listen(PORT, () => console.log(`llm-proxy on ${PORT}; upstream=${upstreamKind}`));
