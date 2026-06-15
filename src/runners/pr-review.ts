@@ -47,7 +47,7 @@ const PR_HASH_RE = /^([^/\s]+\/[^#\s]+)#(\d+)$/;
 const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
-const PR_REVIEW_MARKER_RE = /^<!-- vanguard-pr-review: ([a-fA-F0-9]+) -->$/m;
+const PR_REVIEW_MARKER_RE = /^<!--\s*vanguard-pr-review:\s*([a-fA-F0-9]+)\s*-->$/gm;
 
 export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequestReviewTarget {
   const trimmed = ref.trim();
@@ -119,8 +119,7 @@ export function pullRequestReviewMarker(headRefOid: string): string {
 }
 
 export function hasPullRequestReviewMarker(body: string, headRefOid: string): boolean {
-  const marker = PR_REVIEW_MARKER_RE.exec(body);
-  return marker?.[1] === headRefOid;
+  return Array.from(body.matchAll(PR_REVIEW_MARKER_RE)).some((marker) => marker[1] === headRefOid);
 }
 
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
