@@ -68,6 +68,33 @@ describe('watchPullRequestsOnce', () => {
     expect(logs).toContain('watch-prs o/r#12: skipped -> already claimed');
     expect(logs).toContain('watch-prs o/r#13: failed -> retry later');
   });
+
+  it('reports PR as failed even when onFailure (label restore) also throws', async () => {
+    const logs: string[] = [];
+    const primitives: PullRequestWatchPrimitives = {
+      listReady: async () => [pr(13)],
+      claim: vi.fn(),
+      review: vi.fn(async () => {
+        throw new Error('review boom');
+      }),
+      markReviewed: vi.fn(),
+      onFailure: vi.fn(async () => {
+        throw new Error('restore boom');
+      }),
+    };
+
+    const tick = await watchPullRequestsOnce(primitives, { log: (line) => logs.push(line), concurrency: 1 });
+
+    expect(tick.failed).toEqual(['o/r#13']);
+    expect(tick.reviewed).toEqual([]);
+    expect(tick.skipped).toEqual([]);
+    expect(logs).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('watch-prs o/r#13: restore failed -> manual label check'),
+        'watch-prs o/r#13: failed -> retry later',
+      ]),
+    );
+  });
 });
 
 describe('githubPullRequestWatchPrimitives', () => {
