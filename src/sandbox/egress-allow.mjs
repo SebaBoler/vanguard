@@ -10,6 +10,9 @@ export const DEFAULT_EGRESS_ALLOWLIST = [
   // Codex/OpenAI direct mode (--egress without --llm-proxy): the sandbox reaches OpenAI directly via
   // this entry. Under --llm-proxy this host is dropped from the sandbox allowlist (see llmProxyEgressAllowlist).
   'api.openai.com',
+  // z.ai (GLM Coding Plan, --provider zai) direct mode: the Claude Code CLI talks to z.ai's
+  // Anthropic-compatible coding endpoint. Dropped under --llm-proxy (the sidecar owns it).
+  'api.z.ai',
   'api.linear.app',
   'github.com',
   'api.github.com',

@@ -40,10 +40,14 @@ export function upstreamAuthHeaders(auth, reqHeaders) {
 const ALLOWED_BY_UPSTREAM = {
   anthropic: new Set(['/v1/messages', '/v1/messages/count_tokens']),
   openai: new Set(['/v1/responses']),
+  // z.ai (GLM Coding Plan) is Anthropic-Messages-compatible: the Claude Code CLI POSTs to the same
+  // /v1/messages paths it uses against api.anthropic.com.
+  zai: new Set(['/v1/messages', '/v1/messages/count_tokens']),
 };
 /**
  * Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored).
  * anthropic => /v1/messages, /v1/messages/count_tokens. openai => /v1/responses only.
+ * zai => same paths as anthropic (z.ai's coding endpoint is Anthropic-compatible).
  */
 export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
   if ((method ?? '').toUpperCase() !== 'POST') return false;
@@ -55,6 +59,15 @@ export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
 
 /** Headers to apply upstream for OpenAI: just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export function openaiAuthHeaders(secret) {
+  return { authorization: `Bearer ${secret}` };
+}
+
+/**
+ * Headers to apply upstream for z.ai (GLM Coding Plan): just Authorization: Bearer SECRET. z.ai's coding
+ * endpoint is Anthropic-Messages-compatible on the wire but authenticates with a plain bearer key (no
+ * anthropic-beta, no x-api-key), so this mirrors openaiAuthHeaders — kept distinct so the intent is named.
+ */
+export function zaiAuthHeaders(secret) {
   return { authorization: `Bearer ${secret}` };
 }
 

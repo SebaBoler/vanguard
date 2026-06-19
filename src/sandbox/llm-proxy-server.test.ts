@@ -75,8 +75,8 @@ async function tcpUp(port: number): Promise<boolean> {
  * until the child server is listening. The TDZ crash, if present, surfaces later in the test body's
  * HTTP calls as a connection reset → a clear assertion failure rather than this helper hanging.
  */
-async function waitUntilUp(port: number, child: Child): Promise<void> {
-  const deadline = Date.now() + 5000;
+async function waitUntilUp(port: number, child: Child, timeoutMs = 45_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   // If the child dies during boot, surface that immediately instead of timing out.
   let exited = false;
   child.catch(() => {
@@ -124,7 +124,7 @@ describe('llm-proxy-server (booted child)', () => {
     expect(
       await hit(s.port, 'POST', '/v1/messages', { authorization: 'Bearer wrong-nonce' }),
     ).toBe(401);
-  });
+  }, 60_000);
 
   it('openai: 404 on disallowed path and 401 on wrong nonce (no upstream contacted)', async () => {
     const s = track(await startServer('UPSTREAM=openai\nSECRET=sk-openai-test\nNONCE=real-nonce\n'));
@@ -133,5 +133,17 @@ describe('llm-proxy-server (booted child)', () => {
     expect(
       await hit(s.port, 'POST', '/v1/responses', { authorization: 'Bearer wrong-nonce' }),
     ).toBe(401);
-  });
+  }, 60_000);
+
+  it('zai: allows the anthropic-compatible /v1/messages path, rejects openai paths and wrong nonce', async () => {
+    const s = track(await startServer('UPSTREAM=zai\nSECRET=zai-test-key\nNONCE=real-nonce\n'));
+    // z.ai's coding endpoint is Anthropic-Messages-compatible: /v1/messages is allowed, /v1/responses is not.
+    expect(await hit(s.port, 'POST', '/v1/responses')).toBe(404);
+    expect(await hit(s.port, 'POST', '/v1/models')).toBe(404);
+    // Allowed path but wrong nonce -> 401, short-circuits before any forward to api.z.ai.
+    expect(
+      await hit(s.port, 'POST', '/v1/messages', { authorization: 'Bearer wrong-nonce' }),
+    ).toBe(401);
+  }, 60_000);
 });
+

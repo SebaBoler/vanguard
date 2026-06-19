@@ -10,9 +10,9 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
+import { upstreamAuthHeaders, openaiAuthHeaders, zaiAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
 
-const UPSTREAM_HOSTS = { anthropic: 'api.anthropic.com', openai: 'api.openai.com' };
+const UPSTREAM_HOSTS = { anthropic: 'api.anthropic.com', openai: 'api.openai.com', zai: 'api.z.ai' };
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -47,11 +47,11 @@ const config = parseSecretFile(secretText);
 // NB: named `upstreamKind` (not `upstream`) to avoid shadowing the per-request `upstream` socket
 // bindings in the request handler / forward() — that shadowing would TDZ-crash on every request.
 const upstreamKind = config.UPSTREAM ?? 'anthropic';
-if (upstreamKind !== 'anthropic' && upstreamKind !== 'openai') {
-  console.error('llm-proxy: invalid secret file (UPSTREAM must be anthropic|openai)');
+if (upstreamKind !== 'anthropic' && upstreamKind !== 'openai' && upstreamKind !== 'zai') {
+  console.error('llm-proxy: invalid secret file (UPSTREAM must be anthropic|openai|zai)');
   process.exit(1);
 }
-// anthropic auth needs MODE (subscription|api); openai auth is just Bearer SECRET (no MODE required).
+// anthropic auth needs MODE (subscription|api); openai and zai auth is just Bearer SECRET (no MODE required).
 if (upstreamKind === 'anthropic' && config.MODE !== 'subscription' && config.MODE !== 'api') {
   console.error('llm-proxy: invalid secret file (need MODE=subscription|api for anthropic)');
   process.exit(1);
@@ -183,9 +183,11 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
     if (HOP_BY_HOP.has(lower)) continue;
     if (value !== undefined) headers[lower] = value;
   }
-  // anthropic: mode-aware Bearer/x-api-key (+ oauth beta merge); openai: just Bearer SECRET.
+  // anthropic: mode-aware Bearer/x-api-key (+ oauth beta merge); openai & zai: just Bearer SECRET.
   const applied =
-    upstreamKind === 'openai' ? openaiAuthHeaders(config.SECRET) : upstreamAuthHeaders(auth, req.headers);
+    upstreamKind === 'openai' ? openaiAuthHeaders(config.SECRET)
+      : upstreamKind === 'zai' ? zaiAuthHeaders(config.SECRET)
+      : upstreamAuthHeaders(auth, req.headers);
   for (const [key, value] of Object.entries(applied)) headers[key] = value;
   headers['content-length'] = String(body.length);
 

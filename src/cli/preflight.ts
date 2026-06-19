@@ -120,6 +120,8 @@ async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: strin
  */
 function collectProviders(cmd: PreflightCommand): ProviderName[] {
   const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, cmd.reviewProvider];
+  // Zai is excluded here: it rides the Claude transport and its key is already covered by the
+  // provider-aware 'llm auth' check above. Codex/Cursor still get a dedicated 'provider auth' check.
   return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
 }
 
@@ -137,7 +139,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       : check('node 24', false, `found ${nodeVersion}`),
   );
 
-  checks.push(authFromEnv(env) !== undefined ? check('llm auth', true) : check('llm auth', false, 'missing'));
+  // The primary LLM auth: Anthropic token by default, or ZAI_API_KEY for --provider zai (zai owns its
+  // transport and never needs an Anthropic credential). Reported concisely as 'missing' so the
+  // preflight summary stays one line; the detailed requirement surfaces when the runner runs.
+  const llmAuthPresent = cmd.provider === 'zai' ? hasEnv(env, 'ZAI_API_KEY') : authFromEnv(env) !== undefined;
+  checks.push(llmAuthPresent ? check('llm auth', true) : check('llm auth', false, 'missing'));
 
   const usedProviders = collectProviders(cmd);
   if (usedProviders.length > 0) {

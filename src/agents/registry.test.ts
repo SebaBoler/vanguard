@@ -14,6 +14,7 @@ describe('makeProvider', () => {
     expect(makeProvider('claude').name).toBe('claude-code');
     expect(makeProvider('codex').name).toBe('codex');
     expect(makeProvider('cursor').name).toBe('cursor');
+    expect(makeProvider('zai').name).toBe('zai');
   });
 });
 
@@ -70,12 +71,40 @@ describe('providerSecrets', () => {
   });
 });
 
+describe('providerSecrets (zai)', () => {
+  it('injects ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN in normal mode (zai rides the Claude transport)', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['zai'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/coding/paas/v4', ANTHROPIC_AUTH_TOKEN: 'z-key' },
+      proxySecrets: {},
+    });
+  });
+
+  it('holds the z.ai key back from the sandbox in proxy mode (surfaced as proxySecrets.zai)', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets, proxySecrets } = providerSecrets(['zai'], env, { proxyMode: true });
+    expect(sandboxSecrets).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+    expect(sandboxSecrets).not.toHaveProperty('ANTHROPIC_BASE_URL');
+    expect(sandboxSecrets).toEqual({});
+    expect(proxySecrets.zai).toBe('z-key');
+  });
+
+  it('throws when ZAI_API_KEY is missing (normal mode)', () => {
+    expect(() => providerSecrets(['zai'], {})).toThrow(/ZAI_API_KEY/);
+  });
+
+  it('throws when ZAI_API_KEY is missing (proxy mode — key required either way)', () => {
+    expect(() => providerSecrets(['zai'], {}, { proxyMode: true })).toThrow(/ZAI_API_KEY/);
+  });
+});
+
 describe('selectAgents', () => {
   it('routes codex secrets to the sandbox in normal mode', () => {
     const env = { CODEX_API_KEY: 'c-key' } as NodeJS.ProcessEnv;
     const selected = selectAgents({ provider: 'codex' }, env);
     expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
     expect(selected.proxySecrets).toEqual({});
+    expect(selected.injectAnthropicAuth).toBe(true);
   });
 
   it('holds the codex key in proxySecrets and out of the sandbox in proxy mode', () => {
@@ -83,5 +112,24 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'codex' }, env, { proxyMode: true });
     expect(selected.secrets).not.toHaveProperty('OPENAI_API_KEY');
     expect(selected.proxySecrets.codex).toBe('c-key');
+  });
+
+  it('injects z.ai transport secrets and suppresses Anthropic auth for zai', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'zai' }, env);
+    expect(selected.secrets).toEqual({
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/coding/paas/v4',
+      ANTHROPIC_AUTH_TOKEN: 'z-key',
+    });
+    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.proxySecrets).toEqual({});
+  });
+
+  it('keeps the z.ai key out of the sandbox in proxy mode (held by the primary sidecar)', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'zai' }, env, { proxyMode: true });
+    expect(selected.secrets).toEqual({});
+    expect(selected.proxySecrets.zai).toBe('z-key');
+    expect(selected.injectAnthropicAuth).toBe(false);
   });
 });

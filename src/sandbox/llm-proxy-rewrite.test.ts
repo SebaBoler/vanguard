@@ -3,6 +3,7 @@ import {
   mergeAnthropicBeta,
   upstreamAuthHeaders,
   openaiAuthHeaders,
+  zaiAuthHeaders,
   isAllowedLlmPath,
   constantTimeEqual,
 } from './llm-proxy-rewrite.mjs';
@@ -74,6 +75,28 @@ describe('openaiAuthHeaders', () => {
   it('returns only a Bearer authorization header', () => {
     const h = openaiAuthHeaders('sk-openai');
     expect(h.authorization).toBe('Bearer sk-openai');
+    expect('anthropic-beta' in h).toBe(false);
+    expect('x-api-key' in h).toBe(false);
+    expect(Object.keys(h)).toEqual(['authorization']);
+  });
+});
+
+describe('isAllowedLlmPath (zai)', () => {
+  it('accepts the anthropic-compatible paths z.ai serves and rejects the rest', () => {
+    expect(isAllowedLlmPath('POST', '/v1/messages', 'zai')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/messages/count_tokens', 'zai')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/messages?beta=true', 'zai')).toBe(true);
+    // z.ai is not OpenAI-Responses-compatible.
+    expect(isAllowedLlmPath('POST', '/v1/responses', 'zai')).toBe(false);
+    expect(isAllowedLlmPath('POST', '/v1/chat/completions', 'zai')).toBe(false);
+    expect(isAllowedLlmPath('GET', '/v1/messages', 'zai')).toBe(false);
+  });
+});
+
+describe('zaiAuthHeaders', () => {
+  it('returns only a Bearer authorization header (no anthropic-beta, no x-api-key)', () => {
+    const h = zaiAuthHeaders('zai-key');
+    expect(h.authorization).toBe('Bearer zai-key');
     expect('anthropic-beta' in h).toBe(false);
     expect('x-api-key' in h).toBe(false);
     expect(Object.keys(h)).toEqual(['authorization']);

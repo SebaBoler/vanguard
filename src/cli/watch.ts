@@ -1,7 +1,7 @@
 import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1 } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
-import { authFromEnv } from '../agents/auth.js';
+import { agentAuthFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
 import { formatPreflightReport, runPreflight } from './preflight.js';
@@ -21,17 +21,14 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   for (const line of formatPreflightReport(report)) console.log(line);
   if (!report.ok) throw new Error('preflight failed');
 
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
+  const auth = agentAuthFromEnv(cmd.provider);
 
   const controller = new AbortController();
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth });
+  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth, ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}) });
 
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
   console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
