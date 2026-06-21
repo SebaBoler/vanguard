@@ -122,51 +122,59 @@ describe('upstreamPath', () => {
 });
 
 describe('parseUnifiedRatelimit', () => {
-  it('derives usedPct from remaining/limit and resetAt from epoch-seconds reset', () => {
+  it('5h-utilization only (fraction 0.8 → usedPct 80) with RFC3339 reset', () => {
+    const resetStr = '2025-06-21T12:00:00Z';
     const snap = parseUnifiedRatelimit({
-      'anthropic-ratelimit-unified-status': 'allowed',
-      'anthropic-ratelimit-unified-remaining': '200',
-      'anthropic-ratelimit-unified-limit': '1000',
-      'anthropic-ratelimit-unified-reset': '1750000000',
+      'anthropic-ratelimit-unified-5h-utilization': '0.8',
+      'anthropic-ratelimit-unified-5h-reset': resetStr,
     }, 1_700_000_000_000);
-    expect(snap).toEqual({ usedPct: 80, resetAt: 1_750_000_000_000, fetchedAt: 1_700_000_000_000 });
+    expect(snap).toEqual({ usedPct: 80, resetAt: Date.parse(resetStr), fetchedAt: 1_700_000_000_000 });
   });
 
-  it('falls back to status when no remaining/limit (rejected => 100)', () => {
+  it('both 5h + 7d utilization — picks the worse (higher) window pct and its reset', () => {
+    const reset5h = '2025-06-21T06:00:00Z';
+    const reset7d = '2025-06-28T00:00:00Z';
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': '0.5',
+      'anthropic-ratelimit-unified-5h-reset': reset5h,
+      'anthropic-ratelimit-unified-7d-utilization': '0.9',
+      'anthropic-ratelimit-unified-7d-reset': reset7d,
+    }, 5);
+    // 7d is 90% vs 5h 50% — 7d wins
+    expect(snap).toEqual({ usedPct: 90, resetAt: Date.parse(reset7d), fetchedAt: 5 });
+  });
+
+  it('utilization in percent form (e.g. "73" → usedPct 73) — proves ≤1 fraction vs >1 percent tolerance', () => {
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': '73',
+      'anthropic-ratelimit-unified-5h-reset': '1750000000',
+    }, 5);
+    expect(snap).toEqual({ usedPct: 73, resetAt: 1_750_000_000_000, fetchedAt: 5 });
+  });
+
+  it('no utilization headers, status="rejected" → usedPct 100', () => {
     const snap = parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'rejected' }, 5);
     expect(snap).toEqual({ usedPct: 100, resetAt: 0, fetchedAt: 5 });
+  });
+
+  it('array-valued utilization header + ISO 5h-reset still parse', () => {
+    const resetStr = '2025-01-01T00:00:00Z';
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': ['0.6'],
+      'anthropic-ratelimit-unified-5h-reset': resetStr,
+    }, 7);
+    expect(snap?.usedPct).toBe(60);
+    expect(snap?.resetAt).toBe(Date.parse(resetStr));
   });
 
   it('returns undefined when no unified headers present', () => {
     expect(parseUnifiedRatelimit({ 'content-type': 'application/json' }, 5)).toBeUndefined();
   });
 
-  it('returns undefined when only an unrecognized/garbage status is present and no remaining/limit', () => {
+  it('returns undefined when only an unrecognized status is present and no utilization', () => {
     expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'some_garbage_value' }, 5)).toBeUndefined();
     expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': '' }, 5)).toBeUndefined();
     expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'unknown' }, 5)).toBeUndefined();
-  });
-
-  it('returns undefined when remaining is present but limit is absent and no status', () => {
-    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-remaining': '200' }, 5)).toBeUndefined();
-  });
-
-  it('does not compute 100% used from an empty-string remaining with a valid limit', () => {
-    const snap = parseUnifiedRatelimit({
-      'anthropic-ratelimit-unified-remaining': '',
-      'anthropic-ratelimit-unified-limit': '1000',
-    }, 5);
-    expect(snap).not.toEqual({ usedPct: 100, resetAt: 0, fetchedAt: 5 });
-  });
-
-  it('handles array-valued headers and ISO reset', () => {
-    const snap = parseUnifiedRatelimit({
-      'anthropic-ratelimit-unified-remaining': ['0'],
-      'anthropic-ratelimit-unified-limit': ['100'],
-      'anthropic-ratelimit-unified-reset': '2025-01-01T00:00:00Z',
-    }, 5);
-    expect(snap?.usedPct).toBe(100);
-    expect(snap?.resetAt).toBe(Date.parse('2025-01-01T00:00:00Z'));
   });
 });
 
