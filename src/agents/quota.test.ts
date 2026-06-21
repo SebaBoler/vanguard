@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,6 +132,54 @@ describe('snapshot cache', () => {
     try {
       writeFileSync(join(dir, 'zai.json'), raw);
       expect(readSnapshot(dir, 'zai')).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveModel warn-once misconfig', () => {
+  it('warns when preferred model is not in the chain, still returns first available entry', async () => {
+    const warnSpy = vi.spyOn(console, 'warn');
+    const models: ModelEntry[] = [
+      { key: 'glm', bucket: 'zai', env: {} },
+      { key: 'sonnet', bucket: 'claude', env: {} },
+    ];
+    const up: BucketCheck = { available: async () => true };
+    const r = await resolveModel('codex', ['glm', 'sonnet'], models, { zai: up, claude: up });
+    expect(warnSpy).toHaveBeenCalled();
+    expect(r.key).toBe('glm');
+    vi.restoreAllMocks();
+  });
+
+  it('warns when a model bucket has no BucketCheck, treats it as available', async () => {
+    const warnSpy = vi.spyOn(console, 'warn');
+    const models: ModelEntry[] = [
+      { key: 'unique-model-xyzzy', bucket: 'no-check-bucket-xyzzy', env: {} },
+    ];
+    const r = await resolveModel('unique-model-xyzzy', ['unique-model-xyzzy'], models, {});
+    expect(warnSpy).toHaveBeenCalled();
+    expect(r.key).toBe('unique-model-xyzzy');
+    vi.restoreAllMocks();
+  });
+});
+
+describe('pctBucketCheck per-instance warn', () => {
+  it('warns exactly once per instance when no snapshot exists (header-fed, no refresh)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vg-fix2-'));
+    try {
+      const warnSpy = vi.spyOn(console, 'warn');
+      const c1 = pctBucketCheck(dir, 'fix2-test-bucket', { bailPct: 90, ttlMs: 0 });
+      await c1.available();
+      await c1.available();
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // Second instance warns again (per-instance isolation, not global dedup)
+      const c2 = pctBucketCheck(dir, 'fix2-test-bucket-b', { bailPct: 90, ttlMs: 0 });
+      await c2.available();
+      expect(warnSpy).toHaveBeenCalledTimes(2);
+
+      vi.restoreAllMocks();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

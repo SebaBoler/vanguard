@@ -62,6 +62,9 @@ export class AllBucketsFlooredError extends Error {
   }
 }
 
+const warnedConfig = new Set<string>();
+function warnOnce(key: string, msg: string) { if (!warnedConfig.has(key)) { warnedConfig.add(key); console.warn(msg); } }
+
 /** First entry in `chain` (from `preferred` onward) whose bucket is available; throws if none. */
 export async function resolveModel(
   preferred: string,
@@ -70,11 +73,17 @@ export async function resolveModel(
   checks: Record<BucketId, BucketCheck>,
 ): Promise<ModelEntry> {
   const start = chain.indexOf(preferred);
+  if (start < 0) {
+    warnOnce(`resolveModel:preferred-not-in-chain:${preferred}`, `[quota] preferred model '${preferred}' is not in the fallback chain; starting from the first chain entry.`);
+  }
   const ordered = start >= 0 ? chain.slice(start) : chain;
   for (const key of ordered) {
     const entry = models.find((m) => m.key === key);
     if (entry === undefined) continue;
     const check = checks[entry.bucket];
+    if (check === undefined) {
+      warnOnce(`resolveModel:no-check:${entry.bucket}`, `[quota] bucket '${entry.bucket}' has no BucketCheck configured; treating as available.`);
+    }
     if (check === undefined || (await check.available())) return entry;
   }
   throw new AllBucketsFlooredError(preferred);
@@ -89,7 +98,6 @@ export interface PctCheckOptions {
   refresh?: () => Promise<QuotaSnapshot>;
 }
 
-const warnedMissing = new Set<BucketId>();
 
 /**
  * Bucket check from a percent-used snapshot in the cache. Refreshes when stale (if a refresh fn is
@@ -99,6 +107,7 @@ const warnedMissing = new Set<BucketId>();
  * which strips the headers).
  */
 export function pctBucketCheck(cacheDir: string, bucket: BucketId, opts: PctCheckOptions): BucketCheck {
+  let warnedMissing = false;
   return {
     available: async () => {
       let snap = readSnapshot(cacheDir, bucket);
@@ -112,8 +121,8 @@ export function pctBucketCheck(cacheDir: string, bucket: BucketId, opts: PctChec
         }
       }
       if (snap === undefined) {
-        if (opts.refresh === undefined && !warnedMissing.has(bucket)) {
-          warnedMissing.add(bucket);
+        if (opts.refresh === undefined && !warnedMissing) {
+          warnedMissing = true;
           console.warn(
             `[quota] no snapshots for header-fed bucket '${bucket}'. ` +
               `Usage tracking needs it routed through vanguard's sidecar; LiteLLM strips the rate-limit headers.`,

@@ -169,7 +169,7 @@ export function parseUnifiedRatelimit(headers, now = Date.now()) {
 
 /** Atomically write a QuotaSnapshot as JSON (tmp file + rename). */
 export function writeQuotaSnapshot(filePath, snap) {
-  const tmp = `${filePath}.tmp`;
+  const tmp = `${filePath}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(snap));
   renameSync(tmp, filePath);
 }
