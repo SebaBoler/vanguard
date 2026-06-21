@@ -112,9 +112,12 @@ function parseResetMs(raw) {
  */
 export function parseUnifiedRatelimit(headers, now = Date.now()) {
   const status = headerValue(headers, 'anthropic-ratelimit-unified-status');
-  const remaining = Number(headerValue(headers, 'anthropic-ratelimit-unified-remaining'));
-  const limit = Number(headerValue(headers, 'anthropic-ratelimit-unified-limit'));
+  const rawRemaining = headerValue(headers, 'anthropic-ratelimit-unified-remaining');
+  const rawLimit = headerValue(headers, 'anthropic-ratelimit-unified-limit');
   const reset = headerValue(headers, 'anthropic-ratelimit-unified-reset');
+  // Treat absent or empty-string as "not a number" — Number('') === 0 which would be a false signal.
+  const remaining = (typeof rawRemaining === 'string' && rawRemaining !== '') ? Number(rawRemaining) : NaN;
+  const limit = (typeof rawLimit === 'string' && rawLimit !== '') ? Number(rawLimit) : NaN;
   if (status === undefined && !Number.isFinite(remaining)) return undefined;
   let usedPct;
   if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0) {
@@ -123,8 +126,11 @@ export function parseUnifiedRatelimit(headers, now = Date.now()) {
     usedPct = 100;
   } else if (status === 'allowed_warning') {
     usedPct = 95;
-  } else {
+  } else if (status === 'allowed') {
     usedPct = 0;
+  } else {
+    // No usable remaining/limit and no recognized status — surface as "no data".
+    return undefined;
   }
   return { usedPct, resetAt: parseResetMs(reset), fetchedAt: now };
 }
