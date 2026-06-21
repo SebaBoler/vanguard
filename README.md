@@ -435,6 +435,7 @@ jobs:
       - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
         with: { repository: SebaBoler/vanguard, path: .vanguard-src }
       - uses: pnpm/action-setup@v6
+        with: { package_json_file: .vanguard-src/package.json }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
       - run: pnpm install --frozen-lockfile
