@@ -37,6 +37,7 @@ export class QuotaRoutingProvider implements AgentProvider {
       model: entry.key,
       env: { ...(input.env ?? {}), ...entry.env },
       ...(input.effort === undefined && entry.effort !== undefined ? { effort: entry.effort } : {}),
+      ...(entry.secrets !== undefined ? { secrets: { ...(input.secrets ?? {}), ...entry.secrets } } : {}),
     };
 
     const it = this.opts.delegate.run(next);

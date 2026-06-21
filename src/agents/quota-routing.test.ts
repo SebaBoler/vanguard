@@ -8,12 +8,17 @@ const MODELS: ModelEntry[] = [
   { key: 'sonnet', bucket: 'claude', env: { A: 'c' } },
 ];
 
+const MODELS_WITH_SECRETS: ModelEntry[] = [
+  { key: 'glm', bucket: 'zai', env: { A: 'z' }, secrets: { ENTRY_KEY: 'entry-val' } },
+  { key: 'sonnet', bucket: 'claude', env: { A: 'c' } },
+];
+
 function fakeDelegate() {
-  const calls: Array<{ model: string | undefined; env: Record<string, string> | undefined }> = [];
+  const calls: Array<{ model: string | undefined; env: Record<string, string> | undefined; secrets: Record<string, string> | undefined }> = [];
   const provider: AgentProvider = {
     name: 'fake',
     async *run(input: AgentRunInput) {
-      calls.push({ model: input.model, env: input.env });
+      calls.push({ model: input.model, env: input.env, secrets: input.secrets });
       yield { text: 't' };
       return { finalText: 'ok', turns: 1 };
     },
@@ -32,7 +37,19 @@ describe('QuotaRoutingProvider', () => {
     });
     const g = r.run({ model: 'glm' } as AgentRunInput);
     while (!(await g.next()).done) { /* drain */ }
-    expect(calls[0]).toEqual({ model: 'glm', env: { A: 'z' } });
+    expect(calls[0]).toMatchObject({ model: 'glm', env: { A: 'z' } });
+  });
+
+  it('overlays entry.secrets onto input.secrets (entry wins, pre-existing keys preserved)', async () => {
+    const { provider, calls } = fakeDelegate();
+    const r = new QuotaRoutingProvider({
+      delegate: provider, models: MODELS_WITH_SECRETS, chain: ['glm', 'sonnet'], cacheDir: '/tmp/none',
+      checks: { zai: up, claude: up },
+    });
+    // input already carries a secret; entry should overlay its own key on top
+    const g = r.run({ model: 'glm', secrets: { PRE_KEY: 'pre-val' } } as unknown as AgentRunInput);
+    while (!(await g.next()).done) { /* drain */ }
+    expect(calls[0]?.secrets).toEqual({ PRE_KEY: 'pre-val', ENTRY_KEY: 'entry-val' });
   });
 
   it('is sticky: once zai floors, later stages stay on claude even if zai recovers', async () => {

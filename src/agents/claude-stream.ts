@@ -40,6 +40,7 @@ export async function* runClaudeCli(
     input: input.prompt,
     ...(input.env !== undefined ? { env: input.env } : {}),
     ...(input.signal !== undefined ? { signal: input.signal } : {}),
+    ...(input.secrets !== undefined ? { secrets: input.secrets } : {}),
   });
 
   let sessionId: string | undefined = input.resumeSessionId;

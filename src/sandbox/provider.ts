@@ -4,6 +4,8 @@ export interface ExecOptions {
   timeoutMs?: number;
   input?: string;
   signal?: AbortSignal;
+  /** Per-exec secrets delivered via tmpfs (stdin-written, sourced, removed) — never argv. */
+  secrets?: Record<string, string>;
 }
 
 export interface ExecResult {
