@@ -38,6 +38,7 @@ export async function* runClaudeCli(
   const res = await input.sandbox.exec(command, {
     cwd: input.workdir,
     input: input.prompt,
+    ...(input.env !== undefined ? { env: input.env } : {}),
     ...(input.signal !== undefined ? { signal: input.signal } : {}),
   });
 
