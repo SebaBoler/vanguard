@@ -11,8 +11,29 @@ const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 const DEFAULT_WORKDIR = '/workspace';
 const SECRETS_DIR = '/run/vanguard';
 const SECRETS_FILE = `${SECRETS_DIR}/secrets.env`;
+// One path per container; stages run sequentially per sandbox (fan-out uses separate sandboxes).
+const STAGE_SECRETS_FILE = `${SECRETS_DIR}/stage.env`;
 
 type SecretsMode = 'tmpfs' | 'env-file';
+
+/** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
+function shellBody(record: Record<string, string>): string {
+  return Object.entries(record)
+    .map(([key, value]) => `${key}='${value.replace(/'/g, "'\\''")}'`)
+    .join('\n');
+}
+
+/** Validate secret names and values; throw SandboxError on bad name or newline value. */
+function validateSecrets(record: Record<string, string>): void {
+  for (const [key, value] of Object.entries(record)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new SandboxError(`Invalid secret name: ${key}`);
+    }
+    if (/[\n\r]/.test(value)) {
+      throw new SandboxError(`Secret ${key} contains a newline, which is not allowed`);
+    }
+  }
+}
 
 /** Runs an isolated command environment as a detached Docker container. */
 export class DockerSandboxProvider implements IsolatedSandboxProvider {
@@ -37,14 +58,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       const value = process.env[key];
       if (value !== undefined) this.secrets[key] = value;
     }
-    for (const [key, value] of Object.entries(this.secrets)) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-        throw new SandboxError(`Invalid secret name: ${key}`);
-      }
-      if (/[\n\r]/.test(value)) {
-        throw new SandboxError(`Secret ${key} contains a newline, which is not allowed`);
-      }
-    }
+    validateSecrets(this.secrets);
   }
 
   private get name(): string {
@@ -64,15 +78,17 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
 
   /** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
   private secretsShellBody(): string {
-    return Object.entries(this.secrets)
-      .map(([key, value]) => `${key}='${value.replace(/'/g, "'\\''")}'`)
-      .join('\n');
+    return shellBody(this.secrets);
   }
 
-  /** In tmpfs mode, source the in-RAM secrets file so values reach the command env without docker-inspect exposure. */
+  /** In tmpfs mode, source the in-RAM secrets file(s) so values reach the command env without docker-inspect exposure. */
   private wrap(command: string): string {
-    if (this.secretsMode !== 'tmpfs' || !this.hasSecrets) return command;
-    return `set -a; [ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}; set +a; ${command}`;
+    if (this.secretsMode !== 'tmpfs') return command;
+    const sources = [
+      this.hasSecrets ? `[ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}` : '',
+      `[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`,
+    ].filter(Boolean).join('; ');
+    return sources === '' ? command : `set -a; ${sources}; set +a; ${command}`;
   }
 
   async start(): Promise<void> {
@@ -120,18 +136,49 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    const stageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0
+      ? options.secrets
+      : undefined;
+
+    if (stageSecrets !== undefined) {
+      // Per-exec secrets require tmpfs so the stage file lands in RAM, not on disk or in argv.
+      if (this.secretsMode !== 'tmpfs') {
+        throw new SandboxError('Per-exec secrets require secretsMode "tmpfs"');
+      }
+      validateSecrets(stageSecrets);
+      // Write the stage secrets file via stdin (umask 077) — value never appears in argv.
+      const write = await execa(
+        'docker',
+        ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${STAGE_SECRETS_FILE}`],
+        { reject: false, input: shellBody(stageSecrets) },
+      );
+      if (write.exitCode !== 0) {
+        throw new SandboxError(`Failed to write stage secrets to tmpfs: ${write.stderr}`);
+      }
+    }
+
+    // STAGE_SECRETS_FILE is one path per container; stages run sequentially per sandbox
+    // (fan-out uses separate sandboxes) — do not share one container across concurrent execs
+    // with per-exec secrets.
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
     if (options.input !== undefined) args.push('-i');
     args.push(this.name, 'sh', '-lc', this.wrap(command));
-    const result = await execa('docker', args, {
-      reject: false,
-      ...(options.input !== undefined ? { input: options.input } : {}),
-      ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-      ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
-    });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+
+    try {
+      const result = await execa('docker', args, {
+        reject: false,
+        ...(options.input !== undefined ? { input: options.input } : {}),
+        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+        ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+    } finally {
+      if (stageSecrets !== undefined) {
+        await execa('docker', ['exec', this.name, 'sh', '-c', `rm -f ${STAGE_SECRETS_FILE}`], { reject: false });
+      }
+    }
   }
 
   execStream(command: string, options: ExecOptions = {}): ExecStream {

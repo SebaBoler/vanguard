@@ -15,6 +15,8 @@ that model's transport env per stage. New public exports:
 - types: `QuotaSnapshot`, `BucketId`, `ModelEntry`, `BucketCheck`, `PctCheckOptions`,
   `QuotaRoutedOptions`, `QuotaBucketConfig`, `QuotaRoutingOptions`
 - `AgentRunInput.env?` — per-invocation transport overlay (additive; threaded through `runClaudeCli`)
+- `AgentRunInput.secrets?` — per-invocation real credentials delivered via tmpfs (not argv); see below
+- `ModelEntry.secrets?` — per-stage secrets, overlaid onto `input.secrets` at routing time (entry wins)
 
 ## Usage
 
@@ -44,6 +46,32 @@ const agent = quotaRoutedAgent({
 
 `env` maps carry only transport vars (`ANTHROPIC_BASE_URL` + per-run nonce/bearer) — never real upstream
 keys (they're rendered as argv-visible `docker exec -e`; real keys stay in tmpfs secrets).
+
+### Per-stage real credentials (`secrets`)
+
+`secrets` delivers actual credentials (e.g. a Claude Max OAuth token) that must never appear in `docker
+inspect` or process argv. The threading path is:
+
+```text
+ModelEntry.secrets → QuotaRoutingProvider.run() overlay → AgentRunInput.secrets
+  → runClaudeCli → sandbox.exec({ secrets }) → DockerSandboxProvider.exec()
+    1. writes /run/vanguard/stage.env via stdin (umask 077; never in argv)
+    2. wrap() sources it: [ -f /run/vanguard/stage.env ] && . /run/vanguard/stage.env
+    3. finally: rm -f /run/vanguard/stage.env (runs even on throw)
+```
+
+Key constraints:
+
+- **`secretsMode: 'tmpfs'` required.** Passing `secrets` to `exec()` when the provider was constructed
+  with `secretsMode: 'env-file'` throws `SandboxError` immediately — env-file mode would land secrets
+  in `docker inspect Config.Env`.
+- **Sequential execs only.** `/run/vanguard/stage.env` is a single path per container. Stages run
+  sequentially per sandbox (fan-out uses separate sandboxes), so this is safe by construction.
+- **Firecracker parity.** `FirecrackerSandboxProvider.exec()` throws `NotImplementedError` for all
+  calls — per-exec secrets can never silently leak through it.
+- **`env` vs `secrets`.** Use `env` for transport-only vars (ANTHROPIC_BASE_URL, nonce) that can
+  tolerate argv visibility. Use `secrets` for real credentials that must stay out of process args,
+  docker inspect, and disk entirely.
 
 ## What works today vs. needs wiring
 
