@@ -152,6 +152,8 @@ await run(opts, { skills });
 
 For targeted injection instead of the whole set, construct `new SkillRegistry({ id: '/host/path' })` and call `inject(['id'], sandbox)`.
 
+The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering — climb the laziness ladder, stop at the first rung that works).
+
 ### Example: the linear-cli skill
 
 [schpet/linear-cli](https://github.com/schpet/linear-cli) ships a skill at `skills/linear-cli/` that teaches the agent to drive the `linear` CLI directly. The sandbox image already includes the `linear` CLI, so you only inject the skill and forward `LINEAR_API_KEY`:
@@ -281,6 +283,8 @@ vanguard watch --source github --github-repo owner/repo \
 | State TYPE matches `--trigger-state` (default `unstarted`) + label | Agent pass triggers (next poll after spec, or for any pre-specced issue). Triage runs in `agent` mode — vague tickets moved to `--needs-info-state`. Valid tickets: Implementer → Reviewer → Simplifier → draft PR. |
 | Needs Info state | Parked. Human updates the ticket and moves it back. |
 
+The two-flag split is Linear-specific: `--agent-state` sets the **state name** the spec pass moves the ticket to (`Todo`), while `--trigger-state` matches the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box and `--trigger-state` rarely needs setting (hence its absence from the example below) — unlike GitHub, where a single `--agent-label` is both the move target and the trigger.
+
 ```bash
 # Linear Loop v1.1 defaults
 vanguard doctor --loop-v1 --label vanguard
@@ -386,6 +390,69 @@ watch-prs owner/repo#123: reviewed -> marked
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
 Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metrics.jsonl` (cost, tokens, cache efficiency, duration, exit reason). `vanguard stats` aggregates that into a rollup — per task, per stage, and a grand total — for fleet cost/time visibility (`--json` for machine output).
+
+### Implement issues via GitHub Actions
+
+Run the implement loop straight from GitHub Actions — no always-on host. Label an issue `ready for agent` and the workflow runs `vanguard run --github <n>` in a sandbox, then opens a PR. This is event-driven (the agent pass only); the two-pass spec loop needs a polling watcher, so put `ready for agent` directly on the issue. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo.
+
+**Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
+
+**Security:** the job condition restricts triggers to the maintainer's own issues (`github.event.issue.user.login == '<you>'`), so a stranger labelling an issue cannot start a run. `--llm-proxy` keeps the model credential in a sidecar, out of the sandbox.
+
+#### Run it on another repo
+
+The target repo does not need Vanguard installed — check it out alongside the workspace and build it in the job. Drop this in `.github/workflows/vanguard-implement.yml` in *that* repo, add the `CLAUDE_CODE_OAUTH_TOKEN` secret, and label an issue `ready for agent`:
+
+```yaml
+name: Vanguard Implement
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue: { description: Issue number to implement, required: true }
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+concurrency:
+  group: vanguard-implement-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.issue }}
+  cancel-in-progress: false
+jobs:
+  implement:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'ready for agent' &&
+      github.event.issue.user.login == 'YOUR_LOGIN' &&
+      github.event.sender.login == 'YOUR_LOGIN')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6                 # target repo -> workspace
+      - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
+        with: { repository: SebaBoler/vanguard, path: .vanguard-src }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 24 }
+      - run: pnpm install --frozen-lockfile
+        working-directory: .vanguard-src
+      - run: pnpm build
+        working-directory: .vanguard-src
+      - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+      - name: Implement issue
+        env:
+          ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: >-
+          node .vanguard-src/dist/cli/index.js run
+          --github "$ISSUE" --github-repo "$GITHUB_REPOSITORY"
+          --repo "$GITHUB_WORKSPACE" --skills .vanguard-src/skills --llm-proxy
+```
+
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same label — pick one per repo (a Linear watcher does not clash).
 
 ## Retrospective memory
 
