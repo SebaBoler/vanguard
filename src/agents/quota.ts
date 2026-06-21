@@ -48,6 +48,8 @@ export interface ModelEntry {
   effort?: ReasoningEffort;
   /** Per-stage env overlay selecting this model's transport/auth. */
   env: Record<string, string>;
+  /** Per-stage real credentials for this model, delivered via tmpfs (not argv). Optional. */
+  secrets?: Record<string, string>;
 }
 
 /** True when a bucket has quota headroom right now (implementations cache/refresh internally). */
