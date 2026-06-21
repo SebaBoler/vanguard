@@ -213,8 +213,9 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
         try {
           const snap = parseUnifiedRatelimit(upRes.headers);
           if (snap !== undefined) writeQuotaSnapshot(QUOTA_FILE, snap);
-        } catch {
-          // never let quota bookkeeping break proxying; never log header contents
+        } catch (err) {
+          // never log header content; the error code (e.g. ENOSPC/EACCES) is safe and aids ops
+          console.error(`llm-proxy: quota snapshot write failed (${err?.code ?? 'unknown'})`);
         }
       }
       // Byte count for the access log comes from the upstream content-length when present (no
