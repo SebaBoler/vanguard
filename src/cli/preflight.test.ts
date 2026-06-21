@@ -5,6 +5,7 @@ import type { PreflightRunner } from './preflight.js';
 
 type DoctorCommand = Extract<Command, { kind: 'doctor' }>;
 type DoctorPrsCommand = Extract<Command, { kind: 'doctor-prs' }>;
+type WatchCommand = Extract<Command, { kind: 'watch' }>;
 
 function githubDoctor(overrides: Partial<DoctorCommand> = {}): DoctorCommand {
   return {
@@ -94,6 +95,7 @@ describe('runPreflight', () => {
     expect(formatPreflightReport(report)).toEqual([
       'preflight: node 24 ok',
       'preflight: llm auth ok',
+      'preflight: provider combo ok',
       'preflight: repo remote ok',
       'preflight: docker daemon ok',
       'preflight: sandbox image ok',
@@ -199,5 +201,71 @@ describe('runPreflight', () => {
     const providerCheck = report.checks.find((c) => c.name === 'provider auth');
     expect(providerCheck).toBeUndefined();
     expect(formatPreflightReport(report)).not.toContain('provider auth');
+  });
+});
+
+function githubWatch(overrides: Partial<WatchCommand> = {}): WatchCommand {
+  return {
+    kind: 'watch',
+    source: 'github',
+    repoPath: '/repo',
+    repoSlug: 'owner/repo',
+    label: 'vanguard',
+    concurrency: 1,
+    intervalMs: 60000,
+    once: false,
+    egress: false,
+    ...overrides,
+  };
+}
+
+describe('runPreflight provider combo check', () => {
+  it('fails provider combo when claude implements and zai reviews (shared anthropic transport)', async () => {
+    const report = await runPreflight(
+      githubWatch({ provider: 'claude', reviewProvider: 'zai' }),
+      {
+        env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', ZAI_API_KEY: 'z-key' },
+        nodeVersion: '24.11.1',
+        run: makeRunner(),
+      },
+    );
+
+    expect(report.ok).toBe(false);
+    const comboCheck = report.checks.find((c) => c.name === 'provider combo');
+    expect(comboCheck).toBeDefined();
+    expect(comboCheck?.ok).toBe(false);
+    expect(comboCheck?.reason).toMatch(/cannot mix "claude" and "zai"/);
+  });
+
+  it('passes provider combo when codex implements and zai reviews (different transports)', async () => {
+    const report = await runPreflight(
+      githubWatch({ provider: 'codex', reviewProvider: 'zai' }),
+      {
+        env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' },
+        nodeVersion: '24.11.1',
+        run: makeRunner(),
+      },
+    );
+
+    const comboCheck = report.checks.find((c) => c.name === 'provider combo');
+    expect(comboCheck).toBeDefined();
+    expect(comboCheck?.ok).toBe(true);
+  });
+
+  it('fails provider combo when zai is reviewer-only under --llm-proxy', async () => {
+    const report = await runPreflight(
+      githubWatch({ provider: 'codex', reviewProvider: 'zai', llmProxy: true }),
+      {
+        env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' },
+        nodeVersion: '24.11.1',
+        run: makeRunner(),
+      },
+    );
+
+    expect(report.ok).toBe(false);
+    const comboCheck = report.checks.find((c) => c.name === 'provider combo');
+    expect(comboCheck).toBeDefined();
+    expect(comboCheck?.ok).toBe(false);
+    expect(comboCheck?.reason).toMatch(/needs "zai" as the implementer/);
   });
 });

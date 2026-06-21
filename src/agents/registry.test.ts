@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isProviderName, makeProvider, providerSecrets, selectAgents, PROVIDER_NAMES } from './registry.js';
+import { isProviderName, makeProvider, providerSecrets, selectAgents, validateProviderChoice, PROVIDER_NAMES } from './registry.js';
 
 describe('isProviderName', () => {
   it('accepts known providers and rejects others', () => {
@@ -188,5 +188,34 @@ describe('selectAgents', () => {
     expect(selected.proxySecrets.codex).toBe('c-key'); // codex gets its secondary sidecar
     expect(selected.secrets).toEqual({}); // zai key withheld (primary sidecar via auth)
     expect(selected.injectAnthropicAuth).toBe(false);
+  });
+});
+
+describe('validateProviderChoice', () => {
+  it('throws on transport collision: claude + zai both own the anthropic transport', () => {
+    expect(() => validateProviderChoice({ provider: 'claude', reviewProvider: 'zai' })).toThrow(
+      /cannot mix "claude" and "zai"/,
+    );
+  });
+
+  it('does NOT throw when codex implements and zai reviews (different transports)', () => {
+    expect(() => validateProviderChoice({ provider: 'codex', reviewProvider: 'zai' })).not.toThrow();
+  });
+
+  it('throws when zai is reviewer-only under proxy mode (no primary sidecar for it)', () => {
+    expect(() => validateProviderChoice({ provider: 'codex', reviewProvider: 'zai' }, { proxyMode: true })).toThrow(
+      /needs "zai" as the implementer/,
+    );
+  });
+
+  it('selectAgents still throws on the same combos (behaviour unchanged)', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'claude', reviewProvider: 'zai' }, env)).toThrow(
+      /cannot mix "claude" and "zai"/,
+    );
+    const env2 = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env2, { proxyMode: true })).toThrow(
+      /needs "zai" as the implementer/,
+    );
   });
 });

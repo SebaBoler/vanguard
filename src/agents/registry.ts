@@ -211,22 +211,16 @@ export interface SelectedAgents {
 }
 
 /**
- * Resolve a provider choice into agents + split secrets, shared by every runner. Keeps provider
- * construction, the used-provider set, the transport-collision check, the fail-fast key check, and
- * Anthropic-auth suppression in one place — all derived from the PROVIDERS table (no per-runner copy).
+ * Throws when the provider/reviewProvider combination cannot run in one sandbox
+ * (shared transport collision, or a reviewer-only primary-sidecar provider under --llm-proxy).
  */
-export function selectAgents(
-  choice: ProviderChoice,
-  env: NodeJS.ProcessEnv = process.env,
-  opts: ProviderSecretOptions = {},
-): SelectedAgents {
+export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSecretOptions = {}): void {
   const provider = choice.provider ?? 'claude';
-  const used: ProviderName[] = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  const review = choice.reviewProvider;
 
   // Two distinct providers sharing one transport slot collide in a single sandbox (shared env namespace,
   // e.g. one ANTHROPIC_BASE_URL). Only the implement + review stages can differ, so a single pairwise
   // check suffices: claude+zai (both 'anthropic') is the case this rejects.
-  const review = choice.reviewProvider;
   if (review !== undefined && review !== provider && spec(review).transport === spec(provider).transport) {
     const names = [provider, review].sort().map((n) => `"${n}"`).join(' and ');
     throw new AgentError(
@@ -245,6 +239,22 @@ export function selectAgents(
         `Use --provider ${review}, or run this combination without --llm-proxy.`,
     );
   }
+}
+
+/**
+ * Resolve a provider choice into agents + split secrets, shared by every runner. Keeps provider
+ * construction, the used-provider set, the transport-collision check, the fail-fast key check, and
+ * Anthropic-auth suppression in one place — all derived from the PROVIDERS table (no per-runner copy).
+ */
+export function selectAgents(
+  choice: ProviderChoice,
+  env: NodeJS.ProcessEnv = process.env,
+  opts: ProviderSecretOptions = {},
+): SelectedAgents {
+  const provider = choice.provider ?? 'claude';
+  const used: ProviderName[] = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+
+  validateProviderChoice(choice, opts);
 
   const { sandboxSecrets, proxySecrets } = providerSecrets(used, env, opts);
   return {

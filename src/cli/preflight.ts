@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { providerSecrets, requiresApiKey } from '../agents/registry.js';
+import { providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { Command } from './args.js';
 
@@ -154,6 +154,19 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       const message = error instanceof Error ? error.message : String(error);
       checks.push(check('provider auth', false, message));
     }
+  }
+
+  try {
+    validateProviderChoice(
+      {
+        ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+        ...('reviewProvider' in cmd && cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+      },
+      { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true },
+    );
+    checks.push(check('provider combo', true));
+  } catch (error) {
+    checks.push(check('provider combo', false, error instanceof Error ? error.message : String(error)));
   }
 
   const gitRoot = await runOk(run, cmd.repoPath, 'git', ['rev-parse', '--show-toplevel']);
