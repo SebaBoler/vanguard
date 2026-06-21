@@ -393,7 +393,7 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 ### Implement issues via GitHub Actions
 
-Run the implement loop straight from GitHub Actions — no always-on host. Label an issue `ready for agent` and the workflow runs `vanguard run --github <n>` in a sandbox, then opens a PR. This is event-driven (the agent pass only); the two-pass spec loop needs a polling watcher, so put `ready for agent` directly on the issue. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo.
+Run the loop straight from GitHub Actions — no always-on host. Labelling an issue triggers one `vanguard watch --source github --once` sweep: Loop v1 triage → spec/agent pipeline → draft PR, with the routing labels moving live (`ready for agent` → `vanguard:running` → `vanguard:review`, or → `needs info` if the ticket is too vague). Label `ready for agent` to implement directly, or `ready for spec` to plan first. Because `--once` has no "next poll", a `ready for spec` ticket is specced and advanced to `ready for agent` in the sweep but implemented on the next trigger. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo.
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 
@@ -409,21 +409,19 @@ on:
   issues:
     types: [labeled]
   workflow_dispatch:
-    inputs:
-      issue: { description: Issue number to implement, required: true }
 permissions:
   contents: write
   pull-requests: write
   issues: write
 concurrency:
-  group: vanguard-implement-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.issue }}
+  group: vanguard-implement-${{ github.repository }}
   cancel-in-progress: false
 jobs:
   implement:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
       (github.event_name == 'issues' &&
-      github.event.label.name == 'ready for agent' &&
+      contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
     runs-on: ubuntu-latest
@@ -443,14 +441,20 @@ jobs:
       - run: pnpm build
         working-directory: .vanguard-src
       - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Implement issue
+      - name: Ensure routing labels       # watch edits these; gh requires them to exist
+        run: |
+          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:review:0E8A16"; do
+            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
+          done
+      - name: Run Vanguard loop (one sweep)
         env:
-          ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: >-
-          node .vanguard-src/dist/cli/index.js run
-          --github "$ISSUE" --github-repo "$GITHUB_REPOSITORY"
-          --repo "$GITHUB_WORKSPACE" --skills .vanguard-src/skills --llm-proxy
+          node .vanguard-src/dist/cli/index.js watch
+          --source github --github-repo "$GITHUB_REPOSITORY"
+          --repo "$GITHUB_WORKSPACE" --once
+          --skills .vanguard-src/skills --llm-proxy
 ```
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same label — pick one per repo (a Linear watcher does not clash).
