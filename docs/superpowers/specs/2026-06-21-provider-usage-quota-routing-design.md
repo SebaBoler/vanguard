@@ -24,8 +24,8 @@ Two transports, chosen per stage by purpose:
 | GLM (z.ai)        | → LiteLLM proxy                        | z.ai **monitor JSON** endpoint, host-side poll  | cost tracking / pay-per-token measure |
 | Claude (+ subs)   | → **vanguard sidecar** → api.anthropic | `anthropic-ratelimit-unified-*` scoured at sidecar | subscription, no per-token cost     |
 
-One uniform abstraction (`UsageProbe` + `SharedQuotaCache` + `BucketCheck`) sits over both. vanguard
-owns polling, caching, gating, and routing. The consumer picks providers and thresholds.
+One uniform shape (`QuotaSnapshot` + per-bucket cache + `BucketCheck`) sits over both. vanguard owns
+polling, caching, gating, and routing. The consumer picks providers and thresholds.
 
 ### Why this shape
 
@@ -47,64 +47,55 @@ LiteLLM-style transport instead of the vanguard sidecar. Tracking only works on 
 
 ## Components
 
-All new code under `src/agents/quota/`.
+Two new files: `src/agents/quota.ts` (snapshot, cache, matrix, checks, z.ai refresh) and
+`src/agents/quota-routing.ts` (the provider).
 
-### `snapshot.ts` — types + pure mappers
+### `quota.ts` — snapshot, cache, matrix, checks
 
 ```ts
 export interface QuotaSnapshot {
   usedPct: number;     // 0..100
   resetAt: number;     // epoch ms; 0 if unknown
   fetchedAt: number;   // epoch ms
-  source: 'monitor' | 'header' | 'stale';
 }
 
-// z.ai: worst (most-depleted) window wins.
-export function worstWindow(windows: Array<{ usedPct: number; resetAt: number }>, now: number): QuotaSnapshot;
-
-// Claude: parse anthropic-ratelimit-unified-* into a snapshot.
-export function parseUnifiedRatelimit(headers: Record<string, string | string[] | undefined>, now: number): QuotaSnapshot | undefined;
-```
-
-Pure functions → tested with literal fixtures (the exact header names captured from a real Claude
-response; the z.ai `data.limits[]` shape already known from `zaiTokenQuota`).
-
-### `cache.ts` — `SharedQuotaCache`
-
-- **One file per bucket**: `<cacheDir>/<bucket>.json` (e.g. `~/.cache/vanguard/quota/zai.json`,
-  `.../claude.json`). Different writers never touch the same file (z.ai writer = vanguard host;
-  Claude writer = the sidecar), so **no lockfile** and no read-modify-write race.
-- Atomic write: write `<file>.tmp` then `rename` (POSIX atomic).
-- API: `read(bucket): QuotaSnapshot | undefined`, `write(bucket, snap)`,
-  `recordHeader(bucket, snap)` (writes only when `snap.fetchedAt >= current.fetchedAt`).
-- Shared cross-project: kotor-kit and ModelBox point at the same `cacheDir`.
-
-### `bucket.ts` — matrix, resolver, checks
-
-```ts
 export type BucketId = string;
 export interface ModelEntry { key: string; bucket: BucketId; effort?: ReasoningEffort; env: Record<string, string>; }
 export interface BucketCheck { available(): Promise<boolean>; }
 export class AllBucketsFlooredError extends Error {}
 
-// First entry in `chain` (ordered model keys, starting at/after preferred) whose bucket is available.
-export function resolveModel(preferred: string, chain: string[], models: ModelEntry[], checks: Record<BucketId, BucketCheck>): Promise<ModelEntry>;
+// Pure mappers (call Date.now() internally). z.ai: worst (most-depleted) window wins.
+export function worstWindow(windows: Array<{ usedPct: number; resetAt: number }>): QuotaSnapshot;
+// Claude: parse anthropic-ratelimit-unified-* into a snapshot.
+export function parseUnifiedRatelimit(headers: Record<string, string | string[] | undefined>): QuotaSnapshot | undefined;
 
+// Per-bucket file cache: <cacheDir>/<bucket>.json. Atomic write (tmp + rename).
+export function readSnapshot(cacheDir: string, bucket: BucketId): QuotaSnapshot | undefined;
+export function writeSnapshot(cacheDir: string, bucket: BucketId, snap: QuotaSnapshot): void;
+
+// First entry in `chain` (ordered model keys, from preferred) whose bucket is available; else throws.
+export function resolveModel(preferred: string, chain: string[], models: ModelEntry[], checks: Record<BucketId, BucketCheck>): Promise<ModelEntry>;
 // Available when fresh snapshot usedPct < bailPct; refreshes when stale; stale-tolerant on refresh error.
-export function pctBucketCheck(cache: SharedQuotaCache, bucket: BucketId, opts: { bailPct: number; ttlMs: number; refresh: () => Promise<QuotaSnapshot> }): BucketCheck;
+export function pctBucketCheck(cacheDir: string, bucket: BucketId, opts: { bailPct: number; ttlMs: number; refresh: () => Promise<QuotaSnapshot> }): BucketCheck;
+// z.ai monitor read (moved out of kotor): GET monitor endpoint, Bearer $ZAI_API_KEY, filter TOKENS_LIMIT → worstWindow.
+export function zaiMonitorRefresh(): Promise<QuotaSnapshot>;
 ```
 
-Stale-tolerance rule: a refresh error (or the hostile usage endpoint 429ing) never trips the gate to
-"floored" — fall back to the last snapshot; with no snapshot at all, return available (Claude is the
-best-effort terminal fallback).
+Notes:
 
-### `probe.ts` — `ZaiMonitorProbe`
+- **Pure mappers** (`worstWindow`, `parseUnifiedRatelimit`) tested with literal fixtures (exact header
+  names captured from a real Claude response; z.ai `data.limits[]` shape known from `zaiTokenQuota`).
+- **One file per bucket** (`zai.json`, `claude.json`): z.ai writer = vanguard host, Claude writer =
+  the sidecar — different files, so **no lockfile** and no read-modify-write race. `writeSnapshot` is
+  last-write-wins; each bucket has a single writer so that's a no-op race anyway. Shared cross-project:
+  kotor-kit and ModelBox point at the same `cacheDir`.
+- **Stale-tolerance**: a refresh error (or the hostile usage endpoint 429ing) never trips the gate to
+  "floored" — fall back to the last snapshot; with no snapshot at all, return available (Claude is the
+  best-effort terminal fallback).
+- Claude needs no refresh fn — the sidecar pushes header snapshots into `claude.json`; its
+  `pctBucketCheck` reads the cache and treats a missing/expired snapshot as available.
 
-The `zaiTokenQuota()` HTTP read (z.ai monitor endpoint, `Authorization: Bearer $ZAI_API_KEY`,
-filter `TOKENS_LIMIT`, map windows) **moved out of kotor into vanguard**, exposed as the `refresh`
-fn for the z.ai `pctBucketCheck`. Claude needs no probe — the sidecar pushes header snapshots in.
-
-### `routing.ts` — `QuotaRoutingProvider`
+### `quota-routing.ts` — `QuotaRoutingProvider`
 
 `implements AgentProvider`. At `run()` (the per-stage boundary): resolve the model from
 `input.model` (preferred key) against the chain, overlay the entry's `env` + `effort`, delegate to
@@ -115,38 +106,38 @@ behavior, no thrash, no flip-back.
 The point of the swap is to **keep work moving smoothly when a limit is hit** — fall over to the next
 bucket at the stage boundary rather than stalling or abruptly dying mid-pipeline when a window empties.
 
-**Live usage debug (`debug`):** when enabled, before each yielded turn the provider reads the current
-snapshot(s) from the cache and prints a one-line burn summary alongside the existing per-turn log,
-e.g. `[quota] zai 84% (resets 42m) · claude 12%`. The numbers are near-live: Claude updates per
-response (sidecar writes the header snapshot), z.ai updates per TTL poll. Default off; opt-in per
-consumer workflow. Sink defaults to stderr; a custom `log?: (line: string) => void` overrides it.
+**Live usage debug (`debug?: (line: string) => void`):** pass a sink to enable, omit to disable.
+Before each yielded turn the provider reads the current snapshots from the cache and emits a one-line
+burn summary, e.g. `[quota] zai 84% (resets 42m) · claude 12%`. Near-live: Claude updates per response
+(sidecar writes the header snapshot), z.ai per TTL poll. (`debug: console.error` for stderr.)
 
 ### High-level factory
 
 ```ts
 const agent = quotaRoutedAgent({
   buckets: {
-    zai:    { bailPct: 97, ttlMs: 60_000,  chainFirst: true,  refresh: zaiMonitorRefresh },
+    zai:    { bailPct: 97, ttlMs: 60_000,  refresh: zaiMonitorRefresh },
     claude: { bailPct: 90, ttlMs: 300_000, /* header-fed; reactive fallback */ },
   },
   models: MODELS,         // ModelEntry[] (key↔bucket↔env)
+  chain: DEFAULT_CHAIN,   // ordered model keys (priority)
   cacheDir: '~/.cache/vanguard/quota',
-  debug: true,            // print live burn before each turn (default false)
-  log: console.error,     // optional sink override (default stderr)
+  debug: console.error,   // optional: live burn per turn (omit to disable)
 });
 ```
 
-Building blocks (`QuotaRoutingProvider`, `SharedQuotaCache`, `pctBucketCheck`, `resolveModel`,
-`ZaiMonitorProbe`, `worstWindow`, `parseUnifiedRatelimit`, types) are **also** exported for custom
-wiring. The factory removes the bulk of consumer boilerplate; the primitives keep it flexible.
+Building blocks (`QuotaRoutingProvider`, `readSnapshot`/`writeSnapshot`, `pctBucketCheck`,
+`resolveModel`, `zaiMonitorRefresh`, `worstWindow`, `parseUnifiedRatelimit`, types) are **also**
+exported for custom wiring. The factory removes the bulk of consumer boilerplate; the primitives keep
+it flexible.
 
 ## Infra changes (outside `quota/`)
 
 ### Header harvest in the sidecar
 
 `src/sandbox/llm-proxy-server.mjs` (upstream=anthropic only): after reading `upRes.headers`, parse
-`anthropic-ratelimit-unified-*` and write a `QuotaSnapshot{source:'header'}` to the path in
-`LLM_PROXY_QUOTA_FILE` (atomic rename, zero-dep `node:fs`). No secret/nonce ever touches that file;
+`anthropic-ratelimit-unified-*` and write a `QuotaSnapshot` to the path in `LLM_PROXY_QUOTA_FILE`
+(atomic rename, zero-dep `node:fs`). No secret/nonce ever touches that file;
 SECURITY log invariant unchanged (still never logs headers/body/secret/nonce). The host wires
 `LLM_PROXY_QUOTA_FILE` to `<cacheDir>/claude.json` and ensures the path is writable by the sidecar.
 
@@ -173,8 +164,8 @@ table (consumer-specific model keys + env maps remain consumer data).
 - `resolveModel` — prefers primary; spills on floor; throws `AllBucketsFlooredError` when all floored.
 - `pctBucketCheck` — fresh-under-bail available; at/over-bail floored; refresh-error stale-tolerant.
 - `QuotaRoutingProvider` — routes to primary + overlays env; sticky once a bucket floors; `debug`
-  emits a burn line per turn to the injected `log` sink (assert the sink receives it).
-- `SharedQuotaCache` — per-bucket read/write round-trip; `recordHeader` newer-wins.
+  sink receives a burn line per turn.
+- `readSnapshot`/`writeSnapshot` — per-bucket round-trip; atomic write leaves no `.tmp`.
 - Sidecar harvest — unit-test the header parser; smoke that the snapshot file is written + parseable.
 - Per-stage env — `runClaudeCli` forwards `input.env`; docker `exec` renders `-e`.
 
