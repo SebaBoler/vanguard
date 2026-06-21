@@ -9,7 +9,7 @@ const MODELS: ModelEntry[] = [
 ];
 
 function fakeDelegate() {
-  const calls: Array<{ model?: string; env?: Record<string, string> }> = [];
+  const calls: Array<{ model: string | undefined; env: Record<string, string> | undefined }> = [];
   const provider: AgentProvider = {
     name: 'fake',
     async *run(input: AgentRunInput) {
