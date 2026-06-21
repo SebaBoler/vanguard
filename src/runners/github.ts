@@ -24,7 +24,7 @@ import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
 export interface RunGithubIssueDeps extends ProviderChoice {
-  auth: AgentAuth;
+  auth?: AgentAuth;
   repoPath: string;
   repoSlug: string;
   /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
@@ -78,7 +78,7 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
       image: 'vanguard-sandbox:latest',
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
-        ...(deps.llmProxy === undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+        ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
         ...agents.secrets,
       },
       ...sandboxResourceLimits(),
@@ -163,10 +163,14 @@ export async function githubDepsFromEnv(
   repoPath: string,
   repoSlug?: string,
   provider?: ProviderName,
+  reviewProvider?: ProviderName,
 ): Promise<RunGithubIssueDeps> {
-  const auth = agentAuthFromEnv(provider);
+  const auth = agentAuthFromEnv({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+  });
   const slug = repoSlug ?? process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
-  return { auth, repoPath, repoSlug: slug };
+  return { ...(auth !== undefined ? { auth } : {}), repoPath, repoSlug: slug };
 }
 
 /** Extract the owner/repo slug from the origin remote. */

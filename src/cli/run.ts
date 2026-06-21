@@ -6,7 +6,6 @@ import { agentAuthFromEnv } from '../agents/auth.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderName } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { Command } from './args.js';
 
@@ -20,8 +19,13 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  const auth = requireAuth(cmd.provider);
-  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth, ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}) });
+  const auth = requireAuth(cmd);
+  const ctx = await startSandboxContext({
+    egress: cmd.egress,
+    llmProxy: cmd.llmProxy === true,
+    ...(auth !== undefined ? { auth } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+  });
 
   try {
     if (cmd.source === 'linear') {
@@ -36,13 +40,16 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
   }
 }
 
-function requireAuth(provider: ProviderName | undefined = undefined): AgentAuth {
-  return agentAuthFromEnv(provider);
+function requireAuth(cmd: RunCommand): AgentAuth | undefined {
+  return agentAuthFromEnv({
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+  });
 }
 
 function linearDeps(
   cmd: RunCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
@@ -56,7 +63,7 @@ function linearDeps(
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
   return {
-    auth,
+    ...(auth !== undefined ? { auth } : {}),
     linearKey,
     skillsDir,
     repoPath: cmd.repoPath,
@@ -76,7 +83,7 @@ function linearDeps(
 
 async function runLinear(
   cmd: RunCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
@@ -99,8 +106,7 @@ async function runGithub(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
-  requireAuth(cmd.provider);
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -126,8 +132,7 @@ async function runProject(
   if (!Number.isInteger(projectNumber) || projectNumber < 1) {
     throw new Error(`--project expects a board number, got "${cmd.id}".`);
   }
-  requireAuth(cmd.provider);
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;

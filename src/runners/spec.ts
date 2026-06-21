@@ -28,7 +28,7 @@ import type { VanguardLogger } from '../core/logger.js';
  * repo slug / verification / fork / review-model options are intentionally absent.
  */
 export interface RunSpecGeneratorDeps extends ProviderChoice {
-  auth: AgentAuth;
+  auth?: AgentAuth;
   /** Local repo path: where the worktree is cut and where the run record is persisted. */
   repoPath: string;
   /** Source of the task being specced. Injected so the spec pass is testable without a live source. */
@@ -71,7 +71,7 @@ function defaultSandboxFactory(
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
     secrets: {
-      ...(deps.llmProxy === undefined && injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+      ...(deps.llmProxy === undefined && deps.auth !== undefined && injectAnthropicAuth ? authSecrets(deps.auth) : {}),
       ...secrets,
     },
     ...sandboxResourceLimits(),

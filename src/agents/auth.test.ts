@@ -27,19 +27,35 @@ describe('authFromEnv', () => {
 
 describe('agentAuthFromEnv', () => {
   it('resolves the z.ai key as an api-mode auth for --provider zai (no Anthropic token needed)', () => {
-    expect(agentAuthFromEnv('zai', { ZAI_API_KEY: 'z-key' })).toEqual({ mode: 'api', apiKey: 'z-key' });
+    expect(agentAuthFromEnv({ provider: 'zai' }, { ZAI_API_KEY: 'z-key' })).toEqual({ mode: 'api', apiKey: 'z-key' });
   });
 
   it('throws when ZAI_API_KEY is missing for zai', () => {
-    expect(() => agentAuthFromEnv('zai', {})).toThrow(/ZAI_API_KEY/);
+    expect(() => agentAuthFromEnv({ provider: 'zai' }, {})).toThrow(/ZAI_API_KEY/);
   });
 
   it('falls back to Anthropic auth for non-zai providers', () => {
-    expect(agentAuthFromEnv('claude', { [API_ENV]: 'k' })).toEqual({ mode: 'api', apiKey: 'k' });
-    expect(agentAuthFromEnv(undefined, { [SUBSCRIPTION_ENV]: 't' })).toEqual({ mode: 'subscription', token: 't' });
+    expect(agentAuthFromEnv({ provider: 'claude' }, { [API_ENV]: 'k' })).toEqual({ mode: 'api', apiKey: 'k' });
+    expect(agentAuthFromEnv({}, { [SUBSCRIPTION_ENV]: 't' })).toEqual({ mode: 'subscription', token: 't' });
   });
 
   it('throws when Anthropic auth is missing for a non-zai provider', () => {
-    expect(() => agentAuthFromEnv('codex', {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+    expect(() => agentAuthFromEnv({ provider: 'codex' }, {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+  });
+
+  it('does not throw and returns undefined when codex/cursor implement + zai review (no Anthropic needed)', () => {
+    expect(agentAuthFromEnv({ provider: 'codex', reviewProvider: 'zai' }, { ZAI_API_KEY: 'z', CODEX_API_KEY: 'c' })).toBeUndefined();
+  });
+
+  it('throws when Anthropic auth is missing and zai is not in the picture', () => {
+    expect(() => agentAuthFromEnv({ provider: 'codex' }, {})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN/);
+  });
+
+  it('throws when ZAI_API_KEY is missing and provider is zai', () => {
+    expect(() => agentAuthFromEnv({ provider: 'zai' }, {})).toThrow(/ZAI_API_KEY/);
+  });
+
+  it('returns subscription auth for claude provider', () => {
+    expect(agentAuthFromEnv({ provider: 'claude' }, { [SUBSCRIPTION_ENV]: 't' })).toEqual({ mode: 'subscription', token: 't' });
   });
 });

@@ -36,8 +36,13 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     return;
   }
 
-  const auth = agentAuthFromEnv(cmd.provider);
-  const sandboxContext = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth, ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}) });
+  const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
+  const sandboxContext = await startSandboxContext({
+    egress: cmd.egress,
+    llmProxy: cmd.llmProxy === true,
+    ...(auth !== undefined ? { auth } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+  });
   try {
     const reviewer: PullRequestReviewer = (pr) => runDefaultReviewer(pr, cmd, auth, sandboxContext);
     const result = await runReview(cmd.prRef, {
@@ -54,7 +59,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
 async function runDefaultReviewer(
   pr: PullRequestForReview,
   cmd: ReviewPrCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
 ): Promise<string> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
@@ -70,7 +75,7 @@ async function runDefaultReviewer(
     const sandbox = new DockerSandboxProvider({
       image: 'vanguard-sandbox:latest',
       secrets: {
-        ...(sandboxContext.llmProxy === undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
+        ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
       },
       ...sandboxResourceLimits(),

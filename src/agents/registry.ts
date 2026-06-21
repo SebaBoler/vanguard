@@ -184,6 +184,14 @@ export interface ProviderChoice {
   reviewProvider?: ProviderName;
 }
 
+/** True when the run needs an Anthropic-family credential (subscription token / API key). A used
+ *  provider that owns the Anthropic transport with its own creds (zai) suppresses the need. */
+export function needsAnthropicAuth(choice: ProviderChoice): boolean {
+  const provider = choice.provider ?? 'claude';
+  const used: ProviderName[] = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  return !used.some((n) => spec(n).ownsAnthropicTransport === true);
+}
+
 /** A resolved choice: the agents to run plus the secrets split into sandbox-safe and proxy-held buckets. */
 export interface SelectedAgents {
   agent: AgentProvider;

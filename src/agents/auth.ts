@@ -1,4 +1,5 @@
-import type { ProviderName } from './registry.js';
+import { needsAnthropicAuth } from './registry.js';
+import type { ProviderChoice } from './registry.js';
 
 export type AgentAuth = { mode: 'subscription'; token: string } | { mode: 'api'; apiKey: string };
 
@@ -31,26 +32,23 @@ export function authFromEnv(env: NodeJS.ProcessEnv = process.env): AgentAuth | u
 }
 
 /**
- * Resolve the run's auth for the chosen provider. For Zai, the z.ai key (ZAI_API_KEY) is carried as an
- * api-mode AgentAuth — it is NOT an Anthropic credential, but it flows through the same auth slot so the
- * proxy sidecar and dep threading stay uniform. It is only consumed two ways: (1) the primary sidecar
- * under --llm-proxy (startSandboxContext forwards it to api.z.ai as a bearer key), and (2) it is held
- * back from the sandbox in normal mode (selectAgents sets injectAnthropicAuth=false for Zai, so the
- * z.ai transport comes from agents.secrets = ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN instead). Throws
- * if a required credential is missing. For every non-Zai provider the Anthropic token is required (it is
- * the default transport, and even Codex/Cursor runs have historically injected it).
+ * Resolve the run's auth for the chosen provider choice. For Zai (as primary provider), the z.ai key
+ * (ZAI_API_KEY) is carried as an api-mode AgentAuth — it is NOT an Anthropic credential, but it flows
+ * through the same auth slot so the proxy sidecar and dep threading stay uniform. When no used provider
+ * needs an Anthropic-family credential (e.g. codex/cursor implement + zai review), returns undefined
+ * rather than throwing — the Anthropic credential is genuinely not required for that combo. Throws if
+ * a required credential is missing.
  */
 export function agentAuthFromEnv(
-  provider: ProviderName | undefined,
+  choice: ProviderChoice,
   env: NodeJS.ProcessEnv = process.env,
-): AgentAuth {
-  if (provider === 'zai') {
+): AgentAuth | undefined {
+  if (choice.provider === 'zai') {
     const key = env['ZAI_API_KEY'];
-    if (key === undefined || key === '') {
-      throw new Error('Set ZAI_API_KEY before running with --provider zai.');
-    }
+    if (key === undefined || key === '') throw new Error('Set ZAI_API_KEY before running with --provider zai.');
     return { mode: 'api', apiKey: key };
   }
+  if (!needsAnthropicAuth(choice)) return authFromEnv(env); // suppressed (e.g. codex/cursor + zai review): unused, may be undefined
   const auth = authFromEnv(env);
   if (auth === undefined) {
     throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');

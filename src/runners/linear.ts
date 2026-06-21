@@ -25,7 +25,7 @@ import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps extends ProviderChoice {
-  auth: AgentAuth;
+  auth?: AgentAuth;
   linearKey: string;
   repoPath: string;
   skillsDir: string;
@@ -84,7 +84,7 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
       image: 'vanguard-sandbox:latest',
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
-        ...(deps.llmProxy === undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+        ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
         LINEAR_API_KEY: deps.linearKey,
         ...agents.secrets,
       },
@@ -165,7 +165,7 @@ export async function runLinearParent(
 
 /** Read the run dependencies from the environment, throwing actionable errors when one is missing. */
 export function linearDepsFromEnv(provider?: ProviderName): RunLinearIssueDeps {
-  const auth = agentAuthFromEnv(provider);
+  const auth = agentAuthFromEnv(provider !== undefined ? { provider } : {});
   const linearKey = process.env.LINEAR_API_KEY;
   if (linearKey === undefined || linearKey === '') {
     throw new Error('Set LINEAR_API_KEY so the in-sandbox linear CLI can read the issue.');
@@ -174,7 +174,7 @@ export function linearDepsFromEnv(provider?: ProviderName): RunLinearIssueDeps {
   if (skillsDir === undefined) {
     throw new Error('Set SKILLS_DIR to a directory of skills (e.g. a clone of schpet/linear-cli /skills).');
   }
-  return { auth, linearKey, skillsDir, repoPath: process.env.REPO_PATH ?? process.cwd() };
+  return { ...(auth !== undefined ? { auth } : {}), linearKey, skillsDir, repoPath: process.env.REPO_PATH ?? process.cwd() };
 }
 
 /**

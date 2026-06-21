@@ -28,9 +28,11 @@ export interface SandboxContextOptions {
   llmProxy: boolean;
   /**
    * The primary sidecar's credential. For Anthropic (default) this is the Claude subscription/API auth;
-   * for Zai it is the z.ai key carried as an api-mode auth (`agentAuthFromEnv('zai')` reads ZAI_API_KEY).
+   * for Zai it is the z.ai key carried as an api-mode auth (`agentAuthFromEnv({provider:'zai'})` reads
+   * ZAI_API_KEY). Absent when no Anthropic-family credential is needed (e.g. codex/cursor + zai review)
+   * and --llm-proxy is not active (proxy mode always needs a primary-sidecar credential).
    */
-  auth: AgentAuth;
+  auth?: AgentAuth;
   /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
   provider?: ProviderName;
 }
@@ -61,6 +63,11 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
 
   // The primary sidecar's upstream follows the provider (zai → api.z.ai, else Anthropic); the credential
   // comes uniformly from `auth` (for zai, agentAuthFromEnv carries the z.ai key as an api-mode secret).
+  if (opts.auth === undefined) {
+    throw new Error(
+      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, or ZAI_API_KEY for --provider zai).',
+    );
+  }
   const upstream: Upstream = opts.provider === 'zai' ? 'zai' : 'anthropic';
   const auth = llmProxyAuth(opts.auth);
   const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });
