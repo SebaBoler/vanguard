@@ -6,7 +6,12 @@ import {
   isAllowedLlmPath,
   constantTimeEqual,
   upstreamPath,
+  parseUnifiedRatelimit,
+  writeQuotaSnapshot,
 } from './llm-proxy-rewrite.mjs';
+import { readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('mergeAnthropicBeta', () => {
   it('appends the oauth beta and dedupes, preserving request betas', () => {
@@ -113,5 +118,49 @@ describe('upstreamPath', () => {
   });
   it('falls back to base path + "/" when reqUrl is undefined', () => {
     expect(upstreamPath('zai', undefined)).toBe('/api/coding/paas/v4/');
+  });
+});
+
+describe('parseUnifiedRatelimit', () => {
+  it('derives usedPct from remaining/limit and resetAt from epoch-seconds reset', () => {
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-status': 'allowed',
+      'anthropic-ratelimit-unified-remaining': '200',
+      'anthropic-ratelimit-unified-limit': '1000',
+      'anthropic-ratelimit-unified-reset': '1750000000',
+    }, 1_700_000_000_000);
+    expect(snap).toEqual({ usedPct: 80, resetAt: 1_750_000_000_000, fetchedAt: 1_700_000_000_000 });
+  });
+
+  it('falls back to status when no remaining/limit (rejected => 100)', () => {
+    const snap = parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'rejected' }, 5);
+    expect(snap).toEqual({ usedPct: 100, resetAt: 0, fetchedAt: 5 });
+  });
+
+  it('returns undefined when no unified headers present', () => {
+    expect(parseUnifiedRatelimit({ 'content-type': 'application/json' }, 5)).toBeUndefined();
+  });
+
+  it('handles array-valued headers and ISO reset', () => {
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-remaining': ['0'],
+      'anthropic-ratelimit-unified-limit': ['100'],
+      'anthropic-ratelimit-unified-reset': '2025-01-01T00:00:00Z',
+    }, 5);
+    expect(snap?.usedPct).toBe(100);
+    expect(snap?.resetAt).toBe(Date.parse('2025-01-01T00:00:00Z'));
+  });
+});
+
+describe('writeQuotaSnapshot', () => {
+  it('writes parseable JSON atomically and leaves no .tmp', () => {
+    const path = join(tmpdir(), `vg-quota-${process.pid}.json`);
+    rmSync(path, { force: true });
+    writeQuotaSnapshot(path, { usedPct: 42, resetAt: 0, fetchedAt: 9 });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ usedPct: 42, resetAt: 0, fetchedAt: 9 });
+    const leftovers = readdirSync(tmpdir()).filter((f) => f.startsWith(`vg-quota-${process.pid}.json`) && f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+    rmSync(path, { force: true });
+    expect(existsSync(path)).toBe(false);
   });
 });

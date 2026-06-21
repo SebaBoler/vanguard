@@ -42,3 +42,21 @@ export declare function upstreamPath(upstream: Upstream, reqUrl: string | undefi
 
 /** Constant-time string compare (length-safe). */
 export declare function constantTimeEqual(a: string, b: string): boolean;
+
+export interface QuotaSnapshot {
+  /** Percent of the most-constrained window consumed, 0..100. */
+  usedPct: number;
+  /** Epoch ms when the window resets; 0 if unknown. */
+  resetAt: number;
+  /** Epoch ms the snapshot was taken. */
+  fetchedAt: number;
+}
+
+/** Parse Anthropic unified rate-limit headers into a snapshot; undefined if none present. */
+export declare function parseUnifiedRatelimit(
+  headers: Record<string, string | string[] | undefined>,
+  now?: number,
+): QuotaSnapshot | undefined;
+
+/** Atomically write a snapshot as JSON (tmp + rename). */
+export declare function writeQuotaSnapshot(filePath: string, snap: QuotaSnapshot): void;
