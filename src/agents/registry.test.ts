@@ -163,4 +163,30 @@ describe('selectAgents', () => {
     // default provider is claude, so an unspecified implementer + zai reviewer also collides
     expect(() => selectAgents({ reviewProvider: 'zai' }, env)).toThrow(/cannot mix "claude" and "zai"/);
   });
+
+  it('rejects zai as reviewer-only under --llm-proxy (no primary sidecar; would misroute to Anthropic)', () => {
+    const env = { CODEX_API_KEY: 'c-key', CURSOR_API_KEY: 'u-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env, { proxyMode: true })).toThrow(
+      /needs "zai" as the implementer/,
+    );
+    expect(() => selectAgents({ provider: 'cursor', reviewProvider: 'zai' }, env, { proxyMode: true })).toThrow(
+      /needs "zai" as the implementer/,
+    );
+  });
+
+  it('allows codex+zai cross-provider WITHOUT --llm-proxy (zai key rides the sandbox directly)', () => {
+    const env = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
+    expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
+    expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
+    expect(selected.injectAnthropicAuth).toBe(false);
+  });
+
+  it('allows zai-implements + codex-reviews under --llm-proxy (zai owns the primary sidecar)', () => {
+    const env = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'zai', reviewProvider: 'codex' }, env, { proxyMode: true });
+    expect(selected.proxySecrets.codex).toBe('c-key'); // codex gets its secondary sidecar
+    expect(selected.secrets).toEqual({}); // zai key withheld (primary sidecar via auth)
+    expect(selected.injectAnthropicAuth).toBe(false);
+  });
 });

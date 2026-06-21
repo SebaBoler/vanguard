@@ -227,6 +227,17 @@ export function selectAgents(
     );
   }
 
+  // Under --llm-proxy, a provider that owns the Anthropic transport (zai) is served by the PRIMARY sidecar,
+  // whose upstream follows --provider only. So such a provider must BE the implementer; as a reviewer-only
+  // it has no sidecar and would silently fall back to the implementer's Anthropic upstream + credential.
+  if (opts.proxyMode === true && review !== undefined && review !== provider && spec(review).ownsAnthropicTransport === true) {
+    throw new AgentError(
+      `Cross-provider review with "${review}" under --llm-proxy needs "${review}" as the implementer too ` +
+        `(--provider ${review}): it owns the primary sidecar, whose upstream follows --provider. ` +
+        `Use --provider ${review}, or run this combination without --llm-proxy.`,
+    );
+  }
+
   const { sandboxSecrets, proxySecrets } = providerSecrets(used, env, opts);
   return {
     agent: makeProvider(provider),
