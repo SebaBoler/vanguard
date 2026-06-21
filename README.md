@@ -236,6 +236,32 @@ Codex does not read its key straight from the environment: `CodexProvider` runs 
 
 **z.ai (GLM Coding Plan).** `--provider zai` reuses the in-sandbox Claude Code CLI, pointed at z.ai's Anthropic-Messages-compatible coding endpoint (`https://api.z.ai/api/coding/paas/v4`) with the GLM model family (default `glm-5.2`). It needs **no Anthropic token** — set `ZAI_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the z.ai key is held by the primary trusted sidecar (forwarding to `api.z.ai` as a bearer key) and the sandbox gets only the per-run nonce. (z.ai's endpoint is OpenAI-compatible too, but the Codex CLI dropped `wire_api = "chat"` support, so the Claude-CLI route is the supported one.)
 
+**Quota routing / provider hot-swap** (library API). Wrap any provider so each *stage* resolves its model from an ordered fallback chain and **hot-swaps when a quota floors** — a run finishes on the fallback instead of dying mid-pipeline. `quotaRoutedAgent` reads each bucket's quota (z.ai from its monitor endpoint; Claude/subscription from `anthropic-ratelimit-unified-*` headers) and is **sticky**: once a bucket floors it stays floored for the rest of the run ("z.ai does the early stages, Claude finishes").
+
+```ts
+import { quotaRoutedAgent, zaiMonitorRefresh, type ModelEntry } from 'vanguard';
+
+const models: ModelEntry[] = [
+  { key: 'zai-anthropic/glm-5.2', bucket: 'zai',
+    env: { ANTHROPIC_BASE_URL: PROXY_URL }, secrets: { ANTHROPIC_AUTH_TOKEN: LITELLM_KEY } },
+  { key: 'claude-sonnet-4-6', bucket: 'claude', effort: 'high',
+    env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }, secrets: { CLAUDE_CODE_OAUTH_TOKEN: OAUTH } },
+];
+const agent = quotaRoutedAgent({
+  models,
+  chain: ['zai-anthropic/glm-5.2', 'claude-sonnet-4-6'],
+  cacheDir: `${process.env.HOME}/.cache/vanguard/quota`,
+  buckets: {
+    zai:    { bailPct: 97, ttlMs: 60_000, refresh: zaiMonitorRefresh }, // proactive; reads ZAI_API_KEY (host)
+    claude: { bailPct: 90, ttlMs: 300_000 },                            // reactive fallback (see note)
+  },
+  debug: console.error, // optional: "[quota] zai 84% (resets 42m) · claude 12%" per turn
+});
+// pass `agent` as the pipeline agent: runStages({ agent, ... })
+```
+
+Per `ModelEntry`, `env` carries transport (base URL, per-run nonce — argv-visible) and `secrets` carries real credentials via tmpfs (never argv / `docker inspect`); on a key collision per-stage `env` wins. The z.ai gate is proactive; the Claude subscription gate is header-harvested at the `--llm-proxy` sidecar and is **currently dormant** until the sidecar surfaces its snapshot to the host cache — until then Claude is the reactive (429) fallback, which still completes the run. Full wiring, precedence ladder, and activation steps: [docs/MIGRATION-provider-usage-quota.md](docs/MIGRATION-provider-usage-quota.md).
+
 ## Fork-and-select
 
 `run --fork <n>` runs the implementer stage `n` times (each variant forks the same base, on a worktree reset between runs), scores each variant's diff, and keeps the best one before the review/simplify stages continue. Scoring is an LLM verdict produced by a one-shot run of the same provider in a throwaway `/tmp` cwd (the diff is supplied in the prompt, so the scorer never touches the worktree). Use it to trade tokens for quality on hard tasks:
