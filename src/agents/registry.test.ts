@@ -80,13 +80,13 @@ describe('providerSecrets (zai)', () => {
     });
   });
 
-  it('holds the z.ai key back from the sandbox in proxy mode (surfaced as proxySecrets.zai)', () => {
+  it('withholds the z.ai key from the sandbox in proxy mode (no secondary sidecar; key comes via auth)', () => {
     const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     const { sandboxSecrets, proxySecrets } = providerSecrets(['zai'], env, { proxyMode: true });
     expect(sandboxSecrets).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
     expect(sandboxSecrets).not.toHaveProperty('ANTHROPIC_BASE_URL');
     expect(sandboxSecrets).toEqual({});
-    expect(proxySecrets.zai).toBe('z-key');
+    expect(proxySecrets).toEqual({});
   });
 
   it('throws when ZAI_API_KEY is missing (normal mode)', () => {
@@ -125,11 +125,42 @@ describe('selectAgents', () => {
     expect(selected.proxySecrets).toEqual({});
   });
 
-  it('keeps the z.ai key out of the sandbox in proxy mode (held by the primary sidecar)', () => {
+  it('keeps the z.ai key out of the sandbox in proxy mode (delivered to the primary sidecar via auth)', () => {
     const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     const selected = selectAgents({ provider: 'zai' }, env, { proxyMode: true });
     expect(selected.secrets).toEqual({});
-    expect(selected.proxySecrets.zai).toBe('z-key');
+    expect(selected.proxySecrets).toEqual({});
     expect(selected.injectAnthropicAuth).toBe(false);
+  });
+
+  it('suppresses Anthropic auth when zai is only the REVIEWER (codex implements)', () => {
+    const env = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
+    // Without this, ANTHROPIC_API_KEY would be injected and the zai reviewer's Claude CLI would
+    // prefer it over z.ai's ANTHROPIC_AUTH_TOKEN, hitting api.anthropic.com instead of z.ai.
+    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
+    expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
+    expect(selected.secrets.ANTHROPIC_BASE_URL).toBe('https://api.z.ai/api/coding/paas/v4');
+  });
+
+  it('suppresses Anthropic auth when zai IMPLEMENTS and cursor reviews', () => {
+    const env = { CURSOR_API_KEY: 'u-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'zai', reviewProvider: 'cursor' }, env);
+    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.secrets.CURSOR_API_KEY).toBe('u-key');
+    expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
+  });
+
+  it('rejects mixing claude and zai across stages (shared ANTHROPIC_* transport collides)', () => {
+    const env = { ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'claude', reviewProvider: 'zai' }, env)).toThrow(
+      /cannot mix "claude" and "zai"/,
+    );
+    expect(() => selectAgents({ provider: 'zai', reviewProvider: 'claude' }, env)).toThrow(
+      /cannot mix "claude" and "zai"/,
+    );
+    // default provider is claude, so an unspecified implementer + zai reviewer also collides
+    expect(() => selectAgents({ reviewProvider: 'zai' }, env)).toThrow(/cannot mix "claude" and "zai"/);
   });
 });

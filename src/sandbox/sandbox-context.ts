@@ -33,24 +33,6 @@ export interface SandboxContextOptions {
   auth: AgentAuth;
   /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
   provider?: ProviderName;
-  /** Injectable env (tests); defaults to process.env. */
-  env?: NodeJS.ProcessEnv;
-}
-
-/**
- * Resolve the primary LLM-proxy sidecar's upstream + secret for the chosen provider. Claude/Codex/Cursor
- * use the Anthropic upstream; Zai uses the z.ai upstream (zai reuses the Claude Code CLI against z.ai's
- * Anthropic-compatible endpoint, so its sidecar forwards to api.z.ai with a bearer key). The credential
- * is taken uniformly from `auth` — for Zai that carries the z.ai key as an api-mode secret.
- */
-function resolvePrimaryProxy(
-  opts: SandboxContextOptions,
-  _env: NodeJS.ProcessEnv,
-): { upstream: Upstream; auth: { mode: 'subscription' | 'api'; secret: string } } {
-  if (opts.provider === 'zai') {
-    return { upstream: 'zai', auth: llmProxyAuth(opts.auth) };
-  }
-  return { upstream: 'anthropic', auth: llmProxyAuth(opts.auth) };
 }
 
 /**
@@ -77,7 +59,10 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { proxyUrl: enclave.proxyUrl, network: enclave.network, destroy: enclave.destroy };
   }
 
-  const { upstream, auth } = resolvePrimaryProxy(opts, opts.env ?? process.env);
+  // The primary sidecar's upstream follows the provider (zai → api.z.ai, else Anthropic); the credential
+  // comes uniformly from `auth` (for zai, agentAuthFromEnv carries the z.ai key as an api-mode secret).
+  const upstream: Upstream = opts.provider === 'zai' ? 'zai' : 'anthropic';
+  const auth = llmProxyAuth(opts.auth);
   const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });
   console.log(
     upstream === 'zai'

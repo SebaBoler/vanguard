@@ -1,7 +1,8 @@
 import type { AgentProvider, AgentRunInput } from './provider.js';
 import { runClaudeCli } from './claude-stream.js';
 
-function buildArgs(input: AgentRunInput): string[] {
+/** Build the `claude` CLI arg list from a run input. Exported so ZaiProvider reuses it (same CLI). */
+export function buildClaudeArgs(input: AgentRunInput): string[] {
   const args = ['--print', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions'];
   if (input.effort !== undefined) args.push('--effort', input.effort);
   if (input.maxTurns !== undefined) args.push('--max-turns', String(input.maxTurns));
@@ -27,6 +28,6 @@ export class ClaudeCodeProvider implements AgentProvider {
   readonly name = 'claude-code';
 
   run(input: AgentRunInput) {
-    return runClaudeCli(input, buildArgs);
+    return runClaudeCli(input, buildClaudeArgs);
   }
 }

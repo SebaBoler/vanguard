@@ -2,6 +2,16 @@
 export type Upstream = 'anthropic' | 'openai' | 'zai';
 export type UpstreamAuth = { mode: 'subscription'; secret: string } | { mode: 'api'; secret: string };
 
+/** One upstream's wiring: forward host, allowed POST paths, and auth scheme. */
+export interface UpstreamSpec {
+  host: string;
+  paths: readonly string[];
+  auth: 'anthropic' | 'bearer';
+}
+
+/** Single source of truth for every proxiable upstream, keyed by the secret file's UPSTREAM value. */
+export declare const UPSTREAMS: Record<Upstream, UpstreamSpec>;
+
 export declare const OAUTH_BETA: 'oauth-2025-04-20';
 
 /** Merge request anthropic-beta with an extra value, preserving order and deduping. */
@@ -23,11 +33,8 @@ export declare function upstreamAuthHeaders(
  */
 export declare function isAllowedLlmPath(method: string, path: string, upstream?: Upstream): boolean;
 
-/** Headers to apply upstream for OpenAI: just Bearer SECRET (no anthropic-beta, no x-api-key). */
+/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export declare function openaiAuthHeaders(secret: string): Record<string, string>;
-
-/** Headers to apply upstream for z.ai: just Authorization: Bearer SECRET (no anthropic-beta, no x-api-key). */
-export declare function zaiAuthHeaders(secret: string): Record<string, string>;
 
 /** Constant-time string compare (length-safe). */
 export declare function constantTimeEqual(a: string, b: string): boolean;

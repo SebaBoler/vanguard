@@ -3,7 +3,6 @@ import {
   mergeAnthropicBeta,
   upstreamAuthHeaders,
   openaiAuthHeaders,
-  zaiAuthHeaders,
   isAllowedLlmPath,
   constantTimeEqual,
 } from './llm-proxy-rewrite.mjs';
@@ -90,16 +89,6 @@ describe('isAllowedLlmPath (zai)', () => {
     expect(isAllowedLlmPath('POST', '/v1/responses', 'zai')).toBe(false);
     expect(isAllowedLlmPath('POST', '/v1/chat/completions', 'zai')).toBe(false);
     expect(isAllowedLlmPath('GET', '/v1/messages', 'zai')).toBe(false);
-  });
-});
-
-describe('zaiAuthHeaders', () => {
-  it('returns only a Bearer authorization header (no anthropic-beta, no x-api-key)', () => {
-    const h = zaiAuthHeaders('zai-key');
-    expect(h.authorization).toBe('Bearer zai-key');
-    expect('anthropic-beta' in h).toBe(false);
-    expect('x-api-key' in h).toBe(false);
-    expect(Object.keys(h)).toEqual(['authorization']);
   });
 });
 

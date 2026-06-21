@@ -5,6 +5,7 @@ import type { LlmProxyDep } from './llm-proxy.js';
 // Single source of the allow semantics + default allowlist: the same plain-ESM `.mjs` the sidecar
 // imports (see egress-allow.mjs). Re-exported below so existing import sites keep working.
 import { isAllowed, DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
+import { UPSTREAMS } from './llm-proxy-rewrite.mjs';
 
 export { isAllowed, DEFAULT_EGRESS_ALLOWLIST };
 
@@ -72,8 +73,9 @@ export function allowlistWithout(list: readonly string[], host: string): string[
 }
 
 /** Upstream API hosts owned by trusted sidecars in --llm-proxy mode — removed from the sandbox allowlist
- *  (the sidecars reach these directly; the sandbox reaches the sidecars by name via NO_PROXY). */
-export const LLM_PROXY_UPSTREAM_HOSTS = ['api.anthropic.com', 'api.openai.com', 'api.z.ai'] as const;
+ *  (the sidecars reach these directly; the sandbox reaches the sidecars by name via NO_PROXY). Derived
+ *  from the single UPSTREAMS source so adding an upstream there drops its host from the allowlist too. */
+export const LLM_PROXY_UPSTREAM_HOSTS = Object.values(UPSTREAMS).map((u) => u.host);
 
 /** The sandbox egress allowlist under --llm-proxy: the base allowlist minus every sidecar-owned upstream host. */
 export function llmProxyEgressAllowlist(base: readonly string[] = DEFAULT_EGRESS_ALLOWLIST): string[] {

@@ -1,28 +1,16 @@
 import type { AgentProvider, AgentRunInput } from './provider.js';
 import { runClaudeCli } from './claude-stream.js';
+import { buildClaudeArgs } from './claude-code.js';
 
 /** Default z.ai coding model (GLM Coding Plan). Overridable per-run via --provider-model. */
 export const ZAI_DEFAULT_MODEL = 'glm-5.2';
 /** z.ai GLM Coding Plan endpoint — Anthropic-Messages-compatible, used as ANTHROPIC_BASE_URL. */
 export const ZAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
-function buildArgs(input: AgentRunInput): string[] {
-  const args = ['--print', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions'];
-  if (input.effort !== undefined) args.push('--effort', input.effort);
-  if (input.maxTurns !== undefined) args.push('--max-turns', String(input.maxTurns));
-  if (input.maxBudgetUsd !== undefined) args.push('--max-budget-usd', String(input.maxBudgetUsd));
-  if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
-  if (input.forkSession === true) args.push('--fork-session');
-  if (input.systemPrompt !== undefined) args.push('--append-system-prompt', input.systemPrompt);
-  if (input.mcpConfig !== undefined) args.push('--mcp-config', input.mcpConfig, '--strict-mcp-config');
-  if (input.allowedTools !== undefined && input.allowedTools.length > 0) {
-    args.push('--allowed-tools', ...input.allowedTools);
-  }
-  // z.ai's endpoint is Anthropic-compatible but serves GLM models, so a model is always required
-  // (the CLI's own default targets a Claude model that z.ai does not serve).
-  args.push('--model', input.model ?? ZAI_DEFAULT_MODEL);
-  return args;
-}
+// zai reuses the claude CLI args verbatim, but a model is always required: z.ai's endpoint serves GLM,
+// and the CLI's own default targets a Claude model z.ai does not serve. So force the GLM default.
+const buildArgs = (input: AgentRunInput): string[] =>
+  buildClaudeArgs({ ...input, model: input.model ?? ZAI_DEFAULT_MODEL });
 
 /**
  * Runs z.ai's GLM Coding Plan by reusing the in-sandbox `claude` CLI pointed at z.ai's
