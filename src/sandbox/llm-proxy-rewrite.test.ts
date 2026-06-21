@@ -141,6 +141,24 @@ describe('parseUnifiedRatelimit', () => {
     expect(parseUnifiedRatelimit({ 'content-type': 'application/json' }, 5)).toBeUndefined();
   });
 
+  it('returns undefined when only an unrecognized/garbage status is present and no remaining/limit', () => {
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'some_garbage_value' }, 5)).toBeUndefined();
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': '' }, 5)).toBeUndefined();
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'unknown' }, 5)).toBeUndefined();
+  });
+
+  it('returns undefined when remaining is present but limit is absent and no status', () => {
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-remaining': '200' }, 5)).toBeUndefined();
+  });
+
+  it('does not compute 100% used from an empty-string remaining with a valid limit', () => {
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-remaining': '',
+      'anthropic-ratelimit-unified-limit': '1000',
+    }, 5);
+    expect(snap).not.toEqual({ usedPct: 100, resetAt: 0, fetchedAt: 5 });
+  });
+
   it('handles array-valued headers and ISO reset', () => {
     const snap = parseUnifiedRatelimit({
       'anthropic-ratelimit-unified-remaining': ['0'],
