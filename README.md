@@ -421,14 +421,15 @@ concurrency:
 jobs:
   implement:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.label.name == 'ready for agent' &&
-      github.event.issue.user.login == 'YOUR_LOGIN')
+      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'ready for agent' &&
+      github.event.issue.user.login == 'YOUR_LOGIN' &&
+      github.event.sender.login == 'YOUR_LOGIN')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6                 # target repo -> workspace
       - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
@@ -444,6 +445,7 @@ jobs:
       - name: Implement issue
         env:
           ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: >-
           node .vanguard-src/dist/cli/index.js run
           --github "$ISSUE" --github-repo "$GITHUB_REPOSITORY"

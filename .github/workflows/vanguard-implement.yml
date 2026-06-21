@@ -1,7 +1,7 @@
 name: Vanguard Implement
 
-# Sandcastle "agent implement": label an issue -> Vanguard implements it in a
-# sandbox and opens a PR. The PR is then reviewed by vanguard-pr-review.yml.
+# Label an issue "ready for agent" -> Vanguard implements it in a sandbox and
+# opens a PR. The PR is then reviewed by vanguard-pr-review.yml.
 
 on:
   issues:
@@ -24,14 +24,15 @@ concurrency:
 jobs:
   implement:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.label.name == 'ready for agent' &&
-      github.event.issue.user.login == 'SebaBoler')
+      (github.event_name == 'workflow_dispatch' && github.actor == 'SebaBoler') ||
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'ready for agent' &&
+      github.event.issue.user.login == 'SebaBoler' &&
+      github.event.sender.login == 'SebaBoler')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6
 
@@ -58,6 +59,7 @@ jobs:
       - name: Implement issue
         env:
           ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: >-
           node dist/cli/index.js run
           --github "$ISSUE"
