@@ -17,7 +17,16 @@ export function readSnapshot(cacheDir: string, bucket: BucketId): QuotaSnapshot 
   const path = bucketPath(cacheDir, bucket);
   if (!existsSync(path)) return undefined;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as QuotaSnapshot;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as { usedPct?: unknown }).usedPct !== 'number' ||
+      typeof (parsed as { resetAt?: unknown }).resetAt !== 'number' ||
+      typeof (parsed as { fetchedAt?: unknown }).fetchedAt !== 'number'
+    ) {
+      return undefined;
+    }
+    return parsed as QuotaSnapshot;
   } catch {
     return undefined;
   }
@@ -139,6 +148,7 @@ export async function zaiMonitorRefresh(
   const key = env.ZAI_API_KEY;
   if (key === undefined || key === '') throw new Error('zaiMonitorRefresh needs ZAI_API_KEY in the environment.');
   const res = await fetchImpl(ZAI_QUOTA_URL, { headers: { Authorization: `Bearer ${key}` } });
+  if (!res.ok) throw new Error(`zaiMonitorRefresh: HTTP ${res.status}`);
   const json = (await res.json()) as {
     data?: { limits?: Array<{ type: string; percentage?: number; nextResetTime?: number }> };
   };
