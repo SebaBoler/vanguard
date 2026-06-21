@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readSnapshot, writeSnapshot } from './quota.js';
 import { resolveModel, pctBucketCheck, AllBucketsFlooredError, type ModelEntry, type BucketCheck } from './quota.js';
+import { worstWindow, zaiMonitorRefresh } from './quota.js';
 
 const MODELS: ModelEntry[] = [
   { key: 'glm', bucket: 'zai', env: { A: 'z' } },
@@ -52,6 +53,37 @@ describe('pctBucketCheck', () => {
   it('header-fed (no refresh): missing snapshot => available', async () => {
     const c = pctBucketCheck(dir, 'never-written', { bailPct: 90, ttlMs: 0 });
     expect(await c.available()).toBe(true);
+  });
+});
+
+describe('worstWindow', () => {
+  it('picks the most-depleted window', () => {
+    const snap = worstWindow([{ usedPct: 30, resetAt: 1 }, { usedPct: 80, resetAt: 2 }], 999);
+    expect(snap).toEqual({ usedPct: 80, resetAt: 2, fetchedAt: 999 });
+  });
+  it('returns 0% for no windows', () => {
+    expect(worstWindow([], 5)).toEqual({ usedPct: 0, resetAt: 0, fetchedAt: 5 });
+  });
+});
+
+describe('zaiMonitorRefresh', () => {
+  it('maps TOKENS_LIMIT windows to the worst snapshot', async () => {
+    const fakeFetch = (async () => ({
+      json: async () => ({
+        data: { limits: [
+          { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 40, nextResetTime: 111 },
+          { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 73, nextResetTime: 222 },
+          { type: 'OTHER', unit: 3, number: 5, percentage: 99, nextResetTime: 333 },
+        ] },
+      }),
+    })) as unknown as typeof fetch;
+    const snap = await zaiMonitorRefresh({ ZAI_API_KEY: 'k' } as NodeJS.ProcessEnv, fakeFetch);
+    expect(snap.usedPct).toBe(73);
+    expect(snap.resetAt).toBe(222);
+  });
+  it('throws when ZAI_API_KEY is missing', async () => {
+    await expect(zaiMonitorRefresh({} as NodeJS.ProcessEnv, (async () => ({ json: async () => ({}) })) as unknown as typeof fetch))
+      .rejects.toThrow(/ZAI_API_KEY/);
   });
 });
 

@@ -116,3 +116,34 @@ export function pctBucketCheck(cacheDir: string, bucket: BucketId, opts: PctChec
     },
   };
 }
+
+const ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit';
+
+/** Most-depleted window wins (matches z.ai's rolling 5h + weekly token windows). */
+export function worstWindow(windows: Array<{ usedPct: number; resetAt: number }>, now = Date.now()): QuotaSnapshot {
+  const worst = windows.reduce(
+    (a, b) => (b.usedPct > a.usedPct ? b : a),
+    { usedPct: 0, resetAt: 0 },
+  );
+  return { usedPct: worst.usedPct, resetAt: worst.resetAt, fetchedAt: now };
+}
+
+/**
+ * Read the z.ai monitor endpoint host-side (the z.ai key is the host's, never the sandbox's) and map
+ * the TOKENS_LIMIT windows to the worst snapshot. The `refresh` fn for the z.ai pctBucketCheck.
+ */
+export async function zaiMonitorRefresh(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<QuotaSnapshot> {
+  const key = env.ZAI_API_KEY;
+  if (key === undefined || key === '') throw new Error('zaiMonitorRefresh needs ZAI_API_KEY in the environment.');
+  const res = await fetchImpl(ZAI_QUOTA_URL, { headers: { Authorization: `Bearer ${key}` } });
+  const json = (await res.json()) as {
+    data?: { limits?: Array<{ type: string; percentage?: number; nextResetTime?: number }> };
+  };
+  const windows = (json.data?.limits ?? [])
+    .filter((l) => l.type === 'TOKENS_LIMIT')
+    .map((l) => ({ usedPct: l.percentage ?? 0, resetAt: l.nextResetTime ?? 0 }));
+  return worstWindow(windows);
+}
