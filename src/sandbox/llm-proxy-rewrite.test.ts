@@ -5,6 +5,7 @@ import {
   openaiAuthHeaders,
   isAllowedLlmPath,
   constantTimeEqual,
+  upstreamPath,
 } from './llm-proxy-rewrite.mjs';
 
 describe('mergeAnthropicBeta', () => {
@@ -97,5 +98,20 @@ describe('constantTimeEqual', () => {
     expect(constantTimeEqual('abc', 'abc')).toBe(true);
     expect(constantTimeEqual('abc', 'abd')).toBe(false);
     expect(constantTimeEqual('abc', 'abcd')).toBe(false);
+  });
+});
+
+describe('upstreamPath', () => {
+  it('prepends the z.ai Coding-Plan base path for the zai upstream', () => {
+    expect(upstreamPath('zai', '/v1/messages')).toBe('/api/coding/paas/v4/v1/messages');
+  });
+  it('preserves query strings when prepending', () => {
+    expect(upstreamPath('zai', '/v1/messages?beta=1')).toBe('/api/coding/paas/v4/v1/messages?beta=1');
+  });
+  it('passes through the path unchanged for anthropic (no base path)', () => {
+    expect(upstreamPath('anthropic', '/v1/messages')).toBe('/v1/messages');
+  });
+  it('falls back to base path + "/" when reqUrl is undefined', () => {
+    expect(upstreamPath('zai', undefined)).toBe('/api/coding/paas/v4/');
   });
 });

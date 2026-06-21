@@ -2,11 +2,12 @@
 export type Upstream = 'anthropic' | 'openai' | 'zai';
 export type UpstreamAuth = { mode: 'subscription'; secret: string } | { mode: 'api'; secret: string };
 
-/** One upstream's wiring: forward host, allowed POST paths, and auth scheme. */
+/** One upstream's wiring: forward host, allowed POST paths, auth scheme, and optional base path prefix. */
 export interface UpstreamSpec {
   host: string;
   paths: readonly string[];
   auth: 'anthropic' | 'bearer';
+  basePath?: string;
 }
 
 /** Single source of truth for every proxiable upstream, keyed by the secret file's UPSTREAM value. */
@@ -35,6 +36,9 @@ export declare function isAllowedLlmPath(method: string, path: string, upstream?
 
 /** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export declare function openaiAuthHeaders(secret: string): Record<string, string>;
+
+/** Outbound upstream path: the upstream's base path prefix + the inbound request path (query kept). */
+export declare function upstreamPath(upstream: Upstream, reqUrl: string | undefined): string;
 
 /** Constant-time string compare (length-safe). */
 export declare function constantTimeEqual(a: string, b: string): boolean;

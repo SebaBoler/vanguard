@@ -51,7 +51,8 @@ export function upstreamAuthHeaders(auth, reqHeaders) {
 export const UPSTREAMS = {
   anthropic: { host: 'api.anthropic.com', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'anthropic' },
   openai: { host: 'api.openai.com', paths: ['/v1/responses'], auth: 'bearer' },
-  zai: { host: 'api.z.ai', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'bearer' },
+  // basePath: keep in sync with ZAI_BASE_URL in src/agents/zai.ts
+  zai: { host: 'api.z.ai', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'bearer', basePath: '/api/coding/paas/v4' },
 };
 
 /** Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored). */
@@ -66,6 +67,12 @@ export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
 /** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export function openaiAuthHeaders(secret) {
   return { authorization: `Bearer ${secret}` };
+}
+
+/** Outbound upstream path: the upstream's base path prefix + the inbound request path (query kept). */
+export function upstreamPath(upstream, reqUrl) {
+  const spec = UPSTREAMS[upstream];
+  return `${spec?.basePath ?? ''}${reqUrl ?? '/'}`;
 }
 
 /** Constant-time string compare (length-safe). */

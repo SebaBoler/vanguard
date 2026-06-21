@@ -10,7 +10,7 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
+import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath } from './llm-proxy-rewrite.mjs';
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -195,7 +195,7 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
   for (const [key, value] of Object.entries(applied)) headers[key] = value;
   headers['content-length'] = String(body.length);
 
-  const path = req.url ?? '/';
+  const path = upstreamPath(upstreamKind, req.url);
   let responded = false;
 
   const upstream = httpsRequest(
