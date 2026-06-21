@@ -4,6 +4,7 @@
 // TS side live in the sibling `llm-proxy-rewrite.d.mts`. The sidecar gets this file
 // `docker cp`'d next to it so the relative `import './llm-proxy-rewrite.mjs'` resolves.
 import { timingSafeEqual } from 'node:crypto';
+import { writeFileSync, renameSync } from 'node:fs';
 
 export const OAUTH_BETA = 'oauth-2025-04-20';
 
@@ -85,4 +86,52 @@ export function constantTimeEqual(a, b) {
     return false;
   }
   return timingSafeEqual(ab, bb);
+}
+
+/** First value of a possibly-array header. */
+function headerValue(headers, name) {
+  const v = headers[name];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+/** Reset value -> epoch ms. Accepts epoch-seconds, epoch-ms, or an ISO string; 0 when absent/unparseable. */
+function parseResetMs(raw) {
+  if (raw === undefined || raw === '') return 0;
+  const n = Number(raw);
+  if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+  const iso = Date.parse(raw);
+  return Number.isNaN(iso) ? 0 : iso;
+}
+
+/**
+ * Parse Anthropic unified rate-limit headers into a QuotaSnapshot. Prefers remaining/limit (exact
+ * percent); falls back to the status string (rejected=100, allowed_warning=95, allowed=0). Returns
+ * undefined when no unified header is present (so callers can ignore non-Anthropic responses).
+ * NOTE: confirm the exact header names against a real Claude response (Task 7 Step 6) and adjust the
+ * three name constants if they differ — the parse logic is name-agnostic beyond these.
+ */
+export function parseUnifiedRatelimit(headers, now = Date.now()) {
+  const status = headerValue(headers, 'anthropic-ratelimit-unified-status');
+  const remaining = Number(headerValue(headers, 'anthropic-ratelimit-unified-remaining'));
+  const limit = Number(headerValue(headers, 'anthropic-ratelimit-unified-limit'));
+  const reset = headerValue(headers, 'anthropic-ratelimit-unified-reset');
+  if (status === undefined && !Number.isFinite(remaining)) return undefined;
+  let usedPct;
+  if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0) {
+    usedPct = Math.round(100 * (1 - remaining / limit));
+  } else if (status === 'rejected') {
+    usedPct = 100;
+  } else if (status === 'allowed_warning') {
+    usedPct = 95;
+  } else {
+    usedPct = 0;
+  }
+  return { usedPct, resetAt: parseResetMs(reset), fetchedAt: now };
+}
+
+/** Atomically write a QuotaSnapshot as JSON (tmp file + rename). */
+export function writeQuotaSnapshot(filePath, snap) {
+  const tmp = `${filePath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(snap));
+  renameSync(tmp, filePath);
 }
