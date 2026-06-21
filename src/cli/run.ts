@@ -3,6 +3,7 @@ import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
+import { validateProviderChoice } from '../agents/registry.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -18,6 +19,16 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     await pruneWorktrees(cmd.repoPath);
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
+
+  // Reject an unsupported provider combo up front, so a raw `vanguard run` reports the actionable
+  // combo error (e.g. "needs zai as implementer") instead of a downstream credential error.
+  validateProviderChoice(
+    {
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    },
+    { proxyMode: cmd.llmProxy === true },
+  );
 
   const auth = requireAuth(cmd);
   const ctx = await startSandboxContext({

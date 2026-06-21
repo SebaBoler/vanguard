@@ -48,7 +48,7 @@ export function agentAuthFromEnv(
     if (key === undefined || key === '') throw new Error('Set ZAI_API_KEY before running with --provider zai.');
     return { mode: 'api', apiKey: key };
   }
-  if (!needsAnthropicAuth(choice)) return authFromEnv(env); // suppressed (e.g. codex/cursor + zai review): unused, may be undefined
+  if (!needsAnthropicAuth(choice)) return undefined; // suppressed (e.g. codex/cursor + zai review): no Anthropic credential is consumed
   const auth = authFromEnv(env);
   if (auth === undefined) {
     throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
