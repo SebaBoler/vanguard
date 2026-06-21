@@ -76,11 +76,6 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       .join('\n');
   }
 
-  /** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
-  private secretsShellBody(): string {
-    return shellBody(this.secrets);
-  }
-
   /** In tmpfs mode, source the in-RAM secrets file(s) so values reach the command env without docker-inspect exposure. */
   private wrap(command: string, sourceStage = false): string {
     if (this.secretsMode !== 'tmpfs') return command;
@@ -127,7 +122,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       // Write the secrets file via stdin (umask 077) so the value never appears in argv.
       const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
         reject: false,
-        input: this.secretsShellBody(),
+        input: shellBody(this.secrets),
       });
       if (write.exitCode !== 0) {
         await this.destroy();
@@ -158,9 +153,6 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       }
     }
 
-    // STAGE_SECRETS_FILE is one path per container; stages run sequentially per sandbox
-    // (fan-out uses separate sandboxes) — do not share one container across concurrent execs
-    // with per-exec secrets.
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
