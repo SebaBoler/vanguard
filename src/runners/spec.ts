@@ -134,7 +134,10 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       deps.contextDeps ?? {},
     );
     try {
-      const outcomes = await runStages(ctx, techSpecStage(deps.specModel !== undefined ? { model: deps.specModel } : {}), {
+      // haiku keeps the spec pass cheap on Claude; z.ai doesn't serve haiku, so let ZaiProvider pick its
+      // own default (glm). An explicit --spec-model always wins.
+      const specModel = deps.specModel ?? (deps.provider === 'zai' ? undefined : 'haiku');
+      const outcomes = await runStages(ctx, techSpecStage(specModel !== undefined ? { model: specModel } : {}), {
         agent,
         variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),

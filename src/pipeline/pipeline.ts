@@ -530,13 +530,14 @@ export function techSpecSystemPrompt(): string {
  * specification wrapped in <tech_spec>...</tech_spec>. Sets copyBack: false — no source files are
  * modified. Use extractTag(result.finalText, 'tech_spec') to pull the spec out of the outcome.
  *
- * Defaults to the same fast model as fastStages() ('haiku') to keep cost low. Override via opts.model.
+ * Model is omitted from the stage unless explicitly supplied via opts.model; the caller owns the
+ * provider-aware default (e.g. 'haiku' for Claude, omitted for z.ai so ZaiProvider picks glm).
  */
 export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
   return [
     {
       name: 'tech-spec',
-      model: opts?.model ?? 'haiku',
+      ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
       maxTurns: 15,
