@@ -82,11 +82,11 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   /** In tmpfs mode, source the in-RAM secrets file(s) so values reach the command env without docker-inspect exposure. */
-  private wrap(command: string): string {
+  private wrap(command: string, sourceStage = false): string {
     if (this.secretsMode !== 'tmpfs') return command;
     const sources = [
       this.hasSecrets ? `[ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}` : '',
-      `[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`,
+      sourceStage ? `[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}` : '',
     ].filter(Boolean).join('; ');
     return sources === '' ? command : `set -a; ${sources}; set +a; ${command}`;
   }
@@ -102,8 +102,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
     if (this.config.pidsLimit !== undefined) args.push('--pids-limit', String(this.config.pidsLimit));
 
-    if (this.hasSecrets && this.secretsMode === 'tmpfs') {
+    if (this.secretsMode === 'tmpfs') {
       // In-RAM tmpfs: secrets never land in the image, on disk, or in docker inspect Config.Env.
+      // Always mount the dir so per-exec (stage) secrets work even without constructor secrets.
       args.push('--tmpfs', `${SECRETS_DIR}:rw,noexec,nosuid,mode=1777,size=1m`);
     }
     if (this.hasSecrets && this.secretsMode === 'env-file') {
@@ -136,15 +137,15 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
-    const stageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0
-      ? options.secrets
-      : undefined;
+    const hasStageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0;
 
-    if (stageSecrets !== undefined) {
+    if (hasStageSecrets) {
       // Per-exec secrets require tmpfs so the stage file lands in RAM, not on disk or in argv.
       if (this.secretsMode !== 'tmpfs') {
         throw new SandboxError('Per-exec secrets require secretsMode "tmpfs"');
       }
+      // options.secrets is defined and non-empty — narrowed by hasStageSecrets check above.
+      const stageSecrets = options.secrets as Record<string, string>;
       validateSecrets(stageSecrets);
       // Write the stage secrets file via stdin (umask 077) — value never appears in argv.
       const write = await execa(
@@ -164,7 +165,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
     if (options.input !== undefined) args.push('-i');
-    args.push(this.name, 'sh', '-lc', this.wrap(command));
+    // Only source the stage file when this exec actually wrote one — prevents stale
+    // stage files from a failed prior exec from bleeding secrets into later no-secret execs.
+    args.push(this.name, 'sh', '-lc', this.wrap(command, hasStageSecrets));
 
     try {
       const result = await execa('docker', args, {
@@ -175,13 +178,16 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       });
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
     } finally {
-      if (stageSecrets !== undefined) {
+      if (hasStageSecrets) {
         await execa('docker', ['exec', this.name, 'sh', '-c', `rm -f ${STAGE_SECRETS_FILE}`], { reject: false });
       }
     }
   }
 
   execStream(command: string, options: ExecOptions = {}): ExecStream {
+    if (options.secrets !== undefined && Object.keys(options.secrets).length > 0) {
+      throw new SandboxError('execStream does not support per-exec secrets; use exec()');
+    }
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
     for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);

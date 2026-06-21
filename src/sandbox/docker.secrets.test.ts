@@ -111,38 +111,39 @@ describe('DockerSandboxProvider per-exec stage secrets', () => {
     expect(rmCall).toBeDefined();
   });
 
-  it('TEST 3 — CLEANUP ON THROW: rm -f is called even when the main exec throws', async () => {
+  it('TEST 3 — CLEANUP ON THROW: rm -f is called even when the main exec rejects', async () => {
     const provider = await makeStartedProvider({ secretsMode: 'tmpfs' });
     mockedExeca().mockReset();
 
     mockedExeca().mockImplementation((_cmd: string, args: string[]) => {
-      // First: write stage file call (has -i flag) — succeed
+      // Stage-file write call (exec -i … umask 077 … cat > stage.env) — succeed
       if (args[0] === 'exec' && args[1] === '-i') {
         return Promise.resolve({ stdout: '', stderr: '', exitCode: 0 });
       }
-      // rm cleanup call — succeed
+      // Cleanup rm call — succeed so it doesn't hide the original error
       const shCmdIdx = args.indexOf('-c');
-      if (shCmdIdx >= 0 && args[shCmdIdx + 1]?.includes('rm -f')) {
+      if (shCmdIdx >= 0 && (args[shCmdIdx + 1] ?? '').includes('rm -f')) {
         return Promise.resolve({ stdout: '', stderr: '', exitCode: 0 });
       }
-      // Main exec call (has -lc) — reject to simulate crash
+      // Main exec (sh -lc <wrapped>) — REJECT to prove finally branch fires
       if (args.includes('-lc')) {
         return Promise.reject(new Error('docker exec failed'));
       }
       return Promise.resolve({ stdout: '', stderr: '', exitCode: 0 });
     });
 
-    await expect(provider.exec('fail-cmd', { secrets: { KEY: 'val' } })).rejects.toThrow();
+    // exec() must rethrow the rejection
+    await expect(provider.exec('fail-cmd', { secrets: { KEY: 'val' } })).rejects.toThrow('docker exec failed');
 
-    // Verify cleanup still ran
+    // Cleanup rm -f must still have been called (finally branch)
     const allCalls = mockedExeca().mock.calls as Array<[string, string[], unknown]>;
     const rmCall = allCalls.find((c) => {
-      const args = c[1];
+      const args = c[1] as string[];
       const shCmdIdx = args.indexOf('-c');
       return (
         c[0] === 'docker' &&
         shCmdIdx >= 0 &&
-        args[shCmdIdx + 1]?.includes(`rm -f ${STAGE_SECRETS_FILE}`)
+        (args[shCmdIdx + 1] ?? '').includes(`rm -f ${STAGE_SECRETS_FILE}`)
       );
     });
     expect(rmCall).toBeDefined();
@@ -181,7 +182,8 @@ describe('DockerSandboxProvider per-exec stage secrets', () => {
     });
 
     expect(mainExecCall).toBeDefined();
-    const args = mainExecCall![1];
+    if (mainExecCall === undefined) return;
+    const args = mainExecCall[1];
     const lcIdx = args.indexOf('-lc');
     const wrappedCommand = args[lcIdx + 1];
     // The wrapped command must source the stage file
@@ -206,11 +208,74 @@ describe('DockerSandboxProvider per-exec stage secrets', () => {
     });
 
     expect(mainExecCall).toBeDefined();
-    const args = mainExecCall![1];
+    if (mainExecCall === undefined) return;
+    const args = mainExecCall[1];
     const lcIdx = args.indexOf('-lc');
     const wrappedCommand = args[lcIdx + 1];
     // Must source BOTH the run-level secrets file AND the stage file
     expect(wrappedCommand).toContain(`[ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}`);
+    expect(wrappedCommand).toContain(`[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`);
+  });
+
+  // ---- FIX 1 regression --------------------------------------------------
+  it('FIX 1 REGRESSION — tmpfs mount present even with no constructor secrets', async () => {
+    // No secrets at all — tmpfs dir must still be mounted so per-exec secrets have somewhere to land.
+    const provider = new DockerSandboxProvider({ secretsMode: 'tmpfs' });
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    await provider.start();
+
+    const allArgvs = capturedArgvArrays();
+    // Find the docker run call
+    const runArgv = allArgvs.find((argv) => argv[0] === 'run');
+    expect(runArgv).toBeDefined();
+    if (runArgv === undefined) return; // narrows type; expect above already fails the test
+    // --tmpfs /run/vanguard must appear even with no run-level secrets
+    const tmpfsIdx = runArgv.indexOf('--tmpfs');
+    expect(tmpfsIdx).toBeGreaterThan(-1);
+    expect(runArgv[tmpfsIdx + 1]).toContain(SECRETS_DIR);
+  });
+
+  // ---- FIX 2 regressions -------------------------------------------------
+  it('FIX 2 REGRESSION — no-secret exec does NOT source stage.env (prevents stale-file bleed)', async () => {
+    const provider = await makeStartedProvider({ secretsMode: 'tmpfs' });
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    // exec with no secrets option
+    await provider.exec('echo hello');
+
+    const allCalls = mockedExeca().mock.calls as Array<[string, string[], unknown]>;
+    const mainExecCall = allCalls.find((c) => {
+      const args = c[1] as string[];
+      return c[0] === 'docker' && args[0] === 'exec' && args.includes('-lc');
+    });
+    expect(mainExecCall).toBeDefined();
+    if (mainExecCall === undefined) return;
+    const lcIdx = (mainExecCall[1] as string[]).indexOf('-lc');
+    const wrappedCommand = (mainExecCall[1] as string[])[lcIdx + 1];
+    // Stage file must NOT be sourced — no secrets were written for this exec
+    expect(wrappedCommand).not.toContain('stage.env');
+  });
+
+  it('FIX 2 REGRESSION — exec WITH secrets DOES source stage.env', async () => {
+    const provider = await makeStartedProvider({ secretsMode: 'tmpfs' });
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    await provider.exec('echo hello', { secrets: { MY_KEY: 'my-val' } });
+
+    const allCalls = mockedExeca().mock.calls as Array<[string, string[], unknown]>;
+    const mainExecCall = allCalls.find((c) => {
+      const args = c[1] as string[];
+      return c[0] === 'docker' && args[0] === 'exec' && args.includes('-lc');
+    });
+    expect(mainExecCall).toBeDefined();
+    if (mainExecCall === undefined) return;
+    const lcIdx = (mainExecCall[1] as string[]).indexOf('-lc');
+    const wrappedCommand = (mainExecCall[1] as string[])[lcIdx + 1];
+    // Stage file MUST be sourced because this exec wrote one
     expect(wrappedCommand).toContain(`[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`);
   });
 });
