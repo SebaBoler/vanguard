@@ -1,6 +1,6 @@
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from './provider.js';
 import {
-  resolveModel, pctBucketCheck, readSnapshot,
+  resolveModel, pctBucketCheck, readSnapshot, AllBucketsFlooredError,
   type BucketId, type BucketCheck, type ModelEntry, type QuotaSnapshot,
 } from './quota.js';
 import { ZaiProvider } from './zai.js';
@@ -30,6 +30,7 @@ export class QuotaRoutingProvider implements AgentProvider {
   async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
     const checks = this.stickyChecks();
     const preferred = input.model ?? this.opts.chain[0];
+    if (preferred === undefined) throw new AllBucketsFlooredError('(empty chain)');
     const entry = await resolveModel(preferred, this.opts.chain, this.opts.models, checks);
     const next: AgentRunInput = {
       ...input,
