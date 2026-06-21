@@ -16,10 +16,15 @@ const STAGE_SECRETS_FILE = `${SECRETS_DIR}/stage.env`;
 
 type SecretsMode = 'tmpfs' | 'env-file';
 
-/** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
+/** POSIX single-quote a value, safe to `source`/`export` in a shell (no expansion or injection). */
+function sq(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** POSIX single-quoted KEY='value' lines, safe to `source` in a shell. */
 function shellBody(record: Record<string, string>): string {
   return Object.entries(record)
-    .map(([key, value]) => `${key}='${value.replace(/'/g, "'\\''")}'`)
+    .map(([key, value]) => `${key}=${sq(value)}`)
     .join('\n');
 }
 
@@ -100,7 +105,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     const sourced = this.secretsMode === 'tmpfs' && (this.hasSecrets || hasStageSecrets);
     if (sourced && entries.length > 0) {
       validateSecrets(options.env as Record<string, string>);
-      const envExports = entries.map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'; `).join('');
+      const envExports = entries.map(([k, v]) => `export ${k}=${sq(v)}; `).join('');
       return { envArgs: [], wrapped: this.wrap(command, hasStageSecrets, envExports) };
     }
     const envArgs: string[] = [];
