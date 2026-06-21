@@ -77,13 +77,35 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   /** In tmpfs mode, source the in-RAM secrets file(s) so values reach the command env without docker-inspect exposure. */
-  private wrap(command: string, sourceStage = false): string {
+  private wrap(command: string, sourceStage = false, envExports = ''): string {
     if (this.secretsMode !== 'tmpfs') return command;
     const sources = [
       this.hasSecrets ? `[ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}` : '',
       sourceStage ? `[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}` : '',
     ].filter(Boolean).join('; ');
-    return sources === '' ? command : `set -a; ${sources}; set +a; ${command}`;
+    if (sources === '') return command;
+    // per-exec env is exported AFTER the source block so it overrides run-level/stage secrets on key collision.
+    return `set -a; ${sources}; set +a; ${envExports}${command}`;
+  }
+
+  /**
+   * Resolve per-exec env into docker `-e` args OR post-source `export` statements, then wrap the command.
+   * When secrets are sourced (tmpfs), `set -a; . secrets.env` would overwrite any colliding `-e` var, so
+   * per-exec env must be applied AFTER sourcing to win ("most-specific wins"). Env values are non-secret
+   * transport vars (already argv-visible via `-e`), so emitting them in the `sh -lc` string is the same
+   * visibility class — real credentials never travel this channel (they go through `secrets`/tmpfs).
+   */
+  private envAndWrap(command: string, options: ExecOptions, hasStageSecrets: boolean): { envArgs: string[]; wrapped: string } {
+    const entries = Object.entries(options.env ?? {});
+    const sourced = this.secretsMode === 'tmpfs' && (this.hasSecrets || hasStageSecrets);
+    if (sourced && entries.length > 0) {
+      validateSecrets(options.env as Record<string, string>);
+      const envExports = entries.map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'; `).join('');
+      return { envArgs: [], wrapped: this.wrap(command, hasStageSecrets, envExports) };
+    }
+    const envArgs: string[] = [];
+    for (const [k, v] of entries) envArgs.push('-e', `${k}=${v}`);
+    return { envArgs, wrapped: this.wrap(command, hasStageSecrets) };
   }
 
   async start(): Promise<void> {
@@ -153,13 +175,14 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       }
     }
 
+    const { envArgs, wrapped } = this.envAndWrap(command, options, hasStageSecrets);
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
-    for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
+    args.push(...envArgs);
     if (options.input !== undefined) args.push('-i');
     // Only source the stage file when this exec actually wrote one — prevents stale
     // stage files from a failed prior exec from bleeding secrets into later no-secret execs.
-    args.push(this.name, 'sh', '-lc', this.wrap(command, hasStageSecrets));
+    args.push(this.name, 'sh', '-lc', wrapped);
 
     try {
       const result = await execa('docker', args, {
@@ -180,10 +203,11 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (options.secrets !== undefined && Object.keys(options.secrets).length > 0) {
       throw new SandboxError('execStream does not support per-exec secrets; use exec()');
     }
+    const { envArgs, wrapped } = this.envAndWrap(command, options, false);
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
-    for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
-    args.push(this.name, 'sh', '-lc', this.wrap(command));
+    args.push(...envArgs);
+    args.push(this.name, 'sh', '-lc', wrapped);
     const child = execa('docker', args, {
       reject: false,
       ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

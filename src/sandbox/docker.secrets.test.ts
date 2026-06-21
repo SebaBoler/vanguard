@@ -279,3 +279,90 @@ describe('DockerSandboxProvider per-exec stage secrets', () => {
     expect(wrappedCommand).toContain(`[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`);
   });
 });
+
+/** Helper: the wrapped command string of the main `docker exec … sh -lc <wrapped>` call. */
+function mainWrappedCommand(): string | undefined {
+  const calls = mockedExeca().mock.calls as Array<[string, string[], unknown]>;
+  const main = calls.find((c) => c[0] === 'docker' && c[1][0] === 'exec' && c[1].includes('-lc'));
+  if (main === undefined) return undefined;
+  return main[1][main[1].indexOf('-lc') + 1];
+}
+
+/** Helper: the argv of the main `docker exec … sh -lc` call. */
+function mainExecArgv(): string[] | undefined {
+  const calls = mockedExeca().mock.calls as Array<[string, string[], unknown]>;
+  return calls.find((c) => c[0] === 'docker' && c[1][0] === 'exec' && c[1].includes('-lc'))?.[1];
+}
+
+describe('DockerSandboxProvider per-exec env precedence', () => {
+  beforeEach(() => {
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+  });
+
+  it('PRECEDENCE — per-exec env is exported AFTER sourcing run-level secrets (wins on collision)', async () => {
+    // Run-level secret sets ANTHROPIC_BASE_URL; per-exec env overrides it to the direct endpoint.
+    const provider = await makeStartedProvider({ secretsMode: 'tmpfs', secrets: { ANTHROPIC_BASE_URL: 'http://proxy:4444' } });
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    await provider.exec('claude run', { env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com' } });
+
+    const wrapped = mainWrappedCommand();
+    expect(wrapped).toBeDefined();
+    if (wrapped === undefined) return;
+    // The export must appear, and AFTER the run-level source so it overrides on collision.
+    expect(wrapped).toContain(`export ANTHROPIC_BASE_URL='https://api.anthropic.com';`);
+    const sourceIdx = wrapped.indexOf(`. ${SECRETS_FILE}`);
+    const exportIdx = wrapped.indexOf('export ANTHROPIC_BASE_URL=');
+    expect(sourceIdx).toBeGreaterThanOrEqual(0);
+    expect(exportIdx).toBeGreaterThan(sourceIdx);
+    // And the colliding key must NOT be passed via `-e` (that would be pre-source, i.e. losable).
+    const argv = mainExecArgv() ?? [];
+    const eIdx = argv.indexOf('-e');
+    if (eIdx >= 0) expect(argv[eIdx + 1]).not.toMatch(/^ANTHROPIC_BASE_URL=/);
+  });
+
+  it('PRECEDENCE — per-exec env uses -e (unchanged) when no secrets are sourced', async () => {
+    const provider = await makeStartedProvider({ secretsMode: 'tmpfs' }); // no run-level secrets
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    await provider.exec('cmd', { env: { FOO: 'bar' } }); // no per-exec secrets either
+
+    const argv = mainExecArgv() ?? [];
+    const eIdx = argv.indexOf('-e');
+    expect(eIdx).toBeGreaterThanOrEqual(0);
+    expect(argv[eIdx + 1]).toBe('FOO=bar');
+    expect(mainWrappedCommand()).not.toContain('export FOO=');
+  });
+
+  it('PRECEDENCE — per-exec env + stage secrets: env exported after stage source, secret only via stdin', async () => {
+    const provider = await makeStartedProvider({ secretsMode: 'tmpfs' }); // no run-level secrets
+    mockedExeca().mockReset();
+    mockedExeca().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+
+    await provider.exec('claude', {
+      env: { ANTHROPIC_BASE_URL: 'https://api.anthropic.com' },
+      secrets: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz' },
+    });
+
+    // The OAuth token must never appear in any argv.
+    for (const c of mockedExeca().mock.calls as Array<[string, string[], unknown]>) {
+      for (const arg of c[1]) expect(arg).not.toContain('oauth-xyz');
+    }
+
+    const wrapped = mainWrappedCommand();
+    expect(wrapped).toBeDefined();
+    if (wrapped === undefined) return;
+    expect(wrapped).toContain(`[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}`);
+    expect(wrapped).toContain(`export ANTHROPIC_BASE_URL='https://api.anthropic.com';`);
+    const stageIdx = wrapped.indexOf(`. ${STAGE_SECRETS_FILE}`);
+    const exportIdx = wrapped.indexOf('export ANTHROPIC_BASE_URL=');
+    expect(exportIdx).toBeGreaterThan(stageIdx);
+    // Base URL is transport (not a credential) — fine in the -lc string, but not double-injected via -e.
+    const argv = mainExecArgv() ?? [];
+    const eIdx = argv.indexOf('-e');
+    if (eIdx >= 0) expect(argv[eIdx + 1]).not.toMatch(/^ANTHROPIC_BASE_URL=/);
+  });
+});

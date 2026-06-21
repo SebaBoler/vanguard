@@ -91,6 +91,14 @@ Key constraints:
 
 ## Semantics worth knowing
 
+- **Per-stage env wins over run-level secrets.** Precedence for a colliding var, low → high:
+  (1) container-start `-e` (`SandboxConfig.env`), (2) run-level sourced `secrets.env`
+  (`SandboxConfig.secrets`), (3) per-exec stage secrets (`ModelEntry.secrets`), (4) **per-exec `env`**
+  (`ModelEntry.env`). In tmpfs mode per-exec `env` is `export`ed *after* the secret source block, so a
+  per-stage `ANTHROPIC_BASE_URL` reliably overrides a run-level base instead of being clobbered by it.
+  Keep per-exec `env` and per-exec `secrets` keys disjoint (transport vs credential); on a collision,
+  `env` wins. Consequence: a consumer's run-level sandbox `secrets` may be empty and each stage selects
+  its own transport — a proxy stage and a direct-provider stage coexist in one run without clobbering.
 - **Fail-open gate:** a refresh error, missing/corrupt snapshot, or unparseable headers never read as
   "floored" — the bucket stays available. A floored gate only comes from a *fresh* snapshot at/over
   `bailPct`.
