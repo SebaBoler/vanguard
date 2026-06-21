@@ -175,7 +175,21 @@ table (consumer-specific model keys + env maps remain consumer data).
 - LiteLLM config / virtual keys / proxy `gen-config.py` — that's the `[proxy]` repo, not vanguard.
 - kotor wiring beyond the factory call — that's the consumer repo's own plan.
 
-## Open verifications (resolve during implementation, not blockers)
+## Resolved verifications
 
-1. Exact `anthropic-ratelimit-unified-*` header names + value shapes (capture from one real response).
-2. Whether `src/sandbox/docker.ts` already renders `ExecOptions.env` or silently drops it.
+1. **Header names — RESOLVED via Anthropic Claude Code docs/issues** (the public API rate-limits
+   doc does NOT define `unified-*`; those are subscription/Claude-Max only). Real headers, parsed by
+   `parseUnifiedRatelimit`:
+   - `anthropic-ratelimit-unified-status` (overall: `allowed` | `allowed_warning` | `rejected`)
+   - `anthropic-ratelimit-unified-5h-utilization` + `-5h-reset` (+ `-5h-status`) — 5-hour window
+   - `anthropic-ratelimit-unified-7d-utilization` + `-7d-reset` (+ `-7d-status`) — weekly window
+   - `anthropic-ratelimit-unified-representative-claim` (authoritative window, informational)
+
+   Signal = **worst (highest) of the 5h/7d `-utilization` values**, with its matching `-reset`;
+   `utilization` is tolerated as fraction (0..1) or percent (0..100); status string is the fallback;
+   absent/unrecognized → `undefined` (no false 0%). Note: the unified headers ride only *successful*
+   `/v1/messages` responses — 429s and `count_tokens` carry none, and `/api/oauth/usage` needs a
+   `user:profile` scope this token lacks. So harvest is success-response-only; the reactive 429 stays
+   the backstop.
+2. **docker env — RESOLVED:** `src/sandbox/docker.ts` already renders `ExecOptions.env` as
+   `docker exec -e KEY=VAL` (no change needed; per-stage env threading is `provider.ts` + `claude-stream.ts` only).
