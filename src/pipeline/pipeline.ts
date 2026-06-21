@@ -25,6 +25,14 @@ export interface PipelineStage {
   provider?: AgentProvider;
   /** When false, skip syncing sandbox files back to the worktree (read-only stage: no diff). Default true. */
   copyBack?: boolean;
+  /**
+   * Max times to auto-resume this stage's session when it exits without a completion signal
+   * (`completed === false`). Some models (e.g. glm) end a turn with prose instead of a tool call and
+   * stop early ("incomplete") before finishing a large, multi-file task. Each resume re-enters the
+   * SAME session (full context preserved) with a "continue / finish the rest" nudge, up to this many
+   * times or until the stage signals COMPLETE. Default 0 (no resume). Opt-in per stage.
+   */
+  resumeUntilComplete?: number;
 }
 
 export interface StageOutcome {
@@ -114,6 +122,14 @@ function makeDiffScorer(complete: Complete): (diff: string, result: RunResult) =
  * and returns a frozen `budget_exceeded` result with the outcomes so far; the caller keeps the
  * context alive and may resume with a higher limit.
  */
+/** Nudge used when auto-resuming an incomplete stage (see PipelineStage.resumeUntilComplete). */
+const RESUME_NUDGE = [
+  'You stopped before signaling completion. Review what the task still requires versus what you have',
+  'actually written to disk so far (check your own diff), then finish EVERY remaining part — including',
+  'files, modules, or UI you have not created yet. Do not stop until the whole task is implemented.',
+  'When (and only when) it is genuinely all done and verified, write <promise>COMPLETE</promise>.',
+].join('\n');
+
 export async function runBudgetedStages(
   ctx: RunContext,
   stages: PipelineStage[],
@@ -165,7 +181,7 @@ export async function runBudgetedStages(
       continue;
     }
 
-    const result = await runAgent(ctx, {
+    let result = await runAgent(ctx, {
       promptTemplate: stage.promptTemplate,
       agent,
       stageName: stage.name,
@@ -178,11 +194,44 @@ export async function runBudgetedStages(
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
     });
+    let stageCost = result.costUsd ?? 0;
+
+    // Auto-resume an incomplete stage: some models (glm) end a turn with prose instead of a tool call
+    // and stop before finishing a large, multi-file task. Re-enter the SAME session (context intact)
+    // with a "finish the rest" nudge, up to stage.resumeUntilComplete times or until it signals COMPLETE.
+    let resumesLeft = stage.resumeUntilComplete ?? 0;
+    while (
+      !result.completed &&
+      resumesLeft > 0 &&
+      result.sessionId !== undefined &&
+      spentUsd + stageCost < maxCostUsd
+    ) {
+      resumesLeft -= 1;
+      ctx.log.info(
+        { taskId: ctx.taskId, stage: stage.name, exitReason: result.exitReason, resumesLeft },
+        'stage incomplete — resuming session',
+      );
+      result = await runAgent(ctx, {
+        promptTemplate: RESUME_NUDGE,
+        agent,
+        stageName: stage.name,
+        variables,
+        ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
+        ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
+        ...(stage.model !== undefined ? { model: stage.model } : {}),
+        ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
+        resumeSessionId: result.sessionId,
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+        ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
+      });
+      stageCost += result.costUsd ?? 0;
+    }
+
     outcomes.push({ name: stage.name, result });
     previous = result;
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    spentUsd += result.costUsd ?? 0;
+    spentUsd += stageCost;
   }
   return { status: 'completed', outcomes };
 }

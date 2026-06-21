@@ -99,6 +99,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     trackSandbox(opts.sandbox);
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
+    await seedSandboxGit(opts.sandbox);
     await skills.injectAll(opts.sandbox, home);
     const ctx: RunContext = {
       taskId: opts.taskId,
@@ -119,6 +120,33 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     releaseSandboxSlot(opts.sandbox);
     throw error;
   }
+}
+
+/**
+ * Reseed an in-sandbox, self-contained git repo at the workspace root so the agent's own
+ * `git diff` / `git status` work. copyIn brings the host's linked-worktree `.git` *file pointer*
+ * (`gitdir: <host path>`), which resolves to a host path that does not exist in the container — so
+ * every git command fails inside the sandbox and the agent loses its only ground truth for "did my
+ * edit land?". Starved of that signal, weaker models confabulate completion ("already present, no
+ * edits required") and the stage produces an empty diff.
+ *
+ * We replace that dangling pointer with a throwaway repo seeded from the copied-in tree as a single
+ * baseline commit. The agent can then diff its work against the baseline. This repo never reaches the
+ * host: COPY_BACK_SKIP excludes `.git`, and the authoritative diff is still computed host-side in
+ * syncSandboxToWorktree against the real worktree. `.gitignore` (present in the tree) keeps node_modules
+ * out of the baseline. Best-effort: a failure here must not abort provisioning, so we swallow errors.
+ */
+async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
+  const script = [
+    `cd ${WORKDIR}`,
+    'rm -rf .git',
+    'git init -q',
+    'git config user.email agent@vanguard.local',
+    'git config user.name vanguard',
+    'git add -A',
+    'git commit -q -m "vanguard baseline" --no-verify || true',
+  ].join(' && ');
+  await sandbox.exec(script).catch(() => undefined);
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
