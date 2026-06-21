@@ -112,6 +112,15 @@ the wrapped provider. **Sticky on floor**: a bucket that floors once during a ru
 the rest of the run (in-instance `Set<BucketId>`) → "z.ai did the early stages, Claude finishes"
 behavior, no thrash, no flip-back.
 
+The point of the swap is to **keep work moving smoothly when a limit is hit** — fall over to the next
+bucket at the stage boundary rather than stalling or abruptly dying mid-pipeline when a window empties.
+
+**Live usage debug (`debug`):** when enabled, before each yielded turn the provider reads the current
+snapshot(s) from the cache and prints a one-line burn summary alongside the existing per-turn log,
+e.g. `[quota] zai 84% (resets 42m) · claude 12%`. The numbers are near-live: Claude updates per
+response (sidecar writes the header snapshot), z.ai updates per TTL poll. Default off; opt-in per
+consumer workflow. Sink defaults to stderr; a custom `log?: (line: string) => void` overrides it.
+
 ### High-level factory
 
 ```ts
@@ -122,6 +131,8 @@ const agent = quotaRoutedAgent({
   },
   models: MODELS,         // ModelEntry[] (key↔bucket↔env)
   cacheDir: '~/.cache/vanguard/quota',
+  debug: true,            // print live burn before each turn (default false)
+  log: console.error,     // optional sink override (default stderr)
 });
 ```
 
@@ -161,7 +172,8 @@ table (consumer-specific model keys + env maps remain consumer data).
   Claude header object.
 - `resolveModel` — prefers primary; spills on floor; throws `AllBucketsFlooredError` when all floored.
 - `pctBucketCheck` — fresh-under-bail available; at/over-bail floored; refresh-error stale-tolerant.
-- `QuotaRoutingProvider` — routes to primary + overlays env; sticky once a bucket floors.
+- `QuotaRoutingProvider` — routes to primary + overlays env; sticky once a bucket floors; `debug`
+  emits a burn line per turn to the injected `log` sink (assert the sink receives it).
 - `SharedQuotaCache` — per-bucket read/write round-trip; `recordHeader` newer-wins.
 - Sidecar harvest — unit-test the header parser; smoke that the snapshot file is written + parseable.
 - Per-stage env — `runClaudeCli` forwards `input.env`; docker `exec` renders `-e`.
