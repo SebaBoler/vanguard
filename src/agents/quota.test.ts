@@ -69,6 +69,7 @@ describe('worstWindow', () => {
 describe('zaiMonitorRefresh', () => {
   it('maps TOKENS_LIMIT windows to the worst snapshot', async () => {
     const fakeFetch = (async () => ({
+      ok: true,
       json: async () => ({
         data: { limits: [
           { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 40, nextResetTime: 111 },
@@ -82,8 +83,17 @@ describe('zaiMonitorRefresh', () => {
     expect(snap.resetAt).toBe(222);
   });
   it('throws when ZAI_API_KEY is missing', async () => {
-    await expect(zaiMonitorRefresh({} as NodeJS.ProcessEnv, (async () => ({ json: async () => ({}) })) as unknown as typeof fetch))
+    await expect(zaiMonitorRefresh({} as NodeJS.ProcessEnv, (async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch))
       .rejects.toThrow(/ZAI_API_KEY/);
+  });
+  it('throws on non-ok HTTP response', async () => {
+    const fakeFetch = (async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ code: 401 }),
+    })) as unknown as typeof fetch;
+    await expect(zaiMonitorRefresh({ ZAI_API_KEY: 'k' } as NodeJS.ProcessEnv, fakeFetch))
+      .rejects.toThrow(/401/);
   });
 });
 
@@ -106,6 +116,21 @@ describe('snapshot cache', () => {
       writeSnapshot(dir, 'zai', { usedPct: 1, resetAt: 0, fetchedAt: 0 });
       // overwrite with garbage
       writeFileSync(join(dir, 'zai.json'), 'not json');
+      expect(readSnapshot(dir, 'zai')).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['null literal', 'null'],
+    ['empty object', '{}'],
+    ['number', '42'],
+    ['array', '[]'],
+  ])('returns undefined for structurally-invalid JSON: %s', (_label, raw) => {
+    const dir = mkdtempSync(join(tmpdir(), 'vg-cache-'));
+    try {
+      writeFileSync(join(dir, 'zai.json'), raw);
       expect(readSnapshot(dir, 'zai')).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
