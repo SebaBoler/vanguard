@@ -264,6 +264,37 @@ describe('vanguard.run', () => {
     expect(result.diff).toContain('output.txt');
   });
 
+  it('completes the stage even when session capture fails (non-Claude provider session path)', async () => {
+    const wm = new WorktreeManager(repo);
+    // copyFileOut succeeds for the worktree (/workspace) but throws for the session jsonl path —
+    // mimics a codex/cursor stage whose session is not at ~/.claude/projects. The run must not fail.
+    const sandbox = {
+      id: 'fake',
+      start: async (): Promise<void> => {},
+      exec: async (command: string): Promise<ExecResult> =>
+        command.includes('$HOME') ? { stdout: '/root', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 },
+      execStream: () => ({ stdout: (async function* () {})(), result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }) }),
+      copyIn: async (): Promise<void> => {},
+      copyFileOut: async (sandboxPath: string, hostPath: string): Promise<void> => {
+        if (sandboxPath === '/workspace') {
+          await mkdir(hostPath, { recursive: true });
+          return;
+        }
+        throw new Error('no such file'); // session jsonl absent for a non-Claude provider
+      },
+      exists: async (): Promise<boolean> => true,
+      destroy: async (): Promise<void> => {},
+    } as unknown as IsolatedSandboxProvider;
+
+    const agent = fakeAgent([{ text: 'reviewed' }], { finalText: 'reviewed', turns: 1, sessionId: 'codex-thread-1' });
+    const ctx = await prepareContext({ taskId: 'cap-fail', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    expect(result.finalText).toBe('reviewed');
+    expect(result.sessionId).toBe('codex-thread-1');
+  });
+
   it('emits a stage complete info log carrying metric fields and no secret content', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox();

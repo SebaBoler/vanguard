@@ -241,7 +241,15 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     if (sessionId !== undefined) {
       const hostDir = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId);
       await mkdir(hostDir, { recursive: true });
-      await captureSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId, hostDir });
+      // Best-effort: capture pulls the Claude session jsonl out for token-saving resume. Non-Claude
+      // providers (codex, cursor) report a session id but write no jsonl at that path, so the copy fails;
+      // that must never fail an otherwise-successful stage (the capture is only an optimization, and
+      // cross-provider stages cannot resume each other's sessions anyway — they pass context via the diff).
+      try {
+        await captureSession(ctx.sandbox, { home: ctx.home, cwd: WORKDIR, sessionId, hostDir });
+      } catch (cause) {
+        ctx.log.debug({ taskId: ctx.taskId, sessionId, err: String(cause) }, 'session capture skipped');
+      }
     }
 
     const preserved = await ctx.wm.isDirty(ctx.worktreePath);
