@@ -1,16 +1,23 @@
 name: Vanguard Implement
 
-# Label an issue "ready for agent" -> Vanguard implements it in a sandbox and
-# opens a PR. The PR is then reviewed by vanguard-pr-review.yml.
+# Loop v1 from GitHub Actions:
+#   "ready for spec"  -> plan, then build (spec pass advances it, the second
+#                        sweep implements it in the same run)
+#   "ready for agent" -> build directly
+#   too vague         -> "needs info" (human fills it in)
+#
+# Two `watch --once` sweeps: the spec pass advances a ticket to "ready for agent",
+# and Loop v1 implements freshly-specced tickets on the *next* poll — so the second
+# sweep is that next poll, keeping spec -> build in one run.
+#
+# Requires repo setting: Settings > Actions > General > Workflow permissions >
+# "Allow GitHub Actions to create and approve pull requests" (otherwise the
+# agent's PR fails with "GitHub Actions is not permitted to create ... pull requests").
 
 on:
   issues:
     types: [labeled]
   workflow_dispatch:
-    inputs:
-      issue:
-        description: Issue number to implement
-        required: true
 
 permissions:
   contents: write
@@ -18,7 +25,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: vanguard-implement-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.issue }}
+  group: vanguard-implement-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -26,11 +33,11 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.actor == 'SebaBoler') ||
       (github.event_name == 'issues' &&
-      github.event.label.name == 'ready for agent' &&
+      contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'SebaBoler' &&
       github.event.sender.login == 'SebaBoler')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -55,14 +62,15 @@ jobs:
           gh label create "ready for spec" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Vanguard Loop v1 spec pass" --force
           gh label create "ready for agent" --repo "$GITHUB_REPOSITORY" --color 5319E7 --description "Vanguard Loop v1 agent pass" --force
           gh label create "needs info" --repo "$GITHUB_REPOSITORY" --color D93F0B --description "Parked: ticket too vague for Vanguard" --force
+          gh label create "vanguard:speccing" --repo "$GITHUB_REPOSITORY" --color FEF2C0 --description "Vanguard is writing a tech spec" --force
+          gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
+          gh label create "vanguard:review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR for review" --force
 
-      - name: Implement issue
+      - name: Run Vanguard loop (spec then implement)
         env:
-          ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: >-
-          node dist/cli/index.js run
-          --github "$ISSUE"
-          --github-repo "$GITHUB_REPOSITORY"
-          --repo "$GITHUB_WORKSPACE"
-          --llm-proxy
+        run: |
+          # Sweep 1: spec pass advances "ready for spec" -> "ready for agent"; agent pass builds "ready for agent".
+          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --llm-proxy
+          # Sweep 2 (the "next poll"): build the tickets the spec pass just advanced.
+          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --llm-proxy

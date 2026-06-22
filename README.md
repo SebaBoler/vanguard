@@ -393,15 +393,23 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 ### Implement issues via GitHub Actions
 
-Run the implement loop straight from GitHub Actions — no always-on host. Label an issue `ready for agent` and the workflow runs `vanguard run --github <n>` in a sandbox, then opens a PR. This is event-driven (the agent pass only); the two-pass spec loop needs a polling watcher, so put `ready for agent` directly on the issue. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo.
+Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue and the workflow runs the two-pass pipeline in a sandbox, with the routing labels moving live:
+
+- **`ready for spec`** — a rough idea: Vanguard writes a tech spec, advances the ticket to `ready for agent`, **then builds it** and opens a PR.
+- **`ready for agent`** — a written, ready ticket: Vanguard builds it directly.
+- **too vague** — triage parks it at `needs info` (no budget spent); you fill it in and re-label.
+
+The job runs `vanguard watch --source github --once` **twice**: Loop v1 implements a freshly-specced ticket on the *next* poll, so the second sweep is that next poll — keeping spec → build in one run. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each sweep processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 
-**Security:** the job condition restricts triggers to the maintainer's own issues (`github.event.issue.user.login == '<you>'`), so a stranger labelling an issue cannot start a run. `--llm-proxy` keeps the model credential in a sidecar, out of the sandbox.
+**Required repo setting:** enable **Settings → Actions → General → Workflow permissions → "Allow GitHub Actions to create and approve pull requests"**. Without it the agent's `gh pr create` fails with `GitHub Actions is not permitted to create or approve pull requests` after doing all the work. (Set it via API: `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -F can_approve_pull_request_reviews=true`.)
+
+**Security:** the job condition restricts triggers to the maintainer's own issues (`github.event.issue.user.login` and `sender.login`), so a stranger labelling an issue cannot start a run. `--llm-proxy` keeps the model credential in a sidecar, out of the sandbox.
 
 #### Run it on another repo
 
-The target repo does not need Vanguard installed — check it out alongside the workspace and build it in the job. Drop this in `.github/workflows/vanguard-implement.yml` in *that* repo, add the `CLAUDE_CODE_OAUTH_TOKEN` secret, and label an issue `ready for agent`:
+The target repo does not need Vanguard installed — check it out alongside the workspace and build it in the job. Drop this in `.github/workflows/vanguard-implement.yml` in *that* repo, add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and label an issue `ready for spec` or `ready for agent`:
 
 ```yaml
 name: Vanguard Implement
@@ -409,25 +417,23 @@ on:
   issues:
     types: [labeled]
   workflow_dispatch:
-    inputs:
-      issue: { description: Issue number to implement, required: true }
 permissions:
   contents: write
   pull-requests: write
   issues: write
 concurrency:
-  group: vanguard-implement-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.issue }}
+  group: vanguard-implement-${{ github.repository }}
   cancel-in-progress: false
 jobs:
   implement:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
       (github.event_name == 'issues' &&
-      github.event.label.name == 'ready for agent' &&
+      contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -435,6 +441,7 @@ jobs:
       - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
         with: { repository: SebaBoler/vanguard, path: .vanguard-src }
       - uses: pnpm/action-setup@v6
+        with: { package_json_file: .vanguard-src/package.json }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
       - run: pnpm install --frozen-lockfile
@@ -442,17 +449,21 @@ jobs:
       - run: pnpm build
         working-directory: .vanguard-src
       - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Implement issue
+      - name: Ensure routing labels       # watch edits these; gh requires them to exist
+        run: |
+          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:review:0E8A16"; do
+            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
+          done
+      - name: Run Vanguard loop (spec then implement)
         env:
-          ISSUE: ${{ github.event.issue.number || github.event.inputs.issue }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: >-
-          node .vanguard-src/dist/cli/index.js run
-          --github "$ISSUE" --github-repo "$GITHUB_REPOSITORY"
-          --repo "$GITHUB_WORKSPACE" --skills .vanguard-src/skills --llm-proxy
+        run: |
+          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
+          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
 ```
 
-Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same label — pick one per repo (a Linear watcher does not clash).
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash).
 
 ## Retrospective memory
 
