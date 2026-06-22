@@ -15,7 +15,6 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      noSimplify?: boolean;
     }
   | {
       kind: 'watch-prs';
@@ -33,7 +32,6 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      noSimplify?: boolean;
     }
   | {
       kind: 'doctor-prs';
@@ -61,7 +59,6 @@ export type Command =
       reviewProvider?: ProviderName;
       providerModel?: string;
       reviewModel?: string;
-      noSimplify?: boolean;
       verifyCmd?: string;
       specModel?: string;
       specLabel?: string;
@@ -315,7 +312,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
     };
   }
 
@@ -340,7 +336,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
     };
   }
 
