@@ -251,7 +251,7 @@ Codex does not read its key straight from the environment: `CodexProvider` runs 
 **Custom OpenAI-compatible endpoint.** To run Codex against any endpoint that speaks the OpenAI **Responses** API (a self-hosted vLLM, OpenRouter, Together, a gateway, …) instead of `api.openai.com`, set `OPENAI_BASE_URL` on the host. The runner forwards it into the sandbox as `VANGUARD_OPENAI_BASE_URL`, and `CodexProvider` writes a `~/.codex/config.toml` provider pointed at it (`wire_api = "responses"`), sending your key from `OPENAI_API_KEY`/`CODEX_API_KEY` as the bearer token:
 
 ```bash
-export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # must include the /v1 path
+export OPENAI_BASE_URL=https://openrouter.ai/api/v1   # must include the /v1 path (OpenRouter's Responses API is in beta)
 export OPENAI_API_KEY=sk-...                           # the key your endpoint expects
 vanguard run --linear TES-1 --provider codex --provider-model <model-the-endpoint-serves>
 ```
