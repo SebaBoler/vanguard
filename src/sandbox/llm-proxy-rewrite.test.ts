@@ -6,7 +6,12 @@ import {
   isAllowedLlmPath,
   constantTimeEqual,
   upstreamPath,
+  parseUnifiedRatelimit,
+  writeQuotaSnapshot,
 } from './llm-proxy-rewrite.mjs';
+import { readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('mergeAnthropicBeta', () => {
   it('appends the oauth beta and dedupes, preserving request betas', () => {
@@ -113,5 +118,75 @@ describe('upstreamPath', () => {
   });
   it('falls back to base path + "/" when reqUrl is undefined', () => {
     expect(upstreamPath('zai', undefined)).toBe('/api/coding/paas/v4/');
+  });
+});
+
+describe('parseUnifiedRatelimit', () => {
+  it('5h-utilization only (fraction 0.8 → usedPct 80) with RFC3339 reset', () => {
+    const resetStr = '2025-06-21T12:00:00Z';
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': '0.8',
+      'anthropic-ratelimit-unified-5h-reset': resetStr,
+    }, 1_700_000_000_000);
+    expect(snap).toEqual({ usedPct: 80, resetAt: Date.parse(resetStr), fetchedAt: 1_700_000_000_000 });
+  });
+
+  it('both 5h + 7d utilization — picks the worse (higher) window pct and its reset', () => {
+    const reset5h = '2025-06-21T06:00:00Z';
+    const reset7d = '2025-06-28T00:00:00Z';
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': '0.5',
+      'anthropic-ratelimit-unified-5h-reset': reset5h,
+      'anthropic-ratelimit-unified-7d-utilization': '0.9',
+      'anthropic-ratelimit-unified-7d-reset': reset7d,
+    }, 5);
+    // 7d is 90% vs 5h 50% — 7d wins
+    expect(snap).toEqual({ usedPct: 90, resetAt: Date.parse(reset7d), fetchedAt: 5 });
+  });
+
+  it('utilization in percent form (e.g. "73" → usedPct 73) — proves ≤1 fraction vs >1 percent tolerance', () => {
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': '73',
+      'anthropic-ratelimit-unified-5h-reset': '1750000000',
+    }, 5);
+    expect(snap).toEqual({ usedPct: 73, resetAt: 1_750_000_000_000, fetchedAt: 5 });
+  });
+
+  it('no utilization headers, status="rejected" → usedPct 100', () => {
+    const snap = parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'rejected' }, 5);
+    expect(snap).toEqual({ usedPct: 100, resetAt: 0, fetchedAt: 5 });
+  });
+
+  it('array-valued utilization header + ISO 5h-reset still parse', () => {
+    const resetStr = '2025-01-01T00:00:00Z';
+    const snap = parseUnifiedRatelimit({
+      'anthropic-ratelimit-unified-5h-utilization': ['0.6'],
+      'anthropic-ratelimit-unified-5h-reset': resetStr,
+    }, 7);
+    expect(snap?.usedPct).toBe(60);
+    expect(snap?.resetAt).toBe(Date.parse(resetStr));
+  });
+
+  it('returns undefined when no unified headers present', () => {
+    expect(parseUnifiedRatelimit({ 'content-type': 'application/json' }, 5)).toBeUndefined();
+  });
+
+  it('returns undefined when only an unrecognized status is present and no utilization', () => {
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'some_garbage_value' }, 5)).toBeUndefined();
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': '' }, 5)).toBeUndefined();
+    expect(parseUnifiedRatelimit({ 'anthropic-ratelimit-unified-status': 'unknown' }, 5)).toBeUndefined();
+  });
+});
+
+describe('writeQuotaSnapshot', () => {
+  it('writes parseable JSON atomically and leaves no .tmp', () => {
+    const path = join(tmpdir(), `vg-quota-${process.pid}.json`);
+    rmSync(path, { force: true });
+    writeQuotaSnapshot(path, { usedPct: 42, resetAt: 0, fetchedAt: 9 });
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ usedPct: 42, resetAt: 0, fetchedAt: 9 });
+    const leftovers = readdirSync(tmpdir()).filter((f) => f.startsWith(`vg-quota-${process.pid}.json`) && f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+    rmSync(path, { force: true });
+    expect(existsSync(path)).toBe(false);
   });
 });

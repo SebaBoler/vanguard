@@ -15,6 +15,10 @@ export interface AgentRunInput {
   mcpConfig?: string;
   allowedTools?: string[];
   model?: string;
+  /** Per-invocation env overlaid on the sandbox env (e.g. per-stage transport: ANTHROPIC_BASE_URL + nonce). */
+  env?: Record<string, string>;
+  /** Per-invocation real credentials delivered out-of-band via tmpfs, not argv. */
+  secrets?: Record<string, string>;
   signal?: AbortSignal;
 }
 

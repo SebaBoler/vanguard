@@ -11,8 +11,34 @@ const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 const DEFAULT_WORKDIR = '/workspace';
 const SECRETS_DIR = '/run/vanguard';
 const SECRETS_FILE = `${SECRETS_DIR}/secrets.env`;
+// One path per container; stages run sequentially per sandbox (fan-out uses separate sandboxes).
+const STAGE_SECRETS_FILE = `${SECRETS_DIR}/stage.env`;
 
 type SecretsMode = 'tmpfs' | 'env-file';
+
+/** POSIX single-quote a value, safe to `source`/`export` in a shell (no expansion or injection). */
+function sq(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** POSIX single-quoted KEY='value' lines, safe to `source` in a shell. */
+function shellBody(record: Record<string, string>): string {
+  return Object.entries(record)
+    .map(([key, value]) => `${key}=${sq(value)}`)
+    .join('\n');
+}
+
+/** Validate secret names and values; throw SandboxError on bad name or newline value. */
+function validateSecrets(record: Record<string, string>): void {
+  for (const [key, value] of Object.entries(record)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new SandboxError(`Invalid secret name: ${key}`);
+    }
+    if (/[\n\r]/.test(value)) {
+      throw new SandboxError(`Secret ${key} contains a newline, which is not allowed`);
+    }
+  }
+}
 
 /** Runs an isolated command environment as a detached Docker container. */
 export class DockerSandboxProvider implements IsolatedSandboxProvider {
@@ -37,14 +63,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       const value = process.env[key];
       if (value !== undefined) this.secrets[key] = value;
     }
-    for (const [key, value] of Object.entries(this.secrets)) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-        throw new SandboxError(`Invalid secret name: ${key}`);
-      }
-      if (/[\n\r]/.test(value)) {
-        throw new SandboxError(`Secret ${key} contains a newline, which is not allowed`);
-      }
-    }
+    validateSecrets(this.secrets);
   }
 
   private get name(): string {
@@ -62,17 +81,36 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       .join('\n');
   }
 
-  /** POSIX single-quoted KEY='value' lines, safe to `source` in a shell (no expansion or injection). */
-  private secretsShellBody(): string {
-    return Object.entries(this.secrets)
-      .map(([key, value]) => `${key}='${value.replace(/'/g, "'\\''")}'`)
-      .join('\n');
+  /** In tmpfs mode, source the in-RAM secrets file(s) so values reach the command env without docker-inspect exposure. */
+  private wrap(command: string, sourceStage = false, envExports = ''): string {
+    if (this.secretsMode !== 'tmpfs') return command;
+    const sources = [
+      this.hasSecrets ? `[ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}` : '',
+      sourceStage ? `[ -f ${STAGE_SECRETS_FILE} ] && . ${STAGE_SECRETS_FILE}` : '',
+    ].filter(Boolean).join('; ');
+    if (sources === '') return command;
+    // per-exec env is exported AFTER the source block so it overrides run-level/stage secrets on key collision.
+    return `set -a; ${sources}; set +a; ${envExports}${command}`;
   }
 
-  /** In tmpfs mode, source the in-RAM secrets file so values reach the command env without docker-inspect exposure. */
-  private wrap(command: string): string {
-    if (this.secretsMode !== 'tmpfs' || !this.hasSecrets) return command;
-    return `set -a; [ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}; set +a; ${command}`;
+  /**
+   * Resolve per-exec env into docker `-e` args OR post-source `export` statements, then wrap the command.
+   * When secrets are sourced (tmpfs), `set -a; . secrets.env` would overwrite any colliding `-e` var, so
+   * per-exec env must be applied AFTER sourcing to win ("most-specific wins"). Env values are non-secret
+   * transport vars (already argv-visible via `-e`), so emitting them in the `sh -lc` string is the same
+   * visibility class — real credentials never travel this channel (they go through `secrets`/tmpfs).
+   */
+  private envAndWrap(command: string, options: ExecOptions, hasStageSecrets: boolean): { envArgs: string[]; wrapped: string } {
+    const entries = Object.entries(options.env ?? {});
+    const sourced = this.secretsMode === 'tmpfs' && (this.hasSecrets || hasStageSecrets);
+    if (sourced && entries.length > 0) {
+      validateSecrets(options.env as Record<string, string>);
+      const envExports = entries.map(([k, v]) => `export ${k}=${sq(v)}; `).join('');
+      return { envArgs: [], wrapped: this.wrap(command, hasStageSecrets, envExports) };
+    }
+    const envArgs: string[] = [];
+    for (const [k, v] of entries) envArgs.push('-e', `${k}=${v}`);
+    return { envArgs, wrapped: this.wrap(command, hasStageSecrets) };
   }
 
   async start(): Promise<void> {
@@ -86,8 +124,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
     if (this.config.pidsLimit !== undefined) args.push('--pids-limit', String(this.config.pidsLimit));
 
-    if (this.hasSecrets && this.secretsMode === 'tmpfs') {
+    if (this.secretsMode === 'tmpfs') {
       // In-RAM tmpfs: secrets never land in the image, on disk, or in docker inspect Config.Env.
+      // Always mount the dir so per-exec (stage) secrets work even without constructor secrets.
       args.push('--tmpfs', `${SECRETS_DIR}:rw,noexec,nosuid,mode=1777,size=1m`);
     }
     if (this.hasSecrets && this.secretsMode === 'env-file') {
@@ -110,7 +149,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       // Write the secrets file via stdin (umask 077) so the value never appears in argv.
       const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
         reject: false,
-        input: this.secretsShellBody(),
+        input: shellBody(this.secrets),
       });
       if (write.exitCode !== 0) {
         await this.destroy();
@@ -120,25 +159,60 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    const hasStageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0;
+
+    if (hasStageSecrets) {
+      // Per-exec secrets require tmpfs so the stage file lands in RAM, not on disk or in argv.
+      if (this.secretsMode !== 'tmpfs') {
+        throw new SandboxError('Per-exec secrets require secretsMode "tmpfs"');
+      }
+      // options.secrets is defined and non-empty — narrowed by hasStageSecrets check above.
+      const stageSecrets = options.secrets as Record<string, string>;
+      validateSecrets(stageSecrets);
+      // Write the stage secrets file via stdin (umask 077) — value never appears in argv.
+      const write = await execa(
+        'docker',
+        ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${STAGE_SECRETS_FILE}`],
+        { reject: false, input: shellBody(stageSecrets) },
+      );
+      if (write.exitCode !== 0) {
+        throw new SandboxError(`Failed to write stage secrets to tmpfs: ${write.stderr}`);
+      }
+    }
+
+    const { envArgs, wrapped } = this.envAndWrap(command, options, hasStageSecrets);
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
-    for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
+    args.push(...envArgs);
     if (options.input !== undefined) args.push('-i');
-    args.push(this.name, 'sh', '-lc', this.wrap(command));
-    const result = await execa('docker', args, {
-      reject: false,
-      ...(options.input !== undefined ? { input: options.input } : {}),
-      ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-      ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
-    });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+    // Only source the stage file when this exec actually wrote one — prevents stale
+    // stage files from a failed prior exec from bleeding secrets into later no-secret execs.
+    args.push(this.name, 'sh', '-lc', wrapped);
+
+    try {
+      const result = await execa('docker', args, {
+        reject: false,
+        ...(options.input !== undefined ? { input: options.input } : {}),
+        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+        ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+    } finally {
+      if (hasStageSecrets) {
+        await execa('docker', ['exec', this.name, 'sh', '-c', `rm -f ${STAGE_SECRETS_FILE}`], { reject: false });
+      }
+    }
   }
 
   execStream(command: string, options: ExecOptions = {}): ExecStream {
+    if (options.secrets !== undefined && Object.keys(options.secrets).length > 0) {
+      throw new SandboxError('execStream does not support per-exec secrets; use exec()');
+    }
+    const { envArgs, wrapped } = this.envAndWrap(command, options, false);
     const args = ['exec'];
     if (options.cwd !== undefined) args.push('-w', options.cwd);
-    for (const [k, v] of Object.entries(options.env ?? {})) args.push('-e', `${k}=${v}`);
-    args.push(this.name, 'sh', '-lc', this.wrap(command));
+    args.push(...envArgs);
+    args.push(this.name, 'sh', '-lc', wrapped);
     const child = execa('docker', args, {
       reject: false,
       ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),

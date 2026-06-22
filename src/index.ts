@@ -20,6 +20,13 @@ export { ClaudeCodeProvider } from './agents/claude-code.js';
 export { CursorProvider } from './agents/cursor.js';
 export { CodexProvider } from './agents/codex.js';
 export { ZaiProvider, ZAI_BASE_URL, ZAI_DEFAULT_MODEL } from './agents/zai.js';
+export {
+  readSnapshot, writeSnapshot, worstWindow, resolveModel, pctBucketCheck, zaiMonitorRefresh,
+  AllBucketsFlooredError,
+} from './agents/quota.js';
+export type { QuotaSnapshot, BucketId, ModelEntry, BucketCheck, PctCheckOptions } from './agents/quota.js';
+export { QuotaRoutingProvider, quotaRoutedAgent } from './agents/quota-routing.js';
+export type { QuotaRoutingOptions, QuotaRoutedOptions, QuotaBucketConfig } from './agents/quota-routing.js';
 export { authSecrets, authFromEnv, agentAuthFromEnv, SUBSCRIPTION_ENV, API_ENV } from './agents/auth.js';
 export type { AgentAuth } from './agents/auth.js';
 export { PiProvider } from './agents/pi.js';

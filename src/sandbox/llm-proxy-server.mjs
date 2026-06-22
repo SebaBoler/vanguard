@@ -10,7 +10,7 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath } from './llm-proxy-rewrite.mjs';
+import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath, parseUnifiedRatelimit, writeQuotaSnapshot } from './llm-proxy-rewrite.mjs';
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -67,6 +67,8 @@ if (CONTROL_CHARS.test(config.SECRET) || CONTROL_CHARS.test(config.NONCE)) {
 }
 const UPSTREAM_HOST = spec.host;
 const PORT = Number(process.env.PORT ?? '8088');
+// Optional: when set (anthropic upstream only), harvest rate-limit headers off each response.
+const QUOTA_FILE = upstreamKind === 'anthropic' ? (process.env.LLM_PROXY_QUOTA_FILE ?? '') : '';
 
 function parseSecretFile(text) {
   const out = {};
@@ -206,6 +208,15 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
       for (const [key, value] of Object.entries(upRes.headers)) {
         if (HOP_BY_HOP.has(key.toLowerCase())) continue;
         if (value !== undefined) outHeaders[key] = value;
+      }
+      if (QUOTA_FILE !== '') {
+        try {
+          const snap = parseUnifiedRatelimit(upRes.headers);
+          if (snap !== undefined) writeQuotaSnapshot(QUOTA_FILE, snap);
+        } catch (err) {
+          // never log header content; the error code (e.g. ENOSPC/EACCES) is safe and aids ops
+          console.error(`llm-proxy: quota snapshot write failed (${err?.code ?? 'unknown'})`);
+        }
       }
       // Byte count for the access log comes from the upstream content-length when present (no
       // per-chunk tallying); streaming responses (SSE) have none → omit the figure.
