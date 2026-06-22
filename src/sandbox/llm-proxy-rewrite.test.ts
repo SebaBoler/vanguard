@@ -5,6 +5,7 @@ import {
   openaiAuthHeaders,
   isAllowedLlmPath,
   constantTimeEqual,
+  upstreamPath,
 } from './llm-proxy-rewrite.mjs';
 
 describe('mergeAnthropicBeta', () => {
@@ -80,10 +81,37 @@ describe('openaiAuthHeaders', () => {
   });
 });
 
+describe('isAllowedLlmPath (zai)', () => {
+  it('accepts the anthropic-compatible paths z.ai serves and rejects the rest', () => {
+    expect(isAllowedLlmPath('POST', '/v1/messages', 'zai')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/messages/count_tokens', 'zai')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/messages?beta=true', 'zai')).toBe(true);
+    // z.ai is not OpenAI-Responses-compatible.
+    expect(isAllowedLlmPath('POST', '/v1/responses', 'zai')).toBe(false);
+    expect(isAllowedLlmPath('POST', '/v1/chat/completions', 'zai')).toBe(false);
+    expect(isAllowedLlmPath('GET', '/v1/messages', 'zai')).toBe(false);
+  });
+});
+
 describe('constantTimeEqual', () => {
   it('matches equal strings and rejects others without leaking length via early return', () => {
     expect(constantTimeEqual('abc', 'abc')).toBe(true);
     expect(constantTimeEqual('abc', 'abd')).toBe(false);
     expect(constantTimeEqual('abc', 'abcd')).toBe(false);
+  });
+});
+
+describe('upstreamPath', () => {
+  it('prepends the z.ai Coding-Plan base path for the zai upstream', () => {
+    expect(upstreamPath('zai', '/v1/messages')).toBe('/api/coding/paas/v4/v1/messages');
+  });
+  it('preserves query strings when prepending', () => {
+    expect(upstreamPath('zai', '/v1/messages?beta=1')).toBe('/api/coding/paas/v4/v1/messages?beta=1');
+  });
+  it('passes through the path unchanged for anthropic (no base path)', () => {
+    expect(upstreamPath('anthropic', '/v1/messages')).toBe('/v1/messages');
+  });
+  it('falls back to base path + "/" when reqUrl is undefined', () => {
+    expect(upstreamPath('zai', undefined)).toBe('/api/coding/paas/v4/');
   });
 });

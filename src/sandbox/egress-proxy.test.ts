@@ -96,6 +96,10 @@ describe('DEFAULT_EGRESS_ALLOWLIST', () => {
   it('includes api.openai.com so direct Codex (--egress) can reach OpenAI', () => {
     expect(DEFAULT_EGRESS_ALLOWLIST).toContain('api.openai.com');
   });
+
+  it('includes api.z.ai so direct Zai (--provider zai --egress) can reach z.ai', () => {
+    expect(DEFAULT_EGRESS_ALLOWLIST).toContain('api.z.ai');
+  });
 });
 
 describe('allowlistWithout', () => {
@@ -109,10 +113,11 @@ describe('allowlistWithout', () => {
 });
 
 describe('llmProxyEgressAllowlist', () => {
-  it('excludes both sidecar-owned upstream hosts but keeps non-upstream hosts', () => {
+  it('excludes the sidecar-owned upstream hosts but keeps non-upstream hosts', () => {
     const result = llmProxyEgressAllowlist();
     expect(result).not.toContain('api.anthropic.com');
     expect(result).not.toContain('api.openai.com');
+    expect(result).not.toContain('api.z.ai');
     expect(result).toContain('github.com');
     expect(result).toContain('registry.npmjs.org');
     expect(result).toContain('api.linear.app');
@@ -123,6 +128,7 @@ describe('llmProxyEgressAllowlist', () => {
     // Regression: the existing Anthropic removal still holds.
     expect(isAllowed('api.anthropic.com', result)).toBe(false);
     expect(isAllowed('api.openai.com', result)).toBe(false);
+    expect(isAllowed('api.z.ai', result)).toBe(false);
     expect(isAllowed('github.com', result)).toBe(true);
   });
 });

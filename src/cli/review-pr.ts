@@ -3,7 +3,7 @@ import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
-import { authFromEnv, authSecrets } from '../agents/auth.js';
+import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
@@ -36,11 +36,13 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     return;
   }
 
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
-  const sandboxContext = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth });
+  const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
+  const sandboxContext = await startSandboxContext({
+    egress: cmd.egress,
+    llmProxy: cmd.llmProxy === true,
+    ...(auth !== undefined ? { auth } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+  });
   try {
     const reviewer: PullRequestReviewer = (pr) => runDefaultReviewer(pr, cmd, auth, sandboxContext);
     const result = await runReview(cmd.prRef, {
@@ -57,7 +59,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
 async function runDefaultReviewer(
   pr: PullRequestForReview,
   cmd: ReviewPrCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
 ): Promise<string> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
@@ -72,7 +74,10 @@ async function runDefaultReviewer(
     const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
       image: 'vanguard-sandbox:latest',
-      secrets: { ...(sandboxContext.llmProxy === undefined ? authSecrets(auth) : {}), ...agents.secrets },
+      secrets: {
+        ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
+        ...agents.secrets,
+      },
       ...sandboxResourceLimits(),
       ...(env !== undefined ? { env } : {}),
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),

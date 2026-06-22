@@ -79,7 +79,7 @@ export type Command =
       parent: boolean;
       gcBefore: boolean;
       egress: boolean;
-      /** Hold the Anthropic (and, with --provider codex, OpenAI) credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       reuse?: boolean;
       repoPath: string;
@@ -118,7 +118,7 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
-      /** Hold the Anthropic (and, with --provider codex, OpenAI) credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
+      /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
@@ -538,8 +538,8 @@ Commands:
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
                            watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
-    --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
+    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
@@ -600,9 +600,9 @@ Commands:
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
-    --provider <claude|codex|cursor>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor>   Run only the review stage on this provider (cross-provider review)
-    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
+    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
+    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
@@ -612,7 +612,7 @@ Commands:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
-    --provider <claude|codex|cursor>          Provider used for the PR review (default: claude)
+    --provider <claude|codex|cursor|zai>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -624,7 +624,7 @@ Commands:
     --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --concurrency <n>      Max PRs reviewed at once (default: 2)
-    --provider <claude|codex|cursor>          Provider used for PR review (default: claude)
+    --provider <claude|codex|cursor|zai>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -664,6 +664,9 @@ Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --
      CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor;
        under --llm-proxy the Codex/OpenAI key is held by the sidecar and the sandbox gets a nonce,
        while Cursor's key is still injected directly);
+     ZAI_API_KEY (when --provider/--review-provider selects zai; runs the Claude Code CLI against
+       z.ai's GLM Coding Plan endpoint, so no Anthropic token is required. Under --llm-proxy the
+       z.ai key is held by the sidecar and the sandbox gets a nonce);
      VANGUARD_VERIFY_CMD (verification command for Proof of Work; overridden by --verify);
      VANGUARD_VISUAL_PROOF_CMD (visual proof command for UI artifacts; overridden by --visual-proof).
 `;

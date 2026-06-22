@@ -13,15 +13,18 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # claude/codex run the agent (selectable via --provider/--review-provider); linear lets the agent use
-# the linear-cli skill; pnpm lets it run the project's typecheck/tests from inside the sandbox before
-# finishing. Codex authenticates with CODEX_API_KEY: in direct mode it is forwarded into the sandbox
-# when codex is selected; under --llm-proxy the key is held by a trusted sidecar and the sandbox
-# receives only a per-run nonce.
+# the linear-cli skill; pnpm and bun let it install deps and run the project's typecheck/tests from
+# inside the sandbox before finishing. bun is required for bun-workspace monorepos (e.g. ModelBox),
+# whose `bun install` / `bun run *` scripts pnpm cannot drive — without it the agent cannot build or
+# verify and ends up confabulating completion. Codex authenticates with CODEX_API_KEY: in direct mode
+# it is forwarded into the sandbox when codex is selected; under --llm-proxy the key is held by a
+# trusted sidecar and the sandbox receives only a per-run nonce.
 RUN npm install -g \
     @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
     @schpet/linear-cli@${LINEAR_CLI_VERSION} \
     @openai/codex@${CODEX_CLI_VERSION} \
-    pnpm
+    pnpm \
+    bun
 
 RUN groupadd -g 10001 agent \
  && useradd -m -u 10001 -g agent -s /bin/bash agent \

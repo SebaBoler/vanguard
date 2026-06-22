@@ -3,7 +3,9 @@ import { startLlmProxy } from './llm-proxy.js';
 import { llmProxyEgressAllowlist } from './egress-proxy.js';
 import { llmProxyAuth } from '../agents/auth.js';
 import type { LlmProxyDep } from './llm-proxy.js';
+import type { Upstream } from './llm-proxy-rewrite.mjs';
 import type { AgentAuth } from '../agents/auth.js';
+import type { ProviderName } from '../agents/registry.js';
 
 /**
  * The sandbox-side wiring shared by `vanguard run` and `vanguard watch`: the egress enclave's proxy
@@ -20,21 +22,32 @@ export interface SandboxContext {
   destroy: () => Promise<void>;
 }
 
-/**
- * Provision the sandbox context once for a command. Builds the egress enclave when `egress` or
- * `llmProxy` is set (dropping the sidecar-owned upstream hosts — Anthropic and OpenAI — from the
- * allowlist in llm-proxy mode, so the sandbox has no direct route to those providers), and starts the
- * LLM-proxy sidecar on that enclave's network when
- * requested — holding the real Claude credential outside the sandbox. With neither flag, no enclave or
- * env is created and `destroy()` is a no-op.
- */
-export async function startSandboxContext(opts: {
+/** Options for {@link startSandboxContext}. */
+export interface SandboxContextOptions {
   egress: boolean;
   llmProxy: boolean;
-  auth: AgentAuth;
-}): Promise<SandboxContext> {
+  /**
+   * The primary sidecar's credential. For Anthropic (default) this is the Claude subscription/API auth;
+   * for Zai it is the z.ai key carried as an api-mode auth (`agentAuthFromEnv({provider:'zai'})` reads
+   * ZAI_API_KEY). Absent when no Anthropic-family credential is needed (e.g. codex/cursor + zai review)
+   * and --llm-proxy is not active (proxy mode always needs a primary-sidecar credential).
+   */
+  auth?: AgentAuth;
+  /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
+  provider?: ProviderName;
+}
+
+/**
+ * Provision the sandbox context once for a command. Builds the egress enclave when `egress` or
+ * `llmProxy` is set (dropping the sidecar-owned upstream hosts — Anthropic, OpenAI, and z.ai — from the
+ * allowlist in llm-proxy mode, so the sandbox has no direct route to those providers), and starts the
+ * LLM-proxy sidecar on that enclave's network when requested — holding the real provider credential
+ * outside the sandbox. The primary sidecar's upstream follows the provider: Anthropic by default, z.ai
+ * for `--provider zai`. With neither flag, no enclave or env is created and `destroy()` is a no-op.
+ */
+export async function startSandboxContext(opts: SandboxContextOptions): Promise<SandboxContext> {
   // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to the
-  // sidecar-owned upstream providers (Anthropic and OpenAI).
+  // sidecar-owned upstream providers (Anthropic, OpenAI, z.ai).
   if (!opts.egress && !opts.llmProxy) {
     return { destroy: async (): Promise<void> => {} };
   }
@@ -48,8 +61,21 @@ export async function startSandboxContext(opts: {
     return { proxyUrl: enclave.proxyUrl, network: enclave.network, destroy: enclave.destroy };
   }
 
-  const llmProxy = await startLlmProxy({ network: enclave.network, auth: llmProxyAuth(opts.auth) });
-  console.log('llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.');
+  // The primary sidecar's upstream follows the provider (zai → api.z.ai, else Anthropic); the credential
+  // comes uniformly from `auth` (for zai, agentAuthFromEnv carries the z.ai key as an api-mode secret).
+  if (opts.auth === undefined) {
+    throw new Error(
+      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, or ZAI_API_KEY for --provider zai).',
+    );
+  }
+  const upstream: Upstream = opts.provider === 'zai' ? 'zai' : 'anthropic';
+  const auth = llmProxyAuth(opts.auth);
+  const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });
+  console.log(
+    upstream === 'zai'
+      ? 'llm-proxy: z.ai credential held in a trusted sidecar; the sandbox sees only a per-run nonce.'
+      : 'llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.',
+  );
 
   return {
     proxyUrl: enclave.proxyUrl,

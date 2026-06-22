@@ -161,6 +161,7 @@ The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by
 ```bash
 git clone --depth 1 https://github.com/schpet/linear-cli /tmp/linear-cli
 ```
+
 ```ts
 const skills = await skillRegistryFromDirectory('/tmp/linear-cli/skills'); // registers the linear-cli skill
 const sandbox = new DockerSandboxProvider({ secrets: { ...authSecrets(auth), LINEAR_API_KEY: process.env.LINEAR_API_KEY! } });
@@ -180,13 +181,14 @@ Runs reuse the session and keep a stable prompt prefix to maximize Anthropic pro
 
 ## Providers
 
-The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), or `cursor` (Cursor CLI). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
+The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), or `zai` (z.ai GLM Coding Plan). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
 
 **One provider does everything** (default)
 
 ```bash
 vanguard run --linear TES-1                 # Claude implements + reviews + simplifies
 vanguard run --linear TES-1 --provider codex # Codex runs every stage
+vanguard run --linear TES-1 --provider zai   # z.ai GLM runs every stage (ZAI_API_KEY)
 ```
 
 **Cross-provider review** (opt-in) — the implementer stays on the main provider while only the review stage runs on an independent one, so a different model family catches different classes of bugs:
@@ -202,9 +204,11 @@ vanguard watch  --label vanguard --provider codex --review-provider claude
 vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/implement big, review cheap
 ```
 
-`--provider` / `--review-provider` / `--provider-model` / `--review-model` work the same on `run` and `watch`. The simplifier stays on the main provider. Each non-Claude provider brings its own key, forwarded into the sandbox **only when that provider is selected**: `CODEX_API_KEY` for codex, `CURSOR_API_KEY` for cursor (a missing key fails fast at dispatch, not mid-run). Under `--llm-proxy` the Codex/OpenAI key is held by a trusted sidecar instead of the sandbox (see [Host LLM proxy](#host-llm-proxy) below); Cursor's key is still injected directly (not yet proxied). Claude auth is the baseline (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`). The sandbox image ships the `claude` and `codex` CLIs; selecting `cursor` also needs its CLI added to the image (`curl https://cursor.com/install -fsS | bash`).
+`--provider` / `--review-provider` / `--provider-model` / `--review-model` work the same on `run` and `watch`. The simplifier stays on the main provider. Each non-Claude provider brings its own key, forwarded into the sandbox **only when that provider is selected**: `CODEX_API_KEY` for codex, `CURSOR_API_KEY` for cursor, `ZAI_API_KEY` for zai (a missing key fails fast at dispatch, not mid-run). Under `--llm-proxy` the Codex/OpenAI key **and** the z.ai key are held by a trusted sidecar instead of the sandbox (see [Host LLM proxy](#host-llm-proxy) below); Cursor's key is still injected directly (not yet proxied). Claude auth is the baseline (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`). The sandbox image ships the `claude` and `codex` CLIs; selecting `cursor` also needs its CLI added to the image (`curl https://cursor.com/install -fsS | bash`).
 
 Codex does not read its key straight from the environment: `CodexProvider` runs `codex login --with-api-key` (the key piped from `OPENAI_API_KEY` inside the sandbox, never on the command line) before `codex exec`. Under `--llm-proxy` Codex is instead configured (via `~/.codex/config.toml`) to use a custom OpenAI-compatible provider pointed at the trusted sidecar, reading only the per-run nonce from `OPENAI_API_KEY` (no `codex login`, and the real key never enters the sandbox). Either way, the OpenAI account behind the key must have active billing — without it `codex exec` connects and authenticates but the API returns "account is not active", which surfaces as a failed review stage.
+
+**z.ai (GLM Coding Plan).** `--provider zai` reuses the in-sandbox Claude Code CLI, pointed at z.ai's Anthropic-Messages-compatible coding endpoint (`https://api.z.ai/api/coding/paas/v4`) with the GLM model family (default `glm-5.2`). It needs **no Anthropic token** — set `ZAI_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the z.ai key is held by the primary trusted sidecar (forwarding to `api.z.ai` as a bearer key) and the sandbox gets only the per-run nonce. (z.ai's endpoint is OpenAI-compatible too, but the Codex CLI dropped `wire_api = "chat"` support, so the Claude-CLI route is the supported one.)
 
 ## Fork-and-select
 
@@ -222,9 +226,9 @@ The sandbox is the blast radius, not the host. Secrets reach the sandbox through
 
 `vanguard run --llm-proxy` (also on `watch`) keeps the real Anthropic credential out of the sandbox entirely. A trusted reverse-proxy sidecar holds the credential; the sandbox is handed only a random **per-run nonce** as `ANTHROPIC_AUTH_TOKEN` and points `ANTHROPIC_BASE_URL` at the sidecar. The sidecar validates the nonce, swaps in the real credential (OAuth `Authorization: Bearer` or `x-api-key`), and is the only thing that talks to `api.anthropic.com`.
 
-The same nonce/sidecar pattern now also covers Codex/OpenAI when Codex is selected with `--llm-proxy`: a separate OpenAI sidecar holds the real OpenAI key, the sandbox gets a nonce as `OPENAI_API_KEY` plus a base URL pointed at that sidecar, and `api.openai.com` is dropped from the sandbox allowlist alongside `api.anthropic.com`.
+The same nonce/sidecar pattern now also covers Codex/OpenAI when Codex is selected with `--llm-proxy`: a separate OpenAI sidecar holds the real OpenAI key, the sandbox gets a nonce as `OPENAI_API_KEY` plus a base URL pointed at that sidecar, and `api.openai.com` is dropped from the sandbox allowlist alongside `api.anthropic.com`. With `--provider zai`, the primary sidecar instead forwards to `api.z.ai` (the z.ai key as a bearer key), `api.z.ai` is dropped from the allowlist, and the sandbox gets the same `ANTHROPIC_BASE_URL`/nonce shape — so the same nonce/sidecar invariant covers z.ai too.
 
-The flag **implies `--egress`** and additionally **removes `api.anthropic.com` from the sandbox's allowlist**, so the sandbox has no direct route to Anthropic — its only path to the model is through the sidecar. The invariant: the real key never enters the sandbox; a leaked nonce is useless beyond the run and never reaches Anthropic. `--llm-proxy` now protects both Claude and Codex/OpenAI provider keys. Cursor is not yet proxied — selecting `cursor` with `--llm-proxy` still injects `CURSOR_API_KEY` directly into the sandbox (a stable Cursor base-url proxy is planned).
+The flag **implies `--egress`** and additionally **removes `api.anthropic.com` from the sandbox's allowlist**, so the sandbox has no direct route to Anthropic — its only path to the model is through the sidecar. The invariant: the real key never enters the sandbox; a leaked nonce is useless beyond the run and never reaches Anthropic. `--llm-proxy` now protects the Claude, Codex/OpenAI, and z.ai provider keys. Cursor is not yet proxied — selecting `cursor` with `--llm-proxy` still injects `CURSOR_API_KEY` directly into the sandbox (a stable Cursor base-url proxy is planned).
 
 See [docs/smoke-tests/codex-openai-proxy.md](docs/smoke-tests/codex-openai-proxy.md) for the current verification status, a zero-cost negative preflight check, and a controlled live runbook that walks through the Codex/OpenAI proxy preflight and a read-only `review-pr` smoke run when active OpenAI billing is available.
 

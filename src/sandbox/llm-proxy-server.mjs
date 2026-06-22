@@ -10,9 +10,7 @@
 import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { readFileSync } from 'node:fs';
-import { upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual } from './llm-proxy-rewrite.mjs';
-
-const UPSTREAM_HOSTS = { anthropic: 'api.anthropic.com', openai: 'api.openai.com' };
+import { UPSTREAMS, upstreamAuthHeaders, openaiAuthHeaders, isAllowedLlmPath, constantTimeEqual, upstreamPath } from './llm-proxy-rewrite.mjs';
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONCURRENT = 8;
@@ -47,12 +45,13 @@ const config = parseSecretFile(secretText);
 // NB: named `upstreamKind` (not `upstream`) to avoid shadowing the per-request `upstream` socket
 // bindings in the request handler / forward() — that shadowing would TDZ-crash on every request.
 const upstreamKind = config.UPSTREAM ?? 'anthropic';
-if (upstreamKind !== 'anthropic' && upstreamKind !== 'openai') {
-  console.error('llm-proxy: invalid secret file (UPSTREAM must be anthropic|openai)');
+if (!(upstreamKind in UPSTREAMS)) {
+  console.error(`llm-proxy: invalid secret file (UPSTREAM must be ${Object.keys(UPSTREAMS).join('|')})`);
   process.exit(1);
 }
-// anthropic auth needs MODE (subscription|api); openai auth is just Bearer SECRET (no MODE required).
-if (upstreamKind === 'anthropic' && config.MODE !== 'subscription' && config.MODE !== 'api') {
+const spec = UPSTREAMS[upstreamKind];
+// 'anthropic'-auth needs MODE (subscription|api); 'bearer'-auth (openai, zai) is just Bearer SECRET (no MODE).
+if (spec.auth === 'anthropic' && config.MODE !== 'subscription' && config.MODE !== 'api') {
   console.error('llm-proxy: invalid secret file (need MODE=subscription|api for anthropic)');
   process.exit(1);
 }
@@ -66,7 +65,7 @@ if (CONTROL_CHARS.test(config.SECRET) || CONTROL_CHARS.test(config.NONCE)) {
   console.error('llm-proxy: secret/nonce contains control characters');
   process.exit(1);
 }
-const UPSTREAM_HOST = UPSTREAM_HOSTS[upstreamKind];
+const UPSTREAM_HOST = spec.host;
 const PORT = Number(process.env.PORT ?? '8088');
 
 function parseSecretFile(text) {
@@ -83,6 +82,14 @@ function parseSecretFile(text) {
 
 const auth = { mode: config.MODE, secret: config.SECRET };
 const expectedAuthorization = `Bearer ${config.NONCE}`;
+
+// Request auth keyed by the upstream's auth STYLE (from UPSTREAMS[upstreamKind].auth), not the upstream
+// name — every 'bearer' upstream (openai, zai, …) shares one builder, so adding one needs no change here.
+// Thunks are lazy (only the chosen style runs per request); spec.auth is validated at boot, never misses.
+const AUTH_HEADERS_BY_STYLE = {
+  anthropic: (req) => upstreamAuthHeaders(auth, req.headers), // mode-aware Bearer/x-api-key (+ oauth beta merge)
+  bearer: () => openaiAuthHeaders(config.SECRET), //            plain Authorization: Bearer SECRET
+};
 
 let inFlight = 0;
 
@@ -183,13 +190,12 @@ function forward(req, res, body, started, setUpstream, cleanup, isDone) {
     if (HOP_BY_HOP.has(lower)) continue;
     if (value !== undefined) headers[lower] = value;
   }
-  // anthropic: mode-aware Bearer/x-api-key (+ oauth beta merge); openai: just Bearer SECRET.
-  const applied =
-    upstreamKind === 'openai' ? openaiAuthHeaders(config.SECRET) : upstreamAuthHeaders(auth, req.headers);
+
+  const applied = AUTH_HEADERS_BY_STYLE[spec.auth](req);
   for (const [key, value] of Object.entries(applied)) headers[key] = value;
   headers['content-length'] = String(body.length);
 
-  const path = req.url ?? '/';
+  const path = upstreamPath(upstreamKind, req.url);
   let responded = false;
 
   const upstream = httpsRequest(

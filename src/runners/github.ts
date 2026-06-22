@@ -8,7 +8,7 @@ import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
-import { authFromEnv, authSecrets } from '../agents/auth.js';
+import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
@@ -19,12 +19,12 @@ import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, ProviderName } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
 export interface RunGithubIssueDeps extends ProviderChoice {
-  auth: AgentAuth;
+  auth?: AgentAuth;
   repoPath: string;
   repoSlug: string;
   /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
@@ -77,7 +77,10 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     const sandbox = new DockerSandboxProvider({
       image: 'vanguard-sandbox:latest',
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
-      secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), ...agents.secrets },
+      secrets: {
+        ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+        ...agents.secrets,
+      },
       ...sandboxResourceLimits(),
       ...(env !== undefined ? { env } : {}),
       ...(deps.network !== undefined ? { network: deps.network } : {}),
@@ -156,13 +159,18 @@ export async function runGithubProject(
 }
 
 /** Read the run dependencies from the environment (+ flag overrides), resolving the repo slug from origin. */
-export async function githubDepsFromEnv(repoPath: string, repoSlug?: string): Promise<RunGithubIssueDeps> {
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
+export async function githubDepsFromEnv(
+  repoPath: string,
+  repoSlug?: string,
+  provider?: ProviderName,
+  reviewProvider?: ProviderName,
+): Promise<RunGithubIssueDeps> {
+  const auth = agentAuthFromEnv({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+  });
   const slug = repoSlug ?? process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
-  return { auth, repoPath, repoSlug: slug };
+  return { ...(auth !== undefined ? { auth } : {}), repoPath, repoSlug: slug };
 }
 
 /** Extract the owner/repo slug from the origin remote. */

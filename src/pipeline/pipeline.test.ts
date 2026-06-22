@@ -392,12 +392,12 @@ describe('runBudgetedStages copyBack', () => {
 });
 
 describe('techSpecStage', () => {
-  it('returns a single-element array with copyBack false and the default haiku model', () => {
+  it('returns a single-element array with copyBack false and no model set (caller owns the default)', () => {
     const stages = techSpecStage();
     expect(stages).toHaveLength(1);
     const stage = stages[0];
     expect(stage?.copyBack).toBe(false);
-    expect(stage?.model).toBe('haiku');
+    expect(stage?.model).toBeUndefined();
     expect(stage?.name).toBe('tech-spec');
   });
 

@@ -1,7 +1,7 @@
 import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1 } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
-import { authFromEnv } from '../agents/auth.js';
+import { agentAuthFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
 import { formatPreflightReport, runPreflight } from './preflight.js';
@@ -21,17 +21,22 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   for (const line of formatPreflightReport(report)) console.log(line);
   if (!report.ok) throw new Error('preflight failed');
 
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
+  const auth = agentAuthFromEnv({
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+  });
 
   const controller = new AbortController();
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth });
+  const ctx = await startSandboxContext({
+    egress: cmd.egress,
+    llmProxy: cmd.llmProxy === true,
+    ...(auth !== undefined ? { auth } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+  });
 
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
   console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
@@ -50,7 +55,7 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 
 async function watchLinearSource(
   cmd: WatchCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
@@ -65,7 +70,7 @@ async function watchLinearSource(
   if (cmd.label === undefined) throw new Error('--label is required for linear watch source');
 
   const agentDeps = {
-    auth,
+    ...(auth !== undefined ? { auth } : {}),
     linearKey,
     skillsDir,
     repoPath: cmd.repoPath,
@@ -85,7 +90,7 @@ async function watchLinearSource(
       throw new Error('--spec-state-name and --needs-info-state are required with --spec-state for linear loop-v1');
     }
     const specDeps: RunSpecGeneratorDeps = {
-      auth,
+      ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new LinearCliTaskFetcher({
         ...(cmd.team !== undefined ? { team: cmd.team } : {}),
@@ -138,9 +143,9 @@ async function watchLinearSource(
   });
 }
 
-async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, ctx: SandboxContext) {
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
-  deps.auth = auth;
+async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
     deps.proxyUrl = ctx.proxyUrl;
     deps.network = ctx.network;
@@ -157,7 +162,7 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth, ctx: SandboxC
 
 async function watchGithubSource(
   cmd: WatchCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
@@ -170,7 +175,7 @@ async function watchGithubSource(
     }
     const repoSlug = deps.repoSlug;
     const specDeps: RunSpecGeneratorDeps = {
-      auth,
+      ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitHubTaskFetcher(repoSlug),
       ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
@@ -219,7 +224,7 @@ async function watchGithubSource(
 
 async function watchGithubProjectSource(
   cmd: WatchCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {

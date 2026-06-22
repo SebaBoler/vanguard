@@ -2,7 +2,8 @@ import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
-import { authFromEnv } from '../agents/auth.js';
+import { agentAuthFromEnv } from '../agents/auth.js';
+import { validateProviderChoice } from '../agents/registry.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -19,8 +20,23 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  const auth = requireAuth();
-  const ctx = await startSandboxContext({ egress: cmd.egress, llmProxy: cmd.llmProxy === true, auth });
+  // Reject an unsupported provider combo up front, so a raw `vanguard run` reports the actionable
+  // combo error (e.g. "needs zai as implementer") instead of a downstream credential error.
+  validateProviderChoice(
+    {
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    },
+    { proxyMode: cmd.llmProxy === true },
+  );
+
+  const auth = requireAuth(cmd);
+  const ctx = await startSandboxContext({
+    egress: cmd.egress,
+    llmProxy: cmd.llmProxy === true,
+    ...(auth !== undefined ? { auth } : {}),
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+  });
 
   try {
     if (cmd.source === 'linear') {
@@ -35,17 +51,16 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
   }
 }
 
-function requireAuth(): AgentAuth {
-  const auth = authFromEnv();
-  if (auth === undefined) {
-    throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');
-  }
-  return auth;
+function requireAuth(cmd: RunCommand): AgentAuth | undefined {
+  return agentAuthFromEnv({
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+  });
 }
 
 function linearDeps(
   cmd: RunCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
@@ -59,7 +74,7 @@ function linearDeps(
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
   return {
-    auth,
+    ...(auth !== undefined ? { auth } : {}),
     linearKey,
     skillsDir,
     repoPath: cmd.repoPath,
@@ -79,7 +94,7 @@ function linearDeps(
 
 async function runLinear(
   cmd: RunCommand,
-  auth: AgentAuth,
+  auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
@@ -102,8 +117,7 @@ async function runGithub(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
-  requireAuth();
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -129,8 +143,7 @@ async function runProject(
   if (!Number.isInteger(projectNumber) || projectNumber < 1) {
     throw new Error(`--project expects a board number, got "${cmd.id}".`);
   }
-  requireAuth();
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;

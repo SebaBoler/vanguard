@@ -562,6 +562,19 @@ function fakeAgent(finalText: string): AgentProvider {
   };
 }
 
+/** Recording agent: captures the model field from the first run() call, returns a valid spec. */
+function recordingSpecAgent(captured: { model: string | undefined }): AgentProvider {
+  const finalText = 'Here is the plan <tech_spec>\n## Problem\nRetry 5xx.\n</tech_spec> <promise>COMPLETE</promise>';
+  return {
+    name: 'recording',
+    async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+      captured.model = input.model;
+      yield { text: finalText };
+      return { finalText, turns: 1, sessionId: 's1' };
+    },
+  };
+}
+
 describe('runSpecGenerator', () => {
   let repo: string;
   beforeEach(async () => {
@@ -613,5 +626,33 @@ describe('runSpecGenerator', () => {
 
     await expect(runSpecGenerator(task.id, deps)).rejects.toThrow(/tech_spec/i);
     expect(wasDestroyed()).toBe(true);
+  });
+
+  it('provider-aware spec model: zai -> undefined, claude -> haiku, explicit specModel always wins', async () => {
+    const task = readyTask('ENG-20');
+
+    async function runWithDeps(overrides: Partial<RunSpecGeneratorDeps>): Promise<string | undefined> {
+      const captured: { model: string | undefined } = { model: 'NOT_SET' as string | undefined };
+      const { sandbox } = makeSandbox();
+      const deps: RunSpecGeneratorDeps = {
+        auth: { type: 'api', apiKey: 'x' } as never,
+        repoPath: repo,
+        fetcher: fakeFetcher({ [task.id]: task }, [task]),
+        sandboxFactory: () => sandbox,
+        agent: recordingSpecAgent(captured),
+        ...overrides,
+      };
+      await runSpecGenerator(task.id, deps);
+      return captured.model;
+    }
+
+    // provider 'zai', no specModel -> model must be omitted (undefined) so ZaiProvider picks glm
+    expect(await runWithDeps({ provider: 'zai' })).toBeUndefined();
+
+    // no provider (claude default), no specModel -> model must be 'haiku' to keep spec pass cheap
+    expect(await runWithDeps({})).toBe('haiku');
+
+    // explicit specModel always wins regardless of provider
+    expect(await runWithDeps({ provider: 'zai', specModel: 'sonnet' })).toBe('sonnet');
   });
 });

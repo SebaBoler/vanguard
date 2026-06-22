@@ -28,7 +28,7 @@ import type { VanguardLogger } from '../core/logger.js';
  * repo slug / verification / fork / review-model options are intentionally absent.
  */
 export interface RunSpecGeneratorDeps extends ProviderChoice {
-  auth: AgentAuth;
+  auth?: AgentAuth;
   /** Local repo path: where the worktree is cut and where the run record is persisted. */
   repoPath: string;
   /** Source of the task being specced. Injected so the spec pass is testable without a live source. */
@@ -64,12 +64,16 @@ function defaultSandboxFactory(
   deps: RunSpecGeneratorDeps,
   secrets: Record<string, string>,
   openaiProxy: LlmProxyDep | undefined,
+  injectAnthropicAuth: boolean,
 ): IsolatedSandboxProvider {
   const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, openaiProxy);
   return new DockerSandboxProvider({
     image: 'vanguard-sandbox:latest',
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
-    secrets: { ...(deps.llmProxy === undefined ? authSecrets(deps.auth) : {}), ...secrets },
+    secrets: {
+      ...(deps.llmProxy === undefined && deps.auth !== undefined && injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+      ...secrets,
+    },
     ...sandboxResourceLimits(),
     ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
@@ -98,11 +102,15 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   // Proxied provider keys (held by sidecars in proxy mode); only set when selectAgents runs (not the
   // injected-agent test path), so injected runs never start a real sidecar.
   let proxySecrets: ProviderProxySecrets = {};
+  // Whether the runner should layer Anthropic authSecrets into the sandbox. Defaults to true (the
+  // injected-agent test path mimics a Claude run); set from selectAgents when it runs.
+  let injectAnthropicAuth = true;
   if (agent === undefined) {
     const selected = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
     agent = selected.agent;
     secrets = { ...selected.secrets, ...secrets };
     proxySecrets = selected.proxySecrets;
+    injectAnthropicAuth = selected.injectAnthropicAuth;
   }
   if (agent === undefined) throw new VanguardError('No agent available for the spec pass');
 
@@ -113,7 +121,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
   try {
-    const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai)))(secrets);
+    const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
@@ -126,7 +134,10 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       deps.contextDeps ?? {},
     );
     try {
-      const outcomes = await runStages(ctx, techSpecStage(deps.specModel !== undefined ? { model: deps.specModel } : {}), {
+      // haiku keeps the spec pass cheap on Claude; z.ai doesn't serve haiku, so let ZaiProvider pick its
+      // own default (glm). An explicit --spec-model always wins.
+      const specModel = deps.specModel ?? (deps.provider === 'zai' ? undefined : 'haiku');
+      const outcomes = await runStages(ctx, techSpecStage(specModel !== undefined ? { model: specModel } : {}), {
         agent,
         variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),

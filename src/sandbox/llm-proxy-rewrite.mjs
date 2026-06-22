@@ -36,26 +36,43 @@ export function upstreamAuthHeaders(auth, reqHeaders) {
   return { 'x-api-key': auth.secret, ...(beta !== undefined ? { 'anthropic-beta': beta } : {}) };
 }
 
-// Per-upstream POST allowlists (query string ignored, no wildcards).
-const ALLOWED_BY_UPSTREAM = {
-  anthropic: new Set(['/v1/messages', '/v1/messages/count_tokens']),
-  openai: new Set(['/v1/responses']),
-};
 /**
- * Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored).
- * anthropic => /v1/messages, /v1/messages/count_tokens. openai => /v1/responses only.
+ * Single source of truth for every upstream the sidecar can proxy, keyed by the UPSTREAM value in the
+ * secret file. Add an upstream here and every consumer follows: host routing + allowlist drop
+ * (UPSTREAMS[k].host), POST-path lockdown (.paths), auth scheme (.auth), and boot validation (`k in UPSTREAMS`).
+ *
+ * - host:  where the sidecar forwards (and the host dropped from the sandbox egress allowlist).
+ * - paths: the ONLY POST paths tunnelled through (query string ignored, no wildcards) — the lockdown.
+ * - auth:  how the real credential is presented upstream. 'anthropic' = mode-aware x-api-key OR
+ *          Bearer+oauth-beta (upstreamAuthHeaders). 'bearer' = plain Authorization: Bearer SECRET
+ *          (openaiAuthHeaders). z.ai is Anthropic-Messages-compatible on the WIRE (same paths) but
+ *          authenticates with a plain bearer key, so it pairs anthropic paths with bearer auth.
  */
+export const UPSTREAMS = {
+  anthropic: { host: 'api.anthropic.com', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'anthropic' },
+  openai: { host: 'api.openai.com', paths: ['/v1/responses'], auth: 'bearer' },
+  // basePath: keep in sync with ZAI_BASE_URL in src/agents/zai.ts
+  zai: { host: 'api.z.ai', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'bearer', basePath: '/api/coding/paas/v4' },
+};
+
+/** Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored). */
 export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
   if ((method ?? '').toUpperCase() !== 'POST') return false;
-  const allowed = ALLOWED_BY_UPSTREAM[upstream];
-  if (allowed === undefined) return false;
+  const spec = UPSTREAMS[upstream];
+  if (spec === undefined) return false;
   const p = (path ?? '').split('?')[0] ?? '';
-  return allowed.has(p);
+  return spec.paths.includes(p);
 }
 
-/** Headers to apply upstream for OpenAI: just Bearer SECRET (no anthropic-beta, no x-api-key). */
+/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export function openaiAuthHeaders(secret) {
   return { authorization: `Bearer ${secret}` };
+}
+
+/** Outbound upstream path: the upstream's base path prefix + the inbound request path (query kept). */
+export function upstreamPath(upstream, reqUrl) {
+  const spec = UPSTREAMS[upstream];
+  return `${spec?.basePath ?? ''}${reqUrl ?? '/'}`;
 }
 
 /** Constant-time string compare (length-safe). */
