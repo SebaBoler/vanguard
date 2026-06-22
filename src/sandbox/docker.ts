@@ -160,6 +160,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
+    if (!this.started) throw new SandboxError('exec() called before start()');
     const hasStageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0;
 
     if (hasStageSecrets) {
