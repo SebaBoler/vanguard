@@ -152,7 +152,33 @@ await run(opts, { skills });
 
 For targeted injection instead of the whole set, construct `new SkillRegistry({ id: '/host/path' })` and call `inject(['id'], sandbox)`.
 
-The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering — climb the laziness ladder, stop at the first rung that works).
+The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering: climb the laziness ladder, stop at the first rung that works).
+
+### Custom skills (bring your own)
+
+A skill is a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body), the standard Claude Code format. `--skills <dir>` injects every subdirectory in that dir, and the agent picks the right one per task by matching each skill's `description`. A Docker task pulls in `docker-expert`, a UI task `frontend-design`, and `ponytail` fires on everything. You curate the set, the model chooses per task. There is no per-issue flag.
+
+Keep your domain skills in the target repo under `.github/vanguard-skills/`:
+
+```
+.github/vanguard-skills/
+  docker-expert/SKILL.md
+  frontend-design/SKILL.md
+  python-expert/SKILL.md
+```
+
+Copy them into the bundled set before the run so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. Add one step to the workflow above:
+
+```yaml
+      - name: Add custom skills
+        run: cp -r .github/vanguard-skills/* .vanguard-src/skills/
+```
+
+The run step already passes `--skills .vanguard-src/skills`, so it now injects both. Pointing `--skills` straight at `.github/vanguard-skills` would drop the bundled skills the loop needs, so merge, do not replace.
+
+Skills reach any provider that runs the `claude` CLI: `claude-code` and `zai` (z.ai's GLM endpoint speaks the Anthropic API). `codex` and `cursor` run their own CLIs and ignore `~/.claude/skills`, so the library does not feed them yet.
+
+Two checks before a skill goes in. It must be self-contained: `SKILL.md` plus plain text, no MCP or browser, since the sandbox has neither. It must allow model invocation: skip any with `disable-model-invocation: true`, because the agent never triggers those itself. Only the `description`s load up front, so curate about a dozen, not a whole collection.
 
 ### Example: the linear-cli skill
 
