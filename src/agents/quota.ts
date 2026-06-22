@@ -94,7 +94,7 @@ export async function resolveModel(
 export interface PctCheckOptions {
   /** usedPct at/above which the bucket is considered floored. */
   bailPct: number;
-  /** Refresh when the cached snapshot is older than this (ms). */
+  /** Refresh when the cached snapshot is older than this (ms). 0 = always refresh (tests only). */
   ttlMs: number;
   /** Optional active refresh (z.ai monitor poll). Omit for header-fed buckets (Claude). */
   refresh?: () => Promise<QuotaSnapshot>;

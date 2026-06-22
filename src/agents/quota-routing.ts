@@ -41,9 +41,9 @@ export class QuotaRoutingProvider implements AgentProvider {
     };
 
     const it = this.opts.delegate.run(next);
+    if (this.opts.debug !== undefined) this.opts.debug(this.burnLine());
     let r = await it.next();
     while (r.done !== true) {
-      if (this.opts.debug !== undefined) this.opts.debug(this.burnLine());
       yield r.value;
       r = await it.next();
     }
