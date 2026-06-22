@@ -42,6 +42,21 @@ describe('providerSecrets', () => {
     expect(() => providerSecrets(['codex'], {})).toThrow(/CODEX_API_KEY/);
   });
 
+  it('forwards CODEX_AUTH_JSON and waives the API key (subscription mode)', () => {
+    expect(providerSecrets(['codex'], { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' } as NodeJS.ProcessEnv)).toEqual({
+      sandboxSecrets: { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' },
+      proxySecrets: {},
+    });
+  });
+
+  it('keeps CODEX_AUTH_JSON in the sandbox even under --llm-proxy (subscription is a sandbox credential)', () => {
+    const env = { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['codex'], env, { proxyMode: true })).toEqual({
+      sandboxSecrets: { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' },
+      proxySecrets: {},
+    });
+  });
+
   it('throws when a selected provider key is missing (proxy mode — key required either way)', () => {
     expect(() => providerSecrets(['codex'], {}, { proxyMode: true })).toThrow(/CODEX_API_KEY/);
   });

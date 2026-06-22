@@ -158,6 +158,30 @@ describe('CodexProvider', () => {
     expect(setup).toContain('$OPENAI_API_KEY');
   });
 
+  it('setup command writes auth.json from CODEX_AUTH_JSON (subscription mode) before the other branches', async () => {
+    const commands: string[] = [];
+    const sandbox = {
+      exec: async (command: string): Promise<ExecResult> => {
+        commands.push(command);
+        return { stdout: cannedJsonl, stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+    const gen = new CodexProvider().run(input(sandbox));
+    for await (const turn of gen) void turn;
+    const setup = commands[0] ?? '';
+
+    // subscription branch is checked FIRST and writes the auth.json the runner forwarded via env
+    expect(setup).toContain('if [ -n "${CODEX_AUTH_JSON:-}" ]; then');
+    expect(setup.indexOf('CODEX_AUTH_JSON')).toBeLessThan(setup.indexOf('VANGUARD_OPENAI_BASE_URL'));
+    expect(setup).toContain('> "${CODEX_HOME:-$HOME/.codex}/auth.json"');
+    expect(setup).toContain('printf %s "$CODEX_AUTH_JSON"'); // content from env, never embedded on argv
+    expect(setup).toContain('chmod 600 "${CODEX_HOME:-$HOME/.codex}/auth.json"');
+
+    // the other two modes remain reachable in the same single command
+    expect(setup).toContain('elif [ -n "${VANGUARD_OPENAI_BASE_URL:-}" ]; then');
+    expect(setup).toContain('codex login --with-api-key');
+  });
+
   it('includes -m flag when model is specified', async () => {
     const { sandbox, captured } = capturingSandbox();
     const gen = new CodexProvider().run({ prompt: 'p', sandbox, workdir: '/workspace', home: '/root', model: 'o4-mini' });

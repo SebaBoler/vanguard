@@ -32,6 +32,14 @@ interface ProviderKeySpec {
   toSandboxSecrets: (key: string) => Record<string, string>;
   /** When set, in proxy mode the real key is held by a sidecar under this name instead of injected into the sandbox. */
   proxyKey?: keyof ProviderProxySecrets;
+  /**
+   * Optional credential-file env var that substitutes for the API key (subscription mode). When this host
+   * env var is set, its value is forwarded verbatim into the sandbox under the same name and the API-key
+   * requirement is waived — Codex on a ChatGPT subscription supplies its auth.json via CODEX_AUTH_JSON,
+   * which CodexProvider writes to ~/.codex/auth.json. The credential lives in the sandbox like Claude's
+   * CLAUDE_CODE_OAUTH_TOKEN, so --llm-proxy does not apply (Codex talks to OpenAI directly with it).
+   */
+  subscriptionEnv?: string;
 }
 
 /** Everything the runner needs to know about one provider, in one place. */
@@ -76,6 +84,8 @@ const PROVIDERS = {
       hostEnv: ['CODEX_API_KEY', 'OPENAI_API_KEY'],
       toSandboxSecrets: (key) => ({ OPENAI_API_KEY: key }),
       proxyKey: 'codex',
+      // Run Codex on a ChatGPT subscription instead of an API key: CODEX_AUTH_JSON carries auth.json content.
+      subscriptionEnv: 'CODEX_AUTH_JSON',
     },
   },
   cursor: {
@@ -159,6 +169,17 @@ export function providerSecrets(
     const s = spec(name);
     const { key } = s;
     if (key === undefined) continue; // Claude: auth handled by authSecrets, no key to route here.
+
+    // Subscription mode: a credential FILE substitutes for the API key. When its env var is set we
+    // forward it verbatim into the sandbox under the same name and waive the API-key requirement — the
+    // credential lives in the sandbox like Claude's OAuth token, so proxy mode does not apply.
+    if (key.subscriptionEnv !== undefined) {
+      const sub = env[key.subscriptionEnv];
+      if (sub !== undefined && sub !== '') {
+        sandboxSecrets[key.subscriptionEnv] = sub;
+        continue;
+      }
+    }
 
     const value = key.hostEnv.map((k) => env[k]).find((v) => v !== undefined && v !== '');
     if (value === undefined) {
