@@ -11,8 +11,9 @@ The README's GitHub Actions section lists three setups flat (same-repo, another-
 
 1. Restructure the README GitHub Actions section into three explicit tiers a user reads top-down.
 2. Extend `doctor` with two checks that map to the real first-run failures, so preflight stops before any work when the repo is misconfigured.
+3. Ship a one-click `vanguard-doctor.yml` validation workflow, and make new-repo onboarding copy BOTH workflows (implement + doctor).
 
-Non-goal: a separate validation workflow, a Codex token liveness probe, or a one-click setup generator. (Deferred; see "Deferred".)
+Non-goal: a Codex token liveness probe or a one-click setup generator. (Deferred; see "Deferred".)
 
 ## Part 1 — README tiers
 
@@ -22,7 +23,9 @@ Replace the flat subsections under `### Implement issues via GitHub Actions` wit
 - **Intermediate** — run on another repo (cross-repo checkout), `ready for spec` double-sweep (with the #143 timing caveat), custom skills.
 - **Full** — cross-provider Opus spec / Sonnet impl / Codex review on a ChatGPT subscription (`CODEX_AUTH_JSON`, `--spec-model`/`--provider-model`/`--review-provider`, drop `--llm-proxy`). Existing subscription content.
 
-Add a short **"Validate before your first run"** subsection: `doctor` runs at the start of every `watch` and stops before claiming any issue if a check fails, so a misconfigured repo never does half-work. A `workflow_dispatch` run with no labeled issues is a safe dry run — the `preflight: …` lines show what passed.
+Add a short **"Validate before your first run"** subsection pointing at the doctor workflow (Part 3): click it once on a fresh repo, get red/green before labeling anything. The in-run preflight is the backstop — `doctor` also runs at the start of every `watch` and stops before claiming if a check fails, so a misconfigured repo never does half-work.
+
+Every tier's setup instructions drop in **both** workflow files together (`vanguard-implement.yml` + `vanguard-doctor.yml`); a new repo gets both, and the user runs the doctor workflow once to confirm green, then labels an issue.
 
 ## Part 2 — `doctor` checks
 
@@ -32,6 +35,16 @@ Two new checks in `src/cli/preflight.ts`, github-backed runs only:
 2. **`codex auth`** — when the implement or review provider is `codex` and `CODEX_AUTH_JSON` is set, parse it and assert it is an object with `auth_mode` and a non-empty `tokens.refresh_token`. Missing/empty/unparseable → fail with "set CODEX_AUTH_JSON to the contents of ~/.codex/auth.json". Shape only, no network. When `CODEX_AUTH_JSON` is unset but an OpenAI key is present, skip (API-key mode is already covered by `provider auth`).
 
 Both follow the existing `check(name, ok, reason?)` shape and join the one-line preflight summary. A failing check returns `ok:false`, which the runner already treats as "stop before claim".
+
+## Part 3 — one-click validation workflow
+
+Ship `.github/workflows/vanguard-doctor.yml` (`on: workflow_dispatch`) with the same setup steps as implement (checkout target + vanguard, pnpm install/build, build sandbox image, ensure labels), then one final step running only `doctor`:
+
+```
+node .vanguard-src/dist/cli/index.js doctor --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" <same provider flags + secrets as implement>
+```
+
+It processes no issues. `doctor` prints the `preflight:` lines and exits non-zero when any check fails, so the run goes red/green — clickable from the GitHub mobile app. It carries the same secrets and provider flags as implement so it validates the real configuration; the flags must mirror implement, and the README presents both files together so they are copied and edited as a pair. Ship this file in the Vanguard repo (alongside the existing `vanguard-implement.yml`) and in the README another-repo template.
 
 ## Data flow
 
@@ -45,10 +58,10 @@ Both follow the existing `check(name, ok, reason?)` shape and join the one-line 
 ## Testing
 
 - `preflight.test.ts`: `codex auth` passes on a well-formed `CODEX_AUTH_JSON`, fails on empty/non-JSON/missing-`refresh_token`, and is skipped when codex is not selected or `CODEX_AUTH_JSON` is unset (API-key mode). `pr-create setting` passes on `can_approve_pull_request_reviews:true`, fails on `false`, and passes (`unknown`) when the API call errors — using the injected `run` stub the suite already uses for `gh` calls.
+- `vanguard-doctor.yml` validated with `actionlint`; the `doctor` command path is already covered by `preflight.test.ts`.
 - No README test (prose).
 
 ## Deferred (YAGNI)
 
 - Codex token **liveness** probe (network call) — shape check covers the common failures; a dead token fails loudly in-run.
-- Separate `vanguard-doctor.yml` for a one-click phone pre-check — the in-run preflight already fail-fasts; add if the dry-run-via-dispatch story proves insufficient.
 - One-shot setup generator (secrets + labels + repo setting) — only if manual setup keeps hurting.
