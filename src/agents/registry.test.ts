@@ -56,6 +56,11 @@ describe('providerSecrets', () => {
     expect(JSON.parse(sandboxSecrets.CODEX_AUTH_JSON ?? '')).toEqual({ auth_mode: 'chatgpt', tokens: { access_token: 'x' } });
   });
 
+  it('rejects a CODEX_AUTH_JSON that parses but is not an object (bare scalar/array)', () => {
+    expect(() => providerSecrets(['codex'], { CODEX_AUTH_JSON: '123' } as NodeJS.ProcessEnv)).toThrow(/must be a JSON object/);
+    expect(() => providerSecrets(['codex'], { CODEX_AUTH_JSON: '["a"]' } as NodeJS.ProcessEnv)).toThrow(/must be a JSON object/);
+  });
+
   it('keeps CODEX_AUTH_JSON in the sandbox even under --llm-proxy (subscription is a sandbox credential)', () => {
     const env = { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' } as NodeJS.ProcessEnv;
     expect(providerSecrets(['codex'], env, { proxyMode: true })).toEqual({

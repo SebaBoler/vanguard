@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CodexProvider } from './codex.js';
+import { CodexProvider, redactTokens } from './codex.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentRunInput, AgentRunOutput } from './provider.js';
 
@@ -50,6 +50,20 @@ async function drain(sandbox: IsolatedSandboxProvider): Promise<{ turns: string[
     turns.push(n.value.text);
   }
 }
+
+describe('redactTokens', () => {
+  it('redacts JWTs, Bearer headers, and token JSON fields', () => {
+    const jwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
+    expect(redactTokens(`got ${jwt} here`)).toBe('got [REDACTED-JWT] here');
+    expect(redactTokens('Authorization: Bearer sk-abc.DEF_123-xyz')).toBe('Authorization: Bearer [REDACTED]');
+    expect(redactTokens('{"refresh_token":"rt_secret_value","x":1}')).toBe('{"refresh_token":"[REDACTED]","x":1}');
+    expect(redactTokens('{"access_token": "at_secret"}')).toBe('{"access_token": "[REDACTED]"}');
+  });
+
+  it('leaves non-credential text untouched', () => {
+    expect(redactTokens('account is not active')).toBe('account is not active');
+  });
+});
 
 describe('CodexProvider', () => {
   it('parses JSONL into turns, sessionId, and usage', async () => {

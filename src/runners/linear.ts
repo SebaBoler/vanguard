@@ -101,12 +101,13 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     try {
       let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
       if (deps.providerModel !== undefined) {
-        // A cross-provider reviewer must not inherit the implement provider's model (a Codex reviewer
-        // rejects an Anthropic model name); it uses --review-model or its own default instead.
-        pipeline =
-          agents.reviewAgent !== undefined
-            ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
-            : withStageModel(pipeline, deps.providerModel);
+        // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
+        // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
+        // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
+        const crossProviderReview = deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
+        pipeline = crossProviderReview
+          ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
+          : withStageModel(pipeline, deps.providerModel);
       }
       if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
       const outcomes = await runStages(ctx, pipeline, {

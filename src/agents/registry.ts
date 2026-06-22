@@ -181,9 +181,14 @@ export function providerSecrets(
       if (sub !== undefined && sub !== '') {
         let value = sub;
         try {
-          value = JSON.stringify(JSON.parse(sub));
-        } catch {
-          /* not JSON — leave as-is */
+          const parsed: unknown = JSON.parse(sub);
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            throw new AgentError(`${key.subscriptionEnv} must be a JSON object (the contents of ~/.codex/auth.json).`);
+          }
+          value = JSON.stringify(parsed);
+        } catch (e) {
+          if (e instanceof AgentError) throw e; // a bare scalar/array parsed but is not auth.json — fail at dispatch
+          /* not JSON — leave as-is; the sandbox newline guard / codex surfaces it */
         }
         sandboxSecrets[key.subscriptionEnv] = value;
         continue;
