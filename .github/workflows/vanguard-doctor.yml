@@ -1,0 +1,58 @@
+name: Vanguard Doctor
+
+# One-click preflight: validates that this repo is ready for Vanguard (secrets, labels, Docker,
+# sandbox image, provider auth) WITHOUT processing any issue. Run it from Actions -> Vanguard Doctor
+# -> Run workflow (clickable from the GitHub mobile app). Green = ready to label an issue.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: vanguard-doctor-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  doctor:
+    if: github.actor == 'SebaBoler'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "ready for spec" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Vanguard Loop v1 spec pass" --force
+          gh label create "ready for agent" --repo "$GITHUB_REPOSITORY" --color 5319E7 --description "Vanguard Loop v1 agent pass" --force
+          gh label create "needs info" --repo "$GITHUB_REPOSITORY" --color D93F0B --description "Parked: ticket too vague for Vanguard" --force
+          gh label create "vanguard:speccing" --repo "$GITHUB_REPOSITORY" --color FEF2C0 --description "Vanguard is writing a tech spec" --force
+          gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
+          gh label create "vanguard:review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR for review" --force
+
+      # Preflight only — no issues are claimed. Same providers as implement (Claude + Codex review),
+      # so it also validates the Codex subscription credential. Exits non-zero on any failed check.
+      - name: Doctor
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: node dist/cli/index.js doctor --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --provider claude --review-provider codex
