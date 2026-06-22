@@ -226,6 +226,17 @@ The sandbox is the blast radius, not the host. Secrets reach the sandbox through
 
 `vanguard run --llm-proxy` (also on `watch`) keeps the real Anthropic credential out of the sandbox entirely. A trusted reverse-proxy sidecar holds the credential; the sandbox is handed only a random **per-run nonce** as `ANTHROPIC_AUTH_TOKEN` and points `ANTHROPIC_BASE_URL` at the sidecar. The sidecar validates the nonce, swaps in the real credential (OAuth `Authorization: Bearer` or `x-api-key`), and is the only thing that talks to `api.anthropic.com`.
 
+Just add the flag; the key lives in the host env (never the sandbox) and Docker must be running:
+
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN=...                       # host key, stays in the sidecar
+vanguard run --linear TES-1 --llm-proxy                  # Claude credential held by the sidecar
+vanguard watch --label vanguard --llm-proxy              # same, for the watch loop
+
+export ZAI_API_KEY=...                                   # z.ai key, also stays in the sidecar
+vanguard run --linear TES-1 --provider zai --llm-proxy   # z.ai credential held by the sidecar
+```
+
 The same nonce/sidecar pattern now also covers Codex/OpenAI when Codex is selected with `--llm-proxy`: a separate OpenAI sidecar holds the real OpenAI key, the sandbox gets a nonce as `OPENAI_API_KEY` plus a base URL pointed at that sidecar, and `api.openai.com` is dropped from the sandbox allowlist alongside `api.anthropic.com`. With `--provider zai`, the primary sidecar instead forwards to `api.z.ai` (the z.ai key as a bearer key), `api.z.ai` is dropped from the allowlist, and the sandbox gets the same `ANTHROPIC_BASE_URL`/nonce shape — so the same nonce/sidecar invariant covers z.ai too.
 
 The flag **implies `--egress`** and additionally **removes `api.anthropic.com` from the sandbox's allowlist**, so the sandbox has no direct route to Anthropic — its only path to the model is through the sidecar. The invariant: the real key never enters the sandbox; a leaked nonce is useless beyond the run and never reaches Anthropic. `--llm-proxy` now protects the Claude, Codex/OpenAI, and z.ai provider keys. Cursor is not yet proxied — selecting `cursor` with `--llm-proxy` still injects `CURSOR_API_KEY` directly into the sandbox (a stable Cursor base-url proxy is planned).
