@@ -49,6 +49,13 @@ describe('providerSecrets', () => {
     });
   });
 
+  it('minifies pretty-printed CODEX_AUTH_JSON so the forwarded value carries no newline', () => {
+    const pretty = '{\n  "auth_mode": "chatgpt",\n  "tokens": { "access_token": "x" }\n}\n';
+    const { sandboxSecrets } = providerSecrets(['codex'], { CODEX_AUTH_JSON: pretty } as NodeJS.ProcessEnv);
+    expect(sandboxSecrets.CODEX_AUTH_JSON).not.toMatch(/[\n\r]/);
+    expect(JSON.parse(sandboxSecrets.CODEX_AUTH_JSON ?? '')).toEqual({ auth_mode: 'chatgpt', tokens: { access_token: 'x' } });
+  });
+
   it('keeps CODEX_AUTH_JSON in the sandbox even under --llm-proxy (subscription is a sandbox credential)', () => {
     const env = { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' } as NodeJS.ProcessEnv;
     expect(providerSecrets(['codex'], env, { proxyMode: true })).toEqual({

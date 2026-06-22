@@ -171,12 +171,21 @@ export function providerSecrets(
     if (key === undefined) continue; // Claude: auth handled by authSecrets, no key to route here.
 
     // Subscription mode: a credential FILE substitutes for the API key. When its env var is set we
-    // forward it verbatim into the sandbox under the same name and waive the API-key requirement — the
-    // credential lives in the sandbox like Claude's OAuth token, so proxy mode does not apply.
+    // forward it into the sandbox under the same name and waive the API-key requirement — the credential
+    // lives in the sandbox like Claude's OAuth token, so proxy mode does not apply. auth.json is usually
+    // stored pretty-printed, so collapse it to single-line JSON: the sandbox secret layer rejects any
+    // value with a newline. Forward as-is if it is not parseable JSON (the newline guard then catches
+    // genuinely malformed input with a clear error).
     if (key.subscriptionEnv !== undefined) {
       const sub = env[key.subscriptionEnv];
       if (sub !== undefined && sub !== '') {
-        sandboxSecrets[key.subscriptionEnv] = sub;
+        let value = sub;
+        try {
+          value = JSON.stringify(JSON.parse(sub));
+        } catch {
+          /* not JSON — leave as-is */
+        }
+        sandboxSecrets[key.subscriptionEnv] = value;
         continue;
       }
     }
