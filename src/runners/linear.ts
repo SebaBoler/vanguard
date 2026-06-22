@@ -46,6 +46,8 @@ export interface RunLinearIssueDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage (default: provider's default). */
   reviewModel?: string;
+  /** Skip the simplifier stage (lean run: implement -> review only). */
+  noSimplify?: boolean;
   /** Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect). */
   verifyCmd?: string;
   /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). Failure never blocks the PR. */
@@ -99,7 +101,9 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
       { skills },
     );
     try {
-      let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
+      // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
+      const base = deps.noSimplify === true ? stages().filter((s) => s.name !== 'simplifier') : stages();
+      let pipeline = agents.reviewAgent !== undefined ? withStageProvider(base, agents.reviewAgent) : base;
       if (deps.providerModel !== undefined) {
         // A cross-provider reviewer must not inherit the implement provider's model (a Codex reviewer
         // rejects an Anthropic model name); it uses --review-model or its own default instead.
