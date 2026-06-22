@@ -264,11 +264,8 @@ describe('vanguard.run', () => {
     expect(result.diff).toContain('output.txt');
   });
 
-  it('completes the stage even when session capture fails (non-Claude provider session path)', async () => {
-    const wm = new WorktreeManager(repo);
-    // copyFileOut succeeds for the worktree (/workspace) but throws for the session jsonl path —
-    // mimics a codex/cursor stage whose session is not at ~/.claude/projects. The run must not fail.
-    const sandbox = {
+  function sessionTrackingSandbox(sessionCopyOut: () => void): IsolatedSandboxProvider {
+    return {
       id: 'fake',
       start: async (): Promise<void> => {},
       exec: async (command: string): Promise<ExecResult> =>
@@ -280,19 +277,48 @@ describe('vanguard.run', () => {
           await mkdir(hostPath, { recursive: true });
           return;
         }
-        throw new Error('no such file'); // session jsonl absent for a non-Claude provider
+        sessionCopyOut(); // a session-jsonl copy was attempted
+        throw new Error('no such file');
       },
       exists: async (): Promise<boolean> => true,
       destroy: async (): Promise<void> => {},
     } as unknown as IsolatedSandboxProvider;
+  }
 
-    const agent = fakeAgent([{ text: 'reviewed' }], { finalText: 'reviewed', turns: 1, sessionId: 'codex-thread-1' });
-    const ctx = await prepareContext({ taskId: 'cap-fail', localRepoPath: repo, sandbox }, { worktrees: wm });
+  it('does not attempt session capture for a non-Claude provider (codex reports a sessionId but writes no jsonl)', async () => {
+    const wm = new WorktreeManager(repo);
+    let captureAttempted = false;
+    const sandbox = sessionTrackingSandbox(() => { captureAttempted = true; });
+    const agent: AgentProvider = {
+      name: 'codex',
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'reviewed', turns: 1, sessionId: 'codex-thread-1' };
+      },
+    };
+    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
     expect(result.finalText).toBe('reviewed');
-    expect(result.sessionId).toBe('codex-thread-1');
+    expect(captureAttempted).toBe(false); // skipped by provider, not attempted-and-swallowed
+  });
+
+  it('does not fail a claude-family stage when session capture fails (non-fatal, attempted)', async () => {
+    const wm = new WorktreeManager(repo);
+    let captureAttempted = false;
+    const sandbox = sessionTrackingSandbox(() => { captureAttempted = true; });
+    const agent: AgentProvider = {
+      name: 'claude-code',
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'done', turns: 1, sessionId: 's1' };
+      },
+    };
+    const ctx = await prepareContext({ taskId: 'cap-warn', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    expect(result.finalText).toBe('done');
+    expect(captureAttempted).toBe(true); // claude-family: capture is attempted, failure caught and warned
   });
 
   it('emits a stage complete info log carrying metric fields and no secret content', async () => {

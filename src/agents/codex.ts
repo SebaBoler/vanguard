@@ -2,6 +2,18 @@ import { AgentError } from '../core/errors.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote } from './shell.js';
 
+/**
+ * Strip credential material before codex output is logged or surfaced (the failure string becomes a public
+ * issue comment). Covers JWTs (`eyJ…`, which is what auth.json id/access tokens are), `Authorization:
+ * Bearer …` headers, and the `access_token`/`refresh_token`/`id_token`/`OPENAI_API_KEY` JSON fields.
+ */
+export function redactTokens(s: string): string {
+  return s
+    .replace(/eyJ[A-Za-z0-9._-]{10,}/g, '[REDACTED-JWT]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, '$1[REDACTED]')
+    .replace(/("(?:access_token|refresh_token|id_token|OPENAI_API_KEY|api_key)"\s*:\s*")[^"]+"/gi, '$1[REDACTED]"');
+}
+
 interface CodexEvent {
   type?: string;
   thread_id?: string;
@@ -111,16 +123,17 @@ export class CodexProvider implements AgentProvider {
     }
 
     // On a silent network/auth failure codex often leaves stderr empty and stdout holding only a startup
-    // line, so surface BOTH streams (not just one) and the exit code. Also dump the raw output to stderr
-    // so the real failure reaches the run log (e.g. the GitHub Actions step), not only the truncated note.
+    // line, so surface BOTH streams (not just one) and the exit code. Redact credential material first:
+    // in subscription mode auth.json (JWTs + Bearer tokens) lives in the sandbox, and this string is both
+    // dumped to the run log AND posted as a public issue comment by the runner — a token must never ride along.
     const detail = (): string => {
-      const err = res.stderr.trim();
-      const out = res.stdout.trim().slice(-1500);
+      const err = redactTokens(res.stderr.trim());
+      const out = redactTokens(res.stdout.trim()).slice(-1500);
       return [err !== '' ? `stderr: ${err}` : '', out !== '' ? `stdout: ${out}` : ''].filter(Boolean).join(' | ') || '(no output)';
     };
     if (!parsedAny || !sawTurnCompleted) {
       const reason = parsedAny ? 'exited without a result' : 'produced no parseable output';
-      console.error(`codex ${reason} (exit ${res.exitCode})\n--- codex stdout ---\n${res.stdout}\n--- codex stderr ---\n${res.stderr}`);
+      console.error(`codex ${reason} (exit ${res.exitCode})\n--- codex stdout ---\n${redactTokens(res.stdout)}\n--- codex stderr ---\n${redactTokens(res.stderr)}`);
       throw new AgentError(`Agent ${reason} (exit ${res.exitCode}): ${detail()}`);
     }
 
