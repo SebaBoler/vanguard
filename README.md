@@ -234,6 +234,8 @@ vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/
 
 Codex does not read its key straight from the environment: `CodexProvider` runs `codex login --with-api-key` (the key piped from `OPENAI_API_KEY` inside the sandbox, never on the command line) before `codex exec`. Under `--llm-proxy` Codex is instead configured (via `~/.codex/config.toml`) to use a custom OpenAI-compatible provider pointed at the trusted sidecar, reading only the per-run nonce from `OPENAI_API_KEY` (no `codex login`, and the real key never enters the sandbox). Either way, the OpenAI account behind the key must have active billing — without it `codex exec` connects and authenticates but the API returns "account is not active", which surfaces as a failed review stage.
 
+**Codex on a ChatGPT subscription (no API key).** Set `CODEX_AUTH_JSON` to the contents of a `~/.codex/auth.json` produced by `codex login` on a ChatGPT Plus/Pro account (`auth_mode: chatgpt`, OAuth tokens, no API key). The runner forwards it verbatim into the sandbox, where `CodexProvider` writes it to `~/.codex/auth.json` (0600) and skips login — `codex exec` then runs on the subscription and self-refreshes the access token via the embedded refresh token. This works like Claude's `CLAUDE_CODE_OAUTH_TOKEN`: the credential lives in the sandbox, so `--llm-proxy` does not apply to it (and `CODEX_AUTH_JSON` takes precedence over `CODEX_API_KEY`/`OPENAI_API_KEY` when both are set). Solid for local and long-running (Synology) use; on ephemeral CI the stored token must carry a valid refresh token, and an API key is the sturdier choice there. Example: `CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)" vanguard run --linear TES-1 --provider codex`.
+
 **z.ai (GLM Coding Plan).** `--provider zai` reuses the in-sandbox Claude Code CLI, pointed at z.ai's Anthropic-Messages-compatible coding endpoint (`https://api.z.ai/api/coding/paas/v4`) with the GLM model family (default `glm-5.2`). It needs **no Anthropic token** — set `ZAI_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the z.ai key is held by the primary trusted sidecar (forwarding to `api.z.ai` as a bearer key) and the sandbox gets only the per-run nonce. (z.ai's endpoint is OpenAI-compatible too, but the Codex CLI dropped `wire_api = "chat"` support, so the Claude-CLI route is the supported one.)
 
 ## Fork-and-select
@@ -505,6 +507,36 @@ jobs:
 ```
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash).
+
+#### Cross-provider on a Codex subscription (no OpenAI key)
+
+Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a ChatGPT Plus/Pro subscription instead of a paid OpenAI API key? Two changes to the job above.
+
+**1. Add the subscription credential as a secret.** Run `codex login` once on your machine (a ChatGPT account, `auth_mode: chatgpt`), then push the resulting `auth.json` verbatim — it holds OAuth tokens, not an API key:
+
+```bash
+gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
+```
+
+**2. Set the providers and drop `--llm-proxy`.** Forward the secret and pick a provider per stage:
+
+```yaml
+      - name: Run Vanguard loop (Opus spec / Sonnet impl / Codex review)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+```
+
+`--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` still only reaches the Claude stages (Codex ignores it).
+
+`--provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — pass `--review-model <model>` to pick a specific one.
+
+`--llm-proxy` is gone on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
+
+One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the short-lived access token from the embedded `refresh_token` on each run, so the secret must carry a live refresh token; re-run `gh secret set` if a run ever fails to authenticate. For long-running hosts (a `vanguard watch` on a server or NAS) the local file refreshes itself and this does not come up.
 
 ## Retrospective memory
 
