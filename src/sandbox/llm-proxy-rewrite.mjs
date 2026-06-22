@@ -136,7 +136,7 @@ export function parseUnifiedRatelimit(headers, now = Date.now()) {
     const num = Number(rawUtil);
     if (!Number.isFinite(num)) continue;
     // Tolerate fraction (0..1) or percent (0..100) — see note above.
-    const pct = num <= 1 ? num * 100 : num;
+    const pct = num < 1 ? num * 100 : num;
     foundUtilization = true;
     if (pct > worstPct) {
       worstPct = pct;

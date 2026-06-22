@@ -109,6 +109,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       return { envArgs: [], wrapped: this.wrap(command, hasStageSecrets, envExports) };
     }
     const envArgs: string[] = [];
+    if (entries.length > 0) validateSecrets(options.env as Record<string, string>);
     for (const [k, v] of entries) envArgs.push('-e', `${k}=${v}`);
     return { envArgs, wrapped: this.wrap(command, hasStageSecrets) };
   }
