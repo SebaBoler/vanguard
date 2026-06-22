@@ -66,11 +66,15 @@ jobs:
           gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
           gh label create "vanguard:review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR for review" --force
 
-      - name: Run Vanguard loop (spec then implement)
+      # Cross-provider self-review: Opus plans the spec, Sonnet implements, Codex reviews.
+      # No --llm-proxy: Codex runs on a ChatGPT subscription (CODEX_AUTH_JSON), which talks to the
+      # ChatGPT backend directly — the proxy allowlist only covers the api.openai.com (API-key) path.
+      - name: Run Vanguard loop (Opus spec / Sonnet impl / Codex review)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
           # Sweep 1: spec pass advances "ready for spec" -> "ready for agent"; agent pass builds "ready for agent".
-          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --llm-proxy
+          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
           # Sweep 2 (the "next poll"): build the tickets the spec pass just advanced.
-          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --llm-proxy
+          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
