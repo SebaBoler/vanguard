@@ -351,6 +351,16 @@ export function withStageModel(stages: PipelineStage[], model: string, stageName
 }
 
 /**
+ * Set `model` on every stage EXCEPT `exceptStage`. Applies the implement provider's `--provider-model`
+ * to the main stages without leaking it onto a cross-provider reviewer: an Anthropic model name (e.g.
+ * `sonnet`) handed to a Codex/ChatGPT reviewer is rejected by the backend. The reviewer keeps its own
+ * provider default unless `--review-model` sets it explicitly.
+ */
+export function withStageModelExcept(stages: PipelineStage[], model: string, exceptStage: string): PipelineStage[] {
+  return stages.map((stage) => (stage.name === exceptStage ? stage : { ...stage, model }));
+}
+
+/**
  * Plan with the most capable model, then implement and review with a faster one. The planner
  * (opus, high effort) emits a <plan>; the implementer and reviewer run on sonnet to cut cost and
  * latency. Each later stage gets the plan / diff via variables, in a fresh context.

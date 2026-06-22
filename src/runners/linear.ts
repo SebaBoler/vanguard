@@ -5,7 +5,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, sandboxComplete, commitStage, publishForReview, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, withStageModelExcept, sandboxComplete, commitStage, publishForReview, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -100,7 +100,14 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
     );
     try {
       let pipeline = agents.reviewAgent !== undefined ? withStageProvider(stages(), agents.reviewAgent) : stages();
-      if (deps.providerModel !== undefined) pipeline = withStageModel(pipeline, deps.providerModel);
+      if (deps.providerModel !== undefined) {
+        // A cross-provider reviewer must not inherit the implement provider's model (a Codex reviewer
+        // rejects an Anthropic model name); it uses --review-model or its own default instead.
+        pipeline =
+          agents.reviewAgent !== undefined
+            ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
+            : withStageModel(pipeline, deps.providerModel);
+      }
       if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,

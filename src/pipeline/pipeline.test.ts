@@ -18,6 +18,7 @@ import {
   adversarySystemPrompt,
   sandboxComplete,
   withStageModel,
+  withStageModelExcept,
   techSpecStage,
   retrospectiveMemoryBlock,
 } from './pipeline.js';
@@ -317,6 +318,27 @@ describe('withStageModel', () => {
   it('does not mutate the original stages array', () => {
     withStageModel(stages, 'sonnet');
     expect(stages[0]?.model).toBeUndefined();
+  });
+});
+
+describe('withStageModelExcept', () => {
+  const stages: import('./pipeline.js').PipelineStage[] = [
+    { name: 'implementer', promptTemplate: 'impl' },
+    { name: 'reviewer', promptTemplate: 'review' },
+    { name: 'simplifier', promptTemplate: 'simplify' },
+  ];
+
+  it('sets the model on every stage except the excepted one', () => {
+    const result = withStageModelExcept(stages, 'sonnet', 'reviewer');
+    expect(result.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
+    expect(result.find((s) => s.name === 'simplifier')?.model).toBe('sonnet');
+    // the cross-provider reviewer keeps its own default (no leaked Anthropic model)
+    expect(result.find((s) => s.name === 'reviewer')?.model).toBeUndefined();
+  });
+
+  it('does not mutate the original stages array', () => {
+    withStageModelExcept(stages, 'opus', 'reviewer');
+    expect(stages.every((s) => s.model === undefined)).toBe(true);
   });
 });
 
