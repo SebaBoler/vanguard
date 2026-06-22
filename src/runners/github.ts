@@ -44,6 +44,8 @@ export interface RunGithubIssueDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage (default: provider's default). */
   reviewModel?: string;
+  /** Skip the simplifier stage (lean run: implement -> review only). */
+  noSimplify?: boolean;
   /** Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect). */
   verifyCmd?: string;
   /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). Failure never blocks the PR. */
@@ -89,7 +91,9 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) });
     try {
-      const base = implementReviewSimplifyStages();
+      const allStages = implementReviewSimplifyStages();
+      // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
+      const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== 'simplifier') : allStages;
       let pipeline = agents.reviewAgent !== undefined ? withStageProvider(base, agents.reviewAgent) : base;
       if (deps.providerModel !== undefined) {
         // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an

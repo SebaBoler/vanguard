@@ -205,6 +205,8 @@ Choose the model per stage with `model` (`'opus'`, `'sonnet'`, `'haiku'`, or a f
 
 Runs reuse the session and keep a stable prompt prefix to maximize Anthropic prompt caching; `RunResult.cacheEfficiency` reports the cached fraction of input tokens.
 
+The canonical pipeline is implement → review → simplify. The reviewer reviews for correctness **and** over-engineering (the ponytail minimalism lens — would less code do the job?), so the third simplify pass is often redundant. Pass `--no-simplify` (on `run`/`watch`) for a lean implement → review run that skips it.
+
 ## Providers
 
 The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), or `zai` (z.ai GLM Coding Plan). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:

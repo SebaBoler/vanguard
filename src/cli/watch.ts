@@ -79,6 +79,7 @@ async function watchLinearSource(
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+    ...(cmd.noSimplify === true ? { noSimplify: true } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
@@ -154,6 +155,7 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, c
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.noSimplify === true) deps.noSimplify = true;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;

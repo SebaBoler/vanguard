@@ -143,6 +143,12 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && cmd.reviewModel).toBe('haiku');
   });
 
+  it('parses --no-simplify on run and watch (absent => undefined)', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--no-simplify'], '/work').kind === 'run' && parseCli(['run', '--linear', 'TES-1', '--no-simplify'], '/work')).toMatchObject({ noSimplify: true });
+    expect(parseCli(['watch', '--label', 'vanguard', '--no-simplify'], '/work')).toMatchObject({ noSimplify: true });
+    expect('noSimplify' in parseCli(['run', '--linear', 'TES-1'], '/work')).toBe(false);
+  });
+
   it('parses review-pr with a GitHub PR URL', () => {
     expect(
       parseCli(['review-pr', 'https://github.com/o/r/pull/12', '--repo', '/work', '--provider', 'codex', '--review-model', 'gpt-5'], '/cwd'),

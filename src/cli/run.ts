@@ -85,6 +85,7 @@ function linearDeps(
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+    ...(cmd.noSimplify === true ? { noSimplify: true } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
@@ -125,6 +126,7 @@ async function runGithub(
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.noSimplify === true) deps.noSimplify = true;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
@@ -150,6 +152,7 @@ async function runProject(
   if (cmd.provider !== undefined) deps.provider = cmd.provider;
   if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.noSimplify === true) deps.noSimplify = true;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
