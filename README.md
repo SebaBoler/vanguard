@@ -152,29 +152,33 @@ await run(opts, { skills });
 
 For targeted injection instead of the whole set, construct `new SkillRegistry({ id: '/host/path' })` and call `inject(['id'], sandbox)`.
 
-The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering — climb the laziness ladder, stop at the first rung that works).
+The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering: climb the laziness ladder, stop at the first rung that works).
 
 ### Custom skills (bring your own)
 
-A skill is just a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body) — the standard Claude Code format. `--skills <dir>` injects every such subdirectory, and the sandboxed agent **auto-selects per task** by matching each skill's `description`: a Docker task pulls in `docker-expert`, a UI task `frontend-design`, and `ponytail` fires on everything. You don't pick per issue — you hand the agent a toolbox and the model reaches for the right tool.
+A skill is a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body), the standard Claude Code format. `--skills <dir>` injects every subdirectory in that dir, and the agent picks the right one per task by matching each skill's `description`. A Docker task pulls in `docker-expert`, a UI task `frontend-design`, and `ponytail` fires on everything. You curate the set, the model chooses per task. There is no per-issue flag.
 
-To add domain skills, drop their folders next to the bundled ones and point `--skills` at the set:
+Keep your domain skills in the target repo under `.github/vanguard-skills/`:
 
 ```
-my-skills/
-  ponytail/SKILL.md
-  code-review/SKILL.md
+.github/vanguard-skills/
   docker-expert/SKILL.md
   frontend-design/SKILL.md
+  python-expert/SKILL.md
 ```
 
-For the GitHub Actions workflows, keep the skill set **in the target repo** and inject it per repo — a Docker repo carries `docker-expert`, a frontend repo carries `frontend-design`, no Vanguard fork needed. In the workflow's run step, point at a repo-local directory instead of the bundled one:
+Copy them into the bundled set before the run so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. Add one step to the workflow above:
 
 ```yaml
---skills .github/vanguard-skills
+      - name: Add custom skills
+        run: cp -r .github/vanguard-skills/* .vanguard-src/skills/
 ```
 
-Caveats: skills must be self-contained (`SKILL.md` only — the sandbox has no MCP or browser, so skills that depend on those won't fire), and only the short `description`s load up front (a skill's body loads on use), so curate ~a dozen rather than dumping hundreds.
+The run step already passes `--skills .vanguard-src/skills`, so it now injects both. Pointing `--skills` straight at `.github/vanguard-skills` would drop the bundled skills the loop needs, so merge, do not replace.
+
+Skills reach any provider that runs the `claude` CLI: `claude-code` and `zai` (z.ai's GLM endpoint speaks the Anthropic API). `codex` and `cursor` run their own CLIs and ignore `~/.claude/skills`, so the library does not feed them yet.
+
+Two checks before a skill goes in. It must be self-contained: `SKILL.md` plus plain text, no MCP or browser, since the sandbox has neither. It must allow model invocation: skip any with `disable-model-invocation: true`, because the agent never triggers those itself. Only the `description`s load up front, so curate about a dozen, not a whole collection.
 
 ### Example: the linear-cli skill
 
