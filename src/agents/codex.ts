@@ -110,12 +110,18 @@ export class CodexProvider implements AgentProvider {
       }
     }
 
-    const detail = (): string => (res.stderr.trim() !== '' ? res.stderr.trim() : res.stdout.trim().slice(-600));
-    if (!parsedAny) {
-      throw new AgentError(`Agent produced no parseable output (exit ${res.exitCode}): ${detail()}`);
-    }
-    if (!sawTurnCompleted) {
-      throw new AgentError(`Agent exited without a result (exit ${res.exitCode}): ${detail()}`);
+    // On a silent network/auth failure codex often leaves stderr empty and stdout holding only a startup
+    // line, so surface BOTH streams (not just one) and the exit code. Also dump the raw output to stderr
+    // so the real failure reaches the run log (e.g. the GitHub Actions step), not only the truncated note.
+    const detail = (): string => {
+      const err = res.stderr.trim();
+      const out = res.stdout.trim().slice(-1500);
+      return [err !== '' ? `stderr: ${err}` : '', out !== '' ? `stdout: ${out}` : ''].filter(Boolean).join(' | ') || '(no output)';
+    };
+    if (!parsedAny || !sawTurnCompleted) {
+      const reason = parsedAny ? 'exited without a result' : 'produced no parseable output';
+      console.error(`codex ${reason} (exit ${res.exitCode})\n--- codex stdout ---\n${res.stdout}\n--- codex stderr ---\n${res.stderr}`);
+      throw new AgentError(`Agent ${reason} (exit ${res.exitCode}): ${detail()}`);
     }
 
     const output: AgentRunOutput = { finalText, turns, transcript: res.stdout };
