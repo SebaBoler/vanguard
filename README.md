@@ -154,6 +154,28 @@ For targeted injection instead of the whole set, construct `new SkillRegistry({ 
 
 The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by the loop's review pass), `tech-spec` (specs for under-specified tasks), `caveman` (cut tokens on long runs), and `ponytail` (avoid over-engineering — climb the laziness ladder, stop at the first rung that works).
 
+### Custom skills (bring your own)
+
+A skill is just a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body) — the standard Claude Code format. `--skills <dir>` injects every such subdirectory, and the sandboxed agent **auto-selects per task** by matching each skill's `description`: a Docker task pulls in `docker-expert`, a UI task `frontend-design`, and `ponytail` fires on everything. You don't pick per issue — you hand the agent a toolbox and the model reaches for the right tool.
+
+To add domain skills, drop their folders next to the bundled ones and point `--skills` at the set:
+
+```
+my-skills/
+  ponytail/SKILL.md
+  code-review/SKILL.md
+  docker-expert/SKILL.md
+  frontend-design/SKILL.md
+```
+
+For the GitHub Actions workflows, keep the skill set **in the target repo** and inject it per repo — a Docker repo carries `docker-expert`, a frontend repo carries `frontend-design`, no Vanguard fork needed. In the workflow's run step, point at a repo-local directory instead of the bundled one:
+
+```yaml
+--skills .github/vanguard-skills
+```
+
+Caveats: skills must be self-contained (`SKILL.md` only — the sandbox has no MCP or browser, so skills that depend on those won't fire), and only the short `description`s load up front (a skill's body loads on use), so curate ~a dozen rather than dumping hundreds.
+
 ### Example: the linear-cli skill
 
 [schpet/linear-cli](https://github.com/schpet/linear-cli) ships a skill at `skills/linear-cli/` that teaches the agent to drive the `linear` CLI directly. The sandbox image already includes the `linear` CLI, so you only inject the skill and forward `LINEAR_API_KEY`:
