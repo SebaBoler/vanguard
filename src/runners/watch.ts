@@ -455,7 +455,7 @@ export interface WatchGithubOptions {
   ownerLabel?: string;
   /** Label added on claim (and the trigger label removed) so re-polls skip it, e.g. 'vanguard:running'. */
   claimedLabel: string;
-  /** Label added after a PR opens, e.g. 'vanguard:review'. */
+  /** Label added after a PR opens, e.g. 'vanguard:needs-human-review'. */
   reviewLabel: string;
   /**
    * Loop-v1 agent-pass triage gate (optional). When set, runOne first triages the ticket in 'agent'

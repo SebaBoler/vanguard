@@ -12,6 +12,7 @@ import {
   githubIssueWatchPrimitives,
 } from './watch.js';
 import { runSpecGenerator } from './spec.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives, GenerateSpec } from './watch.js';
 import type { Task, TaskFetcher } from '../tasks/fetcher.js';
 import type { LinearCliRunner } from '../tasks/linear-cli.js';
@@ -309,7 +310,7 @@ describe('githubSpecPrimitives', () => {
       deps: { fetcher: fakeFetcher({ [task.id]: task }, [task]) } as unknown as RunSpecGeneratorDeps,
       repoSlug: 'owner/repo',
       specLabel: 'vanguard:spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'vanguard',
       needsInfoLabel: 'vanguard:needs-info',
       gh: ghRecorder(calls),
@@ -340,7 +341,7 @@ describe('githubSpecPrimitives', () => {
       deps: { fetcher: fakeFetcher({ [task.id]: task }, [task]) } as unknown as RunSpecGeneratorDeps,
       repoSlug: 'owner/repo',
       specLabel: 'vanguard:spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'vanguard',
       needsInfoLabel: 'vanguard:needs-info',
       gh: async (args) => { calls.push(args); return ''; },
@@ -369,7 +370,7 @@ describe('githubSpecPrimitives', () => {
       deps: { fetcher: fakeFetcher({ [task.id]: task }, [task]) } as unknown as RunSpecGeneratorDeps,
       repoSlug: 'owner/repo',
       specLabel: 'vanguard:spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'vanguard',
       needsInfoLabel: 'vanguard:needs-info',
       gh: ghRecorder(calls),
@@ -396,7 +397,7 @@ describe('githubSpecPrimitives', () => {
       deps: { fetcher: fakeFetcher({ [task.id]: task }, [task]) } as unknown as RunSpecGeneratorDeps,
       repoSlug: 'owner/repo',
       specLabel: 'vanguard:spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'vanguard',
       needsInfoLabel: 'vanguard:needs-info',
       gh: ghRecorder(calls),
@@ -416,7 +417,7 @@ describe('githubSpecPrimitives', () => {
       deps: { fetcher: fakeFetcher({}, []) } as unknown as RunSpecGeneratorDeps,
       repoSlug: 'owner/repo',
       specLabel: 'vanguard:spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'vanguard',
       needsInfoLabel: 'vanguard:needs-info',
       gh: ghRecorder(calls),
@@ -442,8 +443,8 @@ describe('agent-pass triage gate', () => {
     const primitives = githubIssueWatchPrimitives({
       deps: { auth: { type: 'api', apiKey: 'x' }, repoPath: '/tmp', repoSlug: 'owner/repo' } as never,
       label: 'vanguard',
-      claimedLabel: 'vanguard:running',
-      reviewLabel: 'vanguard:review',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
       needsInfoLabel: 'vanguard:needs-info',
       gh,
     });
@@ -470,8 +471,8 @@ describe('agent-pass triage gate', () => {
     const primitives = githubIssueWatchPrimitives({
       deps: { auth: { type: 'api', apiKey: 'x' }, repoPath: '/tmp', repoSlug: 'owner/repo' } as never,
       label: 'vanguard',
-      claimedLabel: 'vanguard:running',
-      reviewLabel: 'vanguard:review',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
       needsInfoLabel: 'vanguard:needs-info',
       gh,
     });

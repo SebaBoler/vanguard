@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { doctorCommand } from './doctor.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { Command } from './args.js';
 import type { PreflightRunner } from './preflight.js';
 
@@ -22,7 +23,7 @@ const runner: PreflightRunner = async (name, args) => {
   if (name === 'gh' && args[0] === 'label') {
     return {
       stdout: JSON.stringify(
-        ['ready for spec', 'ready for agent', 'needs info', 'vanguard:speccing', 'vanguard:running', 'vanguard:review'].map((label) => ({ name: label })),
+        ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL].map((label) => ({ name: label })),
       ),
     };
   }

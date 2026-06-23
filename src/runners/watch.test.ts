@@ -7,6 +7,7 @@ import {
   githubSpecPrimitives,
   githubIssueWatchPrimitives,
 } from './watch.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives } from './watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { TaskFetcher } from '../tasks/fetcher.js';
@@ -440,7 +441,7 @@ describe('githubSpecPrimitives ownerLabel', () => {
       repoSlug: 'owner/repo',
       specLabel: 'ready for spec',
       ownerLabel: 'vanguard',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'ready for agent',
       needsInfoLabel: 'needs info',
       gh: vi.fn().mockResolvedValue(''),
@@ -458,7 +459,7 @@ describe('githubSpecPrimitives ownerLabel', () => {
       deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', fetcher } as never,
       repoSlug: 'owner/repo',
       specLabel: 'ready for spec',
-      claimedLabel: 'vanguard:speccing',
+      claimedLabel: GITHUB_SPEC_CLAIMED_LABEL,
       agentLabel: 'ready for agent',
       needsInfoLabel: 'needs info',
       gh: vi.fn().mockResolvedValue(''),
@@ -484,8 +485,8 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
       deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
       label: 'ready for agent',
       ownerLabel: 'vanguard',
-      claimedLabel: 'vanguard:running',
-      reviewLabel: 'vanguard:review',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
       gh,
     });
 
@@ -503,8 +504,8 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     const primitives = githubIssueWatchPrimitives({
       deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
       label: 'ready for agent',
-      claimedLabel: 'vanguard:running',
-      reviewLabel: 'vanguard:review',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
       gh,
     });
 
