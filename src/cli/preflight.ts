@@ -115,6 +115,44 @@ async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: strin
 }
 
 /**
+ * Verify the repo allows Actions to create PRs ("Allow GitHub Actions to create and approve pull
+ * requests"). Without it the agent does all the work then `gh pr create` fails. Best-effort: the
+ * in-Action GITHUB_TOKEN often lacks `administration:read`, so an unreadable setting yields no check
+ * (returns undefined) rather than a false failure — only an explicit `false` fails.
+ */
+async function prCreateSettingOk(run: PreflightRunner, cwd: string, repoSlug: string): Promise<PreflightCheck | undefined> {
+  const res = await runOk(run, cwd, 'gh', ['api', `repos/${repoSlug}/actions/permissions/workflow`]);
+  if (!res.ok) return undefined; // cannot read (token scope) — skip rather than assert ok or fail
+  try {
+    const parsed = JSON.parse(res.stdout) as { can_approve_pull_request_reviews?: boolean };
+    return parsed.can_approve_pull_request_reviews === false
+      ? check('pr-create setting', false, 'disabled — enable Settings > Actions > "Allow GitHub Actions to create and approve pull requests"')
+      : check('pr-create setting', true);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Validate a subscription-mode CODEX_AUTH_JSON before the run: it must be a JSON object carrying
+ * `auth_mode` and a non-empty `tokens.refresh_token` (the contents of ~/.codex/auth.json). Catches an
+ * empty/pretty-printed/garbled secret at preflight instead of opaquely inside codex. Returns undefined
+ * when the var is unset (API-key mode is already covered by the 'provider auth' check).
+ */
+function codexAuthOk(env: NodeJS.ProcessEnv): PreflightCheck | undefined {
+  const raw = env.CODEX_AUTH_JSON;
+  if (raw === undefined || raw === '') return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { auth_mode?: unknown; tokens?: { refresh_token?: unknown } };
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object');
+    const ok = typeof parsed.auth_mode === 'string' && typeof parsed.tokens?.refresh_token === 'string' && parsed.tokens.refresh_token !== '';
+    return ok ? check('codex auth', true) : check('codex auth', false, 'CODEX_AUTH_JSON missing auth_mode or tokens.refresh_token');
+  } catch {
+    return check('codex auth', false, 'CODEX_AUTH_JSON is not valid JSON (use the contents of ~/.codex/auth.json)');
+  }
+}
+
+/**
  * Collect the set of providers that need a host-key check (i.e. non-claude providers that
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
@@ -156,6 +194,12 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     }
   }
 
+  // Subscription-mode Codex: validate the auth.json shape before the run (only when codex is selected).
+  if (usedProviders.includes('codex')) {
+    const codexCheck = codexAuthOk(env);
+    if (codexCheck !== undefined) checks.push(codexCheck);
+  }
+
   try {
     validateProviderChoice(
       {
@@ -190,6 +234,8 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       checks.push(check('github labels', false, 'repo unknown'));
     } else {
       checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
+      const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
+      if (prCreate !== undefined) checks.push(prCreate);
     }
   }
 

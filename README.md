@@ -348,7 +348,7 @@ vanguard watch --loop-v1 --label vanguard \
 
 **Shared behaviour (both sources):**
 
-- `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest`, source auth, GitHub routing labels, and Linear env/skills setup.
+- `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest`, source auth, GitHub routing labels, and Linear env/skills setup. On a GitHub repo it also verifies the "Allow GitHub Actions to create and approve pull requests" setting (best-effort — skipped if the token cannot read it) and, when Codex is selected with a `CODEX_AUTH_JSON` subscription credential, validates its shape before the run.
 - Triage is deterministic (`assessTaskReadiness`) and rejects under-specified tickets before spending any model tokens.
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
