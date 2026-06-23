@@ -195,18 +195,15 @@ To run **Opus** spec / **Sonnet** impl / **Codex** review with Codex on a ChatGP
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
    ```
 
 The stored `CODEX_AUTH_JSON` is a snapshot; Codex refreshes the access token from the embedded refresh token each run, so the secret must carry a live refresh token. Re-run `gh secret set` if a run ever fails to authenticate.
 
 ---
 
-## Why two run lines (double-sweep)
+## One run, spec and build
 
-`watch --once` does a spec pass then an implement pass per invocation. Running it twice lets a `ready for spec` ticket be specced on the first sweep and built on the second. A `ready for agent` ticket builds on the first sweep; the second is a no-op for it.
-
-Caveat: the two sweeps run seconds apart, and GitHub's label index can lag, so a freshly-specced `ready for spec` ticket is sometimes not yet visible to the second sweep and is left at `ready for agent` with no PR. Re-run the workflow (or re-add the label) and it builds. For a task you have already scoped, label it `ready for agent` directly — one sweep, no timing dependency.
+`watch --once` does a spec pass then an implement pass in the same invocation. A `ready for spec` ticket is specced and built in one job: the spec pass generates the tech spec and advances the ticket to `ready for agent`, and the implement pass immediately picks it up without relying on GitHub's label index (which has eventual-consistency lag). A `ready for agent` ticket that was already labelled before the run is also picked up in the same pass.
 
 ## What an issue must contain (the triage contract)
 

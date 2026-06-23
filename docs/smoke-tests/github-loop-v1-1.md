@@ -1,6 +1,6 @@
 # GitHub Loop v1.1 Smoke Test
 
-Use this when you want to prove the GitHub Loop v1.1 lane works end-to-end on one safe issue. The test uses `--once` twice so the operator controls each pass.
+Use this when you want to prove the GitHub Loop v1.1 lane works end-to-end on one safe issue. A single `--once` run completes both the spec and build passes; a second optional run confirms the no-op behaviour.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ Expected happy path:
 ready for spec -> vanguard:speccing -> ready for agent -> vanguard:running -> vanguard:review
 ```
 
-## Pass 1: Spec Generation
+## Pass 1: Combined spec + build
 
 Create a fresh issue with `ready for spec`. Give it a short goal and measurable acceptance criteria.
 
@@ -52,13 +52,13 @@ vanguard watch --loop-v1 --source github --github-repo OWNER/REPO --repo /path/t
 Expected result:
 
 - The issue receives a `Vanguard tech spec:` comment containing `<tech_spec>`.
-- `ready for spec` is removed.
-- `vanguard:speccing` is removed.
-- `ready for agent` is added.
+- The agent claims the issue with `vanguard:running` and opens a draft PR.
+- The issue receives a comment with the PR URL.
+- Final labels: `vanguard:review` (all routing labels removed).
 
-## Pass 2: Agent Implementation
+## Pass 2 (optional no-op verification)
 
-Run the same command again:
+Run the same command a second time to confirm it is a clean no-op:
 
 ```bash
 vanguard watch --loop-v1 --source github --github-repo OWNER/REPO --repo /path/to/repo --once --llm-proxy
@@ -66,12 +66,8 @@ vanguard watch --loop-v1 --source github --github-repo OWNER/REPO --repo /path/t
 
 Expected result:
 
-- The agent claims the issue with `vanguard:running`.
-- The agent opens a draft PR.
-- The issue receives a comment with the PR URL.
-- `ready for agent` is removed.
-- `vanguard:running` is removed.
-- `vanguard:review` is added.
+- `spec: poll -> 0 ready` and `watch: poll -> 0 ready` — nothing to do.
+- No labels change. No new comments or PRs.
 
 ## Needs Info
 
