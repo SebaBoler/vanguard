@@ -69,6 +69,13 @@ describe('providerSecrets', () => {
     });
   });
 
+  it('subscription mode ignores OPENAI_BASE_URL (mutually exclusive with passthrough)', () => {
+    const env = { CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}', OPENAI_BASE_URL: 'https://openrouter.ai/api/v1' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets } = providerSecrets(['codex'], env);
+    expect(sandboxSecrets).not.toHaveProperty('VANGUARD_OPENAI_BASE_URL');
+    expect(sandboxSecrets).toEqual({ CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' });
+  });
+
   it('throws when a selected provider key is missing (proxy mode — key required either way)', () => {
     expect(() => providerSecrets(['codex'], {}, { proxyMode: true })).toThrow(/CODEX_API_KEY/);
   });
