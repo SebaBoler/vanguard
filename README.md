@@ -351,7 +351,7 @@ vanguard watch --loop-v1 --label vanguard \
 - `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest`, source auth, GitHub routing labels, and Linear env/skills setup. On a GitHub repo it also verifies the "Allow GitHub Actions to create and approve pull requests" setting (best-effort — skipped if the token cannot read it) and, when Codex is selected with a `CODEX_AUTH_JSON` subscription credential, validates its shape before the run.
 - Triage is deterministic (`assessTaskReadiness`) and rejects under-specified tickets before spending any model tokens.
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
-- A freshly-specced ticket is implemented on the **next poll** (human intervention window before the agent runs).
+- In continuous mode, a freshly-specced ticket is implemented on the **next poll** (human intervention window). In `--once` mode spec and build complete in the same invocation.
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
 - External PR review is available as a one-shot `review-pr` command, an always-on `watch-prs` polling loop, or a GitHub Actions label trigger.
 
@@ -440,11 +440,11 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue and the workflow runs the two-pass pipeline in a sandbox, with the routing labels moving live:
 
-- **`ready for spec`** — a rough idea: Vanguard writes a tech spec, advances the ticket to `ready for agent`, **then builds it** and opens a PR.
+- **`ready for spec`** — a rough idea: Vanguard writes a tech spec, advances the ticket to `ready for agent`, **then builds it** and opens a PR — all in one job.
 - **`ready for agent`** — a written, ready ticket: Vanguard builds it directly.
 - **too vague** — triage parks it at `needs info` (no budget spent); you fill it in and re-label.
 
-The job runs `vanguard watch --source github --once` **twice**: Loop v1 implements a freshly-specced ticket on the *next* poll, so the second sweep is that next poll — keeping spec → build in one run. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each sweep processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
+The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 
@@ -504,7 +504,6 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
 ```
 

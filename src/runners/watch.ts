@@ -341,6 +341,7 @@ export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPri
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener(
@@ -384,9 +385,10 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
 
 /**
  * Loop-v1 poll: run the SPEC pass (specOnce over specPrimitives) then the AGENT pass (watchOnce over
- * agentPrimitives) once per tick. A specced ticket is implemented on the NEXT poll, not the same tick:
- * the agent pass's listReady is filtered for this tick to exclude any id the spec pass just advanced,
- * so a freshly-advanced ticket waits one poll — giving a human a window to intervene before it runs.
+ * agentPrimitives) once per tick. Continuous loops defer freshly-specced tickets to the next poll,
+ * giving a human a window to intervene before the agent runs. One-shot runs carry freshly-specced
+ * tickets into the same invocation, which avoids relying on GitHub's eventually consistent label
+ * search in GitHub Actions.
  * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
  */
 export async function runLoopV1(
@@ -401,12 +403,21 @@ export async function runLoopV1(
     if (opts.signal?.aborted === true) return;
     const spec = await specOnce(specPrimitives, { ...concurrency, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
-    // Defer same-tick implementation: a ticket the spec pass just advanced is excluded from this
-    // tick's agent listReady, so it is only picked up on the next poll.
-    const justAdvanced = new Set(spec.advanced);
+    // GitHub's label index is eventually consistent: a label written by the spec pass may not
+    // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
+    // into the agent ready-set so spec→build completes in one invocation, deduping against what
+    // the index already returned. In continuous mode exclude them — the next poll is the
+    // human-intervention window before the agent runs.
+    const listed = await agentPrimitives.listReady();
+    const advancedSet = new Set(spec.advanced);
+    const listedIds = new Set(listed.map((item) => item.id));
+    const agentReady =
+      opts.once === true
+        ? [...spec.advanced.filter((id) => !listedIds.has(id)).map((id) => ({ id })), ...listed]
+        : listed.filter((item) => !advancedSet.has(item.id));
     const agentThisTick: WatchPrimitives = {
       ...agentPrimitives,
-      listReady: async () => (await agentPrimitives.listReady()).filter((item) => !justAdvanced.has(item.id)),
+      listReady: async () => agentReady,
     };
     const agent = await watchOnce(agentThisTick, { ...concurrency, log, phase: 'watch' });
     log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);

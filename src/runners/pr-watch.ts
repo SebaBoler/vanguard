@@ -238,6 +238,7 @@ export async function watchPullRequestsOnce(
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener(

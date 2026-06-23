@@ -80,10 +80,11 @@ describe('specOnce', () => {
 });
 
 describe('runLoopV1', () => {
-  it('defers same-tick implementation: an id the spec pass just advanced is NOT picked by the agent pass this tick', async () => {
-    // Spec pass advances X. Agent pass's listReady returns both X (freshly advanced) and Y (already
-    // sitting in the agent trigger). X must be filtered out this tick; only Y runs.
+  it('defers same-tick implementation in continuous mode: just-advanced id is NOT picked by the agent pass this tick', async () => {
+    // Continuous mode: spec pass advances X. Agent pass's listReady returns both X (freshly advanced)
+    // and Y (already in the agent trigger). X must be filtered out this tick; only Y runs.
     const ran: string[] = [];
+    const controller = new AbortController();
     const specPrimitives: SpecWatchPrimitives = {
       listReady: async () => [{ id: 'X' }],
       claim: async () => {},
@@ -95,13 +96,19 @@ describe('runLoopV1', () => {
       claim: async () => {},
       runOne: async (id) => {
         ran.push(id);
+        controller.abort(); // stop the loop after this tick
         return {};
       },
       review: async () => {},
       onFailure: async () => {},
     };
 
-    await runLoopV1(specPrimitives, agentPrimitives, { once: true, concurrency: 1 }, () => {});
+    await runLoopV1(
+      specPrimitives,
+      agentPrimitives,
+      { once: false, signal: controller.signal, intervalMs: 0, concurrency: 1 },
+      () => {},
+    );
 
     expect(ran).toEqual(['Y']); // X deferred to next poll, Y implemented now
     expect(ran).not.toContain('X');

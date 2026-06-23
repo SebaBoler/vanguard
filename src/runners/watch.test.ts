@@ -107,9 +107,11 @@ describe('specOnce', () => {
   });
 });
 
-describe('runLoopV1 operator logs', () => {
-  it('emits spec logs before agent logs while deferring freshly advanced tickets', async () => {
+describe('runLoopV1', () => {
+  // T4 — continuous mode: freshly-advanced ticket is deferred (human-intervention window preserved)
+  it('defers freshly-advanced tickets in continuous mode', async () => {
     const logs: string[] = [];
+    const controller = new AbortController();
     const specPrimitives: SpecWatchPrimitives = {
       listReady: async () => [{ id: 'A' }],
       claim: async () => {},
@@ -120,6 +122,150 @@ describe('runLoopV1 operator logs', () => {
       listReady: async () => [{ id: 'A' }, { id: 'B' }],
       claim: async () => {},
       runOne: async () => ({ prUrl: 'pr/B' }),
+      review: async () => {
+        controller.abort();
+      },
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(
+      specPrimitives,
+      agentPrimitives,
+      { once: false, signal: controller.signal, intervalMs: 0, concurrency: 1 },
+      (msg) => logs.push(msg),
+    );
+
+    expect(logs).toEqual([
+      'spec: poll -> 1 ready',
+      'spec A: claim -> triage',
+      'spec A: advanced -> next poll agent',
+      'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
+      'watch: poll -> 1 ready',
+      'watch B: claim -> running',
+      'watch B: pr opened -> review',
+      'watch: 1 PR(s), 0 no-change, 0 failed, 0 skipped.',
+    ]);
+  });
+
+  it('exits promptly when the signal is aborted during a continuous tick', async () => {
+    const controller = new AbortController();
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runOne: async () => {
+        controller.abort();
+        return {};
+      },
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await expect(
+      Promise.race([
+        runLoopV1(specPrimitives, agentPrimitives, { signal: controller.signal, intervalMs: 60_000 }, () => {}),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('loop did not stop after abort')), 100)),
+      ]),
+    ).resolves.toBeUndefined();
+  });
+
+  // T1 — once mode: just-advanced ticket is built even when listReady returns [] (index lag)
+  it('once: true builds just-advanced ticket when listReady returns empty (simulates index lag)', async () => {
+    const builtIds: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [],
+      claim: async () => {},
+      runOne: async (id) => {
+        builtIds.push(id);
+        return { prUrl: `pr/${id}` };
+      },
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true }, () => {});
+
+    expect(builtIds).toEqual(['A']);
+  });
+
+  // T2 — once mode: no double-claim/run when the index also returns the just-advanced id
+  it('once: true claims and builds each id exactly once when listReady also returns the advanced id', async () => {
+    const claimed: string[] = [];
+    const builtIds: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => {
+        builtIds.push(id);
+        return { prUrl: `pr/${id}` };
+      },
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, concurrency: 1 }, () => {});
+
+    expect(claimed).toEqual(['A', 'B']);
+    expect(builtIds).toEqual(['A', 'B']);
+  });
+
+  // T3 — once mode: needs-info tickets are NOT carried into the agent pass
+  it('once: true does not build tickets the spec pass moved to needs-info', async () => {
+    const builtIds: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'needs_info',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [],
+      claim: async () => {},
+      runOne: async (id) => {
+        builtIds.push(id);
+        return { prUrl: `pr/${id}` };
+      },
+      review: async () => {},
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true }, () => {});
+
+    expect(builtIds).toEqual([]);
+  });
+
+  // T5 — once mode: operator log ordering includes the carried advanced id
+  it('once: true emits spec logs then agent logs including the carried advanced id', async () => {
+    const logs: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'B' }],
+      claim: async () => {},
+      runOne: async () => ({ prUrl: 'pr/x' }),
       review: async () => {},
       onFailure: async () => {},
     };
@@ -131,10 +277,12 @@ describe('runLoopV1 operator logs', () => {
       'spec A: claim -> triage',
       'spec A: advanced -> next poll agent',
       'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
-      'watch: poll -> 1 ready',
+      'watch: poll -> 2 ready',
+      'watch A: claim -> running',
+      'watch A: pr opened -> review',
       'watch B: claim -> running',
       'watch B: pr opened -> review',
-      'watch: 1 PR(s), 0 no-change, 0 failed, 0 skipped.',
+      'watch: 2 PR(s), 0 no-change, 0 failed, 0 skipped.',
     ]);
   });
 });
