@@ -528,7 +528,6 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
 ```
 
 `--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` still only reaches the Claude stages (Codex ignores it).

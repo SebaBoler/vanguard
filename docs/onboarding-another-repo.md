@@ -61,7 +61,6 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
 ```
 
 That is the **minimal** form: Claude does plan/implement/review/simplify, the model credential stays in a sidecar (`--llm-proxy`). To run Opus-spec / Sonnet-impl / Codex-review on a ChatGPT subscription instead, see [Full: cross-provider](#full-cross-provider-on-a-codex-subscription) below.
