@@ -175,10 +175,8 @@ async function injectClaude(skills: Record<string, string>, sandbox: IsolatedSan
  * Location: $CODEX_HOME/AGENTS.md (or $HOME/.codex/AGENTS.md by default), so the file is never
  * copied back into the PR diff.
  */
-async function injectCodex(skills: Record<string, string>, sandbox: IsolatedSandboxProvider, home: string): Promise<void> {
-  if (Object.keys(skills).length === 0) return;
-
-  const entries = await prepareSkillEntries(skills, sandbox);
+async function injectCodex(entries: SkillEntry[], sandbox: IsolatedSandboxProvider, home: string): Promise<void> {
+  if (entries.length === 0) return;
 
   const [codexHome, existingAgents] = await Promise.all([
     resolveCodexHome(sandbox, home),
@@ -206,10 +204,8 @@ async function injectCodex(skills: Record<string, string>, sandbox: IsolatedSand
  * alwaysApply: false). Body is a pointer to the readable SKILL.md so auto-attached context stays
  * small (parallel to the codex approach-a choice).
  */
-async function injectCursor(skills: Record<string, string>, sandbox: IsolatedSandboxProvider): Promise<void> {
-  if (Object.keys(skills).length === 0) return;
-
-  const entries = await prepareSkillEntries(skills, sandbox);
+async function injectCursor(entries: SkillEntry[], sandbox: IsolatedSandboxProvider): Promise<void> {
+  if (entries.length === 0) return;
   await sandbox.exec(`mkdir -p "${CURSOR_RULES_DIR}"`);
 
   const tmpDir = await mkdtemp(join(tmpdir(), 'vg-cursor-'));
@@ -249,20 +245,27 @@ export class SkillRegistry {
   }
 
   /**
-   * Inject ALL registered skills in a provider-aware way:
+   * Inject ALL registered skills in a provider-aware way for the union of implementer and reviewer
+   * provider families:
    * - claude-code / zai / default → ~/.claude/skills/<id> (auto-discovered by the claude CLI)
    * - codex → $CODEX_HOME/AGENTS.md (pointer index) + .vanguard/skills/<id> bodies
    * - cursor → .cursor/rules/<id>.mdc per skill + .vanguard/skills/<id> bodies
+   *
+   * When agentName and reviewAgentName resolve to different families (e.g. claude implement / codex
+   * review), both injection paths run so every stage's provider finds its skills.
    */
-  async injectAll(sandbox: IsolatedSandboxProvider, home: string, agentName?: string): Promise<void> {
-    const family = providerFamily(agentName);
-    if (family === 'codex') {
-      await injectCodex(this.skills, sandbox, home);
-    } else if (family === 'cursor') {
-      await injectCursor(this.skills, sandbox);
-    } else {
-      await injectClaude(this.skills, sandbox, home);
-    }
+  async injectAll(sandbox: IsolatedSandboxProvider, home: string, agentName?: string, reviewAgentName?: string): Promise<void> {
+    const families = new Set<'claude' | 'codex' | 'cursor'>([providerFamily(agentName)]);
+    if (reviewAgentName !== undefined) families.add(providerFamily(reviewAgentName));
+
+    const needsBodies = families.has('codex') || families.has('cursor');
+    const bodyEntriesP = needsBodies ? prepareSkillEntries(this.skills, sandbox) : Promise.resolve([]);
+
+    const promises: Promise<void>[] = [];
+    if (families.has('claude')) promises.push(injectClaude(this.skills, sandbox, home));
+    if (families.has('codex')) promises.push(bodyEntriesP.then((e) => injectCodex(e, sandbox, home)));
+    if (families.has('cursor')) promises.push(bodyEntriesP.then((e) => injectCursor(e, sandbox)));
+    await Promise.all(promises);
   }
 }
 

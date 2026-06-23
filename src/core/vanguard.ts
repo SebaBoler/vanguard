@@ -38,6 +38,8 @@ export interface PrepareOptions {
   skills?: string[];
   /** Provider name (AgentProvider.name) used to select the skill injection target format. */
   agentName?: string;
+  /** Provider name for the review stage; when different from agentName, skills are injected for both families. */
+  reviewAgentName?: string;
   sandbox: IsolatedSandboxProvider;
   logger?: VanguardLogger;
 }
@@ -107,7 +109,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await seedSandboxGit(opts.sandbox);
-    await skills.injectAll(opts.sandbox, home, opts.agentName);
+    await skills.injectAll(opts.sandbox, home, opts.agentName, opts.reviewAgentName);
     const ctx: RunContext = {
       taskId: opts.taskId,
       sandbox: opts.sandbox,

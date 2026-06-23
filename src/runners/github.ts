@@ -89,7 +89,14 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
     });
 
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
-    const ctx = await prepareContext({ taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`, localRepoPath: deps.repoPath, sandbox, agentName: agents.agent.name, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) });
+    const ctx = await prepareContext({
+      taskId: `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`,
+      localRepoPath: deps.repoPath,
+      sandbox,
+      agentName: agents.agent.name,
+      ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
+      ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
+    });
     try {
       const allStages = implementReviewSimplifyStages();
       // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
