@@ -128,6 +128,42 @@ export function buildPullRequestReviewComment(agentText: string, headRefOid?: st
   return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
 }
 
+/** Action flag passed to `gh pr review`. */
+export type PullRequestReviewAction = 'comment' | 'request-changes';
+
+/** Post a Vanguard review verdict to a PR via `gh pr review`. Reused by review-pr and the agent loop. */
+export async function postPullRequestReview(
+  target: PullRequestReviewTarget,
+  commentBody: string,
+  action: PullRequestReviewAction = 'comment',
+  gh: GhRunner = defaultGhRunner,
+): Promise<void> {
+  const flag = action === 'request-changes' ? '--request-changes' : '--comment';
+  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, flag, '--body', commentBody]);
+}
+
+const NO_BLOCKING_RE = /^no blocking (?:findings|issues)\.?$/i;
+
+/**
+ * Build a review comment for the main-loop reviewer (after the PR is created). Unlike
+ * buildPullRequestReviewComment (used by the standalone review-pr command), this always
+ * includes an attribution line so the comment is traceable even when the verdict is empty.
+ */
+export function buildMainLoopReviewComment(
+  agentText: string,
+  opts: { headRefOid?: string; attribution: string },
+): string {
+  const body = agentText.replace(PROMISE_RE, '').trim();
+  const oid = opts.headRefOid || undefined;
+  const sha7 = oid?.slice(0, 7);
+  const prefix = `Reviewed by ${opts.attribution}${sha7 !== undefined ? ` @ ${sha7}` : ''}`;
+  const noIssues = body === '' || NO_BLOCKING_RE.test(body);
+  const verdict = noIssues ? `${prefix}: no blocking issues` : `${prefix}:\n\n${body}`;
+  const visible = `## Vanguard Review\n\n${verdict}`;
+  const marker = oid !== undefined ? pullRequestReviewMarker(oid) : undefined;
+  return marker !== undefined ? `${visible}\n\n${marker}` : visible;
+}
+
 export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> {
   const gh = deps.gh ?? defaultGhRunner;
   const target = parsePullRequestRef(ref, deps.repoSlug);
@@ -136,7 +172,7 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: agent -> reviewing`);
   const reviewText = await deps.reviewer(pr);
   const commentBody = buildPullRequestReviewComment(reviewText, pr.headRefOid);
-  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, '--comment', '--body', commentBody]);
+  await postPullRequestReview(target, commentBody, 'comment', gh);
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
   return { pr, commentBody };
 }

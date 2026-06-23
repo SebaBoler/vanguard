@@ -4,6 +4,7 @@ import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
+import { AgentError } from '../core/errors.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -33,6 +34,13 @@ export interface PipelineStage {
    * times or until the stage signals COMPLETE. Default 0 (no resume). Opt-in per stage.
    */
   resumeUntilComplete?: number;
+  /**
+   * When this stage's provider throws AgentError (unavailable / rate-limited / non-zero exit), re-run
+   * the stage once on this fallback provider+model instead of failing the whole task. Used for the
+   * reviewer stage: degrade to the implementer provider when the cross-provider reviewer is down.
+   * The fallback model overrides stage.model so a foreign model name is never sent to the new provider.
+   */
+  fallback?: { provider: AgentProvider; model?: string };
 }
 
 export interface StageOutcome {
@@ -181,19 +189,50 @@ export async function runBudgetedStages(
       continue;
     }
 
-    let result = await runAgent(ctx, {
-      promptTemplate: stage.promptTemplate,
-      agent,
+    // Shared options for every runAgent call in this stage iteration.
+    const baseOpts = {
       stageName: stage.name,
       variables,
       ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
-      ...(stage.model !== undefined ? { model: stage.model } : {}),
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
-      ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
-    });
+    };
+
+    // effectiveAgent / effectiveModel may switch to stage.fallback when the primary throws AgentError.
+    let effectiveAgent = agent;
+    let effectiveModel: string | undefined = stage.model;
+
+    let result: RunResult;
+    try {
+      result = await runAgent(ctx, {
+        ...baseOpts,
+        promptTemplate: stage.promptTemplate,
+        agent: effectiveAgent,
+        ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
+        ...(resume && sessionId !== undefined ? { resumeSessionId: sessionId } : {}),
+      });
+    } catch (err) {
+      if (err instanceof AgentError && stage.fallback !== undefined) {
+        const fb = stage.fallback;
+        ctx.log.warn(
+          { stage: stage.name, from: effectiveAgent.name, to: fb.provider.name },
+          'stage provider unavailable — falling back',
+        );
+        effectiveAgent = fb.provider;
+        effectiveModel = fb.model;
+        // Fallback starts fresh: no inherited session from the failed provider.
+        result = await runAgent(ctx, {
+          ...baseOpts,
+          promptTemplate: stage.promptTemplate,
+          agent: effectiveAgent,
+          ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
+        });
+      } else {
+        throw err;
+      }
+    }
     let stageCost = result.costUsd ?? 0;
 
     // Auto-resume an incomplete stage: some models (glm) end a turn with prose instead of a tool call
@@ -212,17 +251,11 @@ export async function runBudgetedStages(
         'stage incomplete — resuming session',
       );
       result = await runAgent(ctx, {
+        ...baseOpts,
         promptTemplate: RESUME_NUDGE,
-        agent,
-        stageName: stage.name,
-        variables,
-        ...(stage.effort !== undefined ? { effort: stage.effort } : {}),
-        ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
-        ...(stage.model !== undefined ? { model: stage.model } : {}),
-        ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
+        agent: effectiveAgent,
+        ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         resumeSessionId: result.sessionId,
-        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
-        ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
       });
       stageCost += result.costUsd ?? 0;
     }
@@ -317,7 +350,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       // inheriting the implementer's reasoning. The files are still on disk in the shared worktree.
       resumePrevious: false,
       promptTemplate:
-        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\n{{PREVIOUS_DIFF}}\n\nConclude with a Markdown verdict summarising your findings sorted by severity. If there are no blocking issues, write exactly: No blocking issues.\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
       maxTurns: 20,
     },
@@ -361,6 +394,19 @@ export function withStageModelExcept(stages: PipelineStage[], model: string, exc
 }
 
 /**
+ * Set a fallback provider+model on one named stage (default 'reviewer'). When that stage's primary
+ * provider throws AgentError, runBudgetedStages re-runs it on the fallback instead of failing the task.
+ * Typical use: degrade the cross-provider reviewer to the implementer provider when the reviewer is down.
+ */
+export function withStageFallback(
+  stages: PipelineStage[],
+  fallback: { provider: AgentProvider; model?: string },
+  stageName = 'reviewer',
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
+}
+
+/**
  * Plan with the most capable model, then implement and review with a faster one. The planner
  * (opus, high effort) emits a <plan>; the implementer and reviewer run on sonnet to cut cost and
  * latency. Each later stage gets the plan / diff via variables, in a fresh context.
@@ -392,7 +438,7 @@ export function planImplementReviewStages(): PipelineStage[] {
       maxTurns: 20,
       resumePrevious: false,
       promptTemplate:
-        'Review the diff below for bugs and gaps, then fix the code:\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'Review the diff below for bugs and gaps, then fix the code:\n\n{{PREVIOUS_DIFF}}\n\nConclude with a Markdown verdict summarising your findings sorted by severity. If there are no blocking issues, write exactly: No blocking issues.\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));

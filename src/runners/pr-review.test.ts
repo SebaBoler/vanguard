@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  buildMainLoopReviewComment,
   buildPullRequestReviewComment,
   buildPullRequestReviewPrompt,
   fetchPullRequestForReview,
   hasPullRequestReviewMarker,
   parsePullRequestRef,
+  postPullRequestReview,
   reviewPullRequest,
 } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -139,6 +141,35 @@ describe('review prompt and comment formatting', () => {
     expect(buildPullRequestReviewComment('No blocking findings.\n<promise>COMPLETE</promise>', 'abc123')).toBe(
       '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->',
     );
+  });
+
+  it('builds a main-loop review comment with attribution and a short SHA', () => {
+    expect(
+      buildMainLoopReviewComment('No blocking issues.\n<promise>COMPLETE</promise>', {
+        headRefOid: 'abcdef123456',
+        attribution: 'codex/gpt-5',
+      }),
+    ).toBe(
+      [
+        '## Vanguard Review',
+        '',
+        'Reviewed by codex/gpt-5 @ abcdef1: no blocking issues',
+        '',
+        '<!-- vanguard-pr-review: abcdef123456 -->',
+      ].join('\n'),
+    );
+  });
+
+  it('posts request-changes reviews through gh when requested', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      return '';
+    };
+
+    await postPullRequestReview({ repoSlug: 'o/r', number: 12 }, 'body', 'request-changes', gh);
+
+    expect(calls).toEqual([['pr', 'review', '12', '--repo', 'o/r', '--request-changes', '--body', 'body']]);
   });
 
   it('finds a matching hidden head SHA marker after older markers in the same body', () => {

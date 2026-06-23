@@ -21,9 +21,11 @@ import {
   withStageModelExcept,
   techSpecStage,
   retrospectiveMemoryBlock,
+  withStageFallback,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
+import { AgentError } from '../core/errors.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -173,6 +175,39 @@ describe('runBudgetedStages', () => {
     const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.01), maxCostUsd: 1 });
     expect(result.status).toBe('completed');
     if (result.status === 'completed') expect(result.outcomes).toHaveLength(3);
+    await disposeContext(ctx);
+  });
+
+  it('retries a stage on its fallback provider after an AgentError', async () => {
+    const wm = new WorktreeManager(repo);
+    const fallbackInputs: AgentRunInput[] = [];
+    const primary: AgentProvider = {
+      name: 'primary',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        throw new AgentError('primary unavailable');
+      },
+    };
+    const fallback = recordingAgent(fallbackInputs);
+    const ctx = await prepareContext({ taskId: 'fallback', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+
+    const result = await runBudgetedStages(
+      ctx,
+      [
+        {
+          name: 'reviewer',
+          promptTemplate: 'review',
+          provider: primary,
+          model: 'foreign-model',
+          fallback: { provider: fallback, model: 'fallback-model' },
+        },
+      ],
+      { agent: primary, maxCostUsd: 1 },
+    );
+
+    expect(result.status).toBe('completed');
+    expect(fallbackInputs).toHaveLength(1);
+    expect(fallbackInputs[0]?.model).toBe('fallback-model');
+    expect(fallbackInputs[0]?.resumeSessionId).toBeUndefined();
     await disposeContext(ctx);
   });
 });
@@ -339,6 +374,22 @@ describe('withStageModelExcept', () => {
   it('does not mutate the original stages array', () => {
     withStageModelExcept(stages, 'opus', 'reviewer');
     expect(stages.every((s) => s.model === undefined)).toBe(true);
+  });
+});
+
+describe('withStageFallback', () => {
+  const stages: import('./pipeline.js').PipelineStage[] = [
+    { name: 'implementer', promptTemplate: 'impl' },
+    { name: 'reviewer', promptTemplate: 'review' },
+  ];
+
+  it('sets fallback only on the named stage and leaves the original array untouched', () => {
+    const provider = recordingAgent([]);
+    const result = withStageFallback(stages, { provider, model: 'gpt-5' });
+
+    expect(result.find((s) => s.name === 'implementer')?.fallback).toBeUndefined();
+    expect(result.find((s) => s.name === 'reviewer')?.fallback).toEqual({ provider, model: 'gpt-5' });
+    expect(stages.every((s) => s.fallback === undefined)).toBe(true);
   });
 });
 
