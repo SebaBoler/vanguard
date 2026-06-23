@@ -538,7 +538,7 @@ jobs:
         with: { package_json_file: .vanguard-src/package.json }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-workspace
         working-directory: .vanguard-src
       - run: pnpm build
         working-directory: .vanguard-src
@@ -556,7 +556,7 @@ jobs:
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
 ```
 
-Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash).
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). `--ignore-workspace` on the Vanguard install matters when the target repo is itself a **pnpm workspace** (monorepo): without it, `pnpm install` in `.vanguard-src` walks up to the target's `pnpm-workspace.yaml`, installs into the wrong place, and the Vanguard build fails. It is a no-op for non-workspace targets, so keep it always.
 
 #### Cross-provider on a Codex subscription (no OpenAI key)
 
