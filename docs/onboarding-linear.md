@@ -5,7 +5,20 @@ The Linear counterpart of [docs/onboarding-another-repo.md](onboarding-another-r
 - **Routing is by STATE, not labels.** GitHub uses `ready for spec` / `ready for agent` labels; Linear uses workflow **states** (state types: `triage`, `unstarted`, …). A `vanguard` label is an ownership tag the issue must carry.
 - **No GitHub-Actions equivalent.** Linear has no CI trigger, so you run an **always-on `vanguard watch --source linear`** on a host (a server, or the Synology deploy — see [docs/deploy.md](deploy.md)). It is still phone-drivable: change an issue's state from the Linear app and the watcher picks it up on the next poll.
 
-GitHub is still the review surface — the PR opens on the linked GitHub repo and the PR link is commented back onto the Linear issue.
+GitHub is still the review surface — the PR opens on the linked GitHub repo and the PR link is commented back onto the Linear issue. **Non-GitHub VCS:** GitLab workspaces open MRs instead (`glab mr create --fill`); the Linear issue receives the MR link the same way. Any VCS with a CLI that can open a review request works — the watcher is not GitHub-specific.
+
+---
+
+## 0. Pre-flight check
+
+Before dispatching an issue, verify the feature is not already implemented:
+
+```bash
+# grep for key symbols or behavior from the issue title/description
+grep -r "symbolOrBehavior" src/
+```
+
+If the implementation exists on the default branch, close the Linear task and skip the run. A full model budget spent on an empty diff is wasted budget.
 
 ---
 
@@ -25,6 +38,8 @@ vanguard watch  --loop-v1 --label vanguard --repo /path/to/repo   # the loop
 
 Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md](deploy.md). The shipped Synology deploy already runs `watch --source linear --team TES --label vanguard`.
 
+**Disk management:** Docker-based sandboxes accumulate build cache silently. On long-running hosts, run `docker builder prune -f` before starting the watcher to prevent silent mid-run failures — package installs fail with no free space but no clear error message.
+
 ---
 
 ## 2. State routing (the equivalent of GitHub labels)
@@ -37,6 +52,8 @@ Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md]
 
 The two-flag split is Linear-specific: `--agent-state` is the **state name** the spec pass moves a ticket to (`Todo`), while `--trigger-state` is the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box.
 
+**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`/`unstarted`) with a complete spec; the watcher builds them directly, skipping the spec pass entirely.
+
 ---
 
 ## 3. The triage contract (same as GitHub)
@@ -47,6 +64,8 @@ Independent of routing, before spending model budget the agent pass refuses an u
 - a Vanguard `<tech_spec>` comment, which the spec pass writes for tickets you put in **Triage**.
 
 A ticket meeting neither is moved to **Needs Info** with a clarification comment. Same contract as the GitHub onboarding — see [the triage contract there](onboarding-another-repo.md#what-an-issue-must-contain-the-triage-contract).
+
+**Quality calibration:** Keep one or two reference issues with known-good specs bookmarked in your workspace. Link them in the issue description or team docs as calibration examples for what "ready to run" looks like. Vague tickets cost a full run budget to reject.
 
 ---
 
@@ -63,3 +82,15 @@ A ticket meeting neither is moved to **Needs Info** with a clarification comment
   ```
 
 Models are chosen the same way as GitHub (`--spec-model` plans, `--provider`/`--provider-model` implement + simplify, `--review-provider` reviews). The Codex subscription credential and its CI caveat are identical — see [onboarding-another-repo.md](onboarding-another-repo.md#full-cross-provider-on-a-codex-subscription).
+
+---
+
+## 5. Post-run checklist
+
+After the watcher finishes and a draft PR/MR exists:
+
+1. **Check the diff stat** — every layer the spec demanded actually landed. A schema change without the corresponding module, or a missing test, means the run stopped short → resume or finish by hand.
+2. **Run the verify gate** — `typecheck` + lint (whatever the project uses). The agent may have left type errors it did not notice.
+3. **Spot-check auth/security** — resolver ownership filters, webhook signature verification, feature gates. These are the areas agents most commonly skip under time pressure.
+4. **Open the review request** — push the draft PR/MR out of draft and post the link as a comment on the Linear issue.
+5. **Close the loop** — mark the Linear issue **Done**. File any newly discovered bugs as separate issues.
