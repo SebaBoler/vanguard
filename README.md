@@ -448,11 +448,17 @@ Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metri
 
 ### Implement issues via GitHub Actions
 
-Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue and the workflow runs the two-pass pipeline in a sandbox, with the routing labels moving live:
+Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue and the workflow runs the pipeline in a sandbox, with the routing labels moving live:
 
 - **`ready for spec`** — a rough idea: Vanguard writes a tech spec, advances the ticket to `ready for agent`, **then builds it** and opens a PR — all in one job.
 - **`ready for agent`** — a written, ready ticket: Vanguard builds it directly.
 - **too vague** — triage parks it at `needs info` (no budget spent); you fill it in and re-label.
+
+Three tiers, each building on the last — for the full copy-paste setup (both workflow files, the one-click doctor validator, secrets, and the triage contract) see **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**:
+
+- **Minimal** — same repo (this section), Claude only, label `ready for agent`. One secret, one setting.
+- **Intermediate** — [run it on another repo](#run-it-on-another-repo): cross-repo checkout + `ready for spec` (spec → build in one run) + custom skills.
+- **Full** — [cross-provider on a Codex subscription](#cross-provider-on-a-codex-subscription-no-openai-key): Opus plans, Sonnet implements, Codex reviews.
 
 The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
 
