@@ -19,6 +19,29 @@
 
 Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested. Runs autonomously (AFK) as a `watch` loop; deployed always-on on Docker (Synology / Hetzner / any host).
 
+## Contents
+
+- [Design philosophy](#design-philosophy)
+- [How it works](#how-it-works)
+- [Layers](#layers)
+- [Quick start](#quick-start)
+- [Task sources](#task-sources-pick-one)
+- [Auth](#auth) · [Local secrets](#local-secrets-two-ways)
+- [End to end](#end-to-end)
+- [Skills](#skills) · [Custom skills (bring your own)](#custom-skills-bring-your-own)
+- [Models](#models)
+- [Providers](#providers) — Claude / Codex / Cursor / z.ai, cross-provider, Codex subscription, custom endpoint
+- [Fork-and-select](#fork-and-select)
+- [Security](#security) · [Host LLM proxy](#host-llm-proxy)
+- [Development](#development)
+- [Autonomous loop](#autonomous-loop) · [Loop v1 (two-pass)](#loop-v1--two-pass-autonomous-pipeline) · [External PR review](#external-pr-review) · [Implement issues via GitHub Actions](#implement-issues-via-github-actions)
+- [Cost & limits](#cost--limits)
+- [Retrospective memory](#retrospective-memory)
+- [Proof of work](#proof-of-work)
+- [Visual proof](#visual-proof)
+
+New repo onboarding: [GitHub Actions](docs/onboarding-another-repo.md) · [Linear](docs/onboarding-linear.md) · [always-on host (Synology / Hetzner)](docs/deploy.md)
+
 ## Design philosophy
 
 Vanguard treats autonomous coding as an engineering system, not a prompt-and-pray script. Five principles separate it from "run an agent in a loop":
