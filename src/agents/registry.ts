@@ -40,6 +40,13 @@ interface ProviderKeySpec {
    * CLAUDE_CODE_OAUTH_TOKEN, so --llm-proxy does not apply (Codex talks to OpenAI directly with it).
    */
   subscriptionEnv?: string;
+  /**
+   * Host→sandbox env passthrough applied in NORMAL mode only (never under --llm-proxy, whose sidecar
+   * owns the upstream): when the host env var (the map key) is set, its value is forwarded verbatim into
+   * the sandbox under the mapped name. Used to point Codex at a custom OpenAI-compatible endpoint via
+   * OPENAI_BASE_URL → VANGUARD_OPENAI_BASE_URL (CodexProvider then writes a config.toml provider for it).
+   */
+  passthroughEnv?: Record<string, string>;
 }
 
 /** Everything the runner needs to know about one provider, in one place. */
@@ -86,6 +93,8 @@ const PROVIDERS = {
       proxyKey: 'codex',
       // Run Codex on a ChatGPT subscription instead of an API key: CODEX_AUTH_JSON carries auth.json content.
       subscriptionEnv: 'CODEX_AUTH_JSON',
+      // Set OPENAI_BASE_URL to run Codex against any OpenAI-compatible endpoint (Responses API) — direct mode only.
+      passthroughEnv: { OPENAI_BASE_URL: 'VANGUARD_OPENAI_BASE_URL' },
     },
   },
   cursor: {
@@ -206,6 +215,11 @@ export function providerSecrets(
       proxySecrets[key.proxyKey] = value;
     } else {
       Object.assign(sandboxSecrets, key.toSandboxSecrets(value));
+      // Normal mode only: forward optional host env (e.g. a custom OpenAI base URL) into the sandbox.
+      for (const [hostVar, sandboxVar] of Object.entries(key.passthroughEnv ?? {})) {
+        const v = env[hostVar];
+        if (v !== undefined && v !== '') sandboxSecrets[sandboxVar] = v;
+      }
     }
   }
   return { sandboxSecrets, proxySecrets };
