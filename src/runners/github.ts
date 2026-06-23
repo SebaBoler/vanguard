@@ -6,7 +6,8 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, withStageModelExcept, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, implementReviewSimplifyStages, withStageProvider, withStageModel, withStageModelExcept, withStageFallback, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { publishReviewVerdict, buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -50,6 +51,8 @@ export interface RunGithubIssueDeps extends ProviderChoice {
   verifyCmd?: string;
   /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). Failure never blocks the PR. */
   visualProofCmd?: string;
+  /** When true, blocking (high/critical) reviewer findings post as --request-changes to block merge. */
+  reviewGate?: boolean;
 }
 
 export interface RunGithubIssueResult {
@@ -112,6 +115,14 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
           : withStageModel(pipeline, deps.providerModel);
       }
       if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
+      // Cross-provider reviewer: fall back to the planning provider on AgentError (outage/rate-limit)
+      // rather than failing the whole run. The fallback never sends the reviewer's foreign model name.
+      if (agents.reviewAgent !== undefined) {
+        pipeline = withStageFallback(pipeline, {
+          provider: agents.agent,
+          ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+        });
+      }
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
@@ -142,6 +153,15 @@ export async function runGithubIssue(issueRef: string, deps: RunGithubIssueDeps)
         visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
       ].filter((s): s is string => s !== undefined).join('\n\n');
       const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
+      const reviewerOutcome = outcomes.find((o) => o.name === 'reviewer');
+      await publishReviewVerdict({
+        repoSlug: deps.repoSlug,
+        prUrl: pr.prUrl,
+        headSha: commit.sha!,
+        reviewerOutcome,
+        attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),
+        ...(deps.reviewGate === true ? { gate: true } : {}),
+      });
       await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
       if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
       if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);

@@ -19,11 +19,13 @@ import {
   sandboxComplete,
   withStageModel,
   withStageModelExcept,
+  withStageFallback,
   techSpecStage,
   retrospectiveMemoryBlock,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
+import { AgentError } from '../core/errors.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
@@ -173,6 +175,38 @@ describe('runBudgetedStages', () => {
     const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.01), maxCostUsd: 1 });
     expect(result.status).toBe('completed');
     if (result.status === 'completed') expect(result.outcomes).toHaveLength(3);
+    await disposeContext(ctx);
+  });
+
+  it('retries an AgentError stage on its fallback provider and records the provider actually used', async () => {
+    const wm = new WorktreeManager(repo);
+    const primaryInputs: AgentRunInput[] = [];
+    const fallbackInputs: AgentRunInput[] = [];
+    const primary: AgentProvider = {
+      name: 'codex',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        primaryInputs.push(input);
+        throw new AgentError('provider unavailable');
+      },
+    };
+    const fallback = recordingAgent(fallbackInputs);
+    const ctx = await prepareContext({ taskId: 'fallback', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages = withStageFallback(
+      [{ name: 'reviewer', promptTemplate: 'review', provider: primary, model: 'gpt-5' }],
+      { provider: fallback, model: 'sonnet' },
+    );
+
+    const result = await runBudgetedStages(ctx, stages, { agent: recordingAgent([]), maxCostUsd: 1 });
+
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes[0]?.providerName).toBe('rec');
+      expect(result.outcomes[0]?.model).toBe('sonnet');
+    }
+    expect(primaryInputs).toHaveLength(1);
+    expect(primaryInputs[0]?.model).toBe('gpt-5');
+    expect(fallbackInputs).toHaveLength(1);
+    expect(fallbackInputs[0]?.model).toBe('sonnet');
     await disposeContext(ctx);
   });
 });

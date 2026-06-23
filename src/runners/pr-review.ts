@@ -128,6 +128,39 @@ export function buildPullRequestReviewComment(agentText: string, headRefOid?: st
   return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
 }
 
+export type PullRequestReviewAction = 'comment' | 'request-changes' | 'approve';
+
+/** Post a Vanguard review verdict to a PR via `gh pr review`. Reused by review-pr and the main agent loop. */
+export async function postPullRequestReview(
+  target: PullRequestReviewTarget,
+  commentBody: string,
+  action: PullRequestReviewAction = 'comment',
+  gh: GhRunner = defaultGhRunner,
+): Promise<void> {
+  const flag = action === 'request-changes' ? '--request-changes' : action === 'approve' ? '--approve' : '--comment';
+  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, flag, '--body', commentBody]);
+}
+
+/**
+ * Build a main-loop review comment with an attribution header.
+ * Empty agentText → explicit "no blocking issues" sentinel (silence ≠ ok).
+ * Non-empty agentText → the verdict text below the attribution header.
+ * Appends the hidden head-SHA dedupe marker when headRefOid is provided.
+ */
+export function buildMainLoopReviewComment(
+  agentText: string,
+  opts: { headRefOid?: string; attribution: string },
+): string {
+  const body = agentText.replace(PROMISE_RE, '').trim();
+  const oid = opts.headRefOid !== undefined && opts.headRefOid !== '' ? opts.headRefOid : undefined;
+  const sha7 = oid?.slice(0, 7);
+  const atSha = sha7 !== undefined ? ` @ ${sha7}` : '';
+  const header = `Reviewed by ${opts.attribution}${atSha}`;
+  const visible =
+    body === '' ? `## Vanguard Review\n\n${header}: no blocking issues` : `## Vanguard Review\n\n${header}:\n\n${body}`;
+  return oid !== undefined ? `${visible}\n\n${pullRequestReviewMarker(oid)}` : visible;
+}
+
 export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> {
   const gh = deps.gh ?? defaultGhRunner;
   const target = parsePullRequestRef(ref, deps.repoSlug);
@@ -136,7 +169,7 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: agent -> reviewing`);
   const reviewText = await deps.reviewer(pr);
   const commentBody = buildPullRequestReviewComment(reviewText, pr.headRefOid);
-  await gh(['pr', 'review', String(target.number), '--repo', target.repoSlug, '--comment', '--body', commentBody]);
+  await postPullRequestReview(target, commentBody, 'comment', gh);
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
   return { pr, commentBody };
 }
