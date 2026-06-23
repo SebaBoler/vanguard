@@ -63,7 +63,7 @@ jobs:
           gh label create "needs info" --repo "$GITHUB_REPOSITORY" --color D93F0B --description "Parked: ticket too vague for Vanguard" --force
           gh label create "vanguard:speccing" --repo "$GITHUB_REPOSITORY" --color FEF2C0 --description "Vanguard is writing a tech spec" --force
           gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
-          gh label create "vanguard:review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR for review" --force
+          gh label create "vanguard:needs-human-review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR — awaiting human review" --force
 
       # Cross-provider self-review: Opus plans the spec, Sonnet implements, Codex reviews.
       # No --llm-proxy: Codex runs on a ChatGPT subscription (CODEX_AUTH_JSON), which talks to the
