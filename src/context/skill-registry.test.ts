@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -365,6 +365,78 @@ describe('SkillRegistry.injectAll — cursor branch', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('SkillRegistry.injectAll — cross-provider families', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'vg-cross-'));
+    await mkdir(join(dir, 'myskill'), { recursive: true });
+    await writeFile(join(dir, 'myskill', 'SKILL.md'), '---\nname: myskill\ndescription: A skill.\n---\n# Body\n');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('claude-impl / codex-review: injects into both ~/.claude/skills and AGENTS.md', async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'claude-code', 'codex');
+
+    const claudeTarget = copies.find(([, s]) => s === '/home/agent/.claude/skills/myskill');
+    expect(claudeTarget).toBeDefined();
+
+    const agentsMd = copies.find(([, s]) => s.endsWith('/AGENTS.md'));
+    expect(agentsMd).toBeDefined();
+
+    const bodyTarget = copies.find(([, s]) => s === '/workspace/.vanguard/skills/myskill');
+    expect(bodyTarget).toBeDefined();
+  });
+
+  it('codex-impl / claude-review: injects into both AGENTS.md and ~/.claude/skills', async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'codex', 'claude-code');
+
+    const agentsMd = copies.find(([, s]) => s.endsWith('/AGENTS.md'));
+    expect(agentsMd).toBeDefined();
+
+    const claudeTarget = copies.find(([, s]) => s === '/home/agent/.claude/skills/myskill');
+    expect(claudeTarget).toBeDefined();
+  });
+
+  it('same-provider (claude/claude): injects only once into ~/.claude/skills', async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'claude-code', 'zai');
+
+    const claudeCopies = copies.filter(([, s]) => s.startsWith('/home/agent/.claude/skills/'));
+    // Both map to the same 'claude' family — should inject exactly once per skill
+    expect(claudeCopies).toHaveLength(1);
+  });
+
+  it('same-provider (codex/codex): injects only one AGENTS.md', async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'codex', 'codex');
+
+    const agentsMdCopies = copies.filter(([, s]) => s.endsWith('/AGENTS.md'));
+    expect(agentsMdCopies).toHaveLength(1);
+  });
+
+  it('codex/cursor: injects both provider indexes but copies shared skill bodies once', async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'codex', 'cursor');
+
+    expect(copies.some(([, s]) => s === '/home/agent/.codex/AGENTS.md')).toBe(true);
+    expect(copies.some(([, s]) => s === '/workspace/.cursor/rules/myskill.mdc')).toBe(true);
+
+    const bodyCopies = copies.filter(([, s]) => s === '/workspace/.vanguard/skills/myskill');
+    expect(bodyCopies).toHaveLength(1);
   });
 });
 

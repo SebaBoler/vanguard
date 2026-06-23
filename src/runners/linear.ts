@@ -97,7 +97,14 @@ export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps)
 
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
-      { taskId: `linear-${task.id.toLowerCase()}`, localRepoPath: deps.repoPath, sandbox, agentName: agents.agent.name, ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}) },
+      {
+        taskId: `linear-${task.id.toLowerCase()}`,
+        localRepoPath: deps.repoPath,
+        sandbox,
+        agentName: agents.agent.name,
+        ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
+        ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
+      },
       { skills },
     );
     try {
