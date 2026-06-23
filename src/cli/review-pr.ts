@@ -83,7 +83,7 @@ async function runDefaultReviewer(
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
     });
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox });
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
     try {
       const result = await runAgent(ctx, {
         stageName: 'pr-review',

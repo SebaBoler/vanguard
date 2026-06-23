@@ -22,10 +22,13 @@ const CLAUDE_SESSION_PROVIDERS = new Set(['claude-code', 'zai']);
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TURNS = 6;
 // Skip on copy-back: .git (a linked worktree's .git is a file pointer; copying it corrupts the
-// worktree), node_modules (gitignored, huge, and its .bin symlinks make fs.cp throw EINVAL), and
+// worktree), node_modules (gitignored, huge, and its .bin symlinks make fs.cp throw EINVAL),
 // .claude/skills (plugin-installed symlinks pointing to absolute paths inside the sandbox —
-// copying them yields dangling symlinks that cause Bun's fs.cp to throw ENOENT via stat).
-const COPY_BACK_SKIP = /(^|[\\/])(\.git|node_modules)([\\/]|$)|(^|[\\/])\.claude[\\/]skills([\\/]|$)/;
+// copying them yields dangling symlinks that cause Bun's fs.cp to throw ENOENT via stat),
+// .cursor/rules (injected .mdc skill rules — load-bearing exclusion, these must not land in PRs),
+// and .vanguard/skills (skill bodies copied in as pointer targets for codex/cursor providers).
+const COPY_BACK_SKIP =
+  /(^|[\\/])(\.git|node_modules)([\\/]|$)|(^|[\\/])\.claude[\\/]skills([\\/]|$)|(^|[\\/])\.cursor[\\/]rules([\\/]|$)|(^|[\\/])\.vanguard[\\/]skills([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
@@ -33,6 +36,8 @@ export interface PrepareOptions {
   baseBranch?: string;
   reuse?: boolean;
   skills?: string[];
+  /** Provider name (AgentProvider.name) used to select the skill injection target format. */
+  agentName?: string;
   sandbox: IsolatedSandboxProvider;
   logger?: VanguardLogger;
 }
@@ -102,7 +107,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await seedSandboxGit(opts.sandbox);
-    await skills.injectAll(opts.sandbox, home);
+    await skills.injectAll(opts.sandbox, home, opts.agentName);
     const ctx: RunContext = {
       taskId: opts.taskId,
       sandbox: opts.sandbox,
@@ -303,6 +308,7 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
       taskId: opts.taskId,
       localRepoPath: opts.localRepoPath,
       sandbox: opts.sandbox,
+      agentName: opts.agent.name,
       ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
       ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
       ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
