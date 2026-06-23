@@ -55,7 +55,7 @@ jobs:
       - name: Ensure routing labels
         run: |
           for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:review:0E8A16"; do
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
             gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
           done
       - name: Run Vanguard loop (spec then implement)
@@ -105,7 +105,7 @@ jobs:
       - name: Ensure routing labels
         run: |
           for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:review:0E8A16"; do
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
             gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
           done
       - name: Doctor (preflight only — no issues processed)
@@ -167,7 +167,7 @@ Replace `YOUR_LOGIN` in both workflows with your GitHub login. The `if:` gate re
 3. **Label it:**
    - `ready for agent` — the task is precisely scoped (you wrote the criteria); Vanguard builds it directly.
    - `ready for spec` — a rough idea; Vanguard writes a Tech Spec first, then builds it.
-4. Vanguard opens a **draft PR** and moves the issue through `vanguard:running` → `vanguard:review`.
+4. Vanguard opens a **draft PR** and moves the issue through `vanguard:running` → `vanguard:needs-human-review`.
 
 ---
 

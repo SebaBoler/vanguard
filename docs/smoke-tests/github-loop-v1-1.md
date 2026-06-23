@@ -8,7 +8,7 @@ Use this when you want to prove the GitHub Loop v1.1 lane works end-to-end on on
 - `GH_TOKEN` can read and update the repo.
 - `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is available to the watcher.
 - `vanguard-sandbox:latest` exists on the Docker daemon used by the controller.
-- The repo has these labels: `ready for spec`, `ready for agent`, `needs info`, `vanguard:speccing`, `vanguard:running`, and `vanguard:review`.
+- The repo has these labels: `ready for spec`, `ready for agent`, `needs info`, `vanguard:speccing`, `vanguard:running`, and `vanguard:needs-human-review`.
 
 ## Label Flow
 
@@ -18,13 +18,13 @@ Use this when you want to prove the GitHub Loop v1.1 lane works end-to-end on on
 | `vanguard:speccing` | Spec pass is running. |
 | `ready for agent` | Tech spec exists; the next pass can implement. |
 | `vanguard:running` | Agent pass is running. |
-| `vanguard:review` | Draft PR opened for human review. |
+| `vanguard:needs-human-review` | Draft PR opened for human review. |
 | `needs info` | Parked until a human adds missing context and moves it back. |
 
 Expected happy path:
 
 ```text
-ready for spec -> vanguard:speccing -> ready for agent -> vanguard:running -> vanguard:review
+ready for spec -> vanguard:speccing -> ready for agent -> vanguard:running -> vanguard:needs-human-review
 ```
 
 ## Pass 1: Combined spec + build
@@ -54,7 +54,7 @@ Expected result:
 - The issue receives a `Vanguard tech spec:` comment containing `<tech_spec>`.
 - The agent claims the issue with `vanguard:running` and opens a draft PR.
 - The issue receives a comment with the PR URL.
-- Final labels: `vanguard:review` (all routing labels removed).
+- Final labels: `vanguard:needs-human-review` (all routing labels removed).
 
 ## Pass 2 (optional no-op verification)
 
@@ -86,4 +86,4 @@ To resume, update the issue with the missing detail, remove `needs info`, and ad
 - No issue is picked up: confirm the repo slug and labels.
 - Spec runs but agent does not: confirm the issue has `ready for agent`, then run another `--once` pass.
 - Auth fails before claim: set `GH_TOKEN` and one LLM auth env var, then rerun. The issue should still have its trigger label.
-- A bad draft PR opens: close the PR, remove `vanguard:review`, and put the issue back on the right trigger label after fixing the issue text.
+- A bad draft PR opens: close the PR, remove `vanguard:needs-human-review`, and put the issue back on the right trigger label after fixing the issue text.

@@ -537,7 +537,7 @@ Commands:
     --claimed-state <x>    Status/label set on claim (project default: "In Progress";
                            linear: state default "In Progress"; github: label "vanguard:running")
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";
-                           linear: "In Review"; github: "vanguard:review")
+                           linear: "In Review"; github: "vanguard:needs-human-review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --loop-v1              Use Loop v1 defaults (GitHub labels "ready for spec"/"ready for agent"/
                            "needs info"; Linear ownership label "vanguard", state type "triage",

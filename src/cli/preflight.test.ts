@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { runPreflight, formatPreflightReport } from './preflight.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { Command } from './args.js';
 import type { PreflightRunner } from './preflight.js';
 
@@ -20,7 +21,7 @@ function githubDoctor(overrides: Partial<DoctorCommand> = {}): DoctorCommand {
   };
 }
 
-function makeRunner(labels: string[] = ['ready for spec', 'ready for agent', 'needs info', 'vanguard:speccing', 'vanguard:running', 'vanguard:review']): PreflightRunner {
+function makeRunner(labels: string[] = ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL]): PreflightRunner {
   return async (cmd, args) => {
     if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
     if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
@@ -60,11 +61,11 @@ describe('runPreflight', () => {
     const report = await runPreflight(githubDoctor(), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
       nodeVersion: '24.11.1',
-      run: makeRunner(['ready for spec', 'ready for agent', 'needs info', 'vanguard:speccing', 'vanguard:running']),
+      run: makeRunner(['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL]),
     });
 
     expect(report.ok).toBe(false);
-    expect(formatPreflightReport(report)).toContain('preflight: github labels missing vanguard:review -> stop before claim');
+    expect(formatPreflightReport(report)).toContain('preflight: github labels missing vanguard:needs-human-review -> stop before claim');
   });
 
   it('reports unreadable GitHub labels instead of throwing on malformed gh output', async () => {

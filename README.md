@@ -546,7 +546,7 @@ jobs:
       - name: Ensure routing labels       # watch edits these; gh requires them to exist
         run: |
           for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:review:0E8A16"; do
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
             gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
           done
       - name: Run Vanguard loop (spec then implement)
@@ -557,6 +557,8 @@ jobs:
 ```
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). `--ignore-workspace` on the Vanguard install matters when the target repo is itself a **pnpm workspace** (monorepo): without it, `pnpm install` in `.vanguard-src` walks up to the target's `pnpm-workspace.yaml`, installs into the wrong place, and the Vanguard build fails. It is a no-op for non-workspace targets, so keep it always.
+
+**Backward compatibility — `vanguard:review` label.** Repos onboarded before this change carry `vanguard:review` on in-flight issues and PRs; Vanguard will not migrate them automatically. The new default (`vanguard:needs-human-review`) and the old label coexist harmlessly in the same repo — `gh label create --force` adds the new one without deleting the old. To reconcile in-flight items, either re-run the "Ensure routing labels" step (it adds the new label) then pass `--review-state vanguard:review` to keep the old terminal label, or update in-flight labels by hand and let Vanguard pick up the new default going forward.
 
 #### Cross-provider on a Codex subscription (no OpenAI key)
 

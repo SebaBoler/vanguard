@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { Command } from './args.js';
 
@@ -34,9 +35,6 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
-const DEFAULT_SPEC_CLAIMED_LABEL = 'vanguard:speccing';
-const DEFAULT_GITHUB_CLAIMED_LABEL = 'vanguard:running';
-const DEFAULT_GITHUB_REVIEW_LABEL = 'vanguard:review';
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
   const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
@@ -72,15 +70,15 @@ function githubLabelsFor(cmd: PreflightCommand): string[] {
       cmd.specLabel,
       cmd.agentLabel,
       cmd.needsInfoLabel,
-      cmd.specClaimedLabel ?? DEFAULT_SPEC_CLAIMED_LABEL,
-      cmd.claimedState ?? DEFAULT_GITHUB_CLAIMED_LABEL,
-      cmd.reviewState ?? DEFAULT_GITHUB_REVIEW_LABEL,
+      cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
+      cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
+      cmd.reviewState ?? GITHUB_REVIEW_LABEL,
     ]);
   }
   return unique([
     cmd.label,
-    cmd.claimedState ?? DEFAULT_GITHUB_CLAIMED_LABEL,
-    cmd.reviewState ?? DEFAULT_GITHUB_REVIEW_LABEL,
+    cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
+    cmd.reviewState ?? GITHUB_REVIEW_LABEL,
   ]);
 }
 

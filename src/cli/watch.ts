@@ -4,6 +4,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -13,7 +14,6 @@ import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
 
 const SPEC_CLAIMED_STATE = 'Speccing'; // Linear default; override with --spec-claimed-state.
-const SPEC_CLAIMED_LABEL = 'vanguard:speccing'; // GitHub default; override with --spec-claimed-label.
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {
@@ -190,7 +190,7 @@ async function watchGithubSource(
         deps: specDeps,
         repoSlug,
         specLabel: cmd.specLabel,
-        claimedLabel: cmd.specClaimedLabel ?? SPEC_CLAIMED_LABEL,
+        claimedLabel: cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
         agentLabel: cmd.agentLabel,
         needsInfoLabel: cmd.needsInfoLabel,
         ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
@@ -198,8 +198,8 @@ async function watchGithubSource(
       agent: {
         deps,
         label: cmd.agentLabel,
-        claimedLabel: cmd.claimedState ?? 'vanguard:running',
-        reviewLabel: cmd.reviewState ?? 'vanguard:review',
+        claimedLabel: cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
+        reviewLabel: cmd.reviewState ?? GITHUB_REVIEW_LABEL,
         needsInfoLabel: cmd.needsInfoLabel,
         ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
       },
@@ -215,8 +215,8 @@ async function watchGithubSource(
   await watchGithub({
     deps,
     label: cmd.label,
-    claimedLabel: cmd.claimedState ?? 'vanguard:running',
-    reviewLabel: cmd.reviewState ?? 'vanguard:review',
+    claimedLabel: cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
+    reviewLabel: cmd.reviewState ?? GITHUB_REVIEW_LABEL,
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
