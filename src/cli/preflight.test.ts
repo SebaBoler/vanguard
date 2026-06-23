@@ -268,4 +268,51 @@ describe('runPreflight provider combo check', () => {
     expect(comboCheck?.ok).toBe(false);
     expect(comboCheck?.reason).toMatch(/needs "zai" as the implementer/);
   });
+
+  it('passes codex auth on a well-formed CODEX_AUTH_JSON when codex is selected', async () => {
+    const report = await runPreflight(githubDoctor({ reviewProvider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_AUTH_JSON: JSON.stringify({ auth_mode: 'chatgpt', tokens: { refresh_token: 'rt' } }) },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.checks.find((c) => c.name === 'codex auth')?.ok).toBe(true);
+  });
+
+  it('fails codex auth on a CODEX_AUTH_JSON missing tokens.refresh_token', async () => {
+    const report = await runPreflight(githubDoctor({ reviewProvider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_AUTH_JSON: '{"auth_mode":"chatgpt"}' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === 'codex auth')?.ok).toBe(false);
+  });
+
+  it('skips codex auth when CODEX_AUTH_JSON is unset (API-key mode)', async () => {
+    const report = await runPreflight(githubDoctor({ reviewProvider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_API_KEY: 'c-key' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.checks.find((c) => c.name === 'codex auth')).toBeUndefined();
+  });
+
+  it('fails pr-create setting when disabled, passes when enabled, skips when unreadable', async () => {
+    const withApi = (canApprove: boolean): PreflightRunner => async (cmd, args, opts) =>
+      cmd === 'gh' && args[0] === 'api'
+        ? { stdout: JSON.stringify({ can_approve_pull_request_reviews: canApprove }) }
+        : makeRunner()(cmd, args, opts);
+    const env = { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' };
+
+    const disabled = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: withApi(false) });
+    expect(disabled.ok).toBe(false);
+    expect(disabled.checks.find((c) => c.name === 'pr-create setting')?.ok).toBe(false);
+
+    const enabled = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: withApi(true) });
+    expect(enabled.checks.find((c) => c.name === 'pr-create setting')?.ok).toBe(true);
+
+    // makeRunner throws on `gh api` -> runOk catches -> unreadable -> best-effort skip (no check pushed)
+    const unreadable = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: makeRunner() });
+    expect(unreadable.checks.find((c) => c.name === 'pr-create setting')).toBeUndefined();
+  });
 });
