@@ -132,6 +132,9 @@ export function pctBucketCheck(cacheDir: string, bucket: BucketId, opts: PctChec
         }
         return true;
       }
+      // If the quota window has already rolled over, treat the bucket as available regardless of
+      // stored usedPct — a header-fed bucket has no refresh fn and stays floored without this.
+      if (snap.resetAt > 0 && Date.now() >= snap.resetAt) return true;
       return snap.usedPct < opts.bailPct;
     },
   };

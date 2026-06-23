@@ -161,6 +161,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
     if (!this.started) throw new SandboxError('exec() called before start()');
+    // Validate env keys before writing the stage secrets file so a throw here doesn't leave it in tmpfs.
+    const envEntries = Object.entries(options.env ?? {});
+    if (envEntries.length > 0) validateSecrets(options.env as Record<string, string>);
     const hasStageSecrets = options.secrets !== undefined && Object.keys(options.secrets).length > 0;
 
     if (hasStageSecrets) {

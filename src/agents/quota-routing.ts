@@ -11,7 +11,7 @@ export interface QuotaRoutingOptions {
   checks: Record<BucketId, BucketCheck>;
   chain: string[];
   cacheDir: string;
-  /** Optional sink for a per-turn live-burn line; omit to disable. */
+  /** Optional sink for a live-burn line logged once at run() entry; omit to disable. */
   debug?: (line: string) => void;
 }
 
