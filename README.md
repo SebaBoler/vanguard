@@ -176,7 +176,17 @@ Copy them into the bundled set before the run so the agent keeps `ponytail`/`cod
 
 The run step already passes `--skills .vanguard-src/skills`, so it now injects both. Pointing `--skills` straight at `.github/vanguard-skills` would drop the bundled skills the loop needs, so merge, do not replace.
 
-Skills reach any provider that runs the `claude` CLI: `claude-code` and `zai` (z.ai's GLM endpoint speaks the Anthropic API). `codex` and `cursor` run their own CLIs and ignore `~/.claude/skills`, so the library does not feed them yet.
+Skills are injected per-provider in the format each CLI auto-discovers:
+
+| Provider | Target | Format |
+|---|---|---|
+| `claude-code`, `zai` | `~/.claude/skills/<id>/` | Full skill directory (current behaviour) |
+| `codex` | `$CODEX_HOME/AGENTS.md` (`~/.codex/AGENTS.md` by default) | Pointer index: name + description + path to `.vanguard/skills/<id>/SKILL.md` |
+| `cursor` | `.cursor/rules/<id>.mdc` | One `.mdc` per skill with `description`/`globs` frontmatter + pointer |
+
+Codex receives only a pointer index (not the full skill bodies) in its always-on `AGENTS.md` to avoid inflating every turn with N full skill texts; the model reads the body from `.vanguard/skills/<id>/SKILL.md` when the description matches the task. Cursor rules use `alwaysApply: false` so they are description-attached, not always-on, for the same reason. Neither `.cursor/rules/` nor `.vanguard/skills/` is copied back into the PR diff.
+
+**Cross-provider limitation:** when `--provider` and `--review-provider` differ (e.g. `--provider claude --review-provider codex`), skills are injected for the implementer's family only. The Codex reviewer runs without the skill index in that configuration. Inject for both families is a planned extension.
 
 Two checks before a skill goes in. It must be self-contained: `SKILL.md` plus plain text, no MCP or browser, since the sandbox has neither. It must allow model invocation: skip any with `disable-model-invocation: true`, because the agent never triggers those itself. Only the `description`s load up front, so curate about a dozen, not a whole collection.
 
@@ -530,7 +540,7 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
           node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
 ```
 
-`--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` still only reaches the Claude stages (Codex ignores it).
+`--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
 
 `--provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — pass `--review-model <model>` to pick a specific one.
 

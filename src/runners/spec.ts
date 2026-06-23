@@ -129,6 +129,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
         localRepoPath: deps.repoPath,
         sandbox,
+        agentName: agent.name,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
       deps.contextDeps ?? {},
