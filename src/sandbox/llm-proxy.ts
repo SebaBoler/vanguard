@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
@@ -58,12 +59,23 @@ export interface LlmProxyDep {
  * argv, so `docker inspect` cannot reveal it. The sandbox authenticates with the returned per-run
  * nonce; the proxy swaps in the real auth upstream.
  */
+// Container-side path for the host cacheDir bind-mount (used for quota snapshots).
+const CONTAINER_QUOTA_DIR = '/tmp/vg-quota';
+// Bucket name for the Anthropic/Claude header-fed quota snapshot (matches bucketPath convention).
+const CLAUDE_BUCKET = 'claude';
+
 export async function startLlmProxy(opts: {
   network: string;
   auth: { mode: 'subscription' | 'api'; secret: string };
   upstream?: Upstream;
   image?: string;
   docker?: DockerRunner;
+  /**
+   * Host-side directory where quota snapshots are stored (the cacheDir from quotaRoutedAgent).
+   * When set and upstream is 'anthropic', the sidecar writes harvested rate-limit data to
+   * `<cacheDir>/claude.json` via a bind-mount, making it readable by pctBucketCheck on the host.
+   */
+  cacheDir?: string;
 }): Promise<LlmProxy> {
   const docker = opts.docker ?? defaultDocker;
   const image = opts.image ?? 'vanguard-sandbox:latest';
@@ -71,6 +83,7 @@ export async function startLlmProxy(opts: {
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;
   const nonce = randomUUID().replace(/-/g, '');
+  const quotaMount = opts.cacheDir !== undefined && upstream === 'anthropic' ? opts.cacheDir : undefined;
 
   // The existing reapContainers (label vanguard.runId) already reaps this sidecar on gc — no gc change.
   const teardown = async (): Promise<void> => {
@@ -78,8 +91,12 @@ export async function startLlmProxy(opts: {
   };
 
   try {
+    if (quotaMount !== undefined) mkdirSync(quotaMount, { recursive: true });
     // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
-    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
+    const runArgs = ['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...sidecarMemoryArgs()];
+    if (quotaMount !== undefined) runArgs.push('-v', `${quotaMount}:${CONTAINER_QUOTA_DIR}:rw`);
+    runArgs.push(image, 'sleep', 'infinity');
+    await docker(runArgs);
     await docker(['network', 'connect', opts.network, name]);
     await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
     // The shared logic must sit next to the server so its relative import resolves.
@@ -90,17 +107,10 @@ export async function startLlmProxy(opts: {
     if (write.exitCode !== 0) {
       throw new SandboxError(`Failed to write llm proxy secret: ${write.stderr}`);
     }
-    await docker([
-      'exec',
-      '-d',
-      '-e',
-      `LLM_PROXY_SECRET_FILE=${SECRET_FILE}`,
-      '-e',
-      `PORT=${PROXY_PORT}`,
-      name,
-      'node',
-      '/tmp/llm-proxy.mjs',
-    ]);
+    const execArgs = ['exec', '-d', '-e', `LLM_PROXY_SECRET_FILE=${SECRET_FILE}`, '-e', `PORT=${PROXY_PORT}`];
+    if (quotaMount !== undefined) execArgs.push('-e', `LLM_PROXY_QUOTA_FILE=${CONTAINER_QUOTA_DIR}/${CLAUDE_BUCKET}.json`);
+    execArgs.push(name, 'node', '/tmp/llm-proxy.mjs');
+    await docker(execArgs);
     return { url: `http://${name}:${PROXY_PORT}`, nonce, host: name, destroy: teardown };
   } catch (cause) {
     await teardown();

@@ -35,6 +35,12 @@ export interface SandboxContextOptions {
   auth?: AgentAuth;
   /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
   provider?: ProviderName;
+  /**
+   * Host-side quota snapshot directory (the cacheDir from quotaRoutedAgent). When set and upstream
+   * is 'anthropic', the sidecar bind-mounts this directory and writes harvested rate-limit headers
+   * to `<cacheDir>/claude.json` so pctBucketCheck can read it on the host.
+   */
+  cacheDir?: string;
 }
 
 /**
@@ -70,7 +76,12 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
   }
   const upstream: Upstream = opts.provider === 'zai' ? 'zai' : 'anthropic';
   const auth = llmProxyAuth(opts.auth);
-  const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });
+  const llmProxy = await startLlmProxy({
+    network: enclave.network,
+    auth,
+    ...(upstream === 'anthropic' ? {} : { upstream }),
+    ...(opts.cacheDir !== undefined ? { cacheDir: opts.cacheDir } : {}),
+  });
   console.log(
     upstream === 'zai'
       ? 'llm-proxy: z.ai credential held in a trusted sidecar; the sandbox sees only a per-run nonce.'

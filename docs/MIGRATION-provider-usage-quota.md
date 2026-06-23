@@ -11,7 +11,7 @@ that model's transport env per stage. New public exports:
 
 - `quotaRoutedAgent(opts)` → `QuotaRoutingProvider` (an `AgentProvider`)
 - building blocks: `QuotaRoutingProvider`, `resolveModel`, `pctBucketCheck`, `readSnapshot`,
-  `writeSnapshot`, `zaiMonitorRefresh`, `worstWindow`, `parseUnifiedRatelimit`, `AllBucketsFlooredError`
+  `writeSnapshot`, `zaiMonitorRefresh`, `worstWindow`, `AllBucketsFlooredError`
 - types: `QuotaSnapshot`, `BucketId`, `ModelEntry`, `BucketCheck`, `PctCheckOptions`,
   `QuotaRoutedOptions`, `QuotaBucketConfig`, `QuotaRoutingOptions`
 - `AgentRunInput.env?` — per-invocation transport overlay (additive; threaded through `runClaudeCli`)
