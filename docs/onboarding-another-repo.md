@@ -47,7 +47,7 @@ jobs:
         with: { package_json_file: .vanguard-src/package.json }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-workspace
         working-directory: .vanguard-src
       - run: pnpm build
         working-directory: .vanguard-src
@@ -66,6 +66,8 @@ jobs:
 ```
 
 That is the **minimal** form: Claude does plan/implement/review/simplify, the model credential stays in a sidecar (`--llm-proxy`). To run Opus-spec / Sonnet-impl / Codex-review on a ChatGPT subscription instead, see [Full: cross-provider](#full-cross-provider-on-a-codex-subscription) below.
+
+`--ignore-workspace` on the install is what lets this work when **your repo is a pnpm workspace (monorepo)**: otherwise `pnpm install` inside `.vanguard-src` is captured by your root `pnpm-workspace.yaml`, leaves `.vanguard-src/node_modules` empty, and the Vanguard build fails. It is harmless for non-workspace repos — keep it.
 
 ### `.github/workflows/vanguard-doctor.yml` — validate before your first issue
 
@@ -95,7 +97,7 @@ jobs:
         with: { package_json_file: .vanguard-src/package.json }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-workspace
         working-directory: .vanguard-src
       - run: pnpm build
         working-directory: .vanguard-src
