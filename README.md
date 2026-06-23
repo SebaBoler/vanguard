@@ -564,6 +564,18 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 
 One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the short-lived access token from the embedded `refresh_token` on each run, so the secret must carry a live refresh token; re-run `gh secret set` if a run ever fails to authenticate. For long-running hosts (a `vanguard watch` on a server or NAS) the local file refreshes itself and this does not come up.
 
+## Cost & limits
+
+Two cost dimensions: **GitHub Actions minutes** (only when you run via Actions) and **model usage**.
+
+**GitHub Actions minutes.** A run builds Vanguard + the sandbox image, then runs the pipeline — about **15-20 minutes per run** on `ubuntu-latest`.
+- **Public repos: unlimited.** GitHub bills no Actions minutes for public repositories, so the Actions path has no minute ceiling there.
+- **Private repos: 2000 min/month** on the Free plan (then paid). At ~15-20 min/run that is roughly **100-130 runs/month**.
+- **Avoid Actions minutes entirely:** run an always-on `vanguard watch` on your own hardware (Synology / Hetzner / any Docker host — see [docs/deploy.md](docs/deploy.md)). It uses **zero** GitHub minutes, polls Linear or GitHub itself, and is the right home for a private-repo factory or heavy use. The Linear path has no Actions option anyway and always runs on a host.
+- **Cut per-run minutes** (private-repo Actions): the biggest slice is rebuilding the sandbox image every run — prebuild it and push to GHCR, then `docker pull` instead of `docker build` (saves ~2-3 min/run); cache `pnpm` and the build. Keep `runs-on: ubuntu-latest` (1× multiplier; larger runners multiply the minute cost). A single `watch --once` (the default since the spec→build fix) already halved the old double-sweep.
+
+**Model usage.** Billing follows the credential, not the run count: a **subscription** (`CLAUDE_CODE_OAUTH_TOKEN`, or Codex `CODEX_AUTH_JSON`) draws on your plan's usage with no per-token charge; an **API key** bills per token (see [Auth](#auth)). On a subscription the marginal cost of a run is plan usage + time, not dollars. `vanguard stats` rolls up per-run tokens/cost from `.vanguard/runs/metrics.jsonl`.
+
 ## Retrospective memory
 
 `vanguard memory` reads `.vanguard/runs` artifacts — failed runs, failed proofs, and reviewer notes (not diffs or transcripts) — and refreshes a short, redacted digest at `.vanguard/memory/retrospective.md`. It is deterministic (no LLM): a host-side rollup, advisory only.
