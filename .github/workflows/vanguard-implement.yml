@@ -1,14 +1,13 @@
 name: Vanguard Implement
 
 # Loop v1 from GitHub Actions:
-#   "ready for spec"  -> plan, then build (spec pass advances it, the second
-#                        sweep implements it in the same run)
+#   "ready for spec"  -> plan, then build it in the same run
 #   "ready for agent" -> build directly
 #   too vague         -> "needs info" (human fills it in)
 #
-# Two `watch --once` sweeps: the spec pass advances a ticket to "ready for agent",
-# and Loop v1 implements freshly-specced tickets on the *next* poll — so the second
-# sweep is that next poll, keeping spec -> build in one run.
+# A single `watch --once`: the spec pass advances a ticket to "ready for agent" and the agent pass
+# builds it in the same invocation (carries the just-advanced id in memory, so it no longer depends on
+# GitHub's eventually-consistent label index — see #143). No second sweep needed.
 #
 # Requires repo setting: Settings > Actions > General > Workflow permissions >
 # "Allow GitHub Actions to create and approve pull requests" (otherwise the
@@ -74,7 +73,5 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
-          # Sweep 1: spec pass advances "ready for spec" -> "ready for agent"; agent pass builds "ready for agent".
-          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
-          # Sweep 2 (the "next poll"): build the tickets the spec pass just advanced.
+          # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
           node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
