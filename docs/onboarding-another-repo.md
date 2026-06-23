@@ -4,6 +4,8 @@ Label a GitHub issue, get back a reviewed draft PR. The target repo does not nee
 
 You drop in **two workflow files** (required), set **two secrets** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
 
+> **Cost:** each run uses ~15-20 GitHub Actions minutes — **unlimited on public repos**, 2000/month free on private. To avoid Actions minutes entirely, run an always-on `vanguard watch` on your own host (see [Cost & limits](../README.md#cost--limits) and [docs/deploy.md](deploy.md)).
+
 ---
 
 ## 1. The files
