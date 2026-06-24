@@ -17,6 +17,19 @@ export type Command =
       reviewModel?: string;
     }
   | {
+      kind: 'research';
+      /** GitHub issue ref: owner/repo#n, or a bare number with --github-repo. */
+      issueRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      /** Declare that web egress is available; the prompt/comment will reflect web-research mode. */
+      webAccess?: boolean;
+      provider?: ProviderName;
+      researchModel?: string;
+    }
+  | {
       kind: 'watch-prs';
       repoSlug: string;
       repoPath: string;
@@ -250,6 +263,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         // proof-of-work verification (run + watch)
         verify: { type: 'string' },
         'visual-proof': { type: 'string' },
+        // research
+        web: { type: 'boolean' },
+        'research-model': { type: 'string' },
         // stats / memory
         json: { type: 'boolean' },
         limit: { type: 'string' },
@@ -312,6 +328,22 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+    };
+  }
+
+  if (positionals[0] === 'research') {
+    const issueRef = typeof values.github === 'string' ? values.github : positionals[1];
+    if (issueRef === undefined) return { kind: 'help' };
+    return {
+      kind: 'research',
+      issueRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(values.web === true ? { webAccess: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
     };
   }
 
@@ -622,6 +654,15 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+  research options:
+    <owner/repo#number>     GitHub issue to research
+    --github <ref>          Issue ref (alternative to positional)
+    --github-repo <o/r>     Required for bare issue numbers
+    --web                   Declare that web egress/search is available; otherwise comments say model-knowledge only
+    --research-model <m>    Model for the research pass
+    --provider <claude|codex|cursor|zai>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   watch-prs options:
