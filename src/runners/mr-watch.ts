@@ -46,6 +46,7 @@ export interface GitLabMergeRequestWatchOptions {
   /** Only review MRs opened by this GitLab username (optional). */
   author?: string;
   glab?: GlabRunner;
+  log?: (line: string) => void;
   reviewOne: (item: MergeRequestWatchItem) => Promise<void>;
 }
 
@@ -69,7 +70,7 @@ function mrId(item: MergeRequestWatchItem): string {
 
 function isAutomationAuthor(username: string): boolean {
   const lower = username.toLowerCase();
-  return lower.includes('vanguard') || lower.endsWith('[bot]') || lower === 'gitlab-ci-token';
+  return lower.startsWith('vanguard') || lower.endsWith('[bot]') || lower === 'gitlab-ci-token';
 }
 
 function parseMrList(
@@ -115,8 +116,13 @@ function editMrLabels(
 async function hasExistingReviewForHead(
   glab: GlabRunner,
   item: MergeRequestWatchItem,
+  log?: (line: string) => void,
 ): Promise<boolean> {
-  if (item.sha === '') return false;
+  if (item.sha === '') {
+    // glab mr list omitted sha — dedup disabled; MR may be re-reviewed on each poll
+    log?.(`watch-mrs ${mrId(item)}: sha absent, dedup disabled`);
+    return false;
+  }
   try {
     const out = await glab([
       'api',
@@ -126,7 +132,9 @@ async function hasExistingReviewForHead(
     return notes.some(
       (n) => !n.system && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, item.sha),
     );
-  } catch {
+  } catch (err) {
+    // best-effort: transient failure → re-review rather than skip
+    log?.(`watch-mrs ${mrId(item)}: dedup check failed (${String(err)}), will re-review`);
     return false;
   }
 }
@@ -139,6 +147,7 @@ export function gitlabMergeRequestWatchPrimitives(
   opts: GitLabMergeRequestWatchOptions,
 ): MergeRequestWatchPrimitives {
   const glab = opts.glab ?? defaultGlabRunner;
+  const log = opts.log;
   return {
     listReady: async () => {
       const listArgs = [
@@ -152,7 +161,7 @@ export function gitlabMergeRequestWatchPrimitives(
       const candidates = parseMrList(await glab(listArgs), opts.project, opts.label, opts.author);
       const ready = await Promise.all(
         candidates.map(async (item): Promise<MergeRequestWatchItem | undefined> =>
-          (await hasExistingReviewForHead(glab, item)) ? undefined : item,
+          (await hasExistingReviewForHead(glab, item, log)) ? undefined : item,
         ),
       );
       return ready.filter((item): item is MergeRequestWatchItem => item !== undefined);

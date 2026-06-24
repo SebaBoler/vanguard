@@ -38,6 +38,7 @@ export async function watchMrsCommand(cmd: WatchMrsCommand, deps: WatchMrsComman
     reviewingLabel: cmd.reviewingLabel,
     reviewedLabel: cmd.reviewedLabel,
     ...(cmd.author !== undefined ? { author: cmd.author } : {}),
+    log,
     reviewOne: (item) =>
       runReviewMr({
         kind: 'review-mr',
