@@ -9,8 +9,12 @@ import {
   revisionMarker,
   buildItemReply,
   buildRevisionSummary,
-  summaryContradictsDiff,
+  parseRevisionDiff,
+  formatFileChanges,
+  describeItemChange,
+  guardedPoint,
 } from './pr-feedback.js';
+import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import {
   implementReviewSimplifyStages,
@@ -231,17 +235,34 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       const sha = commit.sha ?? 'unknown';
 
+      // Derive a diff-true "what changed" point for each feedback item.
+      const diffFiles = parseRevisionDiff(revisionDiff);
+      const globalPoint = formatFileChanges(diffFiles, 3, 3);
+      const pointFor = (item: FeedbackItem): string => {
+        const candidate = describeItemChange(item, diffFiles) || globalPoint;
+        return guardedPoint(candidate, revisionDiff);
+      };
+
       // Reply to and resolve each addressed thread (one reply per unique thread).
-      const threadIds = new Set(
-        actionable.flatMap((i) => (i.source === 'thread' && i.threadId !== undefined ? [i.threadId] : [])),
+      // Map each threadId to its first actionable item to derive a per-thread point.
+      const threadIdToItem = new Map<string, FeedbackItem>();
+      for (const item of actionable) {
+        if (item.source === 'thread' && item.threadId !== undefined && !threadIdToItem.has(item.threadId)) {
+          threadIdToItem.set(item.threadId, item);
+        }
+      }
+      await Promise.all(
+        [...threadIdToItem.entries()].map(([threadId, item]) => {
+          const p = pointFor(item);
+          const detail = p ? `: ${p}` : '.';
+          return replyAndResolveThread(threadId, `Addressed in commit ${sha}${detail}\n\n${revisionMarker(pr.headRefOid)}`, gh);
+        }),
       );
-      const threadReplyBody = `Addressed in commit ${sha}.\n\n${revisionMarker(pr.headRefOid)}`;
-      await Promise.all([...threadIds].map((threadId) => replyAndResolveThread(threadId, threadReplyBody, gh)));
 
       // Post a per-item referencing reply for each non-threadable feedback item.
       const nonThreadItems = actionable.filter((item) => item.source !== 'thread');
       await Promise.all(
-        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, '', sha, pr.headRefOid), gh)),
+        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, pointFor(item), sha, pr.headRefOid), gh)),
       );
 
       // Post the single final round summary.
@@ -250,14 +271,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         number: target.number,
         headRefOid: pr.headRefOid,
         commitSha: sha,
-        addressed: actionable.map((item) => ({ item, point: '' })),
+        addressed: actionable.map((item) => ({ item, point: pointFor(item) })),
         deferred: [],
         verification: { typecheck: 'unknown', test: 'unknown' },
       });
-      const summaryGuard = summaryContradictsDiff(summaryText, revisionDiff);
-      if (!summaryGuard.ok) {
-        log(`revise-pr ${target.repoSlug}#${target.number}: summary diff guard — ${summaryGuard.violations.join('; ')}`);
-      }
       await commentPullRequest(target, summaryText, gh);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);

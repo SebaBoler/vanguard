@@ -419,6 +419,14 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
         a.some((s) => s.includes('review comment')),
     );
     expect(hasLumpedReview).toBe(false);
+
+    // Per-item replies include a diff-derived "what changed" point (file path from the worktree diff).
+    // The sandbox writes fix.txt → the revision diff contains that file.
+    expect(aliceBody).toContain('fix.txt');
+    expect(bobBody).toContain('fix.txt');
+
+    // Final summary also carries the diff-derived points for each addressed item.
+    expect(summaryBody).toContain('fix.txt');
   });
 });
 
