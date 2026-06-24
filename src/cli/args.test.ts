@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, assert } from 'vitest';
 import { parseCli } from './args.js';
 
 describe('parseCli', () => {
@@ -827,5 +827,51 @@ describe('parseCli revise-pr', () => {
     if (cmd.kind === 'revise-pr') {
       expect(cmd.prRef).toBe('https://github.com/o/r/pull/99');
     }
+  });
+});
+
+describe('parseCli gitlab run', () => {
+  it('parses --gitlab flag as gitlab source', () => {
+    const cmd = parseCli(['run', '--gitlab', 'owner/project#42'], '/repo');
+    assert(cmd.kind === 'run');
+    expect(cmd.source).toBe('gitlab');
+    expect(cmd.id).toBe('owner/project#42');
+  });
+});
+
+describe('parseCli watch gitlab', () => {
+  it('parses --source gitlab with --gitlab-project', () => {
+    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'owner/project', '--label', 'vanguard'], '/repo');
+    assert(cmd.kind === 'watch');
+    expect(cmd.source).toBe('gitlab');
+    expect(cmd.project).toBe('owner/project');
+    expect(cmd.label).toBe('vanguard');
+  });
+});
+
+describe('parseCli review-mr', () => {
+  it('parses review-mr with --mr and --gitlab-project', () => {
+    const cmd = parseCli(['review-mr', '--mr', '42', '--gitlab-project', 'owner/project'], '/repo');
+    assert(cmd.kind === 'review-mr');
+    expect(cmd.iid).toBe(42);
+    expect(cmd.project).toBe('owner/project');
+  });
+});
+
+describe('parseCli watch-mrs', () => {
+  it('parses watch-mrs with required flags', () => {
+    const cmd = parseCli(['watch-mrs', '--gitlab-project', 'g/p', '--label', 'ready for review'], '/repo');
+    assert(cmd.kind === 'watch-mrs');
+    expect(cmd.project).toBe('g/p');
+    expect(cmd.label).toBe('ready for review');
+    expect(cmd.reviewingLabel).toBe('vanguard::reviewing');
+    expect(cmd.reviewedLabel).toBe('vanguard::reviewed');
+  });
+});
+
+describe('parseCli doctor-mrs', () => {
+  it('parses doctor-mrs with required flags', () => {
+    const cmd = parseCli(['doctor-mrs', '--gitlab-project', 'g/p', '--label', 'ready for review'], '/repo');
+    assert(cmd.kind === 'doctor-mrs');
   });
 });

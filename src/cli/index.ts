@@ -58,6 +58,11 @@ async function main(): Promise<void> {
     await memoryCommand(command);
     return;
   }
+  if (command.kind !== 'gc') {
+    // review-mr / watch-mrs / doctor-mrs — not yet wired to an implementation
+    console.error(`Command '${command.kind}' is not yet implemented.`);
+    process.exit(1);
+  }
   const report = await runGc(command);
   const tag = command.dryRun ? ' (dry-run)' : '';
   const remote = command.remoteRepo !== undefined ? `, ${report.branches.length} merged remote branch(es)` : '';
