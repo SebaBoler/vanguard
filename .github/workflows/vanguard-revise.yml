@@ -20,7 +20,7 @@ jobs:
        contains(fromJSON('["SebaBoler","github-actions[bot]"]'), github.event.pull_request.user.login) &&
        github.event.sender.login == 'SebaBoler')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
