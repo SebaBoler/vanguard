@@ -54,8 +54,8 @@ jobs:
       - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
       - name: Ensure routing labels
         run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
+          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" "needs research:1D76DB" \
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16" "vanguard:researching:BFDADC"; do
             gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
           done
       - name: Run Vanguard loop (spec then implement)
@@ -104,8 +104,8 @@ jobs:
       - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
       - name: Ensure routing labels
         run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
+          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" "needs research:1D76DB" \
+                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16" "vanguard:researching:BFDADC"; do
             gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
           done
       - name: Doctor (preflight only — no issues processed)
@@ -218,3 +218,31 @@ This is the only hard requirement on issue content — independent of whether yo
 What does **not** pass: a plain `Acceptance criteria:` line with no `#` heading, or only the placeholder bullets. A ticket that meets neither condition is moved to `needs info` with a comment explaining what to add; fill it in and re-label.
 
 So: do whatever you like for issue authoring (template, your own, freehand) — just make sure a `ready for agent` issue carries that heading + real bullets, or hand it to the spec pass with `ready for spec`.
+
+## Label reference: routing vs enrichment
+
+| Label | Set by | Bot state | Meaning | Bot action | Auto-advance? |
+|---|---|---|---|---|---|
+| `ready for spec` | Human | `vanguard:speccing` | Ticket is ready to be specced | Generate tech spec, post `<tech_spec>` comment, advance to `ready for agent` | Yes → `ready for agent` |
+| `ready for agent` | Human or spec pass | `vanguard:running` | Ticket is ready to implement | Implement and open a draft PR | Yes → `vanguard:needs-human-review` |
+| `needs info` | **Vanguard triage** (`assessTaskReadiness`) | — | Ticket is too vague to proceed — **rejected/parked** | Post clarification comment, stop | No — human must add content |
+| `needs research` | **Human** (manually) | `vanguard:researching` | Ticket is a valid idea needing **external context** before speccing | Run external research, post findings comment, **REST** | No — human sets `ready for spec` or `ready for agent` next |
+
+### `needs research` vs `needs info`
+
+These are orthogonal signals and must not be conflated:
+
+- **`needs info`** is an automated *rejection* for under-specified tickets. Vanguard sets it when `assessTaskReadiness` fails (description too short, no acceptance criteria). The human must add content before the ticket can be picked up again.
+- **`needs research`** is a human-initiated *enrichment* request for a well-formed ticket that would benefit from external context (prior art, standards, library docs). Vanguard does not apply the `needs_info` gate to the research pass — external research is valuable even for a one-line idea, and gating it would conflate the two signals.
+
+The research pass is **iterative and resting**: each time a human re-applies `needs research`, Vanguard posts a new research comment that builds on prior findings (appends — never replaces). The issue rests with no routing label after each run; the human decides what comes next.
+
+### Egress note for `needs research`
+
+The research sandbox runs under the same egress allowlist as the spec and agent passes by default (`api.anthropic.com` + package registries — no general web). The `--web` CLI flag declares that the operator has widened egress to allow web search/fetch. Without `--web`, the agent conducts model-knowledge research and the comment header says so. To enable true web research, add the following hosts to a research-specific egress extension (do **not** widen `DEFAULT_EGRESS_ALLOWLIST` for the build passes):
+
+- Common documentation hosts: `developer.mozilla.org`, `docs.github.com`, `pkg.go.dev`, `docs.rs`
+- Standards bodies: `datatracker.ietf.org`, `www.w3.org`, `tc39.es`
+- General search/fetch: your preferred search API endpoint
+
+The `vanguard-research.yml` workflow (not yet applied — see below) must pass `--web` if egress has been widened.

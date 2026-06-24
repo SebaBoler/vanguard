@@ -8,6 +8,7 @@ import { memoryCommand } from './memory.js';
 import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
 import { reviewPrCommand } from './review-pr.js';
+import { researchCommand } from './research.js';
 import { watchPrsCommand } from './watch-prs.js';
 
 async function main(): Promise<void> {
@@ -34,6 +35,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'review-pr') {
     await reviewPrCommand(command);
+    return;
+  }
+  if (command.kind === 'research') {
+    await researchCommand(command);
     return;
   }
   if (command.kind === 'watch-prs') {
