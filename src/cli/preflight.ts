@@ -8,7 +8,9 @@ import type { Command } from './args.js';
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
 type DoctorCommand = Extract<Command, { kind: 'doctor' }>;
 type DoctorPrsCommand = Extract<Command, { kind: 'doctor-prs' }>;
-export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand;
+type WatchMrsCommand = Extract<Command, { kind: 'watch-mrs' }>;
+type DoctorMrsCommand = Extract<Command, { kind: 'doctor-mrs' }>;
+export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand | WatchMrsCommand | DoctorMrsCommand;
 
 export type PreflightRunner = (
   cmd: string,
@@ -35,6 +37,9 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
+const GITLAB_DEFAULT_CLAIMED_LABEL = 'vanguard::running';
+const GITLAB_DEFAULT_REVIEW_LABEL = 'vanguard::review';
+const GITLAB_DEFAULT_SPEC_CLAIMED_LABEL = 'vanguard::speccing';
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
   const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
@@ -61,7 +66,34 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => value !== undefined && value !== ''))];
 }
 
-function githubLabelsFor(cmd: PreflightCommand): string[] {
+function gitlabLabelsFor(cmd: PreflightCommand): string[] {
+  if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
+    return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
+  }
+  if (cmd.kind !== 'doctor' && cmd.kind !== 'watch') return [];
+  if (cmd.source !== 'gitlab') return [];
+  // For loop-v1 on gitlab, routing labels come from the same spec/agent label fields as github.
+  if (cmd.specLabel !== undefined) {
+    return unique([
+      cmd.label,
+      cmd.specLabel,
+      cmd.agentLabel,
+      cmd.needsInfoLabel,
+      cmd.specClaimedLabel ?? GITLAB_DEFAULT_SPEC_CLAIMED_LABEL,
+      cmd.claimedState ?? GITLAB_DEFAULT_CLAIMED_LABEL,
+      cmd.reviewState ?? GITLAB_DEFAULT_REVIEW_LABEL,
+    ]);
+  }
+  return unique([cmd.label, cmd.claimedState ?? GITLAB_DEFAULT_CLAIMED_LABEL, cmd.reviewState ?? GITLAB_DEFAULT_REVIEW_LABEL]);
+}
+
+type LoopCommand = WatchCommand | DoctorCommand | DoctorPrsCommand;
+
+function isLoopCommand(cmd: PreflightCommand): cmd is LoopCommand {
+  return cmd.kind === 'watch' || cmd.kind === 'doctor' || cmd.kind === 'doctor-prs';
+}
+
+function githubLabelsFor(cmd: LoopCommand): string[] {
   if (cmd.kind === 'doctor-prs') return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
   if (cmd.source !== 'github') return [];
   if (cmd.specLabel !== undefined) {
@@ -96,6 +128,26 @@ async function githubAuthOk(run: PreflightRunner, cwd: string, env: NodeJS.Proce
   if (hasEnv(env, 'GH_TOKEN') || hasEnv(env, 'GITHUB_TOKEN')) return check('github auth', true);
   const status = await runOk(run, cwd, 'gh', ['auth', 'status']);
   return status.ok ? check('github auth', true) : check('github auth', false, 'missing');
+}
+
+async function gitlabAuthOk(run: PreflightRunner, cwd: string, env: NodeJS.ProcessEnv): Promise<PreflightCheck> {
+  if (hasEnv(env, 'GITLAB_TOKEN')) return check('gitlab auth', true);
+  const status = await runOk(run, cwd, 'glab', ['auth', 'status']);
+  return status.ok ? check('gitlab auth', true) : check('gitlab auth', false, 'missing');
+}
+
+async function gitlabLabelsOk(run: PreflightRunner, cwd: string, project: string, required: string[]): Promise<PreflightCheck> {
+  const labels = await runOk(run, cwd, 'glab', ['label', 'list', '--project', project, '--output', 'json']);
+  if (!labels.ok) return check('gitlab labels', false, 'unreadable');
+  let parsed: Array<{ name?: string }>;
+  try {
+    parsed = JSON.parse(labels.stdout) as Array<{ name?: string }>;
+  } catch {
+    return check('gitlab labels', false, 'unreadable');
+  }
+  const existing = new Set(parsed.map((l) => l.name).filter((n): n is string => n !== undefined));
+  const missing = required.filter((l) => !existing.has(l));
+  return missing.length === 0 ? check('gitlab labels', true) : check('gitlab labels', false, `missing ${missing.join(', ')}`);
 }
 
 async function githubLabelsOk(run: PreflightRunner, cwd: string, repoSlug: string, required: string[]): Promise<PreflightCheck> {
@@ -155,7 +207,8 @@ function codexAuthOk(env: NodeJS.ProcessEnv): PreflightCheck | undefined {
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
 function collectProviders(cmd: PreflightCommand): ProviderName[] {
-  const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, cmd.reviewProvider];
+  const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
+  const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, reviewProvider];
   // Zai is excluded here: it rides the Claude transport and its key is already covered by the
   // provider-aware 'llm auth' check above. Codex/Cursor still get a dedicated 'provider auth' check.
   return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
@@ -199,10 +252,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   }
 
   try {
+    const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
     validateProviderChoice(
       {
         ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-        ...('reviewProvider' in cmd && cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+        ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       },
       { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true },
     );
@@ -221,25 +275,43 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
   checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
 
-  const isGithubBacked = cmd.kind === 'doctor-prs' || cmd.source === 'github' || cmd.source === 'project';
-  if (isGithubBacked) {
-    checks.push(await githubAuthOk(run, cmd.repoPath, env));
-  }
+  const isGitlabBacked =
+    cmd.kind === 'doctor-mrs' ||
+    cmd.kind === 'watch-mrs' ||
+    ((cmd.kind === 'watch' || cmd.kind === 'doctor') && cmd.source === 'gitlab');
 
-  if (cmd.kind === 'doctor-prs' || cmd.source === 'github') {
-    const repoSlug = cmd.repoSlug ?? (remote.ok ? repoSlugFromRemote(remote.stdout) : undefined);
-    if (repoSlug === undefined) {
-      checks.push(check('github labels', false, 'repo unknown'));
+  if (isGitlabBacked) {
+    checks.push(await gitlabAuthOk(run, cmd.repoPath, env));
+    const project =
+      'project' in cmd && typeof cmd.project === 'string' ? cmd.project : undefined;
+    if (project === undefined) {
+      checks.push(check('gitlab labels', false, 'project unknown'));
     } else {
-      checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
-      const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
-      if (prCreate !== undefined) checks.push(prCreate);
+      checks.push(await gitlabLabelsOk(run, cmd.repoPath, project, gitlabLabelsFor(cmd)));
     }
   }
 
-  if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
-    checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
-    checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+  if (isLoopCommand(cmd)) {
+    const isGithubBacked = cmd.kind === 'doctor-prs' || cmd.source === 'github' || cmd.source === 'project';
+    if (isGithubBacked) {
+      checks.push(await githubAuthOk(run, cmd.repoPath, env));
+    }
+
+    if (cmd.kind === 'doctor-prs' || cmd.source === 'github') {
+      const repoSlug = cmd.repoSlug ?? (remote.ok ? repoSlugFromRemote(remote.stdout) : undefined);
+      if (repoSlug === undefined) {
+        checks.push(check('github labels', false, 'repo unknown'));
+      } else {
+        checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
+        const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
+        if (prCreate !== undefined) checks.push(prCreate);
+      }
+    }
+
+    if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
+      checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
+      checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+    }
   }
 
   return { ok: checks.every((item) => item.ok), checks };

@@ -205,6 +205,42 @@ describe('runPreflight', () => {
   });
 });
 
+describe('runPreflight gitlab source', () => {
+  const baseCmd = {
+    kind: 'doctor' as const,
+    source: 'gitlab' as const,
+    project: 'g/p',
+    repoPath: '/repo',
+    label: 'vanguard',
+  };
+
+  it('checks glab auth when GITLAB_TOKEN is absent', async () => {
+    let glabAuthCalled = false;
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'auth') { glabAuthCalled = true; return { stdout: 'ok' }; }
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker') return { stdout: '{}' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: '[]' };
+      return { stdout: '' };
+    };
+    await runPreflight(baseCmd, { env: {}, nodeVersion: '24.0.0', run });
+    expect(glabAuthCalled).toBe(true);
+  });
+
+  it('skips glab auth check when GITLAB_TOKEN is set', async () => {
+    let glabAuthCalled = false;
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'auth') { glabAuthCalled = true; return { stdout: '' }; }
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker') return { stdout: '{}' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: '[]' };
+      return { stdout: '' };
+    };
+    await runPreflight(baseCmd, { env: { GITLAB_TOKEN: 'token', ANTHROPIC_API_KEY: 'key' }, nodeVersion: '24.0.0', run });
+    expect(glabAuthCalled).toBe(false);
+  });
+});
+
 function githubWatch(overrides: Partial<WatchCommand> = {}): WatchCommand {
   return {
     kind: 'watch',
