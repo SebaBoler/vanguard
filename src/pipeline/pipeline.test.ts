@@ -304,6 +304,34 @@ describe('publishForReview', () => {
     );
     await disposeContext(ctx);
   });
+
+  it('publishForReview with glab calls glab mr create with gitlab flags', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'gl-test', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const runner = async (file: string, args: string[], cwd: string): Promise<string> => {
+      calls.push({ file, args, cwd });
+      if (file === 'glab' && args[0] === 'mr') return 'https://gitlab.com/owner/repo/-/merge_requests/1\n';
+      return '';
+    };
+    const out = await publishForReview(ctx, {
+      title: 'My MR',
+      body: 'desc',
+      draft: true,
+      cli: 'glab',
+      runner,
+    });
+    const mrCall = calls.find(({ file }) => file === 'glab');
+    expect(mrCall).toBeDefined();
+    expect(mrCall?.args).toContain('mr');
+    expect(mrCall?.args).toContain('create');
+    expect(mrCall?.args).toContain('--source-branch');
+    expect(mrCall?.args).toContain('--target-branch');
+    expect(mrCall?.args).toContain('--description');
+    expect(mrCall?.args).toContain('--draft');
+    expect(out.prUrl).toBe('https://gitlab.com/owner/repo/-/merge_requests/1');
+    await disposeContext(ctx);
+  });
 });
 
 describe('planImplementReviewStages', () => {
