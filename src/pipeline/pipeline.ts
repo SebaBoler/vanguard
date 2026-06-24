@@ -659,6 +659,24 @@ export interface PublishOutcome {
   prUrl: string;
 }
 
+export interface PushToExistingBranchOptions {
+  /** The PR head branch name on the remote (e.g. 'fix-auth'). */
+  prHeadRef: string;
+  remote?: string;
+  /** Injected for tests; defaults to running git via execa. */
+  runner?: CommandRunner;
+}
+
+/**
+ * Push the worktree's current HEAD to an existing remote branch (the PR head ref), updating
+ * the PR in place. Unlike publishForReview, this never creates a new PR.
+ * Runs: `git push <remote> HEAD:<prHeadRef>` in ctx.worktreePath.
+ */
+export async function pushToExistingBranch(ctx: RunContext, opts: PushToExistingBranchOptions): Promise<void> {
+  const run = opts.runner ?? defaultRunner;
+  await run('git', ['push', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+}
+
 /**
  * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
  * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the

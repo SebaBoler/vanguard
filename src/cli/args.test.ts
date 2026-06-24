@@ -778,3 +778,54 @@ describe('parseCli', () => {
     }
   });
 });
+
+describe('parseCli revise-pr', () => {
+  it('parses a bare PR number with --github-repo', () => {
+    const cmd = parseCli(['revise-pr', '7', '--github-repo', 'o/r'], '/work');
+    expect(cmd).toEqual({
+      kind: 'revise-pr',
+      prRef: '7',
+      repoSlug: 'o/r',
+      repoPath: '/work',
+      egress: false,
+    });
+  });
+
+  it('parses --github-pr as an alternative to positional', () => {
+    const cmd = parseCli(['revise-pr', '--github-pr', '42', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind).toBe('revise-pr');
+    if (cmd.kind === 'revise-pr') expect(cmd.prRef).toBe('42');
+  });
+
+  it('returns help when the PR ref is missing', () => {
+    expect(parseCli(['revise-pr'], '/work').kind).toBe('help');
+  });
+
+  it('parses --max-rounds', () => {
+    const cmd = parseCli(['revise-pr', '7', '--github-repo', 'o/r', '--max-rounds', '3'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.maxRounds).toBe(3);
+  });
+
+  it('omits maxRounds when --max-rounds is not passed', () => {
+    const cmd = parseCli(['revise-pr', '7', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind === 'revise-pr' && 'maxRounds' in cmd).toBe(false);
+  });
+
+  it('parses --llm-proxy', () => {
+    const cmd = parseCli(['revise-pr', '7', '--github-repo', 'o/r', '--llm-proxy'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.llmProxy).toBe(true);
+  });
+
+  it('parses --review-model', () => {
+    const cmd = parseCli(['revise-pr', '7', '--github-repo', 'o/r', '--review-model', 'sonnet'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.reviewModel).toBe('sonnet');
+  });
+
+  it('parses a GitHub PR URL', () => {
+    const cmd = parseCli(['revise-pr', 'https://github.com/o/r/pull/99'], '/work');
+    expect(cmd.kind).toBe('revise-pr');
+    if (cmd.kind === 'revise-pr') {
+      expect(cmd.prRef).toBe('https://github.com/o/r/pull/99');
+    }
+  });
+});
