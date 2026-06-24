@@ -3,8 +3,13 @@ import {
   fetchPullRequestFeedback,
   selectActionableFeedback,
   buildRevisionPrompt,
+  countRevisionRounds,
+  referenceSnippet,
+  buildItemReply,
+  buildRevisionSummary,
+  summaryContradictsDiff,
 } from './pr-feedback.js';
-import type { PullRequestFeedback, FeedbackItem } from './pr-feedback.js';
+import type { PullRequestFeedback, FeedbackItem, RevisionSummaryInput } from './pr-feedback.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -214,6 +219,12 @@ describe('selectActionableFeedback', () => {
     expect(selectActionableFeedback(fb, opts)).toHaveLength(0);
   });
 
+  it('drops revision acknowledgement comments even when authored by a human token', () => {
+    const body = `Addressed in commit abc1234.\n\n<!-- vanguard-revision: deadbeef -->`;
+    const fb = makeFeedback({ items: [commentItem({ author: 'octocat', body })] });
+    expect(selectActionableFeedback(fb, opts)).toHaveLength(0);
+  });
+
   it('keeps a body with a marker for a DIFFERENT sha (stale marker)', () => {
     const body = '<!-- vanguard-pr-review: deadbeef -->';
     const fb = makeFeedback({ items: [commentItem({ body })] });
@@ -284,6 +295,41 @@ describe('selectActionableFeedback', () => {
 });
 
 // ---------------------------------------------------------------------------
+// countRevisionRounds
+// ---------------------------------------------------------------------------
+
+describe('countRevisionRounds', () => {
+  it('counts repeated markers for the same head as one revision round', async () => {
+    const gh = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        comments: [
+          { body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->' },
+          { body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->' },
+          { body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->' },
+        ],
+        reviews: [],
+      }),
+    );
+
+    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+  });
+
+  it('counts distinct revision marker heads as distinct rounds', async () => {
+    const gh = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        comments: [
+          { body: '<!-- vanguard-revision: deadbeef -->' },
+          { body: '<!-- vanguard-revision: abc1234 -->' },
+        ],
+        reviews: [],
+      }),
+    );
+
+    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildRevisionPrompt
 // ---------------------------------------------------------------------------
 
@@ -337,5 +383,220 @@ describe('buildRevisionPrompt', () => {
     const prompt = buildRevisionPrompt(pr, items);
     expect(prompt).not.toContain('vanguard');
     expect(prompt).not.toContain('<!-- vanguard-pr-review');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// referenceSnippet
+// ---------------------------------------------------------------------------
+
+describe('referenceSnippet', () => {
+  it('labels a review item with "review"', () => {
+    const snippet = referenceSnippet(reviewItem());
+    expect(snippet).toContain('Re: your review by @alice');
+    expect(snippet).toContain('"Overall LGTM but please address the naming."');
+  });
+
+  it('labels a comment item with "comment"', () => {
+    const snippet = referenceSnippet(commentItem());
+    expect(snippet).toContain('Re: your comment by @alice');
+    expect(snippet).toContain('"Can you add a test for the edge case?"');
+  });
+
+  it('labels a thread item with "inline thread"', () => {
+    const snippet = referenceSnippet(threadItem());
+    expect(snippet).toContain('Re: your inline thread by @alice');
+  });
+
+  it('truncates long bodies at 120 chars with ellipsis', () => {
+    const long = 'A'.repeat(130);
+    const snippet = referenceSnippet(commentItem({ body: long }));
+    expect(snippet).toContain('…');
+    expect(snippet.indexOf('"')).not.toBe(-1);
+    // Preview part should be at most 120 chars
+    const quoted = snippet.slice(snippet.indexOf('"') + 1);
+    expect(quoted.startsWith('A'.repeat(120))).toBe(true);
+  });
+
+  it('collapses newlines in the preview', () => {
+    const snippet = referenceSnippet(reviewItem({ body: 'Line one\nLine two' }));
+    expect(snippet).not.toContain('\n');
+    expect(snippet).toContain('Line one Line two');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildItemReply
+// ---------------------------------------------------------------------------
+
+describe('buildItemReply', () => {
+  const sha = 'abc1234';
+  const headRefOid = 'deadbeef';
+
+  it('contains the referenceSnippet, SHA, and revision marker for a review item', () => {
+    const body = buildItemReply(reviewItem(), '', sha, headRefOid);
+    expect(body).toContain('Re: your review by @alice');
+    expect(body).toContain('Addressed in commit abc1234.');
+    expect(body).toContain('<!-- vanguard-revision: deadbeef -->');
+  });
+
+  it('contains the referenceSnippet, SHA, and revision marker for a comment item', () => {
+    const body = buildItemReply(commentItem(), '', sha, headRefOid);
+    expect(body).toContain('Re: your comment by @alice');
+    expect(body).toContain('Addressed in commit abc1234.');
+    expect(body).toContain('<!-- vanguard-revision: deadbeef -->');
+  });
+
+  it('appends a colon-delimited point when non-empty', () => {
+    const body = buildItemReply(reviewItem(), 'Updated the variable name', sha, headRefOid);
+    expect(body).toContain('Addressed in commit abc1234: Updated the variable name');
+  });
+
+  it('uses a period when point is empty', () => {
+    const body = buildItemReply(commentItem(), '', sha, headRefOid);
+    expect(body).toContain('Addressed in commit abc1234.');
+    expect(body).not.toContain('Addressed in commit abc1234:');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRevisionSummary
+// ---------------------------------------------------------------------------
+
+describe('buildRevisionSummary', () => {
+  const base: RevisionSummaryInput = {
+    repoSlug: 'o/r',
+    number: 42,
+    headRefOid: 'deadbeef',
+    commitSha: 'abc1234',
+    addressed: [
+      { item: reviewItem({ author: 'alice' }), point: '' },
+      { item: commentItem({ author: 'bob', body: 'Add a test.' }), point: 'Added test for edge case.' },
+    ],
+    deferred: [],
+    verification: { typecheck: 'pass', test: 'pass' },
+  };
+
+  it('includes repo/number heading and commit SHA', () => {
+    const text = buildRevisionSummary(base);
+    expect(text).toContain('o/r#42');
+    expect(text).toContain('abc1234');
+  });
+
+  it('lists each addressed item by referenceSnippet', () => {
+    const text = buildRevisionSummary(base);
+    expect(text).toContain('@alice');
+    expect(text).toContain('@bob');
+  });
+
+  it('renders empty-state "(none)" in deferred section when no deferred items', () => {
+    const text = buildRevisionSummary(base);
+    expect(text).toContain('Deferred / not addressed');
+    expect(text).toContain('(none)');
+  });
+
+  it('lists deferred items when present', () => {
+    const input: RevisionSummaryInput = {
+      ...base,
+      deferred: [{ item: commentItem({ author: 'carol', body: 'Fix the thing.' }), reason: 'Out of scope for this round' }],
+    };
+    const text = buildRevisionSummary(input);
+    expect(text).toContain('@carol');
+    expect(text).toContain('Out of scope for this round');
+  });
+
+  it('ends with the revision marker', () => {
+    const text = buildRevisionSummary(base);
+    expect(text.trimEnd()).toMatch(/<!--\s*vanguard-revision: deadbeef\s*-->$/);
+  });
+
+  it('renders verification status for pass', () => {
+    const text = buildRevisionSummary(base);
+    expect(text).toContain('Typecheck: pass');
+    expect(text).toContain('Tests: pass');
+  });
+
+  it('renders verification status for fail', () => {
+    const text = buildRevisionSummary({ ...base, verification: { typecheck: 'fail', test: 'fail' } });
+    expect(text).toContain('Typecheck: fail');
+    expect(text).toContain('Tests: fail');
+  });
+
+  it('renders verification status for unknown', () => {
+    const text = buildRevisionSummary({ ...base, verification: { typecheck: 'unknown', test: 'unknown' } });
+    expect(text).toContain('Typecheck: unknown');
+    expect(text).toContain('Tests: unknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// summaryContradictsDiff — accuracy guard (#177 regression)
+// ---------------------------------------------------------------------------
+
+describe('summaryContradictsDiff', () => {
+  const removeDiff = [
+    '--- a/src/runner.ts',
+    '+++ b/src/runner.ts',
+    '@@ -1,4 +1,3 @@',
+    ' function runCommand() {',
+    '-  validateProviderChoice(provider, allowedProviders);',
+    ' }',
+  ].join('\n');
+
+  it('flags "Restored … `validateProviderChoice`" when the diff only removes it (#177)', () => {
+    const text = 'Restored defensive runtime validation in `runCommand` (`validateProviderChoice`)';
+    const result = summaryContradictsDiff(text, removeDiff);
+    expect(result.ok).toBe(false);
+    expect(result.violations.length).toBeGreaterThan(0);
+    expect(result.violations[0]).toContain('validateProviderChoice');
+  });
+
+  it('does not flag "Removed `validateProviderChoice`" when the diff only removes it (consistent)', () => {
+    const text = 'Removed `validateProviderChoice` to simplify the flow.';
+    const result = summaryContradictsDiff(text, removeDiff);
+    expect(result.ok).toBe(true);
+    expect(result.violations).toHaveLength(0);
+  });
+
+  it('does not flag "Added `newHelper`" when the diff adds it (consistent)', () => {
+    const addDiff = [
+      '--- a/src/foo.ts',
+      '+++ b/src/foo.ts',
+      '@@ -1,2 +1,3 @@',
+      ' function foo() {',
+      '+  newHelper();',
+      ' }',
+    ].join('\n');
+    const text = 'Added `newHelper` to handle the edge case.';
+    const result = summaryContradictsDiff(text, addDiff);
+    expect(result.ok).toBe(true);
+    expect(result.violations).toHaveLength(0);
+  });
+
+  it('does not flag when a symbol appears on both + and - lines (modified, not removed)', () => {
+    const modifyDiff = [
+      '--- a/src/foo.ts',
+      '+++ b/src/foo.ts',
+      '@@ -1,3 +1,3 @@',
+      ' function foo() {',
+      '-  helperFn(oldArg);',
+      '+  helperFn(newArg);',
+      ' }',
+    ].join('\n');
+    const text = 'Restored `helperFn` with updated arguments.';
+    const result = summaryContradictsDiff(text, modifyDiff);
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok:true for text with no backtick symbols', () => {
+    const result = summaryContradictsDiff('Addressed the review feedback in this commit.', removeDiff);
+    expect(result.ok).toBe(true);
+    expect(result.violations).toHaveLength(0);
+  });
+
+  it('returns ok:true for an empty diff', () => {
+    const text = 'Restored `validateProviderChoice` here.';
+    const result = summaryContradictsDiff(text, '');
+    expect(result.ok).toBe(true);
   });
 });

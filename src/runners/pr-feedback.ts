@@ -198,6 +198,7 @@ export function selectActionableFeedback(fb: PullRequestFeedback, opts: Actionab
   return fb.items.filter((item) => {
     if (isBotAuthor(item.author, extraBots)) return false;
     if (hasPullRequestReviewMarker(item.body, opts.headRefOid)) return false;
+    if (hasRevisionMarker(item.body)) return false;
     if (item.isResolved === true) return false;
     if (watermark !== '' && item.createdAt !== '' && item.createdAt <= watermark) return false;
     return true;
@@ -270,15 +271,150 @@ export async function replyAndResolveThread(
   await gh(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-F', `threadId=${threadId}`]);
 }
 
-const REVISION_MARKER_RE = /<!--\s*vanguard-revision:/;
+const REVISION_MARKER_PRESENT_RE = /<!--\s*vanguard-revision:/;
+const REVISION_MARKER_RE = /<!--\s*vanguard-revision:\s*([^>\s]+)\s*-->/g;
+
+function hasRevisionMarker(body: string): boolean {
+  return REVISION_MARKER_PRESENT_RE.test(body);
+}
 
 /** Count how many revision rounds Vanguard has already completed on this PR. */
 export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
   const out = await gh(['pr', 'view', String(target.number), '--repo', target.repoSlug, '--json', 'comments,reviews']);
   const view = JSON.parse(out) as { comments?: Array<{ body?: string }>; reviews?: Array<{ body?: string }> };
   const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((e) => e.body ?? '');
-  return bodies.filter((b) => REVISION_MARKER_RE.test(b)).length;
+  const rounds = new Set<string>();
+  for (const body of bodies) {
+    for (const match of body.matchAll(REVISION_MARKER_RE)) {
+      if (match[1] !== undefined) rounds.add(match[1]);
+    }
+  }
+  return rounds.size;
 }
 
 /** Marker embedded in revision replies for round-counting and non-recursion. */
 export const revisionMarker = (headRefOid: string): string => `<!-- vanguard-revision: ${headRefOid} -->`;
+
+const REFERENCE_KIND: Record<FeedbackItem['source'], string> = {
+  review: 'review',
+  thread: 'inline thread',
+  comment: 'comment',
+};
+
+/**
+ * A short referencing snippet for a feedback item, used to open
+ * per-item acknowledgement replies and the final summary.
+ */
+export function referenceSnippet(item: FeedbackItem): string {
+  const normalised = item.body.replace(/\r?\n/g, ' ').trim();
+  const preview = normalised.length > 120 ? `${normalised.slice(0, 120)}…` : normalised;
+  return `Re: your ${REFERENCE_KIND[item.source]} by @${item.author} — "${preview}"`;
+}
+
+/**
+ * Body for one non-threadable acknowledgement reply.
+ * Includes a referencing snippet, commit SHA, and the revision marker so
+ * selectActionableFeedback / countRevisionRounds skip this comment next round.
+ */
+export function buildItemReply(
+  item: FeedbackItem,
+  point: string,
+  commitSha: string,
+  headRefOid: string,
+): string {
+  const detail = point.trim() !== '' ? `: ${point.trim()}` : '.';
+  return [referenceSnippet(item), '', `Addressed in commit ${commitSha}${detail}`, '', revisionMarker(headRefOid)].join('\n');
+}
+
+export interface RevisionSummaryInput {
+  repoSlug: string;
+  number: number;
+  headRefOid: string;
+  commitSha: string;
+  addressed: Array<{ item: FeedbackItem; point: string }>;
+  deferred: Array<{ item: FeedbackItem; reason: string }>;
+  verification: { typecheck: 'pass' | 'fail' | 'unknown'; test: 'pass' | 'fail' | 'unknown' };
+}
+
+/** Build the single wrap-up summary comment posted at the end of a revision round. */
+export function buildRevisionSummary(input: RevisionSummaryInput): string {
+  const lines: string[] = [
+    `## Revision Summary — ${input.repoSlug}#${input.number}`,
+    '',
+    `Revision commit: ${input.commitSha}`,
+    '',
+    '### Addressed',
+    '',
+  ];
+
+  if (input.addressed.length === 0) {
+    lines.push('(none)');
+  } else {
+    for (const { item, point } of input.addressed) {
+      const detail = point.trim() !== '' ? ` — ${point.trim()}` : '';
+      lines.push(`- ${referenceSnippet(item)}${detail}`);
+    }
+  }
+
+  lines.push('', '### Deferred / not addressed', '');
+  if (input.deferred.length === 0) {
+    lines.push('(none)');
+  } else {
+    for (const { item, reason } of input.deferred) {
+      lines.push(`- ${referenceSnippet(item)}: ${reason}`);
+    }
+  }
+
+  lines.push(
+    '',
+    '### Verification',
+    '',
+    `- Typecheck: ${input.verification.typecheck}`,
+    `- Tests: ${input.verification.test}`,
+    '',
+    revisionMarker(input.headRefOid),
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Heuristic accuracy guard: detects when acknowledgement text contradicts the round diff.
+ * Only catches direct contradictions provable from +/- lines; never blocks, only reports.
+ * Example: "Restored `validateProviderChoice`" when the diff only removes it.
+ */
+export function summaryContradictsDiff(
+  text: string,
+  diff: string,
+): { ok: boolean; violations: string[] } {
+  const added = new Set<string>();
+  const removed = new Set<string>();
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    const syms = Array.from(line.slice(1).matchAll(/\b([a-zA-Z_]\w{2,})\b/g))
+      .map((m) => m[1] ?? '')
+      .filter((s) => s !== '');
+    if (line.startsWith('+')) for (const s of syms) added.add(s);
+    else if (line.startsWith('-')) for (const s of syms) removed.add(s);
+  }
+
+  const violations: string[] = [];
+  for (const sentence of text.split(/[.!?\n]/)) {
+    const syms = Array.from(sentence.matchAll(/`(\w{3,})`/g))
+      .map((m) => m[1] ?? '')
+      .filter((s) => s !== '');
+    if (syms.length === 0) continue;
+    const hasAddVerb = /\b(?:re-?stored?|added?|re-?added?|reintroduced?|kept)\b/i.test(sentence);
+    const hasRemoveVerb = /\b(?:removed?|deleted?|dropped?|eliminated?)\b/i.test(sentence);
+    for (const sym of syms) {
+      if (hasAddVerb && removed.has(sym) && !added.has(sym)) {
+        violations.push(`"${sym}" is claimed as added/restored but only appears in removed diff lines`);
+      }
+      if (hasRemoveVerb && added.has(sym) && !removed.has(sym)) {
+        violations.push(`"${sym}" is claimed as removed but only appears in added diff lines`);
+      }
+    }
+  }
+
+  return { ok: violations.length === 0, violations };
+}

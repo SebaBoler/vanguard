@@ -165,6 +165,15 @@ export function buildPullRequestReviewComment(agentText: string, headRefOid?: st
 
 export type PullRequestReviewAction = 'comment' | 'request-changes' | 'approve';
 
+/** Post a top-level PR comment via `gh pr comment`. */
+export async function commentPullRequest(
+  target: PullRequestReviewTarget,
+  body: string,
+  gh: GhRunner = defaultGhRunner,
+): Promise<void> {
+  await gh(['pr', 'comment', String(target.number), '--repo', target.repoSlug, '--body', body]);
+}
+
 /** Post a Vanguard review verdict to a PR via `gh pr review`. Reused by review-pr and the main agent loop. */
 export async function postPullRequestReview(
   target: PullRequestReviewTarget,

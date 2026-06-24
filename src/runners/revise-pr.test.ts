@@ -113,6 +113,40 @@ function makeRoundCountJson(): string {
   return JSON.stringify({ comments: [], reviews: [] });
 }
 
+function makeFeedbackJsonWithNonThreadItems(): string {
+  return JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          isDraft: true,
+          headRefOid: 'deadbeef',
+          commits: { nodes: [{ commit: { committedDate: '2024-01-10T08:00:00Z' } }] },
+          reviewThreads: { nodes: [] },
+          reviews: {
+            nodes: [
+              {
+                author: { login: 'alice' },
+                body: 'Overall LGTM but please address the naming.',
+                state: 'COMMENTED',
+                submittedAt: '2024-01-11T10:00:00Z',
+              },
+            ],
+          },
+          comments: {
+            nodes: [
+              {
+                author: { login: 'bob' },
+                body: 'Can you add a test?',
+                createdAt: '2024-01-11T10:01:00Z',
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Happy path
 // ---------------------------------------------------------------------------
@@ -144,6 +178,8 @@ describe('runRevisePullRequest happy path', () => {
         // resolve mutation
         if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
       }
+      // pr comment (final summary)
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
       // pr ready (undraft)
       if (args[0] === 'pr' && args[1] === 'ready') return '';
       // pr edit (label flip)
@@ -302,6 +338,87 @@ describe('runRevisePullRequest — round cap', () => {
     // Labels were still flipped
     const editCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('vanguard:needs-human-review'));
     expect(editCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-item replies for non-thread feedback
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — per-item replies for non-thread feedback', () => {
+  it('posts a per-item reply for each review/comment item plus a final summary, without a lumped review', async () => {
+    const ghCalls: string[][] = [];
+    const prCommentBodies: string[] = [];
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const agentInputs: AgentRunInput[] = [];
+
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) {
+        return makePrViewJson();
+      }
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) {
+        return makeRoundCountJson();
+      }
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJsonWithNonThreadItems();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') {
+        const bodyIdx = args.indexOf('--body');
+        if (bodyIdx !== -1) prCommentBodies.push(args[bodyIdx + 1] ?? '');
+        return '';
+      }
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (f, a, c) => { pushCalls.push({ file: f, args: a, cwd: c }); return ''; },
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    // Two per-item replies + one final summary = 3 pr comment calls
+    expect(prCommentBodies).toHaveLength(3);
+
+    // Per-item bodies reference their respective feedback authors
+    const aliceBody = prCommentBodies.find((b) => b.includes('@alice'));
+    const bobBody = prCommentBodies.find((b) => b.includes('@bob'));
+    expect(aliceBody).toBeDefined();
+    expect(bobBody).toBeDefined();
+
+    // Each per-item body contains "Addressed in commit" and the revision marker
+    expect(aliceBody).toContain('Addressed in commit');
+    expect(aliceBody).toContain('<!-- vanguard-revision:');
+    expect(bobBody).toContain('Addressed in commit');
+    expect(bobBody).toContain('<!-- vanguard-revision:');
+
+    // Final summary exists and has required sections
+    const summaryBody = prCommentBodies.find((b) => b.includes('## Revision Summary'));
+    expect(summaryBody).toBeDefined();
+    expect(summaryBody).toContain('Deferred / not addressed');
+    expect(summaryBody).toContain('Verification');
+    expect(summaryBody).toContain('<!-- vanguard-revision:');
+
+    // No lumped "Addressed N review comment(s)" review was posted
+    const hasLumpedReview = ghCalls.some(
+      (a) =>
+        a[0] === 'pr' &&
+        a[1] === 'review' &&
+        a.some((s) => s.includes('review comment')),
+    );
+    expect(hasLumpedReview).toBe(false);
   });
 });
 

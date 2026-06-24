@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview } from './pr-review.js';
+import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview, commentPullRequest } from './pr-review.js';
 import {
   fetchPullRequestFeedback,
   selectActionableFeedback,
@@ -7,6 +7,9 @@ import {
   replyAndResolveThread,
   countRevisionRounds,
   revisionMarker,
+  buildItemReply,
+  buildRevisionSummary,
+  summaryContradictsDiff,
 } from './pr-feedback.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import {
@@ -82,7 +85,7 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
 
 export interface ReviseGithubPrResult {
   pr: PullRequestForReview;
-  /** Number of threads replied-to and resolved. */
+  /** Number of feedback items addressed this round (threads replied+resolved, non-thread items commented on). */
   addressed: number;
   committed: boolean;
   pushed: boolean;
@@ -207,6 +210,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
       await runStages(ctx, pipeline, { agent: agents.agent });
 
+      // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
+      const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
       const commit = await commitStage(ctx, {
         message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
@@ -223,23 +229,36 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         ...(deps._pushRunner !== undefined ? { runner: deps._pushRunner } : {}),
       });
 
-      // Reply to and resolve each addressed thread.
-      const addressedThreadIds = new Set(
-        actionable.flatMap((i) => (i.source === 'thread' && i.threadId ? [i.threadId] : [])),
+      const sha = commit.sha ?? 'unknown';
+
+      // Reply to and resolve each addressed thread (one reply per unique thread).
+      const threadIds = new Set(
+        actionable.flatMap((i) => (i.source === 'thread' && i.threadId !== undefined ? [i.threadId] : [])),
+      );
+      const threadReplyBody = `Addressed in commit ${sha}.\n\n${revisionMarker(pr.headRefOid)}`;
+      await Promise.all([...threadIds].map((threadId) => replyAndResolveThread(threadId, threadReplyBody, gh)));
+
+      // Post a per-item referencing reply for each non-threadable feedback item.
+      const nonThreadItems = actionable.filter((item) => item.source !== 'thread');
+      await Promise.all(
+        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, '', sha, pr.headRefOid), gh)),
       );
 
-      const replyBody = `Addressed in commit ${commit.sha ?? 'unknown'}.\n\n${revisionMarker(pr.headRefOid)}`;
-      await Promise.all([...addressedThreadIds].map((threadId) => replyAndResolveThread(threadId, replyBody, gh)));
-
-      const nonThreadItems = actionable.filter((item) => item.source !== 'thread');
-      if (nonThreadItems.length > 0) {
-        const summaryBody = [
-          `Addressed ${nonThreadItems.length} review comment(s) from review summaries and PR comments in commit ${commit.sha ?? 'unknown'}.`,
-          '',
-          revisionMarker(pr.headRefOid),
-        ].join('\n');
-        await postPullRequestReview(target, summaryBody, 'comment', gh);
+      // Post the single final round summary.
+      const summaryText = buildRevisionSummary({
+        repoSlug: target.repoSlug,
+        number: target.number,
+        headRefOid: pr.headRefOid,
+        commitSha: sha,
+        addressed: actionable.map((item) => ({ item, point: '' })),
+        deferred: [],
+        verification: { typecheck: 'unknown', test: 'unknown' },
+      });
+      const summaryGuard = summaryContradictsDiff(summaryText, revisionDiff);
+      if (!summaryGuard.ok) {
+        log(`revise-pr ${target.repoSlug}#${target.number}: summary diff guard — ${summaryGuard.violations.join('; ')}`);
       }
+      await commentPullRequest(target, summaryText, gh);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);
       await gh(['pr', 'ready', String(target.number), '--repo', target.repoSlug]);
@@ -249,7 +268,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       return {
         pr,
-        addressed: addressedThreadIds.size,
+        addressed: actionable.length,
         committed: true,
         pushed: true,
         undrafted: true,
