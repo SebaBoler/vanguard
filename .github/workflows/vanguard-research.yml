@@ -1,0 +1,42 @@
+name: Vanguard Research
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue: { description: "issue number", required: true }
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: vanguard-research-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  research:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'needs research' &&
+       github.event.issue.user.login == 'SebaBoler')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest docker/
+      - name: Ensure routing labels
+        run: |
+          gh label create "needs research" --repo "$GITHUB_REPOSITORY" --color 1D76DB --force
+          gh label create "vanguard:researching" --repo "$GITHUB_REPOSITORY" --color BFDADC --force
+      - name: Research the issue
+        run: |
+          node dist/cli/index.js research "${{ github.event.issue.number || inputs.issue }}" \
+            --github-repo "$GITHUB_REPOSITORY" --provider claude
+          # add --web ONLY if you have widened sandbox egress for web search (see the egress note above)
