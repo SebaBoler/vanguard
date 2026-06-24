@@ -22,6 +22,7 @@ import {
   withStageFallback,
   techSpecStage,
   retrospectiveMemoryBlock,
+  assembleReviewPipeline,
 } from './pipeline.js';
 import type { PipelineStage } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
@@ -578,5 +579,108 @@ describe('runBudgetedStages fork option', () => {
     // reviewer (3rd call) received the winning variant's diff in its prompt
     expect(received[2]?.prompt).toContain('feature.txt');
     await disposeContext(ctx);
+  });
+});
+
+describe('assembleReviewPipeline', () => {
+  const base: PipelineStage[] = [
+    { name: 'implementer', promptTemplate: 'impl' },
+    { name: 'reviewer', promptTemplate: 'review' },
+    { name: 'simplifier', promptTemplate: 'simplify' },
+  ];
+
+  function stubAgent(name: string): AgentProvider {
+    return {
+      name,
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: '', turns: 0 };
+      },
+    };
+  }
+
+  const agent = stubAgent('claude');
+  const reviewAgent = stubAgent('codex');
+
+  it('returns base untouched when no reviewAgent and no models are set', () => {
+    const result = assembleReviewPipeline(base, { agent }, {});
+    expect(result).toEqual(base);
+    expect(result.every((s) => s.provider === undefined)).toBe(true);
+    expect(result.every((s) => s.model === undefined)).toBe(true);
+    expect(result.every((s) => s.fallback === undefined)).toBe(true);
+  });
+
+  it('assigns provider and fallback to reviewer when reviewAgent is set', () => {
+    const result = assembleReviewPipeline(base, { agent, reviewAgent }, {});
+    expect(result.find((s) => s.name === 'reviewer')?.provider).toBe(reviewAgent);
+    expect(result.find((s) => s.name === 'implementer')?.provider).toBeUndefined();
+    expect(result.find((s) => s.name === 'reviewer')?.fallback?.provider).toBe(agent);
+    expect(result.find((s) => s.name === 'reviewer')?.fallback?.model).toBeUndefined();
+  });
+
+  it('sets model on every stage (incl. reviewer) for same-provider review', () => {
+    const result = assembleReviewPipeline(base, { agent, reviewAgent: stubAgent('claude') }, {
+      provider: 'claude',
+      reviewProvider: 'claude',
+      providerModel: 'sonnet',
+    });
+    expect(result.every((s) => s.model === 'sonnet')).toBe(true);
+  });
+
+  it('sets model on every stage except reviewer for cross-provider review', () => {
+    const result = assembleReviewPipeline(base, { agent, reviewAgent }, {
+      provider: 'claude',
+      reviewProvider: 'codex',
+      providerModel: 'sonnet',
+    });
+    expect(result.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
+    expect(result.find((s) => s.name === 'simplifier')?.model).toBe('sonnet');
+    expect(result.find((s) => s.name === 'reviewer')?.model).toBeUndefined();
+    expect(result.find((s) => s.name === 'reviewer')?.fallback?.model).toBe('sonnet');
+  });
+
+  it('treats undefined provider as claude for cross-provider detection', () => {
+    // provider undefined defaults to 'claude'; reviewProvider 'codex' => cross-provider
+    const result = assembleReviewPipeline(base, { agent, reviewAgent }, {
+      reviewProvider: 'codex',
+      providerModel: 'sonnet',
+    });
+    expect(result.find((s) => s.name === 'reviewer')?.model).toBeUndefined();
+    expect(result.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
+  });
+
+  it('reviewModel overrides model on reviewer only', () => {
+    const result = assembleReviewPipeline(base, { agent }, {
+      providerModel: 'sonnet',
+      reviewModel: 'opus',
+    });
+    expect(result.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
+    expect(result.find((s) => s.name === 'simplifier')?.model).toBe('sonnet');
+    expect(result.find((s) => s.name === 'reviewer')?.model).toBe('opus');
+  });
+
+  it('noSimplify:true removes the simplifier stage', () => {
+    const result = assembleReviewPipeline(base, { agent }, { noSimplify: true });
+    expect(result.map((s) => s.name)).not.toContain('simplifier');
+    expect(result.map((s) => s.name)).toEqual(['implementer', 'reviewer']);
+  });
+
+  it('noSimplify:false (or absent) retains the simplifier stage', () => {
+    const withFalse = assembleReviewPipeline(base, { agent }, { noSimplify: false });
+    const withAbsent = assembleReviewPipeline(base, { agent }, {});
+    expect(withFalse.map((s) => s.name)).toContain('simplifier');
+    expect(withAbsent.map((s) => s.name)).toContain('simplifier');
+  });
+
+  it('does not mutate the original base array', () => {
+    assembleReviewPipeline(base, { agent, reviewAgent }, {
+      provider: 'claude',
+      reviewProvider: 'codex',
+      providerModel: 'sonnet',
+      reviewModel: 'opus',
+      noSimplify: true,
+    });
+    expect(base).toHaveLength(3);
+    expect(base.every((s) => s.model === undefined)).toBe(true);
+    expect(base.every((s) => s.provider === undefined)).toBe(true);
   });
 });
