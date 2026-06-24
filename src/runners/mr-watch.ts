@@ -106,7 +106,7 @@ function editMrLabels(
   iid: number,
   labels: { add?: string[]; remove?: string[] },
 ): Promise<string> {
-  const args = ['mr', 'update', String(iid), '--project', project];
+  const args = ['mr', 'update', String(iid), '--repo', project];
   for (const label of labels.remove ?? []) args.push('--unlabel', label);
   for (const label of labels.add ?? []) args.push('--label', label);
   return glab(args);
@@ -143,7 +143,7 @@ export function gitlabMergeRequestWatchPrimitives(
     listReady: async () => {
       const listArgs = [
         'mr', 'list',
-        '--project', opts.project,
+        '--repo', opts.project,
         '--state', 'opened',
         '--label', opts.label,
         '--output', 'json',
@@ -173,7 +173,7 @@ export function gitlabMergeRequestWatchPrimitives(
         await glab([
           'mr', 'note', 'create',
           String(item.iid),
-          '--project', item.project,
+          '--repo', item.project,
           '-m', `Vanguard MR review failed: ${String(error)}`,
         ]);
       } catch {

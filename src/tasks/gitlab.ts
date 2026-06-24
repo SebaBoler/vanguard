@@ -55,7 +55,7 @@ export class GitLabTaskFetcher implements TaskFetcher {
 
   async fetch(id: string): Promise<Task> {
     const iid = issueIID(id);
-    const issueOut = await this.glab(['issue', 'view', iid, '--project', this.project, '--output', 'json']);
+    const issueOut = await this.glab(['issue', 'view', iid, '--repo', this.project, '--output', 'json']);
     const issue = JSON.parse(issueOut) as GitLabIssue;
     // notes fetched separately — glab issue view does not include them
     const notesOut = await this.glab(['api', `projects/${encodeProject(this.project)}/issues/${iid}/notes`]);
@@ -66,7 +66,7 @@ export class GitLabTaskFetcher implements TaskFetcher {
   async list(filter?: TaskFilter): Promise<Task[]> {
     const args = [
       'issue', 'list',
-      '--project', this.project,
+      '--repo', this.project,
       '--output', 'json',
       '--state', filter?.state ?? 'opened',
     ];
@@ -84,7 +84,7 @@ export async function commentGitlabIssue(
   body: string,
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<void> {
-  await glab(['issue', 'note', 'create', issueIID(issueRef), '--project', project, '-m', body]);
+  await glab(['issue', 'note', 'create', issueIID(issueRef), '--repo', project, '-m', body]);
 }
 
 /** Comment an MR link back onto the source GitLab issue (closes the loop). */
@@ -104,7 +104,7 @@ export async function editGitlabLabels(
   labels: { add?: string[]; remove?: string[] },
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<void> {
-  const args = ['issue', 'update', issueIID(issueRef), '--project', project];
+  const args = ['issue', 'update', issueIID(issueRef), '--repo', project];
   for (const label of labels.add ?? []) args.push('--label', label);
   for (const label of labels.remove ?? []) args.push('--unlabel', label);
   if (args.length > 5) await glab(args);

@@ -138,6 +138,11 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
   }
 }
 
+/** Extract `group/project` from an SSH or HTTPS git remote URL. */
+export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefined {
+  return remoteUrl.trim().match(/(?:https?:\/\/[^/]+\/|^[^:]+:)(.+?)(?:\.git)?$/)?.[1];
+}
+
 /** Assemble `RunGitlabIssueDeps` from environment + CLI flags (mirrors `githubDepsFromEnv`). */
 export async function gitlabDepsFromEnv(
   repoPath: string,
@@ -148,9 +153,8 @@ export async function gitlabDepsFromEnv(
   let resolvedProject = project;
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
-    const match = stdout.trim().match(/(?:^[^:]+:|https?:\/\/[^/]+\/)(.+?)(?:\.git)?$/);
-    if (match?.[1] === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
-    resolvedProject = match[1];
+    resolvedProject = parseGitlabProjectFromRemote(stdout);
+    if (resolvedProject === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
   }
   return {
     repoPath,

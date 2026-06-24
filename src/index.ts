@@ -139,7 +139,7 @@ export type { EvalKind, EvalCase, EvalVerdict, EvalCaseResult, EvalReport, KindT
 export { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL, GITLAB_MR_REVIEWING_LABEL, GITLAB_MR_REVIEWED_LABEL } from './gitlab-labels.js';
 export { GitLabTaskFetcher, issueIID, encodeProject, defaultGlabRunner, commentGitlabIssue, editGitlabLabels, linkMergeRequest } from './tasks/gitlab.js';
 export type { GlabRunner, GitLabIssue, GitLabNote } from './tasks/gitlab.js';
-export { runGitlabIssue, gitlabDepsFromEnv } from './runners/gitlab.js';
+export { runGitlabIssue, gitlabDepsFromEnv, parseGitlabProjectFromRemote } from './runners/gitlab.js';
 export type { RunGitlabIssueDeps, RunGitlabIssueResult } from './runners/gitlab.js';
 export {
   gitlabWatchPrimitives,

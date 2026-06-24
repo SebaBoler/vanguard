@@ -66,9 +66,9 @@ export async function fetchMergeRequestForReview(
 ): Promise<MergeRequestForReview> {
   const iid = String(target.iid);
   const view = JSON.parse(
-    await glab(['mr', 'view', iid, '--project', target.project, '--output', 'json']),
+    await glab(['mr', 'view', iid, '--repo', target.project, '--output', 'json']),
   ) as GlabMrView;
-  const diff = await glab(['mr', 'diff', iid, '--project', target.project]);
+  const diff = await glab(['mr', 'diff', iid, '--repo', target.project]);
   return {
     project: target.project,
     iid: view.iid ?? target.iid,
@@ -132,7 +132,7 @@ export async function postMergeRequestNote(
   await glab([
     'mr', 'note', 'create',
     String(target.iid),
-    '--project', target.project,
+    '--repo', target.project,
     '-m', body,
   ]);
 }

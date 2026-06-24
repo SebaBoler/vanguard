@@ -137,7 +137,7 @@ async function gitlabAuthOk(run: PreflightRunner, cwd: string, env: NodeJS.Proce
 }
 
 async function gitlabLabelsOk(run: PreflightRunner, cwd: string, project: string, required: string[]): Promise<PreflightCheck> {
-  const labels = await runOk(run, cwd, 'glab', ['label', 'list', '--project', project, '--output', 'json']);
+  const labels = await runOk(run, cwd, 'glab', ['label', 'list', '--repo', project, '--output', 'json']);
   if (!labels.ok) return check('gitlab labels', false, 'unreadable');
   let parsed: Array<{ name?: string }>;
   try {
