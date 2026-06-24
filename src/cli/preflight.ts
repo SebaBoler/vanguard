@@ -37,9 +37,7 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
-const GITLAB_DEFAULT_CLAIMED_LABEL = 'vanguard::running';
-const GITLAB_DEFAULT_REVIEW_LABEL = 'vanguard::review';
-const GITLAB_DEFAULT_SPEC_CLAIMED_LABEL = 'vanguard::speccing';
+
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
   const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
@@ -67,24 +65,18 @@ function unique(values: Array<string | undefined>): string[] {
 }
 
 function gitlabLabelsFor(cmd: PreflightCommand): string[] {
+  // Only check user-owned labels (trigger + routing). Vanguard state labels
+  // (claimedState, reviewState, reviewingLabel, reviewedLabel, specClaimedLabel)
+  // are scoped `::` labels that GitLab auto-creates on first apply.
   if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
-    return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
+    return unique([cmd.label]);
   }
   if (cmd.kind !== 'doctor' && cmd.kind !== 'watch') return [];
   if (cmd.source !== 'gitlab') return [];
-  // For loop-v1 on gitlab, routing labels come from the same spec/agent label fields as github.
   if (cmd.specLabel !== undefined) {
-    return unique([
-      cmd.label,
-      cmd.specLabel,
-      cmd.agentLabel,
-      cmd.needsInfoLabel,
-      cmd.specClaimedLabel ?? GITLAB_DEFAULT_SPEC_CLAIMED_LABEL,
-      cmd.claimedState ?? GITLAB_DEFAULT_CLAIMED_LABEL,
-      cmd.reviewState ?? GITLAB_DEFAULT_REVIEW_LABEL,
-    ]);
+    return unique([cmd.label, cmd.specLabel, cmd.agentLabel, cmd.needsInfoLabel]);
   }
-  return unique([cmd.label, cmd.claimedState ?? GITLAB_DEFAULT_CLAIMED_LABEL, cmd.reviewState ?? GITLAB_DEFAULT_REVIEW_LABEL]);
+  return unique([cmd.label]);
 }
 
 type LoopCommand = WatchCommand | DoctorCommand | DoctorPrsCommand;
@@ -137,7 +129,7 @@ async function gitlabAuthOk(run: PreflightRunner, cwd: string, env: NodeJS.Proce
 }
 
 async function gitlabLabelsOk(run: PreflightRunner, cwd: string, project: string, required: string[]): Promise<PreflightCheck> {
-  const labels = await runOk(run, cwd, 'glab', ['label', 'list', '--repo', project, '--output', 'json']);
+  const labels = await runOk(run, cwd, 'glab', ['label', 'list', '--repo', project, '--per-page', '100', '--output', 'json']);
   if (!labels.ok) return check('gitlab labels', false, 'unreadable');
   let parsed: Array<{ name?: string }>;
   try {

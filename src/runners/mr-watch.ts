@@ -1,6 +1,6 @@
 import { fanOut } from '../pipeline/fan-out.js';
-import { hasMergeRequestReviewMarker } from './mr-review.js';
 import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
+import { hasMergeRequestReviewMarker } from './mr-review.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 
@@ -123,7 +123,7 @@ async function hasExistingReviewForHead(
   try {
     const out = await glab([
       'api',
-      `projects/${encodeProject(item.project)}/merge_requests/${item.iid}/notes?per_page=100`,
+      `projects/${encodeProject(item.project)}/merge_requests/${item.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
     ]);
     const notes = JSON.parse(out) as GlabMrNoteItem[];
     return notes.some(

@@ -153,7 +153,11 @@ export async function gitlabDepsFromEnv(
   let resolvedProject = project;
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
-    resolvedProject = parseGitlabProjectFromRemote(stdout);
+    const remote = stdout.trim();
+    if (/github\.com|bitbucket\.org|dev\.azure\.com/.test(remote)) {
+      throw new Error(`origin remote (${remote}) does not look like a GitLab host. Pass --gitlab-project explicitly.`);
+    }
+    resolvedProject = parseGitlabProjectFromRemote(remote);
     if (resolvedProject === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
   }
   return {
