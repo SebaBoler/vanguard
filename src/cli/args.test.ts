@@ -837,6 +837,14 @@ describe('parseCli gitlab run', () => {
     expect(cmd.source).toBe('gitlab');
     expect(cmd.id).toBe('owner/project#42');
   });
+
+  it('parses --gitlab with --gitlab-project', () => {
+    const cmd = parseCli(['run', '--gitlab', '42', '--gitlab-project', 'group/project'], '/repo');
+    assert(cmd.kind === 'run');
+    expect(cmd.source).toBe('gitlab');
+    expect(cmd.id).toBe('42');
+    expect(cmd.project).toBe('group/project');
+  });
 });
 
 describe('parseCli watch gitlab', () => {

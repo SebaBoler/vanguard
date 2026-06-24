@@ -145,7 +145,7 @@ async function runGitlab(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   if (cmd.parent) throw new Error('--parent is not supported with --gitlab.');
-  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;

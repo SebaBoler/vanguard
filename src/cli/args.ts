@@ -113,6 +113,8 @@ export type Command =
       skillsDir?: string;
       repoSlug?: string;
       label?: string;
+      /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
+      project?: string;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
       /** Model for the implementer/simplifier stages (default: provider's default). */
@@ -534,6 +536,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
+      ...(typeof values['gitlab-project'] === 'string' && picked[0] === 'gitlab' ? { project: values['gitlab-project'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
