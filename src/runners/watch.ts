@@ -1,16 +1,20 @@
 import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
+import { GitLabTaskFetcher, editGitlabLabels, commentGitlabIssue, defaultGlabRunner } from '../tasks/gitlab.js';
 import { runLinearIssue } from './linear.js';
 import { runGithubIssue } from './github.js';
+import { runGitlabIssue } from './gitlab.js';
 import { runSpecGenerator } from './spec.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
+import type { RunGitlabIssueDeps } from './gitlab.js';
 import type { RunSpecGeneratorDeps } from './spec.js';
 import type { LinearCliRunner } from '../tasks/linear-cli.js';
 import type { GhRunner } from '../tasks/github.js';
+import type { GlabRunner } from '../tasks/gitlab.js';
 
 /** Injectable spec generator (the real one boots a sandbox; tests inject a fake). */
 export type GenerateSpec = (id: string, deps: RunSpecGeneratorDeps) => Promise<string>;
@@ -678,4 +682,137 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
 /** Poll GitHub Projects v2 and run each item in the trigger Status. */
 export async function watchGithubProject(opts: WatchGithubProjectOptions, log: (msg: string) => void = console.log): Promise<void> {
   await runWatchLoop(githubProjectWatchPrimitives(opts), opts, log);
+}
+
+export interface WatchGitlabOptions {
+  deps: RunGitlabIssueDeps;
+  /** Trigger label: open issues carrying this label are picked for running. */
+  label: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `label`.
+   * Absent => only `label` is required.
+   */
+  ownerLabel?: string;
+  /** Label added on claim (trigger label removed) so re-polls skip it. */
+  claimedLabel: string;
+  /** Label added after an MR opens (claimed label auto-removed by GitLab scoped-label rule when same scope). */
+  reviewLabel: string;
+  /**
+   * Loop-v1 agent-pass triage gate (optional). When set, runOne first triages the ticket in 'agent'
+   * mode; a vague ticket is commented + swapped to this label and NO implement budget is spent.
+   * Absent => behaviour is unchanged (no triage, straight to runGitlabIssue).
+   */
+  needsInfoLabel?: string;
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+  /** Injectable runner for tests. Defaults to `defaultGlabRunner`. */
+  gl?: GlabRunner;
+}
+
+/** GitLab issue primitives: trigger by label, claim/review by swapping scoped labels. */
+export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives {
+  const project = opts.deps.project;
+  const glab = opts.gl ?? defaultGlabRunner;
+  const fetcher = new GitLabTaskFetcher(project, glab);
+  const needsInfoLabel = opts.needsInfoLabel;
+  const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
+  return {
+    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
+    claim: (id) =>
+      // Explicitly remove trigger label so future polls don't pick it up again.
+      // GitLab scoped :: only auto-removes within the same scope prefix.
+      editGitlabLabels(project, id, { remove: [opts.label], add: [opts.claimedLabel] }, glab),
+    runOne:
+      needsInfoLabel === undefined
+        ? (id) => runGitlabIssue(id, opts.deps)
+        : (id) =>
+            triageAgentRun(id, fetcher, (i) => runGitlabIssue(i, opts.deps), {
+              comment: (body) => commentGitlabIssue(project, id, body, glab),
+              toNeedsInfo: () =>
+                editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, glab),
+            }),
+    review: (id) =>
+      // Explicitly remove claimedLabel for robustness when non-scoped labels are configured.
+      editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, glab),
+    onFailure: (id, error) =>
+      commentGitlabIssue(project, id, `Vanguard run failed: ${String(error)}`, glab),
+  };
+}
+
+export interface WatchGitlabSpecOptions {
+  /** Deps for the spec generator (no MR is opened in the spec pass). */
+  deps: RunSpecGeneratorDeps;
+  /** GitLab project path, e.g. `group/project`. */
+  project: string;
+  /** Trigger label: open issues with this label are picked for speccing. */
+  specLabel: string;
+  /**
+   * Ownership label (optional). When set, issues must carry BOTH this label AND `specLabel`.
+   * Absent => only `specLabel` is required.
+   */
+  ownerLabel?: string;
+  /** Label added on claim (spec label removed) so re-polls skip it. */
+  claimedLabel: string;
+  /** Label added after a spec is generated — the agent-pass trigger. */
+  agentLabel: string;
+  /** Label added when triage flags the ticket as too vague. */
+  needsInfoLabel: string;
+  gl?: GlabRunner;
+  /** Injected for tests so the spec pass runs without a sandbox. Defaults to the real generator. */
+  generateSpec?: GenerateSpec;
+}
+
+/**
+ * GitLab-issue SPEC primitives: trigger by label, triage each issue, then either generate+post a tech
+ * spec and swap to the agent label, or request clarification and swap to needs-info. On failure the
+ * trigger label is restored so a later poll retries it.
+ */
+export function gitlabSpecPrimitives(opts: WatchGitlabSpecOptions): SpecWatchPrimitives {
+  const glab = opts.gl ?? defaultGlabRunner;
+  const fetcher = opts.deps.fetcher;
+  const generate = opts.generateSpec ?? runSpecGenerator;
+  const specLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.specLabel] : [opts.specLabel];
+  return {
+    listReady: async () => (await fetcher.list({ labels: specLabels })).map((task) => ({ id: task.id })),
+    claim: (id) =>
+      editGitlabLabels(opts.project, id, { remove: [opts.specLabel], add: [opts.claimedLabel] }, glab),
+    runSpec: async (id) => {
+      const task = await fetcher.fetch(id);
+      return runSpecCore(task, id, opts.deps, generate, {
+        postComment: (body) => commentGitlabIssue(opts.project, id, body, glab),
+        advance: () =>
+          editGitlabLabels(opts.project, id, { remove: [opts.claimedLabel], add: [opts.agentLabel] }, glab),
+        toNeedsInfo: () =>
+          editGitlabLabels(opts.project, id, { remove: [opts.claimedLabel], add: [opts.needsInfoLabel] }, glab),
+      });
+    },
+    onFailure: async (id, error) => {
+      await commentGitlabIssue(opts.project, id, `Vanguard spec failed: ${String(error)}`, glab);
+      // Restore spec label so next poll retries
+      await editGitlabLabels(opts.project, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, glab);
+    },
+  };
+}
+
+export interface WatchGitlabLoopV1Options {
+  /** SPEC-pass options (label trigger, spec-gen, swap to the agent label). */
+  spec: WatchGitlabSpecOptions;
+  /** AGENT-pass options. Supply needsInfoLabel to gate vague tickets out of the implement budget. */
+  agent: WatchGitlabOptions;
+  concurrency?: number;
+  intervalMs?: number;
+  once?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Poll GitLab Issues and run each newly-ready (labeled) issue. */
+export async function watchGitlab(opts: WatchGitlabOptions, log: (msg: string) => void = console.log): Promise<void> {
+  await runWatchLoop(gitlabWatchPrimitives(opts), opts, log);
+}
+
+/** Loop v1 over GitLab Issues: each poll runs the spec pass then the agent pass. */
+export async function watchGitlabLoopV1(opts: WatchGitlabLoopV1Options, log: (msg: string) => void = console.log): Promise<void> {
+  await runLoopV1(gitlabSpecPrimitives(opts.spec), gitlabWatchPrimitives(opts.agent), opts, log);
 }

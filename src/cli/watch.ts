@@ -1,10 +1,13 @@
-import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1 } from '../runners/watch.js';
+import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1, watchGitlab, watchGitlabLoopV1 } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
+import { gitlabDepsFromEnv } from '../runners/gitlab.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
+import { GitLabTaskFetcher } from '../tasks/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
+import { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL } from '../gitlab-labels.js';
 import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -45,6 +48,8 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
       await watchLinearSource(cmd, auth, ctx, controller.signal);
     } else if (cmd.source === 'project') {
       await watchGithubProjectSource(cmd, auth, ctx, controller.signal);
+    } else if (cmd.source === 'gitlab') {
+      await watchGitlabSource(cmd, auth, ctx, controller.signal);
     } else {
       await watchGithubSource(cmd, auth, ctx, controller.signal);
     }
@@ -239,6 +244,80 @@ async function watchGithubProjectSource(
     claimedStatus: cmd.claimedState ?? 'In Progress',
     reviewStatus: cmd.reviewState ?? 'In Review',
     ...(cmd.label !== undefined ? { label: cmd.label } : {}),
+    concurrency: cmd.concurrency,
+    intervalMs: cmd.intervalMs,
+    once: cmd.once,
+    signal,
+  });
+}
+
+async function watchGitlabSource(
+  cmd: WatchCommand,
+  auth: AgentAuth | undefined,
+  ctx: SandboxContext,
+  signal: AbortSignal,
+): Promise<void> {
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd.provider, cmd.reviewProvider);
+  if (auth !== undefined) deps.auth = auth;
+  if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
+    deps.proxyUrl = ctx.proxyUrl;
+    deps.network = ctx.network;
+  }
+  if (ctx.llmProxy !== undefined) deps.llmProxy = ctx.llmProxy;
+  if (cmd.provider !== undefined) deps.provider = cmd.provider;
+  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.noSimplify === true) deps.noSimplify = true;
+  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
+  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
+  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+
+  // Loop v1: activated when --spec-label is supplied.
+  if (cmd.specLabel !== undefined) {
+    if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
+      throw new Error('--agent-label and --needs-info-label are required with --spec-label for gitlab loop-v1');
+    }
+    const specDeps = {
+      ...(auth !== undefined ? { auth } : {}),
+      repoPath: cmd.repoPath,
+      fetcher: new GitLabTaskFetcher(deps.project),
+      ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
+      ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+    };
+    await watchGitlabLoopV1({
+      spec: {
+        deps: specDeps,
+        project: deps.project,
+        specLabel: cmd.specLabel,
+        claimedLabel: cmd.specClaimedLabel ?? GITLAB_SPEC_CLAIMED_LABEL,
+        agentLabel: cmd.agentLabel,
+        needsInfoLabel: cmd.needsInfoLabel,
+        ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
+      },
+      agent: {
+        deps,
+        label: cmd.agentLabel,
+        claimedLabel: cmd.claimedState ?? GITLAB_CLAIMED_LABEL,
+        reviewLabel: cmd.reviewState ?? GITLAB_REVIEW_LABEL,
+        needsInfoLabel: cmd.needsInfoLabel,
+        ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
+      },
+      concurrency: cmd.concurrency,
+      intervalMs: cmd.intervalMs,
+      once: cmd.once,
+      signal,
+    });
+    return;
+  }
+
+  if (cmd.label === undefined) throw new Error('--label is required for gitlab watch source');
+  await watchGitlab({
+    deps,
+    label: cmd.label,
+    claimedLabel: cmd.claimedState ?? GITLAB_CLAIMED_LABEL,
+    reviewLabel: cmd.reviewState ?? GITLAB_REVIEW_LABEL,
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,

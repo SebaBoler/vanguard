@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { isProviderName } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 
-type WatchSource = 'linear' | 'github' | 'project';
+type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
 export type Command =
   | { kind: 'gc'; repoPath: string; maxAgeMs: number; remoteRepo?: string; dryRun: boolean; abandoned: boolean }
@@ -69,9 +69,11 @@ export type Command =
     }
   | {
       kind: 'doctor';
-      source: 'linear' | 'github' | 'project';
+      source: 'linear' | 'github' | 'project' | 'gitlab';
       label?: string;
       projectNumber?: number;
+      /** GitLab project path (e.g. group/project); required when source === 'gitlab'. */
+      project?: string;
       team?: string;
       triggerState?: string;
       claimedState?: string;
@@ -98,7 +100,7 @@ export type Command =
     }
   | {
       kind: 'run';
-      source: 'linear' | 'github' | 'project';
+      source: 'linear' | 'github' | 'project' | 'gitlab';
       id: string;
       parent: boolean;
       gcBefore: boolean;
@@ -111,6 +113,8 @@ export type Command =
       skillsDir?: string;
       repoSlug?: string;
       label?: string;
+      /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
+      project?: string;
       provider?: ProviderName;
       reviewProvider?: ProviderName;
       /** Model for the implementer/simplifier stages (default: provider's default). */
@@ -127,11 +131,13 @@ export type Command =
     }
   | {
       kind: 'watch';
-      source: 'linear' | 'github' | 'project';
+      source: 'linear' | 'github' | 'project' | 'gitlab';
       /** Required for linear/github; optional for project (label-filter on the board). */
       label?: string;
       /** Project number; required when source === 'project'. */
       projectNumber?: number;
+      /** GitLab project path (e.g. group/project); required when source === 'gitlab'. */
+      project?: string;
       team?: string;
       triggerState?: string;
       claimedState?: string;
@@ -189,6 +195,43 @@ export type Command =
        */
       specClaimedState?: string;
     }
+  | {
+      kind: 'review-mr';
+      iid: number;
+      project: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      reviewModel?: string;
+    }
+  | {
+      kind: 'watch-mrs';
+      project: string;
+      repoPath: string;
+      label: string;
+      reviewingLabel: string;
+      reviewedLabel: string;
+      /** Only review MRs opened by this GitLab username (self-review-only when set). */
+      author?: string;
+      concurrency: number;
+      intervalMs: number;
+      once: boolean;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      reviewModel?: string;
+    }
+  | {
+      kind: 'doctor-mrs';
+      project: string;
+      repoPath: string;
+      label: string;
+      reviewingLabel: string;
+      reviewedLabel: string;
+      provider?: ProviderName;
+      llmProxy?: boolean;
+    }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
   | { kind: 'help' };
@@ -205,6 +248,8 @@ const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
 const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
+const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
+const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
 
 /**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
@@ -227,7 +272,10 @@ export function parseCli(argv: string[], cwd: string): Command {
         // run
         linear: { type: 'string' },
         github: { type: 'string' },
+        gitlab: { type: 'string' },
         'github-pr': { type: 'string' },
+        'gitlab-project': { type: 'string' },
+        mr: { type: 'string' },
         project: { type: 'string' },
         source: { type: 'string' },
         parent: { type: 'boolean' },
@@ -417,11 +465,57 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  if (positionals[0] === 'review-mr') {
+    const iidRaw = typeof values.mr === 'string' ? Number(values.mr) : undefined;
+    const project = typeof values['gitlab-project'] === 'string' ? values['gitlab-project'] : undefined;
+    if (iidRaw === undefined || !Number.isInteger(iidRaw) || project === undefined) return { kind: 'help' };
+    return {
+      kind: 'review-mr',
+      iid: iidRaw,
+      project,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+    };
+  }
+
+  if (positionals[0] === 'watch-mrs' || positionals[0] === 'doctor-mrs') {
+    const commandKind = positionals[0];
+    const project = typeof values['gitlab-project'] === 'string' ? values['gitlab-project'] : undefined;
+    const label = typeof values.label === 'string' ? values.label : undefined;
+    if (project === undefined || label === undefined) return { kind: 'help' };
+    const concurrency = Number(values.concurrency);
+    const interval = Number(values.interval);
+    const shared = {
+      project,
+      repoPath,
+      label,
+      reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_GITLAB_MR_REVIEWING_LABEL,
+      reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_GITLAB_MR_REVIEWED_LABEL,
+      ...(typeof values.author === 'string' ? { author: values.author } : {}),
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+    };
+    if (commandKind === 'doctor-mrs') return { kind: 'doctor-mrs', ...shared };
+    return {
+      kind: 'watch-mrs',
+      ...shared,
+      egress: values.egress === true,
+      concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
+      intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
+      once: values.once === true,
+    };
+  }
+
   if (positionals[0] === 'run') {
-    const sources: Array<['linear' | 'github' | 'project', string]> = [];
+    const sources: Array<['linear' | 'github' | 'project' | 'gitlab', string]> = [];
     if (typeof values.linear === 'string') sources.push(['linear', values.linear]);
     if (typeof values.github === 'string') sources.push(['github', values.github]);
     if (typeof values.project === 'string') sources.push(['project', values.project]);
+    if (typeof values.gitlab === 'string') sources.push(['gitlab', values.gitlab]);
     // Exactly one source is required.
     const picked = sources[0];
     if (sources.length !== 1 || picked === undefined) return { kind: 'help' };
@@ -442,6 +536,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
+      ...(typeof values['gitlab-project'] === 'string' && picked[0] === 'gitlab' ? { project: values['gitlab-project'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
@@ -459,7 +554,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         ? 'github'
         : values.source === 'project'
           ? 'project'
-          : 'linear';
+          : values.source === 'gitlab'
+            ? 'gitlab'
+            : 'linear';
     // project number is required when source === 'project'
     const projectNumber = typeof values.project === 'string' ? Number(values.project) : undefined;
     if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) return { kind: 'help' };
@@ -488,10 +585,10 @@ export function parseCli(argv: string[], cwd: string): Command {
       source === 'github' && label === undefined && !hasGithubLoopFlags && !hasLinearLoopFlags;
     const isLoopV1 = values['loop-v1'] === true || hasGithubLoopFlags || hasLinearLoopFlags || repoOnlyGithubLoop;
 
-    if (isLoopV1 && source === 'github' && hasLinearLoopFlags) return { kind: 'help' };
+    if (isLoopV1 && (source === 'github' || source === 'gitlab') && hasLinearLoopFlags) return { kind: 'help' };
     if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) return { kind: 'help' };
 
-    if (isLoopV1 && source === 'github') {
+    if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
       specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
       agentLabel ??= DEFAULT_GITHUB_AGENT_LABEL;
       needsInfoLabel ??= DEFAULT_GITHUB_NEEDS_INFO_LABEL;
@@ -504,10 +601,9 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     if (isLoopV1) {
       // Loop v1 validation per source.
-      if (source === 'github') {
+      if (source === 'github' || source === 'gitlab') {
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
-        // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
-        // watches the routing labels directly; explicit --label narrows that further when desired.
+        if (source === 'gitlab' && label === undefined) return { kind: 'help' };
       } else if (source === 'linear') {
         if (specState === undefined || specStateName === undefined || needsInfoState === undefined) return { kind: 'help' };
         // --label is still the shared ownership label across both passes. Defaults keep the filter,
@@ -518,7 +614,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         return { kind: 'help' };
       }
     } else {
-      // Existing single-pass validation: label is required for linear/github; optional for project.
+      // Existing single-pass validation: label is required for linear/github/gitlab; optional for project.
       if (source !== 'project' && label === undefined) return { kind: 'help' };
     }
 
@@ -530,6 +626,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       repoPath,
       ...(label !== undefined ? { label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
+      ...(typeof values['gitlab-project'] === 'string' ? { project: values['gitlab-project'] } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
       ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
       ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
@@ -584,13 +681,16 @@ Commands:
   revise-pr Read human review feedback on a Vanguard draft PR, apply fixes, and hand it back ready to merge.
   watch-prs Poll GitHub PRs by label and run the non-blocking Vanguard review loop.
   doctor-prs Check whether watch-prs can run AFK before any PR is claimed.
+  review-mr Review an existing GitLab MR and post a non-blocking Vanguard review comment.
+  watch-mrs Poll GitLab MRs by label and run the non-blocking Vanguard review loop.
+  doctor-mrs Check whether watch-mrs can run AFK before any MR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
 
   watch options (trigger = state/label + label):
-    --source <linear|github|project>  Task source (default: linear)
+    --source <linear|github|project|gitlab>  Task source (default: linear)
     --label <name>         Required for linear/github; optional label-filter for project
     --team <KEY>           (linear) limit to a team
     --github-repo <o/r>    (github/project) repo slug (default: detected from origin)
@@ -659,6 +759,7 @@ Commands:
   run options (exactly one source):
     --linear <ID>          Run a Linear issue (reads it via the in-sandbox linear-cli skill)
     --github <owner/repo#n> Run a GitHub issue
+    --gitlab <group/project#n> Run a GitLab issue
     --project <number>     Run every issue on a GitHub Projects v2 board (one run + PR each)
     --parent               (Linear) fan the issue's sub-tasks out, one run + PR each
     --label <name>         (project) only run board items with this label
@@ -733,6 +834,40 @@ Commands:
     Example:
       vanguard doctor-prs --github-repo owner/repo --label "ready for vanguard review"
 
+  review-mr options:
+    --mr <iid>               GitLab MR IID (integer)
+    --gitlab-project <g/p>   GitLab project path (required, e.g. group/project)
+    --provider --review-model --egress --llm-proxy --repo  As for review-pr
+
+  watch-mrs options:
+    --gitlab-project <g/p>   Required project path (e.g. group/project)
+    --label <name>           Required trigger label (e.g. "ready for review")
+    --reviewing-label <l>    Label added while an MR is being reviewed (default: "vanguard::reviewing")
+    --reviewed-label <l>     Label added after review succeeds (default: "vanguard::reviewed")
+    --author <username>      Only review MRs opened by this GitLab username
+    --interval <seconds>     Poll interval (default: 60); --once does a single pass
+    --concurrency <n>        Max MRs reviewed at once (default: 2)
+    --provider <claude|codex|cursor|zai>          Provider used for MR review (default: claude)
+    --review-model <m>       Model for the MR review
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+    Example:
+      vanguard watch-mrs --gitlab-project group/project --label "ready for review"
+
+  doctor-mrs options:
+    Uses the same flags as watch-mrs, but only runs AFK preflight checks and exits.
+    Example:
+      vanguard doctor-mrs --gitlab-project group/project --label "ready for review"
+
+  watch options (--source gitlab):
+    --source gitlab              GitLab issue watch source
+    --gitlab-project <g/p>       Required: GitLab project path (e.g. group/project)
+    --label <name>               Trigger label; issues must carry this label
+    --claimed-state / --review-state still apply (label-based, as for --source github).
+    GitLab boards are label-based — use --source gitlab --label <column-label> to watch a board column.
+    Example:
+      vanguard watch --source gitlab --gitlab-project group/project --label vanguard
+
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
@@ -755,6 +890,7 @@ Commands:
     Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
 
 Env: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (auth); LINEAR_API_KEY (for --linear);
+     GITLAB_TOKEN (auth for glab; GITLAB_HOST for self-hosted GitLab instances);
      CODEX_API_KEY / CURSOR_API_KEY (when --provider/--review-provider selects codex/cursor;
        under --llm-proxy the Codex/OpenAI key is held by the sidecar and the sandbox gets a nonce,
        while Cursor's key is still injected directly);

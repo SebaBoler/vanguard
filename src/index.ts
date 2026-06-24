@@ -140,3 +140,32 @@ export type { McpServerSpec, InjectedMcp } from './mcp/config.js';
 export { programmaticJudge, llmJudge } from './evals/judges.js';
 export type { Predicate, Complete } from './evals/judges.js';
 export type { EvalKind, EvalCase, EvalVerdict, EvalCaseResult, EvalReport, KindTally, Judge } from './evals/types.js';
+export { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL, GITLAB_MR_REVIEWING_LABEL, GITLAB_MR_REVIEWED_LABEL } from './gitlab-labels.js';
+export { GitLabTaskFetcher, issueIID, encodeProject, defaultGlabRunner, commentGitlabIssue, editGitlabLabels, linkMergeRequest } from './tasks/gitlab.js';
+export type { GlabRunner, GitLabIssue, GitLabNote } from './tasks/gitlab.js';
+export { runGitlabIssue, gitlabDepsFromEnv, parseGitlabProjectFromRemote } from './runners/gitlab.js';
+export type { RunGitlabIssueDeps, RunGitlabIssueResult } from './runners/gitlab.js';
+export {
+  gitlabWatchPrimitives,
+  gitlabSpecPrimitives,
+  watchGitlab,
+  watchGitlabLoopV1,
+} from './runners/watch.js';
+export type { WatchGitlabOptions, WatchGitlabSpecOptions, WatchGitlabLoopV1Options } from './runners/watch.js';
+export {
+  parseMergeRequestRef,
+  fetchMergeRequestForReview,
+  buildMergeRequestReviewPrompt,
+  mergeRequestReviewMarker,
+  hasMergeRequestReviewMarker,
+  buildMergeRequestReviewComment,
+  postMergeRequestNote,
+  reviewMergeRequest,
+} from './runners/mr-review.js';
+export type { MergeRequestReviewTarget, MergeRequestForReview, MergeRequestReviewer, ReviewMergeRequestDeps, ReviewMergeRequestResult } from './runners/mr-review.js';
+export {
+  gitlabMergeRequestWatchPrimitives,
+  watchMergeRequestsOnce,
+  watchMergeRequests,
+} from './runners/mr-watch.js';
+export type { MergeRequestWatchItem, MergeRequestWatchPrimitives, MergeRequestWatchTick, GitLabMergeRequestWatchOptions } from './runners/mr-watch.js';

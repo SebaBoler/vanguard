@@ -693,6 +693,8 @@ export interface PublishOptions {
   baseBranch?: string;
   draft?: boolean;
   remote?: string;
+  /** CLI tool to use for PR/MR creation. Default 'gh' (GitHub). Use 'glab' for GitLab MRs. */
+  cli?: 'gh' | 'glab';
   /** Injected for tests; defaults to running git/gh via execa. */
   runner?: CommandRunner;
 }
@@ -727,21 +729,29 @@ export async function pushToExistingBranch(ctx: RunContext, opts: PushToExisting
  */
 export async function publishForReview(ctx: RunContext, opts: PublishOptions): Promise<PublishOutcome> {
   const run = opts.runner ?? defaultRunner;
+  const tool = opts.cli ?? 'gh';
   await run('git', ['push', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
-  const args = [
-    'pr',
-    'create',
-    '--head',
-    ctx.branch,
-    '--base',
-    opts.baseBranch ?? 'main',
-    '--title',
-    opts.title,
-    '--body',
-    opts.body ?? '',
-  ];
-  if (opts.draft === true) args.push('--draft');
-  const out = await run('gh', args, ctx.worktreePath);
+  let args: string[];
+  if (tool === 'glab') {
+    args = [
+      'mr', 'create',
+      '--source-branch', ctx.branch,
+      '--target-branch', opts.baseBranch ?? 'main',
+      '--title', opts.title,
+      '--description', opts.body ?? '',
+    ];
+    if (opts.draft === true) args.push('--draft');
+  } else {
+    args = [
+      'pr', 'create',
+      '--head', ctx.branch,
+      '--base', opts.baseBranch ?? 'main',
+      '--title', opts.title,
+      '--body', opts.body ?? '',
+    ];
+    if (opts.draft === true) args.push('--draft');
+  }
+  const out = await run(tool, args, ctx.worktreePath);
   const prUrl =
     out
       .split('\n')
