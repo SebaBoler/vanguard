@@ -6,9 +6,10 @@ import {
   githubProjectWatchPrimitives,
   githubSpecPrimitives,
   githubIssueWatchPrimitives,
+  gitlabWatchPrimitives,
 } from './watch.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
-import type { SpecWatchPrimitives, WatchPrimitives } from './watch.js';
+import type { SpecWatchPrimitives, WatchPrimitives, WatchGitlabOptions } from './watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { TaskFetcher } from '../tasks/fetcher.js';
 
@@ -516,5 +517,72 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     const labelIdx = firstArgs.indexOf('--label');
     expect(labelIdx).toBeGreaterThan(-1);
     expect(firstArgs[labelIdx + 1]).toBe('ready for agent');
+  });
+});
+
+describe('gitlabWatchPrimitives', () => {
+  function makeGlab(responses: Record<string, string> = {}) {
+    const calls: string[][] = [];
+    const glab = async (args: string[]) => {
+      calls.push(args);
+      const key = `${args[0]}:${args[1]}`;
+      return responses[key] ?? '[]';
+    };
+    return { glab, calls };
+  }
+
+  function makeOpts(project = 'g/p'): WatchGitlabOptions {
+    return {
+      deps: {
+        repoPath: '/repo',
+        project,
+      } as unknown as WatchGitlabOptions['deps'],
+      label: 'vanguard',
+      claimedLabel: 'vanguard::running',
+      reviewLabel: 'vanguard::review',
+    };
+  }
+
+  it('listReady filters issues by label', async () => {
+    const { glab } = makeGlab({
+      'issue:list': JSON.stringify([
+        { iid: 1, title: 'T', description: null, labels: ['vanguard'] },
+      ]),
+    });
+    const opts = makeOpts();
+    const primitives = gitlabWatchPrimitives({ ...opts, gl: glab });
+    const ready = await primitives.listReady();
+    expect(ready).toHaveLength(1);
+    expect(ready.at(0)?.id).toContain('#1');
+  });
+
+  it('claim adds claimedLabel and removes trigger label', async () => {
+    const { glab, calls } = makeGlab();
+    const opts = makeOpts();
+    const primitives = gitlabWatchPrimitives({ ...opts, gl: glab });
+    await primitives.claim('g/p#1');
+    const updateCall = calls.find((c) => c[0] === 'issue' && c[1] === 'update');
+    expect(updateCall).toBeDefined();
+    expect(updateCall).toContain('vanguard::running');
+    expect(updateCall).toContain('vanguard');
+  });
+
+  it('review adds reviewLabel', async () => {
+    const { glab, calls } = makeGlab();
+    const opts = makeOpts();
+    const primitives = gitlabWatchPrimitives({ ...opts, gl: glab });
+    await primitives.review('g/p#1');
+    const updateCall = calls.find((c) => c[0] === 'issue' && c[1] === 'update');
+    expect(updateCall).toContain('vanguard::review');
+  });
+
+  it('onFailure posts a comment', async () => {
+    const { glab, calls } = makeGlab();
+    const opts = makeOpts();
+    const primitives = gitlabWatchPrimitives({ ...opts, gl: glab });
+    await primitives.onFailure('g/p#1', new Error('boom'));
+    const noteCall = calls.find((c) => c[0] === 'issue' && c[1] === 'note');
+    expect(noteCall).toBeDefined();
+    expect(noteCall?.some((arg) => arg.includes('boom'))).toBe(true);
   });
 });
