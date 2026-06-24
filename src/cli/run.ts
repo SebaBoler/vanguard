@@ -1,5 +1,6 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
+import { runGitlabIssue, gitlabDepsFromEnv } from '../runners/gitlab.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
@@ -43,6 +44,8 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
       await runLinear(cmd, auth, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else if (cmd.source === 'project') {
       await runProject(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
+    } else if (cmd.source === 'gitlab') {
+      await runGitlab(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else {
       await runGithub(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     }
@@ -132,6 +135,29 @@ async function runGithub(
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
   const result = await runGithubIssue(cmd.id, deps);
+  report(result.task.id, result.prUrl);
+}
+
+async function runGitlab(
+  cmd: RunCommand,
+  proxyUrl: string | undefined,
+  network: string | undefined,
+  llmProxy: LlmProxyDep | undefined,
+): Promise<void> {
+  if (cmd.parent) throw new Error('--parent is not supported with --gitlab.');
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
+  if (network !== undefined) deps.network = network;
+  if (llmProxy !== undefined) deps.llmProxy = llmProxy;
+  if (cmd.reuse === true) deps.reuse = true;
+  if (cmd.provider !== undefined) deps.provider = cmd.provider;
+  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
+  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
+  if (cmd.noSimplify === true) deps.noSimplify = true;
+  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
+  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
+  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  const result = await runGitlabIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
 

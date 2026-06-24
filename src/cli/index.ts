@@ -11,6 +11,9 @@ import { reviewPrCommand } from './review-pr.js';
 import { researchCommand } from './research.js';
 import { revisePrCommand } from './revise-pr.js';
 import { watchPrsCommand } from './watch-prs.js';
+import { reviewMrCommand } from './review-mr.js';
+import { watchMrsCommand } from './watch-mrs.js';
+import { doctorMrsCommand } from './doctor-mrs.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
@@ -50,6 +53,18 @@ async function main(): Promise<void> {
     await watchPrsCommand(command);
     return;
   }
+  if (command.kind === 'review-mr') {
+    await reviewMrCommand(command);
+    return;
+  }
+  if (command.kind === 'watch-mrs') {
+    await watchMrsCommand(command);
+    return;
+  }
+  if (command.kind === 'doctor-mrs') {
+    await doctorMrsCommand(command);
+    return;
+  }
   if (command.kind === 'stats') {
     await statsCommand(command);
     return;
@@ -57,11 +72,6 @@ async function main(): Promise<void> {
   if (command.kind === 'memory') {
     await memoryCommand(command);
     return;
-  }
-  if (command.kind !== 'gc') {
-    // review-mr / watch-mrs / doctor-mrs — not yet wired to an implementation
-    console.error(`Command '${command.kind}' is not yet implemented.`);
-    process.exit(1);
   }
   const report = await runGc(command);
   const tag = command.dryRun ? ' (dry-run)' : '';
