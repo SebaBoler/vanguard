@@ -72,7 +72,8 @@ async function watchLinearSource(
   if (skillsDir === undefined) {
     throw new Error('Pass --skills <dir> or set SKILLS_DIR (a clone of schpet/linear-cli /skills).');
   }
-  if (cmd.label === undefined) throw new Error('--label is required for linear watch source');
+  // parseCli guarantees --label for the linear source (single-pass and loop-v1), so it is present here.
+  const label = cmd.label!;
 
   const agentDeps = {
     ...(auth !== undefined ? { auth } : {}),
@@ -90,11 +91,11 @@ async function watchLinearSource(
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
   };
 
-  // Loop v1: activated when --spec-state is supplied.
+  // Loop v1: activated when --spec-state is supplied. parseCli guarantees --spec-state-name and
+  // --needs-info-state accompany it.
   if (cmd.specState !== undefined) {
-    if (cmd.specStateName === undefined || cmd.needsInfoState === undefined) {
-      throw new Error('--spec-state-name and --needs-info-state are required with --spec-state for linear loop-v1');
-    }
+    const specStateName = cmd.specStateName!;
+    const needsInfoState = cmd.needsInfoState!;
     const specDeps: RunSpecGeneratorDeps = {
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
@@ -110,21 +111,21 @@ async function watchLinearSource(
     await watchLinearLoopV1({
       spec: {
         deps: specDeps,
-        label: cmd.label,
+        label,
         specTriggerState: cmd.specState,
-        specTriggerStateName: cmd.specStateName,
+        specTriggerStateName: specStateName,
         claimedState: cmd.specClaimedState ?? SPEC_CLAIMED_STATE,
         agentState: cmd.agentState ?? 'Todo',
-        needsInfoState: cmd.needsInfoState,
+        needsInfoState,
         ...(cmd.team !== undefined ? { team: cmd.team } : {}),
       },
       agent: {
         deps: agentDeps,
-        label: cmd.label,
+        label,
         triggerState: cmd.triggerState ?? 'unstarted',
         claimedState: cmd.claimedState ?? 'In Progress',
         reviewState: cmd.reviewState ?? 'In Review',
-        needsInfoState: cmd.needsInfoState,
+        needsInfoState,
         ...(cmd.team !== undefined ? { team: cmd.team } : {}),
       },
       concurrency: cmd.concurrency,
@@ -137,7 +138,7 @@ async function watchLinearSource(
 
   await watchLinear({
     deps: agentDeps,
-    label: cmd.label,
+    label,
     triggerState: cmd.triggerState ?? 'unstarted',
     claimedState: cmd.claimedState ?? 'In Progress',
     reviewState: cmd.reviewState ?? 'In Review',
@@ -175,11 +176,11 @@ async function watchGithubSource(
 ): Promise<void> {
   const deps = await buildGithubDeps(cmd, auth, ctx);
 
-  // Loop v1: activated when --spec-label is supplied.
+  // Loop v1: activated when --spec-label is supplied. parseCli guarantees --agent-label and
+  // --needs-info-label accompany it.
   if (cmd.specLabel !== undefined) {
-    if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
-      throw new Error('--agent-label and --needs-info-label are required with --spec-label for github loop-v1');
-    }
+    const agentLabel = cmd.agentLabel!;
+    const needsInfoLabel = cmd.needsInfoLabel!;
     const repoSlug = deps.repoSlug;
     const specDeps: RunSpecGeneratorDeps = {
       ...(auth !== undefined ? { auth } : {}),
@@ -196,16 +197,16 @@ async function watchGithubSource(
         repoSlug,
         specLabel: cmd.specLabel,
         claimedLabel: cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
-        agentLabel: cmd.agentLabel,
-        needsInfoLabel: cmd.needsInfoLabel,
+        agentLabel,
+        needsInfoLabel,
         ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
       },
       agent: {
         deps,
-        label: cmd.agentLabel,
+        label: agentLabel,
         claimedLabel: cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
         reviewLabel: cmd.reviewState ?? GITHUB_REVIEW_LABEL,
-        needsInfoLabel: cmd.needsInfoLabel,
+        needsInfoLabel,
         ...(cmd.label !== undefined ? { ownerLabel: cmd.label } : {}),
       },
       concurrency: cmd.concurrency,
@@ -216,10 +217,11 @@ async function watchGithubSource(
     return;
   }
 
-  if (cmd.label === undefined) throw new Error('--label is required for github watch source');
+  // parseCli guarantees --label for the single-pass github source.
+  const label = cmd.label!;
   await watchGithub({
     deps,
-    label: cmd.label,
+    label,
     claimedLabel: cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
     reviewLabel: cmd.reviewState ?? GITHUB_REVIEW_LABEL,
     concurrency: cmd.concurrency,
@@ -235,11 +237,12 @@ async function watchGithubProjectSource(
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
-  if (cmd.projectNumber === undefined) throw new Error('--project <number> is required for project watch source');
+  // parseCli guarantees --project for the project source.
+  const projectNumber = cmd.projectNumber!;
   const deps = await buildGithubDeps(cmd, auth, ctx);
   await watchGithubProject({
     deps,
-    projectNumber: cmd.projectNumber,
+    projectNumber,
     triggerStatus: cmd.triggerState ?? 'Todo',
     claimedStatus: cmd.claimedState ?? 'In Progress',
     reviewStatus: cmd.reviewState ?? 'In Review',

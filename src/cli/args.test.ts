@@ -143,6 +143,15 @@ describe('parseCli', () => {
     });
   });
 
+  it('returns an error when implement and review providers share a transport', () => {
+    expect(
+      parseCli(['run', '--linear', 'TES-1', '--provider', 'claude', '--review-provider', 'zai'], '/work'),
+    ).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('transport'),
+    });
+  });
+
   it('parses --provider-model and --review-model on run', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1', '--provider-model', 'opus', '--review-model', 'haiku'], '/work');
     expect(cmd.kind === 'run' && cmd.providerModel).toBe('opus');
@@ -462,6 +471,21 @@ describe('parseCli', () => {
     expect(parseCli(['run'], '/work')).toMatchObject({ kind: 'error' });
     expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work')).toMatchObject({ kind: 'error' });
     expect(parseCli(['run', '--github', 'A', '--project', '3'], '/work')).toMatchObject({ kind: 'error' });
+  });
+
+  it('returns an error when run --parent is used without --linear', () => {
+    expect(parseCli(['run', '--github', 'o/r#1', '--parent'], '/work')).toMatchObject({
+      kind: 'error',
+      message: '--parent is only supported with --linear.',
+    });
+  });
+
+  it('returns an error when run --project is not a positive integer', () => {
+    expect(parseCli(['run', '--project', 'x'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--project expects a board number'),
+    });
+    expect(parseCli(['run', '--project', '0'], '/work')).toMatchObject({ kind: 'error' });
   });
 
   it('parses --verify into verifyCmd on run', () => {
