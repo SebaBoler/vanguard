@@ -460,11 +460,14 @@ export function formatFileChanges(files: FileChange[], maxFiles: number, maxSyms
     const symParts: string[] = [];
     if (fc.added.length > 0) symParts.push(formatSymList('added', fc.added, maxSyms));
     if (fc.removed.length > 0) symParts.push(formatSymList('removed', fc.removed, maxSyms));
-    parts.push(symParts.length > 0 ? `${fc.path} (${symParts.join('; ')})` : fc.path);
+    // Separate added/removed (and each file) with a sentence terminator so `summaryContradictsDiff`,
+    // which splits on `[.!?\n]`, never sees an add-claim and a remove-claim in the same "sentence" and
+    // cross-applies them — that false-positives on the common same-file add+remove revision shape.
+    parts.push(symParts.length > 0 ? `${fc.path} (${symParts.join('. ')})` : fc.path);
   }
 
   if (files.length > maxFiles) parts.push(`(+${files.length - maxFiles} more)`);
-  return parts.length > 0 ? `touched ${parts.join(', ')}` : '';
+  return parts.length > 0 ? `touched ${parts.join('. ')}` : '';
 }
 
 /**

@@ -891,4 +891,27 @@ describe('guardedPoint', () => {
     const candidate = 'touched src/runner.ts (removed `validateProviderChoice`)';
     expect(guardedPoint(candidate, '')).toBe(candidate);
   });
+
+  it('survives a same-file add+remove and renders both clauses', () => {
+    // One file with both an added and a removed symbol — the common "edit a line" revision shape.
+    const diff = [
+      '--- a/src/foo.ts',
+      '+++ b/src/foo.ts',
+      '@@ -1,3 +1,3 @@',
+      ' function foo() {',
+      '-  oldThing();',
+      '+  newThing();',
+      ' }',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files[0]?.added).toContain('newThing');
+    expect(files[0]?.removed).toContain('oldThing');
+
+    const candidate = describeDiff(diff);
+    const guarded = guardedPoint(candidate, diff);
+    // The diff-derived description must NOT be discarded, and both clauses must render.
+    expect(guarded).toBe(candidate);
+    expect(guarded).toContain('added `newThing`');
+    expect(guarded).toContain('removed `oldThing`');
+  });
 });
