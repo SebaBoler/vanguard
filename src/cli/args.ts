@@ -30,6 +30,17 @@ export type Command =
       researchModel?: string;
     }
   | {
+      kind: 'revise-pr';
+      prRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      reviewModel?: string;
+      maxRounds?: number;
+    }
+  | {
       kind: 'watch-prs';
       repoSlug: string;
       repoPath: string;
@@ -266,6 +277,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // research
         web: { type: 'boolean' },
         'research-model': { type: 'string' },
+        // revise-pr
+        'max-rounds': { type: 'string' },
         // stats / memory
         json: { type: 'boolean' },
         limit: { type: 'string' },
@@ -344,6 +357,23 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
+    };
+  }
+
+  if (positionals[0] === 'revise-pr') {
+    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
+    if (prRef === undefined) return { kind: 'help' };
+    const maxRoundsRaw = Number(values['max-rounds']);
+    return {
+      kind: 'revise-pr',
+      prRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
     };
   }
 
@@ -551,6 +581,7 @@ Commands:
   watch  Poll Linear or GitHub and run each newly-ready issue automatically (the AFK factory loop).
   doctor Check whether watch can run AFK before any issue is claimed.
   review-pr Review an existing GitHub PR and post a non-blocking Vanguard review comment.
+  revise-pr Read human review feedback on a Vanguard draft PR, apply fixes, and hand it back ready to merge.
   watch-prs Poll GitHub PRs by label and run the non-blocking Vanguard review loop.
   doctor-prs Check whether watch-prs can run AFK before any PR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
@@ -664,6 +695,20 @@ Commands:
     --research-model <m>    Model for the research pass
     --provider <claude|codex|cursor|zai>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
+
+  revise-pr options:
+    <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github-pr <n>        PR number (alternative to positional)
+    --github-repo <o/r>    Required for bare PR numbers
+    --provider <claude|codex|cursor|zai>          Provider for the implementer/review stages (default: claude)
+    --review-model <m>     Model for the review stage
+    --max-rounds <n>       Maximum revision rounds (default: 2)
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+    Triggered by the "needs revision" label on a Vanguard draft PR. Reads feedback from
+    review threads, review summaries, and PR comments; applies fixes to the existing PR branch;
+    replies to and resolves addressed threads; un-drafts the PR; and sets the label to
+    "vanguard:needs-human-review" for the next human action.
 
   watch-prs options:
     --github-repo <o/r>    Required repo slug
