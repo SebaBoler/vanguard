@@ -8,8 +8,12 @@ import {
   buildItemReply,
   buildRevisionSummary,
   summaryContradictsDiff,
+  parseRevisionDiff,
+  describeDiff,
+  describeItemChange,
+  guardedPoint,
 } from './pr-feedback.js';
-import type { PullRequestFeedback, FeedbackItem, RevisionSummaryInput } from './pr-feedback.js';
+import type { PullRequestFeedback, FeedbackItem, RevisionSummaryInput, FileChange } from './pr-feedback.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -598,5 +602,293 @@ describe('summaryContradictsDiff', () => {
     const text = 'Restored `validateProviderChoice` here.';
     const result = summaryContradictsDiff(text, '');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseRevisionDiff
+// ---------------------------------------------------------------------------
+
+describe('parseRevisionDiff', () => {
+  it('returns empty array for an empty diff', () => {
+    expect(parseRevisionDiff('')).toHaveLength(0);
+    expect(parseRevisionDiff('   ')).toHaveLength(0);
+  });
+
+  it('parses a single-file remove', () => {
+    const diff = [
+      'diff --git a/src/runner.ts b/src/runner.ts',
+      '--- a/src/runner.ts',
+      '+++ b/src/runner.ts',
+      '@@ -1,4 +1,3 @@',
+      ' function runCommand() {',
+      '-  validateProviderChoice(provider, allowedProviders);',
+      ' }',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe('src/runner.ts');
+    expect(files[0]?.removed).toContain('validateProviderChoice');
+    expect(files[0]?.added).not.toContain('validateProviderChoice');
+  });
+
+  it('parses a single-file add (new file)', () => {
+    const diff = [
+      'diff --git a/src/helper.ts b/src/helper.ts',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/src/helper.ts',
+      '@@ -0,0 +1,3 @@',
+      '+function newHelper() {',
+      '+  return true;',
+      '+}',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe('src/helper.ts');
+    expect(files[0]?.added).toContain('newHelper');
+  });
+
+  it('excludes symbols on both + and - lines from added/removed (modified)', () => {
+    const diff = [
+      'diff --git a/src/foo.ts b/src/foo.ts',
+      '--- a/src/foo.ts',
+      '+++ b/src/foo.ts',
+      '@@ -1,3 +1,3 @@',
+      ' function foo() {',
+      '-  helperFn(oldArg);',
+      '+  helperFn(newArg);',
+      ' }',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files[0]?.added).not.toContain('helperFn');
+    expect(files[0]?.removed).not.toContain('helperFn');
+    expect(files[0]?.added).toContain('newArg');
+    expect(files[0]?.removed).toContain('oldArg');
+  });
+
+  it('parses multiple files', () => {
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1,2 +1,1 @@',
+      '-  funcA();',
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- a/src/b.ts',
+      '+++ b/src/b.ts',
+      '@@ -1,1 +1,2 @@',
+      '+  funcB();',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(2);
+    expect(files[0]?.path).toBe('src/a.ts');
+    expect(files[0]?.removed).toContain('funcA');
+    expect(files[1]?.path).toBe('src/b.ts');
+    expect(files[1]?.added).toContain('funcB');
+  });
+
+  it('handles new untracked file (--- /dev/null)', () => {
+    const diff = [
+      'diff --git a/new.txt b/new.txt',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/new.txt',
+      '@@ -0,0 +1 @@',
+      '+hello world',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe('new.txt');
+  });
+
+  it('parses quoted paths with spaces', () => {
+    const diff = [
+      'diff --git "a/src/file name.ts" "b/src/file name.ts"',
+      '--- "a/src/file name.ts"',
+      '+++ "b/src/file name.ts"',
+      '@@ -1,1 +1,2 @@',
+      '+function parseFlags() { return true; }',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe('src/file name.ts');
+    expect(files[0]?.added).toContain('parseFlags');
+  });
+
+  it('parses a unified file diff without a diff-git header', () => {
+    const diff = [
+      '--- a/src/runner.ts',
+      '+++ b/src/runner.ts',
+      '@@ -1,4 +1,3 @@',
+      '-  validateProviderChoice(provider, allowedProviders);',
+    ].join('\n');
+    const files = parseRevisionDiff(diff);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe('src/runner.ts');
+    expect(files[0]?.removed).toContain('validateProviderChoice');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// describeDiff
+// ---------------------------------------------------------------------------
+
+describe('describeDiff', () => {
+  it('returns empty string for an empty diff', () => {
+    expect(describeDiff('')).toBe('');
+  });
+
+  it('returns a removed-symbol line with backtick-wrapped symbols', () => {
+    const diff = [
+      'diff --git a/src/runner.ts b/src/runner.ts',
+      '--- a/src/runner.ts',
+      '+++ b/src/runner.ts',
+      '@@ -1,4 +1,3 @@',
+      ' function runCommand() {',
+      '-  validateProviderChoice(provider, allowedProviders);',
+      ' }',
+    ].join('\n');
+    const result = describeDiff(diff);
+    expect(result).toContain('src/runner.ts');
+    expect(result).toContain('`validateProviderChoice`');
+    expect(result).toContain('removed');
+  });
+
+  it('returns an added-symbol line with backtick-wrapped symbols', () => {
+    const diff = [
+      'diff --git a/src/helper.ts b/src/helper.ts',
+      '--- /dev/null',
+      '+++ b/src/helper.ts',
+      '@@ -0,0 +1 @@',
+      '+function parseFlags() { return true; }',
+    ].join('\n');
+    const result = describeDiff(diff);
+    expect(result).toContain('src/helper.ts');
+    expect(result).toContain('`parseFlags`');
+    expect(result).toContain('added');
+  });
+
+  it('truncates files beyond maxFiles and appends (+N more)', () => {
+    const diff = [1, 2, 3, 4]
+      .map((i) =>
+        [
+          `diff --git a/src/file${i}.ts b/src/file${i}.ts`,
+          `--- a/src/file${i}.ts`,
+          `+++ b/src/file${i}.ts`,
+          '@@ -1,1 +1,2 @@',
+          `+function func${i}() {}`,
+        ].join('\n'),
+      )
+      .join('\n');
+    const result = describeDiff(diff, 3);
+    expect(result).toContain('(+1 more)');
+  });
+
+  it('starts with "touched "', () => {
+    const diff = [
+      'diff --git a/src/foo.ts b/src/foo.ts',
+      '--- a/src/foo.ts',
+      '+++ b/src/foo.ts',
+      '@@ -1,1 +1,2 @@',
+      '+  doThing();',
+    ].join('\n');
+    expect(describeDiff(diff)).toMatch(/^touched /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// describeItemChange
+// ---------------------------------------------------------------------------
+
+describe('describeItemChange', () => {
+  const files: FileChange[] = [
+    {
+      path: 'src/runner.ts',
+      added: [],
+      removed: ['validateProviderChoice'],
+    },
+  ];
+
+  it('returns scoped line when body mentions a file path present in diff', () => {
+    const item: FeedbackItem = {
+      source: 'review',
+      author: 'alice',
+      body: 'Please check src/runner.ts for the validation call',
+      createdAt: '',
+    };
+    const result = describeItemChange(item, files);
+    expect(result).toContain('src/runner.ts');
+  });
+
+  it('returns empty string when body mentions nothing matchable', () => {
+    const item: FeedbackItem = {
+      source: 'review',
+      author: 'alice',
+      body: 'LGTM overall',
+      createdAt: '',
+    };
+    expect(describeItemChange(item, files)).toBe('');
+  });
+
+  it('returns empty string when body mentions a file not present in diff', () => {
+    const item: FeedbackItem = {
+      source: 'review',
+      author: 'alice',
+      body: 'Check src/other.ts',
+      createdAt: '',
+    };
+    expect(describeItemChange(item, files)).toBe('');
+  });
+
+  it('matches via backtick-quoted symbol present in diff', () => {
+    const item: FeedbackItem = {
+      source: 'review',
+      author: 'alice',
+      body: 'The `validateProviderChoice` call should stay',
+      createdAt: '',
+    };
+    const result = describeItemChange(item, files);
+    expect(result).toContain('src/runner.ts');
+  });
+
+  it('returns empty string when files array is empty', () => {
+    expect(describeItemChange(reviewItem(), [])).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// guardedPoint
+// ---------------------------------------------------------------------------
+
+describe('guardedPoint', () => {
+  const removeDiff = [
+    '--- a/src/runner.ts',
+    '+++ b/src/runner.ts',
+    '@@ -1,4 +1,3 @@',
+    ' function runCommand() {',
+    '-  validateProviderChoice(provider, allowedProviders);',
+    ' }',
+  ].join('\n');
+
+  it('returns the candidate unchanged when it is consistent with the diff (remove case)', () => {
+    const candidate = 'touched src/runner.ts (removed `validateProviderChoice`)';
+    expect(guardedPoint(candidate, removeDiff)).toBe(candidate);
+  });
+
+  it('returns empty string when candidate contradicts the diff (#177 regression)', () => {
+    // The diff removes validateProviderChoice but the candidate claims it was restored/added.
+    const candidate = 'Restored `validateProviderChoice` to validate the provider.';
+    expect(guardedPoint(candidate, removeDiff)).toBe('');
+  });
+
+  it('returns empty string for an empty candidate', () => {
+    expect(guardedPoint('', removeDiff)).toBe('');
+    expect(guardedPoint('   ', removeDiff)).toBe('');
+  });
+
+  it('returns the candidate when diff is empty (no facts to contradict)', () => {
+    const candidate = 'touched src/runner.ts (removed `validateProviderChoice`)';
+    expect(guardedPoint(candidate, '')).toBe(candidate);
   });
 });

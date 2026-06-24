@@ -378,6 +378,138 @@ export function buildRevisionSummary(input: RevisionSummaryInput): string {
   return lines.join('\n');
 }
 
+// TS/JS keywords and common short tokens — never claim these as "symbols added/removed".
+const DIFF_STOP_WORDS = new Set([
+  'function', 'const', 'return', 'import', 'export', 'from', 'class',
+  'interface', 'type', 'let', 'var', 'new', 'this', 'true', 'false', 'null',
+  'undefined', 'void', 'string', 'number', 'boolean', 'object', 'async',
+  'await', 'switch', 'case', 'default', 'break', 'continue', 'throw', 'catch',
+  'finally', 'try', 'else', 'extends', 'implements', 'static', 'public',
+  'private', 'protected', 'readonly', 'abstract', 'enum', 'typeof', 'super',
+]);
+
+const SYM_RE = /\b([a-zA-Z_]\w{2,})\b/g;
+const DIFF_FILE_RE = /^(?:---|\+\+\+) (.+)$/;
+
+/** Per-file summary of what the revision diff added and removed. */
+export interface FileChange {
+  path: string;
+  added: string[];
+  removed: string[];
+}
+
+/** Parse a unified git diff into per-file change facts. */
+export function parseRevisionDiff(diff: string): FileChange[] {
+  if (!diff.trim()) return [];
+  const result: FileChange[] = [];
+
+  const blocks = diff.includes('diff --git ') ? diff.split(/^diff --git .+$/m).filter((b) => b.trim() !== '') : [diff];
+  for (const block of blocks) {
+    const addedSet = new Set<string>();
+    const removedSet = new Set<string>();
+    let oldPath = '';
+    let newPath = '';
+
+    for (const line of block.split('\n')) {
+      const fileMatch = line.match(DIFF_FILE_RE);
+      if (fileMatch) {
+        const path = parseDiffPath(fileMatch[1] ?? '');
+        if (line.startsWith('---')) oldPath = path;
+        else newPath = path;
+        continue;
+      }
+      if (line.startsWith('@@') || line.startsWith('\\')) continue;
+      if (!line.startsWith('+') && !line.startsWith('-')) continue;
+      const syms = Array.from(line.slice(1).matchAll(SYM_RE))
+        .map((m) => m[1] ?? '')
+        .filter((s) => s !== '' && !DIFF_STOP_WORDS.has(s));
+      if (line.startsWith('+')) for (const s of syms) addedSet.add(s);
+      else for (const s of syms) removedSet.add(s);
+    }
+
+    const path = newPath === '/dev/null' ? oldPath : newPath;
+    if (path === '' || path === '/dev/null') continue;
+
+    // Symbols on both sides are modified — exclude from both so we only claim clear direction.
+    const added = [...addedSet].filter((s) => !removedSet.has(s));
+    const removed = [...removedSet].filter((s) => !addedSet.has(s));
+    result.push({ path, added, removed });
+  }
+
+  return result;
+}
+
+function parseDiffPath(raw: string): string {
+  const pathWithMeta = raw.trim();
+  const path =
+    pathWithMeta.startsWith('"') && pathWithMeta.endsWith('"')
+      ? pathWithMeta.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      : pathWithMeta.split(/\t/)[0] ?? pathWithMeta;
+  return path.replace(/^[ab]\//, '');
+}
+
+function formatSymList(label: string, syms: string[], max: number): string {
+  const more = syms.length > max ? ` (+${syms.length - max} more)` : '';
+  return `${label} ${syms.slice(0, max).map((s) => `\`${s}\``).join(', ')}${more}`;
+}
+
+export function formatFileChanges(files: FileChange[], maxFiles: number, maxSyms: number): string {
+  const parts: string[] = [];
+
+  for (const fc of files.slice(0, maxFiles)) {
+    const symParts: string[] = [];
+    if (fc.added.length > 0) symParts.push(formatSymList('added', fc.added, maxSyms));
+    if (fc.removed.length > 0) symParts.push(formatSymList('removed', fc.removed, maxSyms));
+    parts.push(symParts.length > 0 ? `${fc.path} (${symParts.join('; ')})` : fc.path);
+  }
+
+  if (files.length > maxFiles) parts.push(`(+${files.length - maxFiles} more)`);
+  return parts.length > 0 ? `touched ${parts.join(', ')}` : '';
+}
+
+/**
+ * Coarse diff-true "what changed" line derived from the revision diff.
+ * Symbols are backtick-wrapped so `summaryContradictsDiff` can validate them.
+ * Returns '' when the diff is empty or yields no usable content.
+ */
+export function describeDiff(diff: string, maxFiles = 3): string {
+  return formatFileChanges(parseRevisionDiff(diff), maxFiles, 3);
+}
+
+/**
+ * Narrow the global digest to files/symbols this feedback item plausibly refers to.
+ * Uses only body-text signals (path mentions, backtick symbols). Returns '' when uncertain;
+ * the caller should fall back to the global digest.
+ */
+export function describeItemChange(item: FeedbackItem, files: FileChange[]): string {
+  if (files.length === 0) return '';
+
+  const pathMatches = files.filter((fc) => {
+    const filename = fc.path.split('/').pop() ?? fc.path;
+    return item.body.includes(fc.path) || (filename.length >= 3 && item.body.includes(filename));
+  });
+  if (pathMatches.length > 0) return formatFileChanges(pathMatches, 2, 3);
+
+  const bodySyms = Array.from(item.body.matchAll(/`(\w{3,})`/g))
+    .map((m) => m[1] ?? '')
+    .filter(Boolean);
+  const symMatches =
+    bodySyms.length > 0 ? files.filter((fc) => bodySyms.some((s) => fc.added.includes(s) || fc.removed.includes(s))) : [];
+  return symMatches.length > 0 ? formatFileChanges(symMatches, 2, 3) : '';
+}
+
+/**
+ * Validate a candidate description against the revision diff.
+ * If the candidate contradicts the diff (claims "added X" when X was only removed, or vice-versa),
+ * returns '' so the caller can fall back to a neutral ack. This is the single choke point that
+ * keeps `summaryContradictsDiff` active on every posted description rather than dead code.
+ */
+export function guardedPoint(candidate: string, diff: string): string {
+  if (candidate.trim() === '') return '';
+  const { ok } = summaryContradictsDiff(candidate, diff);
+  return ok ? candidate : '';
+}
+
 /**
  * Heuristic accuracy guard: detects when acknowledgement text contradicts the round diff.
  * Only catches direct contradictions provable from +/- lines; never blocks, only reports.
