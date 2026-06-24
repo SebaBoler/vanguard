@@ -8,6 +8,7 @@ import { AgentError } from '../core/errors.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
+import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
 
@@ -417,6 +418,48 @@ export function withStageFallback(
   stageName = 'reviewer',
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
+}
+
+export interface ReviewPipelineDeps {
+  provider?: ProviderName;
+  reviewProvider?: ProviderName;
+  providerModel?: string;
+  reviewModel?: string;
+  noSimplify?: boolean;
+}
+
+/**
+ * Compose the standard review pipeline transformers over `base` stages. Handles the `--no-simplify`
+ * filter, cross-provider reviewer gating, per-stage model assignment, and fallback wiring in one place
+ * so neither the GitHub nor Linear runner needs to inline these steps.
+ */
+export function assembleReviewPipeline(
+  base: PipelineStage[],
+  agents: { agent: AgentProvider; reviewAgent?: AgentProvider },
+  deps: ReviewPipelineDeps,
+): PipelineStage[] {
+  // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
+  let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== 'simplifier') : base;
+  if (agents.reviewAgent !== undefined) pipeline = withStageProvider(pipeline, agents.reviewAgent);
+  if (deps.providerModel !== undefined) {
+    // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
+    // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
+    // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
+    const crossProviderReview = deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
+    pipeline = crossProviderReview
+      ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
+      : withStageModel(pipeline, deps.providerModel);
+  }
+  if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
+  // Cross-provider reviewer: fall back to the planning provider on AgentError (outage/rate-limit)
+  // rather than failing the whole run. The fallback never sends the reviewer's foreign model name.
+  if (agents.reviewAgent !== undefined) {
+    pipeline = withStageFallback(pipeline, {
+      provider: agents.agent,
+      ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+    });
+  }
+  return pipeline;
 }
 
 /**
