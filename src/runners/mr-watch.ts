@@ -126,7 +126,7 @@ async function hasExistingReviewForHead(
   try {
     const out = await glab([
       'api',
-      `projects/${encodeProject(item.project)}/merge_requests/${item.iid}/notes`,
+      `projects/${encodeProject(item.project)}/merge_requests/${item.iid}/notes?per_page=100`,
     ]);
     const notes = JSON.parse(out) as GlabMrNoteItem[];
     return notes.some(

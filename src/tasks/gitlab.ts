@@ -58,7 +58,7 @@ export class GitLabTaskFetcher implements TaskFetcher {
     const issueOut = await this.glab(['issue', 'view', iid, '--repo', this.project, '--output', 'json']);
     const issue = JSON.parse(issueOut) as GitLabIssue;
     // notes fetched separately — glab issue view does not include them
-    const notesOut = await this.glab(['api', `projects/${encodeProject(this.project)}/issues/${iid}/notes`]);
+    const notesOut = await this.glab(['api', `projects/${encodeProject(this.project)}/issues/${iid}/notes?per_page=100`]);
     const notes = JSON.parse(notesOut) as GitLabNote[];
     return toGitLabTask(this.project, issue, notes);
   }
