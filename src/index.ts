@@ -91,6 +91,8 @@ export {
   fetchPullRequestForReview,
   buildPullRequestReviewPrompt,
   buildPullRequestReviewComment,
+  buildPullRequestReviewIncompleteComment,
+  PR_REVIEW_INCOMPLETE_NOTICE,
   pullRequestReviewMarker,
   hasPullRequestReviewMarker,
   reviewPullRequest,
@@ -104,6 +106,8 @@ export type {
   PullRequestReviewTarget,
   PullRequestForReview,
   PullRequestReviewer,
+  PullRequestReviewOutcome,
+  PullRequestReviewAttempt,
   ReviewPullRequestDeps,
   ReviewPullRequestResult,
 } from './runners/pr-review.js';

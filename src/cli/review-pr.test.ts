@@ -6,7 +6,7 @@ import type { ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/
 describe('reviewPrCommand', () => {
   it('delegates to the PR review runner and preserves operator logs', async () => {
     const logs: string[] = [];
-    const reviewer = vi.fn().mockResolvedValue('No blocking findings.');
+    const reviewer = vi.fn().mockResolvedValue({ text: 'No blocking findings.', completed: true });
     const reviewPullRequest = vi.fn(
       async (_ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> => {
         deps.log?.('review-pr o/r#12: fetch -> diff');
