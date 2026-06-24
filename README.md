@@ -345,6 +345,23 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 
 > **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent` only. The spec loop runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug. Add an ownership label such as `vanguard` only when your watcher is started with `--label vanguard`.
 
+#### Routing labels — full set (which go on an **issue** vs a **PR**)
+
+`ready for ...` / `needs ...` are **triggers you add by hand**; `vanguard:...` are **states Vanguard sets itself**. Issue-side triggers fire `issues: labeled` workflows; PR-side triggers fire `pull_request_target: labeled` workflows.
+
+| Label | On | Kind | Triggers / means |
+|---|---|---|---|
+| `ready for spec` | issue | trigger | spec pass writes a `<tech_spec>`, then builds |
+| `ready for agent` | issue | trigger | builds directly (issue already scoped) |
+| `needs research` | issue | trigger | external research → posts a findings comment → **rests** (no auto-advance; you set spec/agent next) |
+| `needs info` | issue | triage (resting) | parked — ticket too vague |
+| `ready for vanguard review` | **PR** | trigger | adversarial **read-only** review → posts a comment; never edits code |
+| `needs revision` | **PR** (a Vanguard draft) | trigger | reads your review comments → fixes on the PR branch → pushes → un-drafts → back to `needs-human-review` |
+| `vanguard:speccing` · `:running` · `:researching` · `:revising` · `:reviewing` | issue/PR | transient state | Vanguard is working (seconds–minutes) |
+| `vanguard:needs-human-review` · `:reviewed` · `:verify-failed` · `:visual-proof-failed` | issue/PR | resting state | waiting on a human |
+
+The word "review" means two things: `ready for vanguard review` (PR) is **Vanguard reviewing your PR** (read-only comment); `needs revision` (PR) is **Vanguard acting on your review of its own draft** (edits + pushes). `vanguard:needs-human-review` is the post-build resting state — your turn to review the draft.
+
 ```bash
 # GitHub Loop v1.1 defaults
 vanguard doctor --source github --github-repo owner/repo
@@ -465,9 +482,9 @@ watch-prs owner/repo#123: reviewed -> marked
 
 **Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
 
-**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. It is **self-review-only**: the job condition requires `github.event.pull_request.user.login == 'SebaBoler'` and the review pass runs with `--author SebaBoler`, so only the maintainer's own PRs are ever reviewed — another contributor's PR is skipped even if labeled.
+**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. Because Flow B is read-only (it reviews the diff in a sandbox and only posts a comment), the job gate is an **author + sender allow-list** rather than a single login: `contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.pull_request.user.login)` **and** the same check on `github.event.sender.login` — a trusted person labels a trusted person's PR. Widen the list to add reviewers; keep it tight because each entry can trigger a run on the repo's review credit. (The sibling `vanguard-revise.yml` flow, which *pushes* code, keeps its author gate to the bot/owner only — see Flow C.)
 
-**Behavior:** each label event runs `watch-prs --once --author SebaBoler`, which reviews only the maintainer's PRs carrying the trigger label (not another contributor's, and not only the just-labeled one). This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
+**Behavior:** each label event runs `watch-prs --once` (the gate, not an `--author` filter, controls which PRs are eligible), reviewing PRs carrying the trigger label. This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
 
 **Re-review:** after new commits land, remove and re-add `ready for vanguard review` to trigger a fresh pass.
 
@@ -558,7 +575,7 @@ jobs:
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). `--ignore-workspace` on the Vanguard install matters when the target repo is itself a **pnpm workspace** (monorepo): without it, `pnpm install` in `.vanguard-src` walks up to the target's `pnpm-workspace.yaml`, installs into the wrong place, and the Vanguard build fails. It is a no-op for non-workspace targets, so keep it always.
 
-**Backward compatibility — `vanguard:review` label.** Repos onboarded before this change carry `vanguard:review` on in-flight issues and PRs; Vanguard will not migrate them automatically. The new default (`vanguard:needs-human-review`) and the old label coexist harmlessly in the same repo — `gh label create --force` adds the new one without deleting the old. To reconcile in-flight items, either re-run the "Ensure routing labels" step (it adds the new label) then pass `--review-state vanguard:review` to keep the old terminal label, or update in-flight labels by hand and let Vanguard pick up the new default going forward.
+**Backward compatibility — `vanguard:review` label (deprecated).** The post-build resting state was renamed from `vanguard:review` to `vanguard:needs-human-review`; the maintained repos (vanguard, temp-test, alpha-window) have had the old label deleted. A repo onboarded before the rename may still carry `vanguard:review` on in-flight items — Vanguard will not migrate it automatically. The new default and the old label coexist harmlessly (`gh label create --force` adds the new one without touching the old); delete the stale `vanguard:review` once nothing in flight uses it, or pass `--review-state vanguard:review` if you deliberately want to keep the old terminal label.
 
 #### Cross-provider on a Codex subscription (no OpenAI key)
 
