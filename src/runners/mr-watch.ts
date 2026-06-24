@@ -168,11 +168,22 @@ export function gitlabMergeRequestWatchPrimitives(
       editMrLabels(glab, item.project, item.iid, {
         add: [opts.reviewedLabel],
       }).then(() => {}),
-    onFailure: (item) =>
-      editMrLabels(glab, item.project, item.iid, {
+    onFailure: async (item, error) => {
+      try {
+        await glab([
+          'mr', 'note', 'create',
+          String(item.iid),
+          '--project', item.project,
+          '-m', `Vanguard MR review failed: ${String(error)}`,
+        ]);
+      } catch {
+        // note posting is best-effort; always restore the trigger label
+      }
+      await editMrLabels(glab, item.project, item.iid, {
         remove: [opts.reviewingLabel],
         add: [opts.label],
-      }).then(() => {}),
+      });
+    },
   };
 }
 

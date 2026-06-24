@@ -148,7 +148,7 @@ export async function gitlabDepsFromEnv(
   let resolvedProject = project;
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
-    const match = stdout.trim().match(/[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+    const match = stdout.trim().match(/(?:^[^:]+:|https?:\/\/[^/]+\/)(.+?)(?:\.git)?$/);
     if (match?.[1] === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
     resolvedProject = match[1];
   }
