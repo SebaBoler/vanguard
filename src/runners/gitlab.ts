@@ -125,10 +125,12 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
       await persistStageOutcomes(deps.repoPath, outcomes);
       if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
       if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
-      await refreshRetrospectiveMemory(deps.repoPath);
       await linkMergeRequest(deps.project, issueRef, mr.prUrl);
       return { task, prUrl: mr.prUrl };
     } finally {
+      await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
+        console.error('retrospective memory refresh failed (non-fatal):', err);
+      });
       await disposeContext(ctx);
     }
   } finally {

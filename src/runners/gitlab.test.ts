@@ -1,6 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { runGitlabIssue } from './gitlab.js';
-import type { RunGitlabIssueDeps } from './gitlab.js';
 
 describe('runGitlabIssue', () => {
   it('returns no prUrl when agent produces no changes', async () => {
