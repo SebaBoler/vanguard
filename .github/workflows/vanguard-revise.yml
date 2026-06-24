@@ -1,0 +1,45 @@
+name: Vanguard Revise
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr: { description: "PR number", required: true }
+permissions:
+  contents: write          # pushes the revision commit to the PR branch
+  pull-requests: write     # reply, resolve threads, gh pr ready
+  issues: write
+concurrency:
+  group: vanguard-revise-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  revise:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'needs revision' &&
+       github.event.pull_request.user.login == 'SebaBoler')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+          fetch-depth: 0          # the runner fetches the PR branch and pushes back to it
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest docker/
+      - name: Ensure routing labels
+        run: |
+          gh label create "needs revision" --repo "$GITHUB_REPOSITORY" --color E99695 --force
+          gh label create "vanguard:revising" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --force
+      - name: Revise the PR from review comments
+        run: |
+          node dist/cli/index.js revise-pr "${{ github.event.pull_request.number || inputs.pr }}" \
+            --github-repo "$GITHUB_REPOSITORY" --max-rounds 2 --llm-proxy
