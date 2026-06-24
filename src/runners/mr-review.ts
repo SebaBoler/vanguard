@@ -74,7 +74,7 @@ export async function fetchMergeRequestForReview(
     iid: view.iid ?? target.iid,
     title: view.title ?? '',
     description: view.description ?? '',
-    webUrl: view.web_url ?? `https://gitlab.com/${target.project}/-/merge_requests/${target.iid}`,
+    webUrl: view.web_url ?? '',
     author: view.author?.username ?? '',
     sourceBranch: view.source_branch ?? '',
     sha: view.sha ?? '',

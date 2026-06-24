@@ -159,8 +159,22 @@ export function gitlabMergeRequestWatchPrimitives(
       ];
       if (opts.author !== undefined) listArgs.push('--author', opts.author);
       const candidates = parseMrList(await glab(listArgs), opts.project, opts.label, opts.author);
+      // glab mr list may omit sha; enrich from mr view so dedup works correctly.
+      const enriched = await Promise.all(
+        candidates.map(async (item): Promise<MergeRequestWatchItem> => {
+          if (item.sha !== '') return item;
+          try {
+            const view = JSON.parse(
+              await glab(['mr', 'view', String(item.iid), '--repo', opts.project, '--output', 'json']),
+            ) as { sha?: string };
+            return { ...item, sha: view.sha ?? '' };
+          } catch {
+            return item;
+          }
+        }),
+      );
       const ready = await Promise.all(
-        candidates.map(async (item): Promise<MergeRequestWatchItem | undefined> =>
+        enriched.map(async (item): Promise<MergeRequestWatchItem | undefined> =>
           (await hasExistingReviewForHead(glab, item, log)) ? undefined : item,
         ),
       );
@@ -173,8 +187,9 @@ export function gitlabMergeRequestWatchPrimitives(
       }).then(() => {}),
     review: (item) => opts.reviewOne(item),
     markReviewed: (item) =>
-      // GitLab scoped labels: adding vanguard::reviewed auto-removes vanguard::reviewing
+      // Explicitly remove reviewingLabel for robustness when non-scoped labels are configured.
       editMrLabels(glab, item.project, item.iid, {
+        remove: [opts.reviewingLabel],
         add: [opts.reviewedLabel],
       }).then(() => {}),
     onFailure: async (item, error) => {

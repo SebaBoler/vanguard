@@ -734,8 +734,8 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
                 editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, glab),
             }),
     review: (id) =>
-      // GitLab scoped labels: adding vanguard::review auto-removes vanguard::running (same scope)
-      editGitlabLabels(project, id, { add: [opts.reviewLabel] }, glab),
+      // Explicitly remove claimedLabel for robustness when non-scoped labels are configured.
+      editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, glab),
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, `Vanguard run failed: ${String(error)}`, glab),
   };
