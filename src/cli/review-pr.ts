@@ -10,7 +10,7 @@ import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildPullRequestReviewPrompt, reviewPullRequest } from '../runners/pr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { PullRequestForReview, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
+import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
 import type { Command } from './args.js';
 
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
@@ -44,7 +44,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
   });
   try {
-    const reviewer: PullRequestReviewer = (pr) => runDefaultReviewer(pr, cmd, auth, sandboxContext);
+    const reviewer: PullRequestReviewer = (pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts);
     const result = await runReview(cmd.prRef, {
       reviewer,
       log,
@@ -61,7 +61,8 @@ async function runDefaultReviewer(
   cmd: ReviewPrCommand,
   auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
-): Promise<string> {
+  opts: PullRequestReviewAttempt,
+): Promise<PullRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
   // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
@@ -88,14 +89,14 @@ async function runDefaultReviewer(
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
         agent: agents.agent,
-        promptTemplate: buildPullRequestReviewPrompt(pr),
+        promptTemplate: buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry }),
         systemPrompt: adversarySystemPrompt(),
-        effort: 'high',
-        maxTurns: 8,
+        effort: opts.isRetry ? 'xhigh' : 'high',
+        maxTurns: opts.isRetry ? 24 : 16,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });
-      return result.finalText;
+      return { text: result.finalText, completed: result.completed };
     } finally {
       await disposeContext(ctx);
     }

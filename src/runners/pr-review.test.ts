@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   buildPullRequestReviewComment,
+  buildPullRequestReviewIncompleteComment,
   buildPullRequestReviewPrompt,
   fetchPullRequestForReview,
   hasPullRequestReviewMarker,
   parsePullRequestRef,
+  PR_REVIEW_INCOMPLETE_NOTICE,
   reviewPullRequest,
 } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -71,42 +73,105 @@ describe('fetchPullRequestForReview', () => {
   });
 });
 
+function makeGh(): { calls: string[][]; gh: GhRunner } {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    if (args[0] === 'pr' && args[1] === 'view') {
+      return JSON.stringify({
+        number: 12,
+        title: 'Fix auth',
+        body: '',
+        url: 'https://github.com/o/r/pull/12',
+        author: { login: 'alice' },
+        headRefName: 'h',
+        headRefOid: 'def456',
+        baseRefName: 'main',
+      });
+    }
+    if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
+    if (args[0] === 'pr' && args[1] === 'review') return '';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  return { calls, gh };
+}
+
 describe('reviewPullRequest', () => {
-  it('posts an injected reviewer result as a non-blocking PR review', async () => {
-    const calls: string[][] = [];
-    const gh: GhRunner = async (args) => {
-      calls.push(args);
-      if (args[0] === 'pr' && args[1] === 'view') {
-        return JSON.stringify({
-          number: 12,
-          title: 'Fix auth',
-          body: '',
-          url: 'https://github.com/o/r/pull/12',
-          author: { login: 'alice' },
-          headRefName: 'h',
-          headRefOid: 'def456',
-          baseRefName: 'main',
-        });
-      }
-      if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
-      if (args[0] === 'pr' && args[1] === 'review') return '';
-      throw new Error(`unexpected gh call: ${args.join(' ')}`);
-    };
-    const reviewer = vi.fn().mockResolvedValue('No blocking findings.\n<promise>COMPLETE</promise>');
+  it('completed first attempt posts as a normal review', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'No blocking findings.\n<promise>COMPLETE</promise>', completed: true });
+    const logs: string[] = [];
 
-    const result = await reviewPullRequest('12', {
-      repoSlug: 'o/r',
-      gh,
-      reviewer,
-      log: () => {},
-    });
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
 
-    expect(reviewer).toHaveBeenCalledWith(expect.objectContaining({ repoSlug: 'o/r', number: 12, diff: 'diff' }));
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(reviewer).toHaveBeenCalledWith(expect.objectContaining({ repoSlug: 'o/r', number: 12 }), { isRetry: false });
     expect(result.commentBody).toContain('No blocking findings.');
     expect(result.commentBody).toContain('<!-- vanguard-pr-review: def456 -->');
     expect(result.commentBody).not.toContain('<promise>');
-    const reviewCall = calls.find((args) => args[0] === 'pr' && args[1] === 'review');
+    expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
     expect(reviewCall).toEqual(['pr', 'review', '12', '--repo', 'o/r', '--comment', '--body', result.commentBody]);
+    expect(logs).toContain('review-pr o/r#12: posted -> pr review');
+  });
+
+  it('accepts the legacy string reviewer result as completed', async () => {
+    const { gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue('Legacy review text.\n<promise>COMPLETE</promise>');
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: () => {} });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result.commentBody).toContain('Legacy review text.');
+    expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+  });
+
+  it('incomplete twice posts the incomplete notice, never raw finalText', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'Now let me examine the auth module...', completed: false });
+    const logs: string[] = [];
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
+
+    expect(reviewer).toHaveBeenCalledTimes(2);
+    expect(reviewer).toHaveBeenNthCalledWith(1, expect.objectContaining({ repoSlug: 'o/r' }), { isRetry: false });
+    expect(reviewer).toHaveBeenNthCalledWith(2, expect.objectContaining({ repoSlug: 'o/r' }), { isRetry: true });
+    expect(result.commentBody).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(result.commentBody).not.toContain('Now let me examine');
+    expect(result.commentBody).toContain('<!-- vanguard-pr-review: def456 -->');
+    const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
+    expect(reviewCall).toBeDefined();
+    expect(logs).toContain('review-pr o/r#12: incomplete -> retry (larger budget)');
+    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice');
+  });
+
+  it('incomplete then completed (retry succeeds) posts the real verdict', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi
+      .fn()
+      .mockResolvedValueOnce({ text: 'frag', completed: false })
+      .mockResolvedValueOnce({ text: 'Found a bug in auth.ts\n<promise>COMPLETE</promise>', completed: true });
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: () => {} });
+
+    expect(reviewer).toHaveBeenCalledTimes(2);
+    expect(result.commentBody).toContain('Found a bug in auth.ts');
+    expect(result.commentBody).not.toContain('frag');
+    expect(result.commentBody).not.toContain('<promise>');
+    expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
+    expect(reviewCall).toBeDefined();
+  });
+
+  it('completed but empty text posts No blocking findings.', async () => {
+    const { gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: '', completed: true });
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: () => {} });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result.commentBody).toContain('No blocking findings.');
+    expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
   });
 });
 
@@ -129,6 +194,44 @@ describe('review prompt and comment formatting', () => {
     expect(prompt).toContain('Fix auth');
     expect(prompt).toContain('diff --git a/auth.ts b/auth.ts');
     expect(prompt).toContain('<promise>COMPLETE</promise>');
+  });
+
+  it('adds retry triage instructions when opts.retryTriage is true', () => {
+    const prompt = buildPullRequestReviewPrompt(
+      {
+        repoSlug: 'o/r',
+        number: 1,
+        title: 'Big PR',
+        body: '',
+        url: 'https://github.com/o/r/pull/1',
+        author: 'bob',
+        headRefName: 'big',
+        headRefOid: 'aaa',
+        baseRefName: 'main',
+        diff: 'diff',
+      },
+      { retryTriage: true },
+    );
+
+    expect(prompt).toContain('This is a large diff');
+    expect(prompt).toContain('Triage');
+  });
+
+  it('does not add retry triage instructions by default', () => {
+    const prompt = buildPullRequestReviewPrompt({
+      repoSlug: 'o/r',
+      number: 1,
+      title: 'Small PR',
+      body: '',
+      url: 'https://github.com/o/r/pull/1',
+      author: 'bob',
+      headRefName: 'small',
+      headRefOid: 'bbb',
+      baseRefName: 'main',
+      diff: 'diff',
+    });
+
+    expect(prompt).not.toContain('This is a large diff');
   });
 
   it('strips completion markers from the posted comment', () => {
@@ -181,5 +284,26 @@ describe('review prompt and comment formatting', () => {
     ].join('\n');
 
     expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(true);
+  });
+});
+
+describe('buildPullRequestReviewIncompleteComment', () => {
+  it('returns the incomplete notice with a head SHA marker', () => {
+    const comment = buildPullRequestReviewIncompleteComment('abc123');
+    expect(comment).toContain('## Vanguard Review');
+    expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(comment).toContain('<!-- vanguard-pr-review: abc123 -->');
+  });
+
+  it('returns the incomplete notice without a marker when no oid is given', () => {
+    const comment = buildPullRequestReviewIncompleteComment();
+    expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(comment).not.toContain('vanguard-pr-review');
+  });
+
+  it('returns the incomplete notice without a marker when oid is empty', () => {
+    const comment = buildPullRequestReviewIncompleteComment('');
+    expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(comment).not.toContain('vanguard-pr-review');
   });
 });

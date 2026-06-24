@@ -17,7 +17,19 @@ export interface PullRequestForReview extends PullRequestReviewTarget {
   diff: string;
 }
 
-export type PullRequestReviewer = (pr: PullRequestForReview) => Promise<string>;
+export interface PullRequestReviewOutcome {
+  text: string;
+  completed: boolean;
+}
+
+export interface PullRequestReviewAttempt {
+  isRetry: boolean;
+}
+
+export type PullRequestReviewer = (
+  pr: PullRequestForReview,
+  opts: PullRequestReviewAttempt,
+) => Promise<string | PullRequestReviewOutcome>;
 
 export interface ReviewPullRequestDeps {
   repoSlug?: string;
@@ -48,6 +60,10 @@ const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 const PR_REVIEW_MARKER_RE = /^<!--[ \t]*vanguard-pr-review:[ \t]*([a-fA-F0-9]+)[ \t]*-->$/gm;
+
+function normalizePullRequestReviewOutcome(outcome: string | PullRequestReviewOutcome): PullRequestReviewOutcome {
+  return typeof outcome === 'string' ? { text: outcome, completed: true } : outcome;
+}
 
 export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequestReviewTarget {
   const trimmed = ref.trim();
@@ -88,8 +104,8 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
   };
 }
 
-export function buildPullRequestReviewPrompt(pr: PullRequestForReview): string {
-  return [
+export function buildPullRequestReviewPrompt(pr: PullRequestForReview, opts: { retryTriage?: boolean } = {}): string {
+  const lines = [
     '<task_instructions>',
     `PR: ${pr.repoSlug}#${pr.number}`,
     `URL: ${pr.url}`,
@@ -102,6 +118,14 @@ export function buildPullRequestReviewPrompt(pr: PullRequestForReview): string {
     'Description:',
     pr.body.trim() === '' ? '(empty)' : pr.body,
     '',
+  ];
+  if (opts.retryTriage) {
+    lines.push(
+      'This is a large diff. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). Produce your verdict within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, but you MUST finish with a verdict and <promise>COMPLETE</promise>.',
+      '',
+    );
+  }
+  lines.push(
     'Review this pull request diff as an independent reviewer. Focus on correctness, security, tests, regressions, and maintainability.',
     'Report only actionable findings that the author can fix. Include file/function evidence when the diff supports it.',
     'If there are no blocking findings, say exactly: No blocking findings.',
@@ -111,7 +135,8 @@ export function buildPullRequestReviewPrompt(pr: PullRequestForReview): string {
     pr.diff,
     '</diff>',
     '</task_instructions>',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 export function pullRequestReviewMarker(headRefOid: string): string {
@@ -122,10 +147,20 @@ export function hasPullRequestReviewMarker(body: string, headRefOid: string): bo
   return Array.from(body.matchAll(PR_REVIEW_MARKER_RE)).some((marker) => marker[1] === headRefOid);
 }
 
+export const PR_REVIEW_INCOMPLETE_NOTICE =
+  'Vanguard review did not complete; PR likely too large for a single pass. Please split or review manually.';
+
+function appendMarker(visible: string, headRefOid?: string): string {
+  return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
+}
+
+export function buildPullRequestReviewIncompleteComment(headRefOid?: string): string {
+  return appendMarker(`## Vanguard Review\n\n${PR_REVIEW_INCOMPLETE_NOTICE}`, headRefOid);
+}
+
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
   const body = agentText.replace(PROMISE_RE, '').trim();
-  const visible = `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
-  return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
+  return appendMarker(`## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`, headRefOid);
 }
 
 export type PullRequestReviewAction = 'comment' | 'request-changes' | 'approve';
@@ -166,10 +201,21 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   const target = parsePullRequestRef(ref, deps.repoSlug);
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: fetch -> diff`);
   const pr = await fetchPullRequestForReview(target, gh);
+
   deps.log?.(`review-pr ${target.repoSlug}#${target.number}: agent -> reviewing`);
-  const reviewText = await deps.reviewer(pr);
-  const commentBody = buildPullRequestReviewComment(reviewText, pr.headRefOid);
+  let outcome = normalizePullRequestReviewOutcome(await deps.reviewer(pr, { isRetry: false }));
+  if (!outcome.completed) {
+    deps.log?.(`review-pr ${target.repoSlug}#${target.number}: incomplete -> retry (larger budget)`);
+    outcome = normalizePullRequestReviewOutcome(await deps.reviewer(pr, { isRetry: true }));
+  }
+
+  const commentBody = outcome.completed
+    ? buildPullRequestReviewComment(outcome.text, pr.headRefOid)
+    : buildPullRequestReviewIncompleteComment(pr.headRefOid);
+
   await postPullRequestReview(target, commentBody, 'comment', gh);
-  deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
+  deps.log?.(
+    `review-pr ${target.repoSlug}#${target.number}: posted -> ${outcome.completed ? 'pr review' : 'incomplete notice'}`,
+  );
   return { pr, commentBody };
 }
