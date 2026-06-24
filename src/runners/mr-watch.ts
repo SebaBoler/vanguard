@@ -76,14 +76,12 @@ function isAutomationAuthor(username: string): boolean {
 function parseMrList(
   out: string,
   project: string,
-  triggerLabel: string,
   onlyAuthor?: string,
 ): MergeRequestWatchItem[] {
   const parsed = JSON.parse(out) as GlabMrListItem[];
   return parsed.flatMap((item) => {
     if (item.iid === undefined) return [];
     const author = item.author?.username ?? '';
-    const labels = item.labels ?? [];
     const mr: MergeRequestWatchItem = {
       project,
       iid: item.iid,
@@ -91,12 +89,11 @@ function parseMrList(
       draft: item.draft === true,
       author,
       sha: item.sha ?? '',
-      labels,
+      labels: item.labels ?? [],
     };
     if (mr.draft) return [];
     if (isAutomationAuthor(author)) return [];
     if (onlyAuthor !== undefined && author !== onlyAuthor) return [];
-    if (!labels.includes(triggerLabel)) return [];
     return [mr];
   });
 }
@@ -158,7 +155,7 @@ export function gitlabMergeRequestWatchPrimitives(
         '--output', 'json',
       ];
       if (opts.author !== undefined) listArgs.push('--author', opts.author);
-      const candidates = parseMrList(await glab(listArgs), opts.project, opts.label, opts.author);
+      const candidates = parseMrList(await glab(listArgs), opts.project, opts.author);
       // glab mr list may omit sha; enrich from mr view so dedup works correctly.
       const enriched = await Promise.all(
         candidates.map(async (item): Promise<MergeRequestWatchItem> => {
