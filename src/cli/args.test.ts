@@ -132,9 +132,15 @@ describe('parseCli', () => {
     expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', 'x'], '/work')).toBe(false);
   });
 
-  it('returns help for an unknown provider name', () => {
-    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work').kind).toBe('help');
-    expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work').kind).toBe('help');
+  it('returns an error for an unknown provider name', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('Unknown provider "gpt"'),
+    });
+    expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('Unknown review-provider "bard"'),
+    });
   });
 
   it('parses --provider-model and --review-model on run', () => {
@@ -251,8 +257,8 @@ describe('parseCli', () => {
   });
 
   it('requires watch-prs to have an explicit repo and trigger label', () => {
-    expect(parseCli(['watch-prs', '--github-repo', 'o/r'], '/work').kind).toBe('help');
-    expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'error' });
+    expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work')).toMatchObject({ kind: 'error' });
   });
 
   it('parses doctor-prs with PR review label defaults', () => {
@@ -267,8 +273,8 @@ describe('parseCli', () => {
   });
 
   it('requires doctor-prs to have an explicit repo and trigger label', () => {
-    expect(parseCli(['doctor-prs', '--github-repo', 'o/r'], '/work').kind).toBe('help');
-    expect(parseCli(['doctor-prs', '--label', 'ready for vanguard review'], '/work').kind).toBe('help');
+    expect(parseCli(['doctor-prs', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'error' });
+    expect(parseCli(['doctor-prs', '--label', 'ready for vanguard review'], '/work')).toMatchObject({ kind: 'error' });
   });
 
   it('parses doctor with --provider and --llm-proxy', () => {
@@ -423,7 +429,10 @@ describe('parseCli', () => {
   });
 
   it('watch requires --label', () => {
-    expect(parseCli(['watch'], '/work').kind).toBe('help');
+    expect(parseCli(['watch'], '/work')).toMatchObject({
+      kind: 'error',
+      message: 'watch --source linear requires --label <name>.',
+    });
   });
 
   it('parses stats with defaults and flags', () => {
@@ -449,10 +458,10 @@ describe('parseCli', () => {
     expect(cmd.kind === 'memory' && cmd.limit === undefined).toBe(true);
   });
 
-  it('returns help when run has no source or more than one source', () => {
-    expect(parseCli(['run'], '/work').kind).toBe('help');
-    expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work').kind).toBe('help');
-    expect(parseCli(['run', '--github', 'A', '--project', '3'], '/work').kind).toBe('help');
+  it('returns an error when run has no source or more than one source', () => {
+    expect(parseCli(['run'], '/work')).toMatchObject({ kind: 'error' });
+    expect(parseCli(['run', '--linear', 'A', '--github', 'B'], '/work')).toMatchObject({ kind: 'error' });
+    expect(parseCli(['run', '--github', 'A', '--project', '3'], '/work')).toMatchObject({ kind: 'error' });
   });
 
   it('parses --verify into verifyCmd on run', () => {
@@ -593,12 +602,13 @@ describe('parseCli', () => {
     expect(cmd.agentState).toBe('Ready');
   });
 
-  it('returns help when a github loop-v1 flag is supplied on --source linear', () => {
-    // --spec-label is a github-only flag; on linear, specState is undefined so loop-v1 is not
-    // activated, and linear single-watch validation still requires --label -> help.
+  it('returns an error when a github loop-v1 flag is supplied on --source linear', () => {
     expect(
-      parseCli(['watch', '--source', 'linear', '--spec-label', 'ready for spec'], '/work').kind,
-    ).toBe('help');
+      parseCli(['watch', '--source', 'linear', '--spec-label', 'ready for spec'], '/work'),
+    ).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('GitHub loop-v1 flags'),
+    });
   });
 
   it('defaults github loop-v1 agent label when --agent-label is missing', () => {
@@ -658,13 +668,16 @@ describe('parseCli', () => {
     }
   });
 
-  it('returns help when loop-v1 is attempted on project source', () => {
+  it('returns an error when loop-v1 is attempted on project source', () => {
     expect(
       parseCli(
         ['watch', '--source', 'project', '--project', '7', '--spec-state', 'triage', '--spec-state-name', 'Spec', '--needs-info-state', 'Needs Info'],
         '/work',
-      ).kind,
-    ).toBe('help');
+      ),
+    ).toMatchObject({
+      kind: 'error',
+      message: 'loop-v1 is not supported with --source project.',
+    });
   });
 
   // --- FIX 1: --label as ownership filter for github loop-v1 ---

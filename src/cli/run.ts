@@ -21,8 +21,7 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  // Reject an unsupported provider combo up front, so a raw `vanguard run` reports the actionable
-  // combo error (e.g. "needs zai as implementer") instead of a downstream credential error.
+  // Keep the exported command boundary defensive even though parseCli also reports these as CLI errors.
   validateProviderChoice(
     {
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
