@@ -855,6 +855,30 @@ describe('parseCli watch gitlab', () => {
     expect(cmd.project).toBe('owner/project');
     expect(cmd.label).toBe('vanguard');
   });
+
+  it('parses --source gitlab with loop-v1 flags', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard',
+       '--spec-label', 'ready for spec', '--agent-label', 'ready for agent', '--needs-info-label', 'needs info'],
+      '/repo',
+    );
+    assert(cmd.kind === 'watch');
+    expect(cmd.source).toBe('gitlab');
+    expect(cmd.specLabel).toBe('ready for spec');
+    expect(cmd.agentLabel).toBe('ready for agent');
+    expect(cmd.needsInfoLabel).toBe('needs info');
+  });
+
+  it('parses --source gitlab --loop-v1 with defaults', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'],
+      '/repo',
+    );
+    assert(cmd.kind === 'watch');
+    expect(cmd.specLabel).toBe('ready for spec');
+    expect(cmd.agentLabel).toBe('ready for agent');
+    expect(cmd.needsInfoLabel).toBe('needs info');
+  });
 });
 
 describe('parseCli review-mr', () => {

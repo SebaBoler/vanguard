@@ -585,10 +585,10 @@ export function parseCli(argv: string[], cwd: string): Command {
       source === 'github' && label === undefined && !hasGithubLoopFlags && !hasLinearLoopFlags;
     const isLoopV1 = values['loop-v1'] === true || hasGithubLoopFlags || hasLinearLoopFlags || repoOnlyGithubLoop;
 
-    if (isLoopV1 && source === 'github' && hasLinearLoopFlags) return { kind: 'help' };
+    if (isLoopV1 && (source === 'github' || source === 'gitlab') && hasLinearLoopFlags) return { kind: 'help' };
     if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) return { kind: 'help' };
 
-    if (isLoopV1 && source === 'github') {
+    if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
       specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
       agentLabel ??= DEFAULT_GITHUB_AGENT_LABEL;
       needsInfoLabel ??= DEFAULT_GITHUB_NEEDS_INFO_LABEL;
@@ -601,17 +601,16 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     if (isLoopV1) {
       // Loop v1 validation per source.
-      if (source === 'github') {
+      if (source === 'github' || source === 'gitlab') {
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
-        // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
-        // watches the routing labels directly; explicit --label narrows that further when desired.
+        if (source === 'gitlab' && label === undefined) return { kind: 'help' };
       } else if (source === 'linear') {
         if (specState === undefined || specStateName === undefined || needsInfoState === undefined) return { kind: 'help' };
         // --label is still the shared ownership label across both passes. Defaults keep the filter,
         // not a status-only scan over the whole Linear workspace.
         if (label === undefined) return { kind: 'help' };
       } else {
-        // project and gitlab sources do not support loop-v1
+        // project source does not support loop-v1
         return { kind: 'help' };
       }
     } else {
