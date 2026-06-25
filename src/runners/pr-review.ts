@@ -65,16 +65,19 @@ function normalizePullRequestReviewOutcome(outcome: string | PullRequestReviewOu
   return typeof outcome === 'string' ? { text: outcome, completed: true } : outcome;
 }
 
+/** Build a target from a `(owner/repo, number)` capture pair, or null if the match didn't capture both. */
+function targetFromMatch(match: RegExpExecArray | null): PullRequestReviewTarget | null {
+  if (match?.[1] === undefined || match[2] === undefined) return null;
+  return { repoSlug: match[1], number: Number(match[2]) };
+}
+
 export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequestReviewTarget {
   const trimmed = ref.trim();
-  const url = PR_URL_RE.exec(trimmed);
-  if (url?.[1] !== undefined && url[2] !== undefined) return { repoSlug: url[1], number: Number(url[2]) };
-
-  const hash = PR_HASH_RE.exec(trimmed);
-  if (hash?.[1] !== undefined && hash[2] !== undefined) return { repoSlug: hash[1], number: Number(hash[2]) };
-
-  const path = PR_PATH_RE.exec(trimmed);
-  if (path?.[1] !== undefined && path[2] !== undefined) return { repoSlug: path[1], number: Number(path[2]) };
+  const matched =
+    targetFromMatch(PR_URL_RE.exec(trimmed)) ??
+    targetFromMatch(PR_HASH_RE.exec(trimmed)) ??
+    targetFromMatch(PR_PATH_RE.exec(trimmed));
+  if (matched) return matched;
 
   if (NUMBER_RE.test(trimmed)) {
     if (repoSlug === undefined) throw new Error(`Pull request ref "${trimmed}" needs --github-repo.`);
@@ -82,6 +85,19 @@ export function parsePullRequestRef(ref: string, repoSlug?: string): PullRequest
   }
 
   throw new Error(`Unsupported pull request ref: ${ref}`);
+}
+
+/**
+ * Strict parser for a self-contained PR reference: only a full GitHub PR URL is accepted.
+ * Shorthand forms (`owner/repo#42`, bare numbers) are rejected, since there is no repo slug to
+ * resolve them against — the error names the actual contract rather than a CLI flag.
+ */
+export function parsePullRequestUrl(url: string): PullRequestReviewTarget {
+  const target = targetFromMatch(PR_URL_RE.exec(url.trim()));
+  if (target === null) {
+    throw new Error(`Pull request reference must be a full GitHub PR URL, got: ${url}`);
+  }
+  return target;
 }
 
 export async function fetchPullRequestForReview(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<PullRequestForReview> {
