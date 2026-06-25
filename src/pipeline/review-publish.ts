@@ -1,4 +1,4 @@
-import { parsePullRequestRef, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
+import { parsePullRequestUrl, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
 import { extractFindings } from '../structured/findings.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -52,7 +52,7 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
     throw new Error(`publishReviewVerdict: no reviewer outcome for ${input.prUrl} — silence is not ok`);
   }
 
-  const target = parsePullRequestRef(input.prUrl);
+  const target = parsePullRequestUrl(input.prUrl);
   const verdictText = input.reviewerOutcome.result.finalText;
   const commentBody = buildMainLoopReviewComment(verdictText, {
     headRefOid: input.headSha,

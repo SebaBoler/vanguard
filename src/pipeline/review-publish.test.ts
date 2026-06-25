@@ -83,6 +83,18 @@ describe('publishReviewVerdict', () => {
         attribution: 'codex',
         gh: async () => '',
       }),
-    ).rejects.toThrow('needs --github-repo');
+    ).rejects.toThrow('must be a full GitHub PR URL');
+  });
+
+  it('throws before posting when prUrl is non-URL shorthand', async () => {
+    await expect(
+      publishReviewVerdict({
+        prUrl: 'o/r#42',
+        headSha: 'abcdef123456',
+        reviewerOutcome: reviewerOutcome('lgtm'),
+        attribution: 'codex',
+        gh: async () => '',
+      }),
+    ).rejects.toThrow('must be a full GitHub PR URL');
   });
 });
