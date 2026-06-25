@@ -73,4 +73,16 @@ describe('publishReviewVerdict', () => {
       }),
     ).rejects.toThrow('no reviewer outcome');
   });
+
+  it('throws before posting when prUrl is a bare number', async () => {
+    await expect(
+      publishReviewVerdict({
+        prUrl: '42',
+        headSha: 'abcdef123456',
+        reviewerOutcome: reviewerOutcome('lgtm'),
+        attribution: 'codex',
+        gh: async () => '',
+      }),
+    ).rejects.toThrow('needs --github-repo');
+  });
 });

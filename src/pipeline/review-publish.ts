@@ -4,8 +4,6 @@ import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PublishReviewVerdictInput {
-  /** Optional fallback for numeric PR refs; full GitHub URLs do not need it. */
-  repoSlug?: string;
   /** Full GitHub PR URL returned by publishForReview. */
   prUrl: string;
   /** The commit SHA — also the dedupe marker embedded in the comment. */
@@ -54,7 +52,7 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
     throw new Error(`publishReviewVerdict: no reviewer outcome for ${input.prUrl} — silence is not ok`);
   }
 
-  const target = parsePullRequestRef(input.prUrl, input.repoSlug);
+  const target = parsePullRequestRef(input.prUrl);
   const verdictText = input.reviewerOutcome.result.finalText;
   const commentBody = buildMainLoopReviewComment(verdictText, {
     headRefOid: input.headSha,
