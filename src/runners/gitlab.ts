@@ -14,6 +14,7 @@ import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
+import { reviewRequestBody } from './review-body.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -114,7 +115,7 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
         if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
         return { task };
       }
-      const baseBody = `Automated implementation of ${task.id} by Vanguard.`;
+      const baseBody = reviewRequestBody(task.id, { closeIssueOnMerge: true });
       const body = [
         baseBody,
         verification !== undefined ? proofBlock(verification) : undefined,

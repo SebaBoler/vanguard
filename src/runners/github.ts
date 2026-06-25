@@ -58,6 +58,7 @@ function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
     },
     taskId: (task) => `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`,
     stages: implementReviewSimplifyStages,
+    closeIssueOnMerge: true,
     async linkPr(issueRef: string, _task: Task, prUrl: string) {
       await linkPullRequest(deps.repoSlug, issueRef, prUrl);
     },

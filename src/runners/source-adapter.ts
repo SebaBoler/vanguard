@@ -14,6 +14,7 @@ import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
+import { reviewRequestBody } from './review-body.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
@@ -51,6 +52,8 @@ export interface SourceAdapter {
   stages(): PipelineStage[];
   /** Extra prompt variables (e.g. ISSUE for Linear). */
   variables?(issueRef: string, task: Task): Record<string, string>;
+  /** Whether the review body should include source-control auto-close syntax for this task id. */
+  closeIssueOnMerge?: boolean;
   /** Write the PR link back onto the source issue. */
   linkPr(issueRef: string, task: Task, prUrl: string): Promise<void>;
 }
@@ -135,7 +138,7 @@ export async function runSourcedIssue(
         await persistStageOutcomes(deps.repoPath, outcomes);
         return { task };
       }
-      const baseBody = `Automated implementation of ${task.id} by Vanguard.`;
+      const baseBody = reviewRequestBody(task.id, { closeIssueOnMerge: !!adapter.closeIssueOnMerge });
       const body = [
         baseBody,
         verification !== undefined ? proofBlock(verification) : undefined,
