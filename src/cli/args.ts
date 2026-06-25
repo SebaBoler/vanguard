@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { isProviderName } from '../agents/registry.js';
+import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
@@ -234,7 +234,8 @@ export type Command =
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
-  | { kind: 'help' };
+  | { kind: 'help' }
+  | { kind: 'error'; message: string };
 
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_HOURS = 6;
@@ -251,9 +252,14 @@ const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
 const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
 
+function fail(message: string): Command {
+  return { kind: 'error', message };
+}
+
 /**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
- * unit-testable. Unknown options or a missing/unknown command resolve to `help`.
+ * unit-testable. Unknown options or a missing/unknown command resolve to `help`; invalid flag
+ * combinations for a recognised command resolve to `error` with an actionable message.
  */
 export function parseCli(argv: string[], cwd: string): Command {
   let values: Record<string, string | boolean | undefined>;
@@ -342,11 +348,15 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (values.help === true) return { kind: 'help' };
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 
-  // Provider flags (run + watch). An unknown provider name resolves to help.
+  // Provider flags (run + watch). An unknown provider name is an error.
   const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
   const reviewProviderRaw = typeof values['review-provider'] === 'string' ? values['review-provider'] : undefined;
-  if (providerRaw !== undefined && !isProviderName(providerRaw)) return { kind: 'help' };
-  if (reviewProviderRaw !== undefined && !isProviderName(reviewProviderRaw)) return { kind: 'help' };
+  if (providerRaw !== undefined && !isProviderName(providerRaw)) {
+    return fail(`Unknown provider "${providerRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
+  }
+  if (reviewProviderRaw !== undefined && !isProviderName(reviewProviderRaw)) {
+    return fail(`Unknown review-provider "${reviewProviderRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
+  }
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
 
@@ -377,15 +387,25 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  const proxyMode = values['llm-proxy'] === true;
+  try {
+    validateProviderChoice(
+      { ...(provider !== undefined ? { provider } : {}), ...(reviewProvider !== undefined ? { reviewProvider } : {}) },
+      { proxyMode },
+    );
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+
   if (positionals[0] === 'review-pr') {
     const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
-    if (prRef === undefined) return { kind: 'help' };
+    if (prRef === undefined) return fail('review-pr requires a PR reference: a URL, owner/repo#number, or --github-pr <number>.');
     return {
       kind: 'review-pr',
       prRef,
       repoPath,
       egress: values.egress === true,
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(proxyMode ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
@@ -428,7 +448,7 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (positionals[0] === 'watch-prs') {
     const repoSlug = typeof values['github-repo'] === 'string' ? values['github-repo'] : undefined;
     const label = typeof values.label === 'string' ? values.label : undefined;
-    if (repoSlug === undefined || label === undefined) return { kind: 'help' };
+    if (repoSlug === undefined || label === undefined) return fail('watch-prs requires --github-repo <owner/repo> and --label <name>.');
     const concurrency = Number(values.concurrency);
     const interval = Number(values.interval);
     return {
@@ -443,7 +463,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       once: values.once === true,
       egress: values.egress === true,
       ...(typeof values.author === 'string' ? { author: values.author } : {}),
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(proxyMode ? { llmProxy: true } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
@@ -452,7 +472,7 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (positionals[0] === 'doctor-prs') {
     const repoSlug = typeof values['github-repo'] === 'string' ? values['github-repo'] : undefined;
     const label = typeof values.label === 'string' ? values.label : undefined;
-    if (repoSlug === undefined || label === undefined) return { kind: 'help' };
+    if (repoSlug === undefined || label === undefined) return fail('doctor-prs requires --github-repo <owner/repo> and --label <name>.');
     return {
       kind: 'doctor-prs',
       repoSlug,
@@ -460,7 +480,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       label,
       reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(proxyMode ? { llmProxy: true } : {}),
       ...(provider !== undefined ? { provider } : {}),
     };
   }
@@ -518,7 +538,18 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (typeof values.gitlab === 'string') sources.push(['gitlab', values.gitlab]);
     // Exactly one source is required.
     const picked = sources[0];
-    if (sources.length !== 1 || picked === undefined) return { kind: 'help' };
+    if (sources.length !== 1 || picked === undefined) {
+      return fail('run requires exactly one of --linear <id>, --github <ref>, or --project <number>.');
+    }
+    if (values.parent === true && picked[0] !== 'linear') {
+      return fail('--parent is only supported with --linear.');
+    }
+    if (picked[0] === 'project') {
+      const projectNum = Number(picked[1]);
+      if (!Number.isInteger(projectNum) || projectNum < 1) {
+        return fail(`--project expects a board number, got "${picked[1]}".`);
+      }
+    }
     const concurrency = Number(values.concurrency);
     const forkN = Number(values.fork);
     return {
@@ -530,7 +561,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       repoPath,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(proxyMode ? { llmProxy: true } : {}),
       ...(Number.isFinite(forkN) && forkN >= 2 ? { forkN: Math.floor(forkN) } : {}),
       ...(values.reuse === true ? { reuse: true } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -559,7 +590,9 @@ export function parseCli(argv: string[], cwd: string): Command {
             : 'linear';
     // project number is required when source === 'project'
     const projectNumber = typeof values.project === 'string' ? Number(values.project) : undefined;
-    if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) return { kind: 'help' };
+    if (source === 'project' && (projectNumber === undefined || !Number.isFinite(projectNumber))) {
+      return fail(`${commandKind} --source project requires --project <number>.`);
+    }
 
     let label = typeof values.label === 'string' ? values.label : undefined;
     let specLabel = typeof values['spec-label'] === 'string' ? values['spec-label'] : undefined;
@@ -585,8 +618,12 @@ export function parseCli(argv: string[], cwd: string): Command {
       source === 'github' && label === undefined && !hasGithubLoopFlags && !hasLinearLoopFlags;
     const isLoopV1 = values['loop-v1'] === true || hasGithubLoopFlags || hasLinearLoopFlags || repoOnlyGithubLoop;
 
-    if (isLoopV1 && (source === 'github' || source === 'gitlab') && hasLinearLoopFlags) return { kind: 'help' };
-    if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) return { kind: 'help' };
+    if (isLoopV1 && (source === 'github' || source === 'gitlab') && hasLinearLoopFlags) {
+      return fail('Linear loop-v1 flags (--spec-state etc.) are not compatible with --source github/gitlab.');
+    }
+    if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) {
+      return fail('GitHub loop-v1 flags (--spec-label etc.) are not compatible with --source linear.');
+    }
 
     if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
       specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
@@ -602,20 +639,32 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (isLoopV1) {
       // Loop v1 validation per source.
       if (source === 'github' || source === 'gitlab') {
-        if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) return { kind: 'help' };
-        if (source === 'gitlab' && label === undefined) return { kind: 'help' };
+        if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) {
+          return fail('github/gitlab loop-v1 requires --spec-label, --agent-label, and --needs-info-label.');
+        }
+        if (source === 'gitlab' && label === undefined) {
+          return fail('gitlab loop-v1 requires --label <name>.');
+        }
+        // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
+        // watches the routing labels directly; explicit --label narrows that further when desired.
       } else if (source === 'linear') {
-        if (specState === undefined || specStateName === undefined || needsInfoState === undefined) return { kind: 'help' };
+        if (specState === undefined || specStateName === undefined || needsInfoState === undefined) {
+          return fail('--spec-state requires --spec-state-name and --needs-info-state (linear loop-v1).');
+        }
         // --label is still the shared ownership label across both passes. Defaults keep the filter,
         // not a status-only scan over the whole Linear workspace.
-        if (label === undefined) return { kind: 'help' };
+        if (label === undefined) {
+          return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
+        }
       } else {
         // project source does not support loop-v1
-        return { kind: 'help' };
+        return fail('loop-v1 is not supported with --source project.');
       }
     } else {
       // Existing single-pass validation: label is required for linear/github/gitlab; optional for project.
-      if (source !== 'project' && label === undefined) return { kind: 'help' };
+      if (source !== 'project' && label === undefined) {
+        return fail(`${commandKind} --source ${source} requires --label <name>.`);
+      }
     }
 
     const interval = Number(values.interval);
@@ -639,7 +688,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
-      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
       ...(specLabel !== undefined ? { specLabel } : {}),

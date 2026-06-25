@@ -21,6 +21,11 @@ async function main(): Promise<void> {
     console.log(USAGE);
     return;
   }
+  if (command.kind === 'error') {
+    console.error(`vanguard: ${command.message}`);
+    process.exitCode = 1;
+    return;
+  }
   if (command.kind === 'run') {
     await runCommand(command);
     return;

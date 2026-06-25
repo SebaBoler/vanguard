@@ -4,7 +4,6 @@ import { runGitlabIssue, gitlabDepsFromEnv } from '../runners/gitlab.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
-import { validateProviderChoice } from '../agents/registry.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -20,16 +19,6 @@ export async function runCommand(cmd: RunCommand): Promise<void> {
     await pruneWorktrees(cmd.repoPath);
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
-
-  // Reject an unsupported provider combo up front, so a raw `vanguard run` reports the actionable
-  // combo error (e.g. "needs zai as implementer") instead of a downstream credential error.
-  validateProviderChoice(
-    {
-      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-      ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-    },
-    { proxyMode: cmd.llmProxy === true },
-  );
 
   const auth = requireAuth(cmd);
   const ctx = await startSandboxContext({
@@ -120,7 +109,6 @@ async function runGithub(
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
-  if (cmd.parent) throw new Error('--parent is only supported with --linear (GitHub issues have no sub-tasks here).');
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
@@ -172,9 +160,6 @@ async function runProject(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   const projectNumber = Number(cmd.id);
-  if (!Number.isInteger(projectNumber) || projectNumber < 1) {
-    throw new Error(`--project expects a board number, got "${cmd.id}".`);
-  }
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
