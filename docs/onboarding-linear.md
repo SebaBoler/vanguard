@@ -52,7 +52,7 @@ Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md]
 
 The two-flag split is Linear-specific: `--agent-state` is the **state name** the spec pass moves a ticket to (`Todo`), while `--trigger-state` is the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box.
 
-**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`/`unstarted`) that satisfy the [triage contract](#3-the-triage-contract-same-as-github) — a `## Acceptance Criteria` heading followed by real bullets. (A free-form "complete spec" in the description that lacks the literal heading is bounced to **Needs Info** by the agent pass, the exact wasted-budget outcome this skips.) The watcher then builds them directly, skipping the spec pass entirely.
+**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`/`unstarted`) that satisfy the [triage contract](#3-the-triage-contract-same-as-github) — a `## Acceptance Criteria` heading followed by real bullets (or a `<tech_spec>` comment). A free-form "complete spec" in the description that lacks the literal heading is bounced to **Needs Info** by the agent pass, so it gains nothing — match the heading. The watcher then builds them directly, skipping the spec pass entirely.
 
 ---
 
@@ -65,7 +65,7 @@ Independent of routing, before spending model budget the agent pass refuses an u
 
 A ticket meeting neither is moved to **Needs Info** with a clarification comment. Same contract as the GitHub onboarding — see [the triage contract there](onboarding-another-repo.md#what-an-issue-must-contain-the-triage-contract).
 
-**Quality calibration:** Keep one or two reference issues with known-good specs bookmarked in your workspace. Link them in the issue description or team docs as calibration examples for what "ready to run" looks like. Vague tickets cost a full run budget to reject.
+**Quality calibration:** Keep one or two reference issues with known-good specs bookmarked in your workspace. Link them in the issue description or team docs as calibration examples for what "ready to run" looks like. The triage gate rejects vague tickets deterministically (no model budget spent), but each bounce still costs you a round-trip of human clarification before the run can start.
 
 ---
 
