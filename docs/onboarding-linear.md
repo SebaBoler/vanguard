@@ -5,7 +5,7 @@ The Linear counterpart of [docs/onboarding-another-repo.md](onboarding-another-r
 - **Routing is by STATE, not labels.** GitHub uses `ready for spec` / `ready for agent` labels; Linear uses workflow **states** (state types: `triage`, `unstarted`, …). A `vanguard` label is an ownership tag the issue must carry.
 - **No GitHub-Actions equivalent.** Linear has no CI trigger, so you run an **always-on `vanguard watch --source linear`** on a host (a server, or the Synology deploy — see [docs/deploy.md](deploy.md)). It is still phone-drivable: change an issue's state from the Linear app and the watcher picks it up on the next poll.
 
-GitHub is still the review surface — the PR opens on the linked GitHub repo and the PR link is commented back onto the Linear issue. **Non-GitHub VCS:** GitLab workspaces open MRs instead (`glab mr create --fill`); the Linear issue receives the MR link the same way. Any VCS with a CLI that can open a review request works — the watcher is not GitHub-specific.
+GitHub is still the review surface — the PR opens on the linked GitHub repo and the PR link is commented back onto the Linear issue.
 
 ---
 
