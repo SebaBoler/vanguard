@@ -52,7 +52,7 @@ Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md]
 
 The two-flag split is Linear-specific: `--agent-state` is the **state name** the spec pass moves a ticket to (`Todo`), while `--trigger-state` is the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box.
 
-**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`/`unstarted`) that satisfy the [triage contract](#3-the-triage-contract-same-as-github) — a `## Acceptance Criteria` heading followed by real bullets (or a `<tech_spec>` comment). A free-form "complete spec" in the description that lacks the literal heading is bounced to **Needs Info** by the agent pass, so it gains nothing — match the heading. The watcher then builds them directly, skipping the spec pass entirely.
+**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`, of type `unstarted`) that satisfy the [triage contract](#3-the-triage-contract-same-as-github) — a `## Acceptance Criteria` heading followed by real bullets. A free-form "complete spec" in the description that lacks the literal heading is bounced to **Needs Info** by the agent pass, so it gains nothing — match the heading. The watcher then builds them directly, skipping the spec pass entirely.
 
 ---
 
@@ -87,10 +87,10 @@ Models are chosen the same way as GitHub (`--spec-model` plans, `--provider`/`--
 
 ## 5. Post-run checklist
 
-After the watcher finishes and a draft PR/MR exists:
+After the watcher finishes and a draft PR exists:
 
 1. **Check the diff stat** — every layer the spec demanded actually landed. A schema change without the corresponding module, or a missing test, means the run stopped short → resume or finish by hand.
-2. **Run the verify gate** — `typecheck` + lint (whatever the project uses). The agent may have left type errors it did not notice.
+2. **Read the Proof-of-Work block** — Vanguard auto-runs the verify command (auto-detected `typecheck` + test) and writes a `## Proof of work` block (command, exit code, sha256) into the PR body, plus a `vanguard:verify-failed` label if it failed. Trust that attestation; re-run locally only if the block is missing or you want a stricter gate.
 3. **Spot-check auth/security** — resolver ownership filters, webhook signature verification, feature gates. These are the areas agents most commonly skip under time pressure.
-4. **Open the review request** — push the draft PR/MR out of draft and post the link as a comment on the Linear issue.
+4. **Open the review request** — push the draft PR out of draft. (Vanguard already commented the PR link onto the Linear issue.)
 5. **Close the loop** — mark the Linear issue **Done**. File any newly discovered bugs as separate issues.
