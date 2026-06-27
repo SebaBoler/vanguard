@@ -187,6 +187,8 @@ describe('runRevisePullRequest happy path', () => {
       if (args[0] === 'pr' && args[1] === 'comment') return '';
       // pr ready (undraft)
       if (args[0] === 'pr' && args[1] === 'ready') return '';
+      // label ensure
+      if (args[0] === 'label' && args[1] === 'create') return '';
       // pr edit (label flip)
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected gh call: ${args.join(' ')}`);
@@ -303,6 +305,7 @@ describe('runRevisePullRequest — round cap', () => {
       if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJsonWithRevisions();
       // cap comment post
       if (args[0] === 'pr' && args[1] === 'review') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected: ${args.join(' ')}`);
     };
@@ -333,6 +336,38 @@ describe('runRevisePullRequest — round cap', () => {
     const editCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('vanguard:needs-human-review'));
     expect(editCall).toBeDefined();
     expect(ghCalls.filter((a) => a[0] === 'api' && a[1] === 'graphql')).toHaveLength(1);
+  });
+
+  it('does not fail the cap path when label hand-back fails', async () => {
+    const ghCalls: string[][] = [];
+
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJsonWithRevisions();
+      if (args[0] === 'pr' && args[1] === 'review') return '';
+      if (args[0] === 'label' && args[1] === 'create') throw new Error('label create failed');
+      if (args[0] === 'pr' && args[1] === 'edit') throw new Error('label edit failed');
+      throw new Error(`unexpected: ${args.join(' ')}`);
+    };
+
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      maxRounds: 2,
+      provider: 'claude',
+    });
+
+    expect(result.committed).toBe(false);
+    expect(result.pushed).toBe(false);
+    expect(result.undrafted).toBe(false);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit')).toBe(true);
   });
 });
 
@@ -365,6 +400,7 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
         return '';
       }
       if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected gh call: ${args.join(' ')}`);
     };
@@ -419,6 +455,67 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
 
     // Final summary also carries the diff-derived points for each addressed item.
     expect(summaryBody).toContain('fix.txt');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Best-effort label hand-back
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — best-effort label hand-back', () => {
+  function makeGhWithLabelFailure(ghCalls: string[][]): GhRunner {
+    return async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      // label ensure — succeed
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      // label flip — fail (simulates missing label in target repo)
+      if (args[0] === 'pr' && args[1] === 'edit') throw new Error('label not found');
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+  }
+
+  async function runWithLabelFailure(): Promise<{ ghCalls: string[][]; result: Awaited<ReturnType<typeof runRevisePullRequest>> }> {
+    const ghCalls: string[][] = [];
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGhWithLabelFailure(ghCalls),
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+    return { ghCalls, result };
+  }
+
+  it('resolves with pushed:true and undrafted:true even when the label flip throws', async () => {
+    const { result } = await runWithLabelFailure();
+    expect(result.pushed).toBe(true);
+    expect(result.undrafted).toBe(true);
+    expect(result.addressed).toBeGreaterThan(0);
+  });
+
+  it('calls label create --force before the label flip', async () => {
+    const { ghCalls } = await runWithLabelFailure();
+    const createCallIndex = ghCalls.findIndex(
+      (a) => a[0] === 'label' && a[1] === 'create' && a.includes('vanguard:needs-human-review'),
+    );
+    const editCallIndex = ghCalls.findIndex((a) => a[0] === 'pr' && a[1] === 'edit');
+    expect(createCallIndex).toBeGreaterThanOrEqual(0);
+    expect(editCallIndex).toBeGreaterThan(createCallIndex);
+    expect(ghCalls[createCallIndex]).toContain('--force');
   });
 });
 

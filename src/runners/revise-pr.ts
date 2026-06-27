@@ -108,6 +108,26 @@ function editPrLabels(
   return gh(args);
 }
 
+async function handBackPrLabels(
+  gh: GhRunner,
+  repoSlug: string,
+  number: number,
+  log: (line: string) => void,
+): Promise<void> {
+  try {
+    await gh(['label', 'create', GITHUB_REVIEW_LABEL, '--repo', repoSlug, '--force']);
+  } catch (err) {
+    log(`revise-pr ${repoSlug}#${number}: label ensure -> manual label check (${err instanceof Error ? err.message : String(err)})`);
+  }
+
+  try {
+    log(`revise-pr ${repoSlug}#${number}: labels -> needs-human-review`);
+    await editPrLabels(gh, repoSlug, number, HAND_BACK_LABELS);
+  } catch (err) {
+    log(`revise-pr ${repoSlug}#${number}: labels -> manual label check (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
+
 /**
  * Run one PR revision round: read human review feedback, apply fixes on the existing PR branch,
  * reply to and resolve addressed threads, un-draft the PR, and flip the labels.
@@ -139,7 +159,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
     log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);
     await postPullRequestReview(target, capMsg, 'comment', gh);
-    await editPrLabels(gh, target.repoSlug, target.number, HAND_BACK_LABELS);
+    await handBackPrLabels(gh, target.repoSlug, target.number, log);
     return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
@@ -280,8 +300,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);
       await gh(['pr', 'ready', String(target.number), '--repo', target.repoSlug]);
 
-      log(`revise-pr ${target.repoSlug}#${target.number}: labels -> needs-human-review`);
-      await editPrLabels(gh, target.repoSlug, target.number, HAND_BACK_LABELS);
+      await handBackPrLabels(gh, target.repoSlug, target.number, log);
 
       return {
         pr,
