@@ -1,6 +1,7 @@
 import { parsePullRequestUrl, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
 import { extractFindings } from '../structured/findings.js';
 import type { StageOutcome } from './pipeline.js';
+import type { RunResult } from '../core/types.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PublishReviewVerdictInput {
@@ -48,6 +49,30 @@ const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 const CONFORMANCE_INCOMPLETE_NOTICE =
   '⚠️ Conformance pass did not complete (large diff / turn budget) — treat as unverified.';
 
+/** Sentinel the conformance stage emits when the task has no <tech_spec> to check against. */
+const CONFORMANCE_SKIP_SENTINEL = 'No spec, conformance skipped.';
+
+/**
+ * Build the body of the ## Conformance comment section for a conformance outcome, or undefined to
+ * suppress the section entirely. Incomplete → unverified notice; the no-spec skip sentinel →
+ * suppressed (a near-empty section is just noise); otherwise the structured <findings> block
+ * rendered as a bullet list, falling back to the cleaned prose when no findings are present.
+ */
+function renderConformanceSection(result: RunResult): string | undefined {
+  if (result.completed === false) return CONFORMANCE_INCOMPLETE_NOTICE;
+  const cleaned = result.finalText.replace(PROMISE_RE, '').trim();
+  if (cleaned === CONFORMANCE_SKIP_SENTINEL) return undefined;
+  try {
+    const { findings } = extractFindings(cleaned);
+    if (findings.length > 0) {
+      return findings.map((f) => `- **${f.severity}** (${f.kind}) — ${f.title}\n  ${f.evidence}`).join('\n');
+    }
+  } catch {
+    // No structured findings block — fall through to the cleaned prose.
+  }
+  return cleaned;
+}
+
 /**
  * Post the reviewer stage's verdict to an already-opened PR.
  * Called by runGithubIssue / runLinearIssue immediately after publishForReview.
@@ -68,19 +93,20 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
     attribution: input.attribution,
   });
 
-  let conformanceText: string | undefined;
-  if (input.conformanceOutcome !== undefined) {
-    conformanceText =
-      input.conformanceOutcome.result.completed === false
-        ? CONFORMANCE_INCOMPLETE_NOTICE
-        : input.conformanceOutcome.result.finalText.replace(PROMISE_RE, '').trim();
-    commentBody = `${commentBody}\n\n## Conformance\n\n${conformanceText}`;
+  const conformanceResult = input.conformanceOutcome?.result;
+  if (conformanceResult !== undefined) {
+    const section = renderConformanceSection(conformanceResult);
+    if (section !== undefined) {
+      commentBody = `${commentBody}\n\n## Conformance\n\n${section}`;
+    }
   }
 
-  // Gate: check reviewer then conformance findings; short-circuits on first block.
+  // Gate on blocking findings in the reviewer verdict or a completed conformance pass (incomplete is
+  // advisory only and never blocks). Gating reads the raw outcome text, independent of rendering.
+  const conformanceGateText = conformanceResult?.completed === false ? undefined : conformanceResult?.finalText;
   const blocking =
     input.gate === true &&
-    (hasBlockingFinding(verdictText) || (conformanceText !== undefined && hasBlockingFinding(conformanceText)));
+    (hasBlockingFinding(verdictText) || (conformanceGateText !== undefined && hasBlockingFinding(conformanceGateText)));
   const action = blocking ? 'request-changes' : 'comment';
   await postPullRequestReview(target, commentBody, action, input.gh);
 }

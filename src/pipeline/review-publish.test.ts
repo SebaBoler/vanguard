@@ -135,6 +135,53 @@ describe('publishReviewVerdict', () => {
     expect(calls[0]?.at(-1)).not.toContain('<promise>COMPLETE</promise>');
   });
 
+  it('renders conformance findings as a bullet list, not raw JSON', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: reviewerOutcome('No blocking issues.'),
+      conformanceOutcome: stageOutcome(
+        'conformance',
+        '<findings>{"findings":[{"severity":"medium","kind":"correctness","title":"missed AC","evidence":"AC-1"}]}</findings>\n<promise>COMPLETE</promise>',
+      ),
+      attribution: 'codex',
+      gh,
+    });
+
+    const body = calls[0]?.at(-1) ?? '';
+    expect(body).toContain('- **medium** (correctness) — missed AC');
+    expect(body).not.toContain('<findings>');
+    // A non-blocking (medium) conformance finding must not flip the gate.
+    expect(calls[0]).toContain('--comment');
+  });
+
+  it('suppresses the conformance section for the no-spec skip sentinel', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: reviewerOutcome('No blocking issues.'),
+      conformanceOutcome: stageOutcome('conformance', 'No spec, conformance skipped.\n<promise>COMPLETE</promise>'),
+      attribution: 'codex',
+      gate: true,
+      gh,
+    });
+
+    expect(calls[0]?.at(-1)).not.toContain('## Conformance');
+    expect(calls[0]).toContain('--comment');
+  });
+
   it('marks incomplete conformance as unverified without blocking the review gate', async () => {
     const calls: string[][] = [];
     const gh: GhRunner = async (args) => {
