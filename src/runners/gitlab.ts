@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
+import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL } from '../gitlab-labels.js';
@@ -91,7 +92,14 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
     },
     async addFailureLabel(mrUrl: string, kind: ProofFailureKind) {
       const label = kind === 'verify' ? GITLAB_VERIFY_FAILED_LABEL : GITLAB_VISUAL_PROOF_FAILED_LABEL;
-      await addMrFailureLabel(deps.repoPath, mrUrl, label);
+      // Best-effort: a bad URL must never block the run (publishVerdict uses the same parser).
+      let target: MergeRequestReviewTarget;
+      try {
+        target = parseMergeRequestRef(mrUrl);
+      } catch {
+        return;
+      }
+      await addMrFailureLabel(target.project, target.iid, label, glab);
     },
     async linkPr(issueRef: string, _task: Task, mrUrl: string) {
       await linkMergeRequest(deps.project, issueRef, mrUrl, glab);

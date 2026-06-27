@@ -98,12 +98,22 @@ export async function linkMergeRequest(
 }
 
 /**
- * Best-effort: add a label to a GitLab MR (used to flag failed proofs for triage).
- * Swallows errors — labeling a draft MR must never block the run.
+ * Best-effort: ensure the scoped label exists on the project, then add it to a GitLab MR
+ * (used to flag failed proofs for triage). Without the pre-create, `glab mr update --label`
+ * is a silent no-op on a project lacking the label (matching GitHub's `gh label create --force`
+ * pre-step). Both steps swallow errors — labeling a draft MR must never block the run.
  */
-export async function addMrFailureLabel(repoPath: string, mrUrl: string, label: string): Promise<void> {
+export async function addMrFailureLabel(
+  project: string,
+  iid: number,
+  label: string,
+  glab: GlabRunner = defaultGlabRunner,
+): Promise<void> {
   try {
-    await execa('glab', ['mr', 'update', mrUrl, '--label', label], { cwd: repoPath });
+    await glab(['label', 'create', '--repo', project, '--name', label]);
+  } catch { /* best-effort */ }
+  try {
+    await glab(['mr', 'update', String(iid), '--repo', project, '--label', label]);
   } catch { /* best-effort */ }
 }
 

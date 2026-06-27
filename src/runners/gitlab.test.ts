@@ -148,17 +148,25 @@ describe('gitlabAdapter', () => {
     expect(body).not.toContain('gate is not enforced');
   });
 
-  it('addFailureLabel issues glab mr update with vanguard::verify-failed for verify kind', async () => {
-    const calls: string[][] = [];
-    const glab: GlabRunner = async (args) => {
-      calls.push(args);
-      return '';
-    };
-    // addMrFailureLabel shells out directly via execa, not through GlabRunner.
-    // Test that addFailureLabel is best-effort and returns normally even when underlying fails.
+  it('addFailureLabel maps verify → vanguard::verify-failed and pre-creates the label', async () => {
+    const { calls, glab } = makeGlab('');
     const adapter = gitlabAdapter(makeDeps(), glab);
-    await expect(adapter.addFailureLabel('https://gitlab.com/group/project/-/merge_requests/1', 'verify')).resolves.toBeUndefined();
-    await expect(adapter.addFailureLabel('https://gitlab.com/group/project/-/merge_requests/1', 'visual-proof')).resolves.toBeUndefined();
+    await adapter.addFailureLabel('https://gitlab.com/group/project/-/merge_requests/1', 'verify');
+    // pre-create the scoped label, then add it to the MR — both routed through the injected GlabRunner.
+    expect(calls).toEqual([
+      ['label', 'create', '--repo', 'group/project', '--name', 'vanguard::verify-failed'],
+      ['mr', 'update', '1', '--repo', 'group/project', '--label', 'vanguard::verify-failed'],
+    ]);
+  });
+
+  it('addFailureLabel maps visual-proof → vanguard::visual-proof-failed', async () => {
+    const { calls, glab } = makeGlab('');
+    const adapter = gitlabAdapter(makeDeps(), glab);
+    await adapter.addFailureLabel('https://gitlab.com/group/project/-/merge_requests/2', 'visual-proof');
+    expect(calls).toEqual([
+      ['label', 'create', '--repo', 'group/project', '--name', 'vanguard::visual-proof-failed'],
+      ['mr', 'update', '2', '--repo', 'group/project', '--label', 'vanguard::visual-proof-failed'],
+    ]);
   });
 
   it('linkPr calls glab to post MR note on the issue', async () => {
