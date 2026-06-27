@@ -378,6 +378,46 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
   return stages.map((stage) => ({ systemPrompt, ...stage }));
 }
 
+/** Report-only conformance pass. Appended by assembleReviewPipeline only when explicitly enabled. */
+export function conformanceStage(): PipelineStage {
+  return {
+    name: 'conformance',
+    // Fresh context: compare the final diff against spec without inheriting prior reasoning.
+    resumePrevious: false,
+    // Report-only: no sandbox->worktree sync.
+    copyBack: false,
+    effort: 'high',
+    maxTurns: 16,
+    systemPrompt: conformanceSystemPrompt(),
+    promptTemplate: [
+      'You are an independent conformance reviewer. Do not edit any files.',
+      '',
+      'If the context below contains no <tech_spec> block, write exactly:',
+      'No spec, conformance skipped.',
+      'then <promise>COMPLETE</promise> and stop.',
+      '',
+      'Otherwise, compare the diff against the spec Acceptance Criteria. Flag exactly three classes of issues:',
+      '1. Unmet or partially-met Acceptance Criteria',
+      '2. Scope drift or scope creep (changes outside the spec)',
+      '3. Silently dropped requirements',
+      '',
+      'Report only. Do not edit files.',
+      '',
+      'Spec and comments:',
+      '{{COMMENTS}}',
+      '',
+      'Diff:',
+      '{{PREVIOUS_DIFF}}',
+      '',
+      'If you find issues, emit:',
+      '<findings>{"findings":[{"severity":"high|critical|medium|low","kind":"correctness","title":"...","evidence":"..."}]}</findings>',
+      'If there are no issues, write: No conformance issues.',
+      '',
+      'End with <promise>COMPLETE</promise>.',
+    ].join('\n'),
+  };
+}
+
 /**
  * Route one named stage (default 'reviewer') to a different provider, leaving the rest on the
  * pipeline's default agent. This is the cross-provider review toggle: the implementer stays on the
@@ -426,6 +466,10 @@ export interface ReviewPipelineDeps {
   providerModel?: string;
   reviewModel?: string;
   noSimplify?: boolean;
+  /** When true, include the conformance stage. Default false (opt-in). */
+  conformance?: boolean;
+  /** Model override for the conformance stage only (e.g. 'opus' for planner-tier). */
+  conformanceModel?: string;
 }
 
 /**
@@ -438,13 +482,17 @@ export function assembleReviewPipeline(
   agents: { agent: AgentProvider; reviewAgent?: AgentProvider },
   deps: ReviewPipelineDeps,
 ): PipelineStage[] {
-  // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
+  // --no-simplify: drop the cleanup stage and run implement -> review, plus optional conformance.
   let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== 'simplifier') : base;
+  if (deps.conformance === true) {
+    pipeline = [...pipeline, conformanceStage()];
+  }
   if (agents.reviewAgent !== undefined) pipeline = withStageProvider(pipeline, agents.reviewAgent);
   if (deps.providerModel !== undefined) {
     // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
     // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
     // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
+    // withStageModelExcept applies providerModel to conformance (planning side), keeping it same-family.
     const crossProviderReview = deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
     pipeline = crossProviderReview
       ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
@@ -459,6 +507,8 @@ export function assembleReviewPipeline(
       ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
     });
   }
+  // Override conformance model only when supplied (e.g. --conformance-model opus for planner-tier).
+  if (deps.conformanceModel !== undefined) pipeline = withStageModel(pipeline, deps.conformanceModel, 'conformance');
   return pipeline;
 }
 
@@ -557,6 +607,16 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));
+}
+
+/** System prompt for the conformance reviewer (reports only, never edits). */
+export function conformanceSystemPrompt(): string {
+  return [
+    '<role>Conformance reviewer. You compare the implementation diff against the tech spec Acceptance Criteria. You do not edit files.</role>',
+    '<policy>Never edit files. Report only. A missed dropped requirement is more costly than a noted false positive.</policy>',
+    '<guidelines>For each Acceptance Criterion in the spec, verify whether the diff satisfies it. Flag unmet or partially-met criteria, scope drift or scope creep, and silently dropped requirements. Name the criterion text in your evidence.</guidelines>',
+    '<tradeoffs>A missed dropped requirement causes rework; a noted false positive is a quick triage. When unsure, report it.</tradeoffs>',
+  ].join('\n');
 }
 
 /** Red-team system prompt for the adversarial reviewer (reports only, never edits). */

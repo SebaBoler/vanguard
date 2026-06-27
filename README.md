@@ -240,6 +240,8 @@ Runs reuse the session and keep a stable prompt prefix to maximize Anthropic pro
 
 The canonical pipeline is implement → review → simplify. The reviewer reviews for correctness **and** over-engineering (the ponytail minimalism lens — would less code do the job?), so the third simplify pass is often redundant. Pass `--no-simplify` (on `run`/`watch`) for a lean implement → review run that skips it.
 
+An optional **conformance pass** can be appended after the reviewer with `--conformance` (on `run`/`watch`; opt-in, default off, GitHub/Linear only). It runs a fresh, report-only stage that checks the final diff against the spec's Acceptance Criteria for unmet criteria, scope drift, and silently dropped requirements; its findings post to the PR and gate the merge alongside the reviewer's. It is report-only — it never edits files (`copyBack:false`). `--conformance-model <m>` sets the model for that stage; it defaults to the implementer/`--provider-model` model, so **pass `--conformance-model opus` to run the check on a planner-tier model** (the headline use case).
+
 ## Providers
 
 The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), or `zai` (z.ai GLM Coding Plan). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
@@ -259,10 +261,11 @@ vanguard run    --linear TES-1 --provider claude --review-provider codex
 vanguard watch  --label vanguard --provider codex --review-provider claude
 ```
 
-**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. Mix freely with provider selection:
+**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
 
 ```bash
 vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/implement big, review cheap
+vanguard run --linear TES-1 --provider-model sonnet --conformance --conformance-model opus   # implement on sonnet, check conformance on opus
 ```
 
 `--provider` / `--review-provider` / `--provider-model` / `--review-model` work the same on `run` and `watch`. The simplifier stays on the main provider. Each non-Claude provider brings its own key, forwarded into the sandbox **only when that provider is selected**: `CODEX_API_KEY` for codex, `CURSOR_API_KEY` for cursor, `ZAI_API_KEY` for zai (a missing key fails fast at dispatch, not mid-run). Under `--llm-proxy` the Codex/OpenAI key **and** the z.ai key are held by a trusted sidecar instead of the sandbox (see [Host LLM proxy](#host-llm-proxy) below); Cursor's key is still injected directly (not yet proxied). Claude auth is the baseline (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`). The sandbox image ships the `claude` and `codex` CLIs; selecting `cursor` also needs its CLI added to the image (`curl https://cursor.com/install -fsS | bash`).

@@ -273,6 +273,11 @@ describe('implementReviewSimplifyStages', () => {
     expect(byName.reviewer?.resumePrevious).toBe(false);
     expect(byName.simplifier?.resumePrevious).toBe(false);
   });
+
+  it('keeps conformance out of the default stage list', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.map((s) => s.name)).toEqual(['implementer', 'reviewer', 'simplifier']);
+  });
 });
 
 describe('fastStages', () => {
@@ -710,5 +715,32 @@ describe('assembleReviewPipeline', () => {
     expect(base).toHaveLength(3);
     expect(base.every((s) => s.model === undefined)).toBe(true);
     expect(base.every((s) => s.provider === undefined)).toBe(true);
+  });
+
+  it('appends conformance after simplifier only when enabled', () => {
+    expect(assembleReviewPipeline(base, { agent }, {}).map((s) => s.name)).toEqual([
+      'implementer',
+      'reviewer',
+      'simplifier',
+    ]);
+    const result = assembleReviewPipeline(base, { agent }, { conformance: true });
+    expect(result.map((s) => s.name)).toEqual([
+      'implementer',
+      'reviewer',
+      'simplifier',
+      'conformance',
+    ]);
+    expect(result.find((s) => s.name === 'conformance')?.copyBack).toBe(false);
+  });
+
+  it('keeps conformance after reviewer when simplifier is disabled and applies its model override', () => {
+    const result = assembleReviewPipeline(base, { agent }, {
+      conformance: true,
+      noSimplify: true,
+      providerModel: 'sonnet',
+      conformanceModel: 'opus',
+    });
+    expect(result.map((s) => s.name)).toEqual(['implementer', 'reviewer', 'conformance']);
+    expect(result.find((s) => s.name === 'conformance')?.model).toBe('opus');
   });
 });

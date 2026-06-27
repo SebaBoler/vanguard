@@ -38,6 +38,10 @@ export interface RunIssueDeps extends ProviderChoice {
   verifyCmd?: string;
   visualProofCmd?: string;
   reviewGate?: boolean;
+  /** When true, run the conformance stage (opt-in; default off). */
+  conformance?: boolean;
+  /** Model override for the conformance stage (e.g. 'opus'). */
+  conformanceModel?: string;
 }
 
 /** Per-source seam: fetch/prepare, extra secrets, id derivation, stage set, extra variables, PR link-back. */
@@ -146,10 +150,12 @@ export async function runSourcedIssue(
       ].filter((s): s is string => s !== undefined).join('\n\n');
       const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
       const reviewerOutcome = outcomes.find((o) => o.name === 'reviewer');
+      const conformanceOutcome = outcomes.find((o) => o.name === 'conformance');
       await publishReviewVerdict({
         prUrl: pr.prUrl,
         headSha: commit.sha!,
         reviewerOutcome,
+        conformanceOutcome,
         attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),
         ...(deps.reviewGate === true ? { gate: true } : {}),
       });

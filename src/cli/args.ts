@@ -128,6 +128,10 @@ export type Command =
       verifyCmd?: string;
       /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
       visualProofCmd?: string;
+      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
+      conformance?: boolean;
+      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
+      conformanceModel?: string;
     }
   | {
       kind: 'watch';
@@ -162,6 +166,10 @@ export type Command =
       verifyCmd?: string;
       /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
       visualProofCmd?: string;
+      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
+      conformance?: boolean;
+      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
+      conformanceModel?: string;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -323,6 +331,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-model': { type: 'string' },
         // skip the simplifier stage (lean run: implement -> review only)
         'no-simplify': { type: 'boolean' },
+        // conformance review pass (opt-in; planner-tier model checks diff against spec)
+        conformance: { type: 'boolean' },
+        'conformance-model': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -347,6 +358,7 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   if (values.help === true) return { kind: 'help' };
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
+  const conformanceRequested = values.conformance === true || typeof values['conformance-model'] === 'string';
 
   // Provider flags (run + watch). An unknown provider name is an error.
   const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
@@ -550,6 +562,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         return fail(`--project expects a board number, got "${picked[1]}".`);
       }
     }
+    if (picked[0] === 'gitlab' && conformanceRequested) {
+      return fail('--conformance is not supported with --gitlab.');
+    }
     const concurrency = Number(values.concurrency);
     const forkN = Number(values.fork);
     return {
@@ -575,6 +590,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
+      ...(values.conformance === true ? { conformance: true } : {}),
+      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
     };
   }
 
@@ -623,6 +640,9 @@ export function parseCli(argv: string[], cwd: string): Command {
     }
     if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) {
       return fail('GitHub loop-v1 flags (--spec-label etc.) are not compatible with --source linear.');
+    }
+    if (source === 'gitlab' && conformanceRequested) {
+      return fail('--conformance is not supported with --source gitlab.');
     }
 
     if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
@@ -710,6 +730,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'watch',
       ...common,
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
+      ...(values.conformance === true ? { conformance: true } : {}),
+      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
@@ -763,6 +785,8 @@ Commands:
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
+    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
+    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -828,6 +852,8 @@ Commands:
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
+    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
+    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
