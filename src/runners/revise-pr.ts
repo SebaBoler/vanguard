@@ -5,7 +5,7 @@ import {
   selectActionableFeedback,
   buildRevisionPrompt,
   replyAndResolveThread,
-  countRevisionRounds,
+  countRevisionRoundsFromFeedback,
   revisionMarker,
   buildItemReply,
   buildRevisionSummary,
@@ -134,7 +134,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
-  const rounds = await countRevisionRounds(target, gh);
+  const rounds = countRevisionRoundsFromFeedback(fb);
   if (rounds >= maxRounds) {
     const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
     log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);

@@ -109,8 +109,17 @@ function makeFeedbackJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function makeRoundCountJson(): string {
-  return JSON.stringify({ comments: [], reviews: [] });
+function makeFeedbackJsonWithRevisions(): string {
+  // Two distinct revision markers simulate 2 prior rounds for countRevisionRounds.
+  // selectActionableFeedback drops them via hasRevisionMarker; countRevisionRounds counts them.
+  return makeFeedbackJson({
+    comments: {
+      nodes: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-09T00:00:00Z' },
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-09T00:00:01Z' },
+      ],
+    },
+  });
 }
 
 function makeFeedbackJsonWithNonThreadItems(): string {
@@ -165,10 +174,6 @@ describe('runRevisePullRequest happy path', () => {
       }
       // pr diff
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      // round count view (different json fields)
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.includes('comments,reviews')) {
-        return makeRoundCountJson();
-      }
       // graphql (feedback query or mutations)
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
@@ -240,7 +245,6 @@ describe('runRevisePullRequest — no actionable feedback', () => {
       ghCalls.push(args);
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) return makeRoundCountJson();
       if (args[0] === 'api' && args[1] === 'graphql') {
         // Empty feedback
         return JSON.stringify({
@@ -296,17 +300,7 @@ describe('runRevisePullRequest — round cap', () => {
       ghCalls.push(args);
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) {
-        // Simulate 2 prior revision rounds
-        return JSON.stringify({
-          comments: [
-            { body: '<!-- vanguard-revision: deadbeef -->' },
-            { body: '<!-- vanguard-revision: abc1234 -->' },
-          ],
-          reviews: [],
-        });
-      }
-      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJsonWithRevisions();
       // cap comment post
       if (args[0] === 'pr' && args[1] === 'review') return '';
       if (args[0] === 'pr' && args[1] === 'edit') return '';
@@ -338,6 +332,7 @@ describe('runRevisePullRequest — round cap', () => {
     // Labels were still flipped
     const editCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('vanguard:needs-human-review'));
     expect(editCall).toBeDefined();
+    expect(ghCalls.filter((a) => a[0] === 'api' && a[1] === 'graphql')).toHaveLength(1);
   });
 });
 
@@ -358,9 +353,6 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
         return makePrViewJson();
       }
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) {
-        return makeRoundCountJson();
-      }
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
         if (query.includes('reviewThreads')) return makeFeedbackJsonWithNonThreadItems();

@@ -78,6 +78,7 @@ interface GqlThread {
 }
 
 interface GqlResponse {
+  errors?: Array<{ message?: string }>;
   data?: {
     repository?: {
       pullRequest?: {
@@ -115,6 +116,10 @@ export async function fetchPullRequestFeedback(
   ]);
 
   const response = JSON.parse(out) as GqlResponse;
+  if (response.errors != null) {
+    const msgs = response.errors.map((e) => e.message ?? 'unknown error').join('; ');
+    throw new Error(`GraphQL error for ${target.repoSlug}#${target.number}: ${msgs}`);
+  }
   const pr = response.data?.repository?.pullRequest;
 
   const headRefOid = pr?.headRefOid ?? '';
@@ -279,17 +284,19 @@ function hasRevisionMarker(body: string): boolean {
 }
 
 /** Count how many revision rounds Vanguard has already completed on this PR. */
-export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
-  const out = await gh(['pr', 'view', String(target.number), '--repo', target.repoSlug, '--json', 'comments,reviews']);
-  const view = JSON.parse(out) as { comments?: Array<{ body?: string }>; reviews?: Array<{ body?: string }> };
-  const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((e) => e.body ?? '');
+export function countRevisionRoundsFromFeedback(fb: PullRequestFeedback): number {
   const rounds = new Set<string>();
-  for (const body of bodies) {
-    for (const match of body.matchAll(REVISION_MARKER_RE)) {
+  for (const item of fb.items) {
+    for (const match of item.body.matchAll(REVISION_MARKER_RE)) {
       if (match[1] !== undefined) rounds.add(match[1]);
     }
   }
   return rounds.size;
+}
+
+/** Count how many revision rounds Vanguard has already completed on this PR. */
+export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
+  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback(target, gh));
 }
 
 /** Marker embedded in revision replies for round-counting and non-recursion. */
