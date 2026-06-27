@@ -562,9 +562,6 @@ export function parseCli(argv: string[], cwd: string): Command {
         return fail(`--project expects a board number, got "${picked[1]}".`);
       }
     }
-    if (picked[0] === 'gitlab' && conformanceRequested) {
-      return fail('--conformance is not supported with --gitlab.');
-    }
     const concurrency = Number(values.concurrency);
     const forkN = Number(values.fork);
     return {
@@ -641,10 +638,6 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) {
       return fail('GitHub loop-v1 flags (--spec-label etc.) are not compatible with --source linear.');
     }
-    if (source === 'gitlab' && conformanceRequested) {
-      return fail('--conformance is not supported with --source gitlab.');
-    }
-
     if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
       specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
       agentLabel ??= DEFAULT_GITHUB_AGENT_LABEL;

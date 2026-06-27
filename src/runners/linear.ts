@@ -1,16 +1,19 @@
 import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
 import { implementReviewSimplifyStages, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
+import { publishReviewVerdict } from '../pipeline/review-publish.js';
+import { addPrFailureLabel } from '../tasks/github.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import { runSourcedIssue } from './source-adapter.js';
+import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, ProviderName } from '../agents/registry.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
-import type { SourceAdapter } from './source-adapter.js';
+import type { SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps extends ProviderChoice {
@@ -93,6 +96,11 @@ function linearAdapter(deps: RunLinearIssueDeps): SourceAdapter {
     taskId: (task) => `linear-${task.id.toLowerCase()}`,
     stages: linearStages,
     variables: (issueRef: string) => ({ ISSUE: issueRef }),
+    publishVerdict: publishReviewVerdict,
+    async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
+      const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
+      await addPrFailureLabel(deps.repoPath, prUrl, label);
+    },
     async linkPr(_issueRef: string, task: Task, prUrl: string) {
       await linkLinearIssue(task.id, prUrl);
     },

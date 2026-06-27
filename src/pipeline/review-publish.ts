@@ -58,7 +58,7 @@ const CONFORMANCE_SKIP_SENTINEL = 'No spec, conformance skipped.';
  * suppressed (a near-empty section is just noise); otherwise the structured <findings> block
  * rendered as a bullet list, falling back to the cleaned prose when no findings are present.
  */
-function renderConformanceSection(result: RunResult): string | undefined {
+export function renderConformanceSection(result: RunResult): string | undefined {
   if (result.completed === false) return CONFORMANCE_INCOMPLETE_NOTICE;
   const cleaned = result.finalText.replace(PROMISE_RE, '').trim();
   if (cleaned === CONFORMANCE_SKIP_SENTINEL) return undefined;

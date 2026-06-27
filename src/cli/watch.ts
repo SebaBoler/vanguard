@@ -278,6 +278,8 @@ async function watchGitlabSource(
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  if (cmd.conformance === true) deps.conformance = true;
+  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
 
   // Loop v1: activated when --spec-label is supplied.
   if (cmd.specLabel !== undefined) {

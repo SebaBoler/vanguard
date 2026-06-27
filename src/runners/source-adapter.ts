@@ -1,11 +1,10 @@
-import { addPrFailureLabel } from '../tasks/github.js';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
-import { publishReviewVerdict, buildReviewerAttribution } from '../pipeline/review-publish.js';
+import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
@@ -15,12 +14,11 @@ import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/v
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
-import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice } from '../agents/registry.js';
-import type { PipelineStage } from '../pipeline/pipeline.js';
+import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
 
 /** Shared dependencies for all source-backed issue runners. */
@@ -44,6 +42,25 @@ export interface RunIssueDeps extends ProviderChoice {
   conformanceModel?: string;
 }
 
+/** Semantic kind of a proof failure; adapters map it to a platform label string. */
+export type ProofFailureKind = 'verify' | 'visual-proof';
+
+/** Input to the per-source publishVerdict hook (platform-neutral subset of PublishReviewVerdictInput). */
+export interface PublishVerdictInput {
+  /** Full PR or MR URL returned by publishForReview. */
+  prUrl: string;
+  /** The commit SHA — also the dedupe marker embedded in the comment. */
+  headSha: string;
+  /** The 'reviewer' StageOutcome. Missing → hard error (no-silence guarantee). */
+  reviewerOutcome?: StageOutcome | undefined;
+  /** The 'conformance' StageOutcome. Optional; when present appends a ## Conformance section. */
+  conformanceOutcome?: StageOutcome | undefined;
+  /** Attribution string e.g. "codex" or "claude/sonnet". */
+  attribution: string;
+  /** When true, blocking (high/critical) findings gate the PR/MR. */
+  gate?: boolean;
+}
+
 /** Per-source seam: fetch/prepare, extra secrets, id derivation, stage set, extra variables, PR link-back. */
 export interface SourceAdapter {
   /** Fetch the task and any source-specific context. Runs on the host. */
@@ -58,6 +75,12 @@ export interface SourceAdapter {
   variables?(issueRef: string, task: Task): Record<string, string>;
   /** Whether the review body should include source-control auto-close syntax for this task id. */
   closeIssueOnMerge?: boolean;
+  /** CLI used to open the draft PR/MR for review. Default 'gh'. GitLab supplies 'glab'. */
+  reviewCli?: 'gh' | 'glab';
+  /** Post the reviewer verdict (+ optional conformance section) onto the opened PR/MR. */
+  publishVerdict(input: PublishVerdictInput): Promise<void>;
+  /** Add a proof-failure label to the opened PR/MR (best-effort; must never throw). */
+  addFailureLabel(prUrl: string, kind: ProofFailureKind): Promise<void>;
   /** Write the PR link back onto the source issue. */
   linkPr(issueRef: string, task: Task, prUrl: string): Promise<void>;
 }
@@ -148,10 +171,10 @@ export async function runSourcedIssue(
         verification !== undefined ? proofBlock(verification) : undefined,
         visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
       ].filter((s): s is string => s !== undefined).join('\n\n');
-      const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true });
+      const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true, ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}) });
       const reviewerOutcome = outcomes.find((o) => o.name === 'reviewer');
       const conformanceOutcome = outcomes.find((o) => o.name === 'conformance');
-      await publishReviewVerdict({
+      await adapter.publishVerdict({
         prUrl: pr.prUrl,
         headSha: commit.sha!,
         reviewerOutcome,
@@ -160,8 +183,8 @@ export async function runSourcedIssue(
         ...(deps.reviewGate === true ? { gate: true } : {}),
       });
       await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
-      if (verification !== undefined && !verification.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, GITHUB_VERIFY_FAILED_LABEL);
-      if (visualProof !== undefined && !visualProof.passed) await addPrFailureLabel(deps.repoPath, pr.prUrl, GITHUB_VISUAL_PROOF_FAILED_LABEL);
+      if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
+      if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       await adapter.linkPr(issueRef, task, pr.prUrl);
       return { task, prUrl: pr.prUrl };
     } finally {
