@@ -89,6 +89,8 @@ async function watchLinearSource(
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
+    ...(cmd.conformance === true ? { conformance: true } : {}),
+    ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
   };
 
   // Loop v1: activated when --spec-state is supplied. parseCli guarantees --spec-state-name and
@@ -165,6 +167,8 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, c
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  if (cmd.conformance === true) deps.conformance = true;
+  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
   return deps;
 }
 

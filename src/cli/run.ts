@@ -82,6 +82,8 @@ function linearDeps(
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
+    ...(cmd.conformance === true ? { conformance: true } : {}),
+    ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
   };
 }
 
@@ -122,6 +124,8 @@ async function runGithub(
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  if (cmd.conformance === true) deps.conformance = true;
+  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -149,6 +153,7 @@ async function runGitlab(
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  // GitLab does not support conformance in v1; the flag is ignored here.
   const result = await runGitlabIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }

@@ -10,6 +10,8 @@ export interface PublishReviewVerdictInput {
   headSha: string;
   /** The 'reviewer' StageOutcome. Missing → hard error (no-silence guarantee). */
   reviewerOutcome?: StageOutcome | undefined;
+  /** The 'conformance' StageOutcome. Optional; when present appends a ## Conformance section. */
+  conformanceOutcome?: StageOutcome | undefined;
   /** Attribution string e.g. "codex" or "claude/sonnet". */
   attribution: string;
   /** When true, blocking (high/critical) findings post as --request-changes to block merge. */
@@ -40,12 +42,19 @@ export function hasBlockingFinding(verdictText: string): boolean {
   }
 }
 
+const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
+
+/** Rendered when a conformance pass exhausts its turn budget without completing. */
+const CONFORMANCE_INCOMPLETE_NOTICE =
+  '⚠️ Conformance pass did not complete (large diff / turn budget) — treat as unverified.';
+
 /**
  * Post the reviewer stage's verdict to an already-opened PR.
  * Called by runGithubIssue / runLinearIssue immediately after publishForReview.
  *
  * No-silence guarantee: if reviewerOutcome is undefined the call throws (the run errors loudly
  * rather than silently recording "ok"). A gh failure also propagates — it is NOT swallowed.
+ * conformanceOutcome is additive and optional — its absence never throws.
  */
 export async function publishReviewVerdict(input: PublishReviewVerdictInput): Promise<void> {
   if (input.reviewerOutcome === undefined) {
@@ -54,11 +63,24 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
 
   const target = parsePullRequestUrl(input.prUrl);
   const verdictText = input.reviewerOutcome.result.finalText;
-  const commentBody = buildMainLoopReviewComment(verdictText, {
+  let commentBody = buildMainLoopReviewComment(verdictText, {
     headRefOid: input.headSha,
     attribution: input.attribution,
   });
 
-  const action = input.gate === true && hasBlockingFinding(verdictText) ? 'request-changes' : 'comment';
+  let conformanceText: string | undefined;
+  if (input.conformanceOutcome !== undefined) {
+    conformanceText =
+      input.conformanceOutcome.result.completed === false
+        ? CONFORMANCE_INCOMPLETE_NOTICE
+        : input.conformanceOutcome.result.finalText.replace(PROMISE_RE, '').trim();
+    commentBody = `${commentBody}\n\n## Conformance\n\n${conformanceText}`;
+  }
+
+  // Gate: check reviewer then conformance findings; short-circuits on first block.
+  const blocking =
+    input.gate === true &&
+    (hasBlockingFinding(verdictText) || (conformanceText !== undefined && hasBlockingFinding(conformanceText)));
+  const action = blocking ? 'request-changes' : 'comment';
   await postPullRequestReview(target, commentBody, action, input.gh);
 }

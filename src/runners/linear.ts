@@ -43,6 +43,10 @@ export interface RunLinearIssueDeps extends ProviderChoice {
   visualProofCmd?: string;
   /** When true, blocking (high/critical) reviewer findings post as --request-changes to block merge. */
   reviewGate?: boolean;
+  /** When true, run the conformance stage (opt-in; default off). */
+  conformance?: boolean;
+  /** Model override for the conformance stage (e.g. 'opus'). */
+  conformanceModel?: string;
 }
 
 export interface RunLinearIssueResult {

@@ -3,19 +3,23 @@ import { hasBlockingFinding, publishReviewVerdict } from './review-publish.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
-function reviewerOutcome(finalText: string): StageOutcome {
+function stageOutcome(name: string, finalText: string, completed = true): StageOutcome {
   return {
-    name: 'reviewer',
+    name,
     result: {
       taskId: 't',
-      completed: true,
-      exitReason: 'completed',
+      completed,
+      exitReason: completed ? 'completed' : 'maxTurns',
       turns: 1,
       worktreePath: '/tmp/wt',
       worktreePreserved: true,
       finalText,
     },
   };
+}
+
+function reviewerOutcome(finalText: string): StageOutcome {
+  return stageOutcome('reviewer', finalText);
 }
 
 describe('hasBlockingFinding', () => {
@@ -96,5 +100,59 @@ describe('publishReviewVerdict', () => {
         gh: async () => '',
       }),
     ).rejects.toThrow('must be a full GitHub PR URL');
+  });
+
+  it('appends conformance output and gates on its blocking findings', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: reviewerOutcome('No blocking issues.'),
+      conformanceOutcome: stageOutcome(
+        'conformance',
+        '<findings>{"findings":[{"severity":"critical","kind":"correctness","title":"missed AC","evidence":"AC-1"}]}</findings>\n<promise>COMPLETE</promise>',
+      ),
+      attribution: 'codex/gpt-5',
+      gate: true,
+      gh,
+    });
+
+    expect(calls[0]).toEqual([
+      'pr',
+      'review',
+      '42',
+      '--repo',
+      'o/r',
+      '--request-changes',
+      '--body',
+      expect.stringContaining('## Conformance'),
+    ]);
+    expect(calls[0]?.at(-1)).not.toContain('<promise>COMPLETE</promise>');
+  });
+
+  it('marks incomplete conformance as unverified without blocking the review gate', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: reviewerOutcome('No blocking issues.'),
+      conformanceOutcome: stageOutcome('conformance', 'partial', false),
+      attribution: 'codex',
+      gate: true,
+      gh,
+    });
+
+    expect(calls[0]).toContain('--comment');
+    expect(calls[0]?.at(-1)).toContain('Conformance pass did not complete');
   });
 });
