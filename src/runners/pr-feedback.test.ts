@@ -182,6 +182,22 @@ describe('fetchPullRequestFeedback', () => {
     expect(fb.items).toHaveLength(0);
     expect(fb.threads).toHaveLength(0);
   });
+
+  it('throws on a GraphQL partial-error response (200 with errors and null data)', async () => {
+    const payload = { errors: [{ message: 'Could not resolve to a Repository' }], data: null };
+    const gh = vi.fn().mockResolvedValue(JSON.stringify(payload));
+    await expect(fetchPullRequestFeedback({ repoSlug: 'o/r', number: 1 }, gh)).rejects.toThrow(
+      'GraphQL error for o/r#1: Could not resolve to a Repository',
+    );
+  });
+
+  it('throws on a GraphQL partial-error response with multiple errors', async () => {
+    const payload = { errors: [{ message: 'first error' }, { message: 'second error' }], data: null };
+    const gh = vi.fn().mockResolvedValue(JSON.stringify(payload));
+    await expect(fetchPullRequestFeedback({ repoSlug: 'o/r', number: 1 }, gh)).rejects.toThrow(
+      'GraphQL error for o/r#1: first error; second error',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -302,17 +318,42 @@ describe('selectActionableFeedback', () => {
 // countRevisionRounds
 // ---------------------------------------------------------------------------
 
+function makeGqlPayload(overrides: {
+  comments?: Array<{ author?: { login: string }; body: string; createdAt?: string }>;
+  reviews?: Array<{ author?: { login: string }; body: string; submittedAt?: string; state?: string }>;
+  threadCommentBodies?: string[];
+} = {}) {
+  const threadNodes = (overrides.threadCommentBodies ?? []).map((body, i) => ({
+    id: `thread-${i}`,
+    isResolved: false,
+    comments: { nodes: [{ author: { login: 'alice' }, body, createdAt: '2024-01-11T10:00:00Z' }] },
+  }));
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          isDraft: false,
+          headRefOid: 'head-sha',
+          commits: { nodes: [{ commit: { committedDate: '2024-01-10T09:00:00Z' } }] },
+          reviewThreads: { nodes: threadNodes },
+          reviews: { nodes: overrides.reviews ?? [] },
+          comments: { nodes: overrides.comments ?? [] },
+        },
+      },
+    },
+  };
+}
+
 describe('countRevisionRounds', () => {
   it('counts repeated markers for the same head as one revision round', async () => {
     const gh = vi.fn().mockResolvedValue(
-      JSON.stringify({
+      JSON.stringify(makeGqlPayload({
         comments: [
-          { body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->' },
-          { body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->' },
-          { body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->' },
+          { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+          { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
+          { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
         ],
-        reviews: [],
-      }),
+      })),
     );
 
     await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
@@ -320,13 +361,37 @@ describe('countRevisionRounds', () => {
 
   it('counts distinct revision marker heads as distinct rounds', async () => {
     const gh = vi.fn().mockResolvedValue(
-      JSON.stringify({
+      JSON.stringify(makeGqlPayload({
         comments: [
-          { body: '<!-- vanguard-revision: deadbeef -->' },
-          { body: '<!-- vanguard-revision: abc1234 -->' },
+          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
         ],
-        reviews: [],
-      }),
+      })),
+    );
+
+    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+  });
+
+  it('counts a round whose marker is only in an inline thread reply', async () => {
+    // Thread-only round: revision marker posted exclusively as a thread reply,
+    // not in PR-level comments or reviews. Must still be counted.
+    const gh = vi.fn().mockResolvedValue(
+      JSON.stringify(makeGqlPayload({
+        threadCommentBodies: ['Addressed inline.\n\n<!-- vanguard-revision: feedcafe -->'],
+      })),
+    );
+
+    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+  });
+
+  it('counts rounds from both thread replies and PR-level comments', async () => {
+    const gh = vi.fn().mockResolvedValue(
+      JSON.stringify(makeGqlPayload({
+        comments: [
+          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
+        ],
+        threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
+      })),
     );
 
     await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
