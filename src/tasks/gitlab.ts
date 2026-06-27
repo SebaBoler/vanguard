@@ -97,6 +97,16 @@ export async function linkMergeRequest(
   await commentGitlabIssue(project, issueRef, `Vanguard opened an MR for review: ${mrUrl}`, glab);
 }
 
+/**
+ * Best-effort: add a label to a GitLab MR (used to flag failed proofs for triage).
+ * Swallows errors — labeling a draft MR must never block the run.
+ */
+export async function addMrFailureLabel(repoPath: string, mrUrl: string, label: string): Promise<void> {
+  try {
+    await execa('glab', ['mr', 'update', mrUrl, '--label', label], { cwd: repoPath });
+  } catch { /* best-effort */ }
+}
+
 /** Add/remove labels on a GitLab issue (used to claim/advance it in the watch loop). */
 export async function editGitlabLabels(
   project: string,

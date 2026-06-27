@@ -151,9 +151,11 @@ async function runGitlab(
   if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
   if (cmd.noSimplify === true) deps.noSimplify = true;
   if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
+  if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
   if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
-  // GitLab does not support conformance in v1; the flag is ignored here.
+  if (cmd.conformance === true) deps.conformance = true;
+  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
   const result = await runGitlabIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }

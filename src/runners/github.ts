@@ -1,16 +1,18 @@
 import { execa } from 'execa';
-import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
+import { GitHubTaskFetcher, linkPullRequest, addPrFailureLabel } from '../tasks/github.js';
 import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
+import { publishReviewVerdict } from '../pipeline/review-publish.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { runSourcedIssue } from './source-adapter.js';
+import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, ProviderName } from '../agents/registry.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
-import type { SourceAdapter } from './source-adapter.js';
+import type { SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
 export interface RunGithubIssueDeps extends ProviderChoice {
@@ -63,6 +65,11 @@ function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
     taskId: (task) => `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`,
     stages: implementReviewSimplifyStages,
     closeIssueOnMerge: true,
+    publishVerdict: publishReviewVerdict,
+    async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
+      const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
+      await addPrFailureLabel(deps.repoPath, prUrl, label);
+    },
     async linkPr(issueRef: string, _task: Task, prUrl: string) {
       await linkPullRequest(deps.repoSlug, issueRef, prUrl);
     },

@@ -551,15 +551,14 @@ describe('parseCli', () => {
     expect('conformanceModel' in doctor).toBe(false);
   });
 
-  it('rejects conformance flags for gitlab runs and watches because they are unsupported', () => {
-    expect(parseCli(['run', '--gitlab', '7', '--conformance'], '/work')).toMatchObject({
-      kind: 'error',
-      message: expect.stringContaining('not supported'),
-    });
-    expect(parseCli(['watch', '--source', 'gitlab', '--label', 'vanguard', '--conformance-model', 'opus'], '/work')).toMatchObject({
-      kind: 'error',
-      message: expect.stringContaining('not supported'),
-    });
+  it('parses --conformance flags for gitlab runs and watches', () => {
+    const run = parseCli(['run', '--gitlab', '7', '--conformance'], '/work');
+    expect(run.kind === 'run' && run.source).toBe('gitlab');
+    expect(run.kind === 'run' && run.conformance).toBe(true);
+
+    const watch = parseCli(['watch', '--source', 'gitlab', '--label', 'vanguard', '--conformance-model', 'opus'], '/work');
+    expect(watch.kind === 'watch' && watch.source).toBe('gitlab');
+    expect(watch.kind === 'watch' && watch.conformanceModel).toBe('opus');
   });
 
   // --- Loop v1 flag tests ---
