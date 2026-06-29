@@ -1,6 +1,7 @@
 import { watchLinear, watchGithub, watchGithubProject, watchLinearLoopV1, watchGithubLoopV1, watchGitlab, watchGitlabLoopV1 } from '../runners/watch.js';
 import { githubDepsFromEnv } from '../runners/github.js';
 import { gitlabDepsFromEnv } from '../runners/gitlab.js';
+import { pickRunOptions } from '../runners/source-adapter.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
@@ -58,7 +59,7 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   }
 }
 
-async function watchLinearSource(
+export async function watchLinearSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
@@ -82,15 +83,7 @@ async function watchLinearSource(
     repoPath: cmd.repoPath,
     ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
     ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
-    ...(cmd.noSimplify === true ? { noSimplify: true } : {}),
-    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
-    ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
-    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
-    ...(cmd.conformance === true ? { conformance: true } : {}),
-    ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
+    ...pickRunOptions(cmd),
   };
 
   // Loop v1: activated when --spec-state is supplied. parseCli guarantees --spec-state-name and
@@ -152,7 +145,7 @@ async function watchLinearSource(
   });
 }
 
-async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
+export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
@@ -160,15 +153,7 @@ async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, c
     deps.network = ctx.network;
   }
   if (ctx.llmProxy !== undefined) deps.llmProxy = ctx.llmProxy;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
-  if (cmd.conformance === true) deps.conformance = true;
-  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
+  Object.assign(deps, pickRunOptions(cmd));
   return deps;
 }
 
@@ -258,7 +243,7 @@ async function watchGithubProjectSource(
   });
 }
 
-async function watchGitlabSource(
+export async function watchGitlabSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
@@ -271,15 +256,7 @@ async function watchGitlabSource(
     deps.network = ctx.network;
   }
   if (ctx.llmProxy !== undefined) deps.llmProxy = ctx.llmProxy;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
-  if (cmd.conformance === true) deps.conformance = true;
-  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
+  Object.assign(deps, pickRunOptions(cmd));
 
   // Loop v1: activated when --spec-label is supplied.
   if (cmd.specLabel !== undefined) {

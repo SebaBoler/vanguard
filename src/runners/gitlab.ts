@@ -6,36 +6,15 @@ import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL } from '../gitlab-labels.js';
-import type { AgentAuth } from '../agents/auth.js';
-import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { ProviderChoice, ProviderName } from '../agents/registry.js';
+import type { ProviderName } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
-import type { SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitLab issue end to end. */
-export interface RunGitlabIssueDeps extends ProviderChoice {
-  auth?: AgentAuth;
-  repoPath: string;
+export interface RunGitlabIssueDeps extends RunIssueDeps {
   /** GitLab project path, e.g. `group/project`. */
   project: string;
-  proxyUrl?: string;
-  network?: string;
-  llmProxy?: LlmProxyDep;
-  reuse?: boolean;
-  /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
-  forkN?: number;
-  providerModel?: string;
-  reviewModel?: string;
-  noSimplify?: boolean;
-  verifyCmd?: string;
-  visualProofCmd?: string;
-  /** When true, blocking findings post a gate-degraded warning note on the MR (no --request-changes on GitLab). */
-  reviewGate?: boolean;
-  /** When true, run the conformance stage (opt-in; default off). */
-  conformance?: boolean;
-  /** Model override for the conformance stage (e.g. 'opus'). */
-  conformanceModel?: string;
 }
 
 export interface RunGitlabIssueResult {
