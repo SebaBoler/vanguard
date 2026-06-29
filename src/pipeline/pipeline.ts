@@ -26,7 +26,15 @@ export const STAGE = {
   TECH_SPEC: 'tech-spec',
 } as const;
 
+/** Union of all canonical stage name string literals. A typo is a compile error. */
 export type StageName = (typeof STAGE)[keyof typeof STAGE];
+
+/** Per-stage routing overrides applied by resolveRouting. Each field is last-writer-wins. */
+export interface StageRouting {
+  provider?: AgentProvider;
+  model?: string;
+  fallback?: { provider: AgentProvider; model?: string };
+}
 
 export interface PipelineStage {
   name: string;
@@ -489,43 +497,84 @@ export interface ReviewPipelineDeps {
 }
 
 /**
+ * Apply per-stage routing overrides to `baseStages` in a single, order-free pass. The result depends
+ * only on `config`'s contents, not on the order its keys were inserted: each stage is matched by name
+ * and its `provider`/`model`/`fallback` overridden when present. Stages without a config entry pass
+ * through untouched. Pure — never mutates its inputs.
+ */
+export function resolveRouting(
+  baseStages: PipelineStage[],
+  config: Partial<Record<StageName, StageRouting>>,
+): PipelineStage[] {
+  return baseStages.map((stage) => {
+    const routing = config[stage.name as StageName];
+    if (routing === undefined) return stage;
+    return {
+      ...stage,
+      ...(routing.provider !== undefined ? { provider: routing.provider } : {}),
+      ...(routing.model !== undefined ? { model: routing.model } : {}),
+      ...(routing.fallback !== undefined ? { fallback: routing.fallback } : {}),
+    };
+  });
+}
+
+/**
  * Compose the standard review pipeline transformers over `base` stages. Handles the `--no-simplify`
  * filter, cross-provider reviewer gating, per-stage model assignment, optional conformance, and
  * fallback wiring in one place so neither the GitHub nor Linear runner needs to inline these steps.
+ *
+ * Membership is decided first (filter/append); then a flat routing config is built and applied by
+ * resolveRouting in one pass. Two subtle rules live as explicit config-building code: (1) a
+ * cross-provider reviewer is excluded from `providerModel` — an Anthropic model name handed to a
+ * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it; and
+ * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins).
  */
 export function assembleReviewPipeline(
   base: PipelineStage[],
   agents: { agent: AgentProvider; reviewAgent?: AgentProvider },
   deps: ReviewPipelineDeps,
 ): PipelineStage[] {
+  // Membership first: drop the cleanup stage for --no-simplify, append optional conformance.
   let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== STAGE.SIMPLIFIER) : base;
   if (deps.conformance === true) {
     pipeline = [...pipeline, conformanceStage()];
   }
-  if (agents.reviewAgent !== undefined) pipeline = withStageProvider(pipeline, agents.reviewAgent);
+
+  // Build a flat per-stage routing config; merge so later writers win on a given field.
+  const config: Partial<Record<StageName, StageRouting>> = {};
+  const route = (name: StageName, patch: StageRouting): void => {
+    config[name] = { ...config[name], ...patch };
+  };
+
   if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
-    // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
-    // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
-    // withStageModelExcept applies providerModel to conformance (planning side), keeping it same-family.
+    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
+    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
+    // stage (incl. conformance, planning side) gets providerModel.
     const crossProviderReview =
       deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
-    pipeline = crossProviderReview
-      ? withStageModelExcept(pipeline, deps.providerModel, STAGE.REVIEWER)
-      : withStageModel(pipeline, deps.providerModel);
+    for (const stage of pipeline) {
+      if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
+      route(stage.name as StageName, { model: deps.providerModel });
+    }
   }
-  if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, STAGE.REVIEWER);
-  // Cross-provider reviewer: fall back to the planning provider on AgentError (outage/rate-limit)
-  // rather than failing the whole run. The fallback never sends the reviewer's foreign model name.
+  // Cross-provider reviewer: route it to its own provider, and fall back to the planning provider on
+  // AgentError (outage/rate-limit) rather than failing the whole run. The fallback never sends the
+  // reviewer's foreign model name.
   if (agents.reviewAgent !== undefined) {
-    pipeline = withStageFallback(pipeline, {
-      provider: agents.agent,
-      ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+    route(STAGE.REVIEWER, {
+      provider: agents.reviewAgent,
+      fallback: {
+        provider: agents.agent,
+        ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+      },
     });
   }
-  // Override conformance model only when supplied (e.g. --conformance-model opus for planner-tier).
-  if (deps.conformanceModel !== undefined) pipeline = withStageModel(pipeline, deps.conformanceModel, STAGE.CONFORMANCE);
-  return pipeline;
+  // reviewModel overrides providerModel on the reviewer only.
+  if (deps.reviewModel !== undefined) route(STAGE.REVIEWER, { model: deps.reviewModel });
+  // conformanceModel wins over providerModel on the conformance stage (last-writer-wins).
+  if (deps.conformanceModel !== undefined) route(STAGE.CONFORMANCE, { model: deps.conformanceModel });
+
+  return resolveRouting(pipeline, config);
 }
 
 /**
