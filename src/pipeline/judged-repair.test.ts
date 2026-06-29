@@ -48,11 +48,11 @@ function makeSandbox(): IsolatedSandboxProvider {
   } as unknown as IsolatedSandboxProvider;
 }
 
-function agentReturning(finalText: string): AgentProvider {
+function agentReturning(finalText: string, costUsd?: number): AgentProvider {
   return {
     name: 'fake',
     async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
-      return { finalText, turns: 1, sessionId: 's' };
+      return { finalText, turns: 1, sessionId: 's', ...(costUsd !== undefined ? { costUsd } : {}) };
     },
   };
 }
@@ -90,5 +90,24 @@ describe('runJudgedRepair', () => {
     const result = await runJudgedRepair(ctx, { agent: agentReturning('done'), generate, repair, judge: judgeReject(1) });
     expect(result.status).toBe('completed');
     await disposeContext(ctx);
+  });
+
+  it('freezes to budget_exceeded instead of completing when the judge still rejects', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'h-budget', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const result = await runJudgedRepair(ctx, {
+      agent: agentReturning('done', 0.5),
+      generate,
+      repair,
+      judge: judgeReject(99),
+      maxCostUsd: 0.5,
+    });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(1);
+      expect(result.spentUsd).toBeCloseTo(0.5);
+    }
+    await disposeContext(ctx, { keep: true });
   });
 });
