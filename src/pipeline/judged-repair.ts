@@ -81,28 +81,10 @@ export async function runJudgedRepair(ctx: RunContext, opts: JudgedRepairOptions
     }
     rejects += 1;
     if (rejects >= maxRejects) {
-      return {
-        status: 'frozen',
-        reason: 'needs_human',
-        taskId: ctx.taskId,
-        worktreePath: ctx.worktreePath,
-        branch: ctx.branch,
-        shellCommand: ctx.sandbox.shellCommand(),
-        spentUsd,
-        outcomes,
-      };
+      return makeFrozenRun(ctx, 'needs_human', spentUsd, outcomes);
     }
     if (spentUsd >= maxCostUsd) {
-      return {
-        status: 'frozen',
-        reason: 'budget_exceeded',
-        taskId: ctx.taskId,
-        worktreePath: ctx.worktreePath,
-        branch: ctx.branch,
-        shellCommand: ctx.sandbox.shellCommand(),
-        spentUsd,
-        outcomes,
-      };
+      return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     const variables: Record<string, string> = {
       ...baseVariables,
