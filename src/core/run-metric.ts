@@ -14,13 +14,19 @@ export interface StageMetric {
   outputTokens: number;
   cacheReadInputTokens: number;
   durationMs: number;
+  /** Effective per-stage budget cap in USD; present only when a finite cap is in effect. */
+  stageCapUsd?: number;
+  /** Remaining global budget before this stage started; present only when the global budget is finite. */
+  remainingBudgetUsd?: number;
 }
+
+export type StageBudgetInfo = Pick<StageMetric, 'stageCapUsd' | 'remainingBudgetUsd'>;
 
 /**
  * Build the canonical flat metric for a run result. Numeric fields default to 0 when absent so the
  * metric shape is stable. `stage` is included only when `stageName` is provided.
  */
-export function stageMetric(result: RunResult, stageName?: string): StageMetric {
+export function stageMetric(result: RunResult, stageName?: string, budgetInfo?: StageBudgetInfo): StageMetric {
   return {
     taskId: result.taskId,
     ...(stageName !== undefined ? { stage: stageName } : {}),
@@ -33,5 +39,7 @@ export function stageMetric(result: RunResult, stageName?: string): StageMetric 
     outputTokens: result.usage?.outputTokens ?? 0,
     cacheReadInputTokens: result.usage?.cacheReadInputTokens ?? 0,
     durationMs: result.durationMs ?? 0,
+    ...(budgetInfo?.stageCapUsd !== undefined ? { stageCapUsd: budgetInfo.stageCapUsd } : {}),
+    ...(budgetInfo?.remainingBudgetUsd !== undefined ? { remainingBudgetUsd: budgetInfo.remainingBudgetUsd } : {}),
   };
 }

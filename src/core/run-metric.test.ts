@@ -57,4 +57,12 @@ describe('stageMetric', () => {
   it('includes the stage key when stageName is given', () => {
     expect(stageMetric(baseResult, 'plan').stage).toBe('plan');
   });
+
+  it('includes budget fields only when provided', () => {
+    expect(stageMetric(baseResult, 'plan', { stageCapUsd: 0.5, remainingBudgetUsd: 1 })).toMatchObject({
+      stageCapUsd: 0.5,
+      remainingBudgetUsd: 1,
+    });
+    expect(stageMetric(baseResult, 'plan', {})).not.toHaveProperty('stageCapUsd');
+  });
 });
