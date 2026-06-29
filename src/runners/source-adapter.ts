@@ -21,8 +21,36 @@ import type { ProviderChoice } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
 
+/** Agent-pipeline options shared by the `run` and `watch` commands, threaded verbatim into the *Deps. */
+export interface RunOptions extends ProviderChoice {
+  providerModel?: string;
+  reviewModel?: string;
+  noSimplify?: boolean;
+  verifyCmd?: string;
+  visualProofCmd?: string;
+  /** When true, run the conformance stage (opt-in; default off). */
+  conformance?: boolean;
+  /** Model override for the conformance stage (e.g. 'opus'). */
+  conformanceModel?: string;
+}
+
+/** Extract the shared RunOptions fields from a `run` or `watch` command (or any compatible shape). */
+export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
+  return {
+    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
+    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+    ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
+    ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
+    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
+    ...(cmd.conformance !== undefined ? { conformance: cmd.conformance } : {}),
+    ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
+  };
+}
+
 /** Shared dependencies for all source-backed issue runners. */
-export interface RunIssueDeps extends ProviderChoice {
+export interface RunIssueDeps extends RunOptions {
   auth?: AgentAuth;
   repoPath: string;
   proxyUrl?: string;
@@ -30,16 +58,7 @@ export interface RunIssueDeps extends ProviderChoice {
   llmProxy?: LlmProxyDep;
   reuse?: boolean;
   forkN?: number;
-  providerModel?: string;
-  reviewModel?: string;
-  noSimplify?: boolean;
-  verifyCmd?: string;
-  visualProofCmd?: string;
   reviewGate?: boolean;
-  /** When true, run the conformance stage (opt-in; default off). */
-  conformance?: boolean;
-  /** Model override for the conformance stage (e.g. 'opus'). */
-  conformanceModel?: string;
 }
 
 /** Semantic kind of a proof failure; adapters map it to a platform label string. */

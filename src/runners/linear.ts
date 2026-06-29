@@ -9,47 +9,14 @@ import { runSourcedIssue } from './source-adapter.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
-import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice, ProviderName } from '../agents/registry.js';
-import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
+import type { ProviderName } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
-import type { SourceAdapter, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single Linear issue end to end. */
-export interface RunLinearIssueDeps extends ProviderChoice {
-  auth?: AgentAuth;
+export interface RunLinearIssueDeps extends RunIssueDeps {
   linearKey: string;
-  repoPath: string;
   skillsDir: string;
-  /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
-  proxyUrl?: string;
-  /** When set, join the sandbox to this docker network (the hard egress enclave). */
-  network?: string;
-  /**
-   * When set, route Claude through a trusted LLM-proxy sidecar: the real Anthropic credential stays
-   * out of the sandbox, which authenticates with the per-run nonce against the proxy host instead.
-   */
-  llmProxy?: LlmProxyDep;
-  /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
-  reuse?: boolean;
-  /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
-  forkN?: number;
-  /** Model for the implementer/simplifier stages (default: provider's default). */
-  providerModel?: string;
-  /** Model for the review stage (default: provider's default). */
-  reviewModel?: string;
-  /** Skip the simplifier stage (lean run: implement -> review only). */
-  noSimplify?: boolean;
-  /** Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect). */
-  verifyCmd?: string;
-  /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). Failure never blocks the PR. */
-  visualProofCmd?: string;
-  /** When true, blocking (high/critical) reviewer findings post as --request-changes to block merge. */
-  reviewGate?: boolean;
-  /** When true, run the conformance stage (opt-in; default off). */
-  conformance?: boolean;
-  /** Model override for the conformance stage (e.g. 'opus'). */
-  conformanceModel?: string;
 }
 
 export interface RunLinearIssueResult {

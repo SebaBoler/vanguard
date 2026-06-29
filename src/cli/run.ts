@@ -4,6 +4,7 @@ import { runGitlabIssue, gitlabDepsFromEnv } from '../runners/gitlab.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
+import { pickRunOptions } from '../runners/source-adapter.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -74,16 +75,8 @@ function linearDeps(
     ...(network !== undefined ? { network } : {}),
     ...(llmProxy !== undefined ? { llmProxy } : {}),
     ...(cmd.reuse === true ? { reuse: true } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
-    ...(cmd.noSimplify === true ? { noSimplify: true } : {}),
-    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
-    ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
-    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
-    ...(cmd.conformance === true ? { conformance: true } : {}),
-    ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
+    ...pickRunOptions(cmd),
   };
 }
 
@@ -116,16 +109,8 @@ async function runGithub(
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.reuse === true) deps.reuse = true;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
-  if (cmd.conformance === true) deps.conformance = true;
-  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
+  Object.assign(deps, pickRunOptions(cmd));
   const result = await runGithubIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -146,16 +131,8 @@ async function runGitlab(
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.reuse === true) deps.reuse = true;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
-  if (cmd.conformance === true) deps.conformance = true;
-  if (cmd.conformanceModel !== undefined) deps.conformanceModel = cmd.conformanceModel;
+  Object.assign(deps, pickRunOptions(cmd));
   const result = await runGitlabIssue(cmd.id, deps);
   report(result.task.id, result.prUrl);
 }
@@ -171,14 +148,8 @@ async function runProject(
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  Object.assign(deps, pickRunOptions(cmd));
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,

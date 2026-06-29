@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
-import { runSourcedIssue } from './source-adapter.js';
+import { pickRunOptions, runSourcedIssue } from './source-adapter.js';
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
@@ -11,6 +11,35 @@ describe('PR body assembly', () => {
     const taskId = 'owner/repo#42';
     const baseBody = [`Closes ${taskId}`, `Automated implementation by Vanguard.`].join('\n\n');
     expect(baseBody.startsWith(`Closes ${taskId}`)).toBe(true);
+  });
+});
+
+describe('pickRunOptions', () => {
+  it('copies all defined CLI run options, including explicit false booleans', () => {
+    const cmd: Partial<RunIssueDeps> = {
+      provider: 'codex',
+      reviewProvider: 'cursor',
+      providerModel: 'gpt-5',
+      reviewModel: 'claude-opus',
+      noSimplify: false,
+      verifyCmd: 'pnpm test',
+      visualProofCmd: 'pnpm screenshots',
+      conformance: false,
+      conformanceModel: 'opus',
+      reviewGate: true,
+    };
+
+    expect(pickRunOptions(cmd)).toEqual({
+      provider: 'codex',
+      reviewProvider: 'cursor',
+      providerModel: 'gpt-5',
+      reviewModel: 'claude-opus',
+      noSimplify: false,
+      verifyCmd: 'pnpm test',
+      visualProofCmd: 'pnpm screenshots',
+      conformance: false,
+      conformanceModel: 'opus',
+    });
   });
 });
 
