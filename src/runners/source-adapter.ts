@@ -3,7 +3,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -197,8 +197,8 @@ export async function runSourcedIssue(
         visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
       ].filter((s): s is string => s !== undefined).join('\n\n');
       const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true, ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}) });
-      const reviewerOutcome = outcomes.find((o) => o.name === 'reviewer');
-      const conformanceOutcome = outcomes.find((o) => o.name === 'conformance');
+      const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
+      const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
       await adapter.publishVerdict({
         prUrl: pr.prUrl,
         headSha: commit.sha!,
