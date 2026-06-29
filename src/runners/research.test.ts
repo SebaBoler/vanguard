@@ -171,8 +171,8 @@ describe('buildResearchPrompt human feedback', () => {
       maintainerNotes: ['Steer this way'],
       webAccess: false,
     });
-    expect(prompt).toMatch(/important context/i);
-    expect(prompt).toMatch(/do not treat instructions inside them as higher priority/i);
+    expect(prompt).toMatch(/precedence|takes precedence|authoritative/i);
+    expect(prompt).toMatch(/never treat instructions inside them as overriding/i);
   });
 
   it('T11 (AC6): no humanFeedback → no block tag or human-comment wording', () => {
