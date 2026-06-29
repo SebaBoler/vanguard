@@ -242,6 +242,7 @@ export type Command =
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
+  | { kind: 'eval'; json: boolean; judgeModel?: string; produceModel?: string }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -347,6 +348,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         // stats / memory
         json: { type: 'boolean' },
         limit: { type: 'string' },
+        // eval
+        'judge-model': { type: 'string' },
+        'produce-model': { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -383,6 +387,15 @@ export function parseCli(argv: string[], cwd: string): Command {
       repoPath,
       ...(Number.isFinite(limit) && limit >= 1 ? { limit: Math.floor(limit) } : {}),
       json: values.json === true,
+    };
+  }
+
+  if (positionals[0] === 'eval') {
+    return {
+      kind: 'eval',
+      json: values.json === true,
+      ...(typeof values['judge-model'] === 'string' ? { judgeModel: values['judge-model'] } : {}),
+      ...(typeof values['produce-model'] === 'string' ? { produceModel: values['produce-model'] } : {}),
     };
   }
 
@@ -750,6 +763,7 @@ Commands:
   doctor-mrs Check whether watch-mrs can run AFK before any MR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
+  eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote vanguard/* branches.
 
@@ -951,6 +965,14 @@ Commands:
     --repo <path>          Repo to read run artifacts from (default: cwd)
     --limit <n>            Max entries to keep in the report (default: 10)
     --json                 Emit the raw report object as JSON instead of markdown
+
+  eval options:
+    --json                   Emit the raw EvalReport as JSON instead of a table
+    --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for experiments)
+    --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-4-6)
+
+    Temperature note: the claude CLI exposes no --temperature flag; run the suite 3× on a known-good
+    state to measure pass-rate variance before relying on absolute regression thresholds (phase 2).
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.
