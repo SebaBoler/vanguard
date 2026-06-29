@@ -34,7 +34,13 @@ export interface RunOptions extends ProviderChoice {
   conformanceModel?: string;
 }
 
-/** Extract the shared RunOptions fields from a `run` or `watch` command (or any compatible shape). */
+/**
+ * Extract the shared RunOptions fields from a `run` or `watch` command (or any compatible shape).
+ *
+ * Booleans (`noSimplify`, `conformance`) are copied on `!== undefined`, relying on the parse-time
+ * invariant that the CLI only ever emits `true` or omits them. A future caller passing an explicit
+ * `false` will therefore propagate it — a conscious choice, not a dropped flag.
+ */
 export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),

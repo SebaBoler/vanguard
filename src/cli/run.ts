@@ -51,7 +51,7 @@ function requireAuth(cmd: RunCommand): AgentAuth | undefined {
   });
 }
 
-function linearDeps(
+export function linearDeps(
   cmd: RunCommand,
   auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
@@ -98,7 +98,7 @@ async function runLinear(
   reportFanOut(outcomes, parent.children.length);
 }
 
-async function runGithub(
+export async function runGithub(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,
@@ -115,7 +115,7 @@ async function runGithub(
   report(result.task.id, result.prUrl);
 }
 
-async function runGitlab(
+export async function runGitlab(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,
@@ -137,7 +137,7 @@ async function runGitlab(
   report(result.task.id, result.prUrl);
 }
 
-async function runProject(
+export async function runProject(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,

@@ -59,7 +59,7 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   }
 }
 
-async function watchLinearSource(
+export async function watchLinearSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
@@ -145,7 +145,7 @@ async function watchLinearSource(
   });
 }
 
-async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
+export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
   const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
@@ -243,7 +243,7 @@ async function watchGithubProjectSource(
   });
 }
 
-async function watchGitlabSource(
+export async function watchGitlabSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
