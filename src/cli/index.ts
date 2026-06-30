@@ -14,6 +14,7 @@ import { watchPrsCommand } from './watch-prs.js';
 import { reviewMrCommand } from './review-mr.js';
 import { watchMrsCommand } from './watch-mrs.js';
 import { doctorMrsCommand } from './doctor-mrs.js';
+import { evalCommand } from './eval.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
@@ -68,6 +69,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'doctor-mrs') {
     await doctorMrsCommand(command);
+    return;
+  }
+  if (command.kind === 'eval') {
+    await evalCommand(command);
     return;
   }
   if (command.kind === 'stats') {

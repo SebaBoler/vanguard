@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
+import { roundUsd } from './budget.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
 import type { RunResult } from '../core/types.js';
 import type { EvalVerdict } from '../evals/types.js';
@@ -18,6 +19,15 @@ export interface ForkSelectOptions {
   score: (diff: string, result: RunResult) => Promise<EvalVerdict>;
   variables?: Record<string, string>;
   signal?: AbortSignal;
+  /** Remaining global budget before this forked stage started, for metric logging only. */
+  remainingBudgetUsd?: number;
+  /**
+   * Total budget for the entire fork set in USD. Uses a rolling-residual model: each variant
+   * receives `residual = stageBudgetUsd - costSoFar` as its maxBudgetUsd. When the residual
+   * reaches zero before a variant starts, remaining variants are skipped and the best winner
+   * found so far is returned. The first variant always runs regardless of residual.
+   */
+  stageBudgetUsd?: number;
 }
 
 export interface ForkVariant {
@@ -54,12 +64,22 @@ export async function forkAndSelect(
     await execa('git', ['clean', '-fd'], { cwd: ctx.worktreePath });
   };
 
+  let costSoFar = 0;
   for (let i = 0; i < n; i++) {
+    // Rolling-residual budget: skip remaining variants when budget exhausted (always run at least one).
+    if (i > 0 && opts.stageBudgetUsd !== undefined && roundUsd(opts.stageBudgetUsd - costSoFar) <= 0) {
+      break;
+    }
+
     if (i > 0) {
       await resetWorktree();
       // Re-seed the sandbox so the next variant starts from the same clean filesystem state.
       await ctx.sandbox.copyIn(ctx.worktreePath, WORKDIR);
     }
+
+    const residual = opts.stageBudgetUsd !== undefined
+      ? Math.max(0, roundUsd(opts.stageBudgetUsd - costSoFar))
+      : undefined;
 
     const input: StageInput = {
       promptTemplate: stage.promptTemplate,
@@ -70,13 +90,17 @@ export async function forkAndSelect(
       ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
       ...(stage.model !== undefined ? { model: stage.model } : {}),
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
+      ...(stage.timeoutMs !== undefined ? { timeoutMs: stage.timeoutMs } : {}),
       ...(opts.forkFromSessionId !== undefined
         ? { resumeSessionId: opts.forkFromSessionId, forkSession: true }
         : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      ...(residual !== undefined ? { maxBudgetUsd: residual, stageCapUsd: residual } : {}),
+      ...(opts.remainingBudgetUsd !== undefined ? { remainingBudgetUsd: opts.remainingBudgetUsd } : {}),
     };
 
     const result = await runAgent(ctx, input);
+    costSoFar = roundUsd(costSoFar + (result.costUsd ?? 0));
     const verdict = await opts.score(result.diff ?? '', result);
     variants.push({ result, verdict });
   }
@@ -91,7 +115,7 @@ export async function forkAndSelect(
 
   // If the winner is not the last variant that ran, reset the worktree and apply its diff so the
   // next pipeline stage sees the correct {{PREVIOUS_DIFF}}.
-  if (winnerIndex !== n - 1) {
+  if (winnerIndex !== variants.length - 1) {
     await resetWorktree();
     const winnerDiff = variants[winnerIndex]!.result.diff;
     if (winnerDiff) {

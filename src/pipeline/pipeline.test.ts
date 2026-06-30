@@ -786,3 +786,260 @@ describe('resolveRouting', () => {
     };
   }
 });
+
+describe('per-stage budget cap', () => {
+  /** Agent that records every AgentRunInput it receives and returns a fixed cost. */
+  function recordingCostAgent(received: AgentRunInput[], costUsd: number): AgentProvider {
+    return {
+      name: 'rec-cost',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'x', turns: 1, costUsd };
+      },
+    };
+  }
+
+  /** Agent that returns a fixed cost; includes a sessionId so resumeUntilComplete can run. */
+  function resumableAgent(costUsd: number): AgentProvider {
+    return {
+      name: 'resumable',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd, sessionId: 'sess' };
+      },
+    };
+  }
+
+  it('effectiveCap uses fraction when set (no floor): fraction * maxCostUsd', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-frac', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.4 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 1.0 },
+    );
+    await disposeContext(ctx);
+    // effectiveCap = min(max(1.0 * 0.4, 0), 1.0) = 0.4
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.4);
+  });
+
+  it('effectiveCap applies floor when floor exceeds fraction result', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-floor', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.1, stageCostFloorUsd: 0.5 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 1.0 },
+    );
+    await disposeContext(ctx);
+    // effectiveCap = min(max(0.1, 0.5), 1.0) = 0.5
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.5);
+  });
+
+  it('global always wins: floor is capped by remainingGlobal when global is tiny', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-tiny-global', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, stageCostFloorUsd: 10.0 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 0.5 },
+    );
+    await disposeContext(ctx);
+    // remainingGlobal = 0.5; floor (10) exceeds it; effectiveCap = min(10, 0.5) = 0.5
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.5);
+  });
+
+  it('stages without new fields get effectiveCap = remaining global (back-compat)', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-compat', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a' }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 2.0 },
+    );
+    await disposeContext(ctx);
+    // No stageCostFraction → effectiveCap = remainingGlobal = 2.0
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(2.0);
+  });
+
+  it('continue policy: implementer at cap, reviewer still runs, result completed', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-continue', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    // maxCostUsd = $2; implementer effectiveCap = $1; costs $1.5 (overshoot). Policy: continue.
+    // spentUsd = $1.5 < $2 (global). Reviewer runs.
+    const result = await runBudgetedStages(ctx, stages, { agent: recordingCostAgent(received, 1.5), maxCostUsd: 2.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes).toHaveLength(2);
+      expect(result.outcomes[0]?.name).toBe('implementer');
+      expect(result.outcomes[1]?.name).toBe('reviewer');
+    }
+  });
+
+  it('freeze policy: stage at cap returns frozen with outcomes so far', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-freeze', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.3, onStageBudgetExceeded: 'freeze' },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    // effectiveCap = $2 * 0.3 = $0.6; costs $1.0 → fires freeze
+    const agent: AgentProvider = {
+      name: 'cost',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 1.0 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 2.0 });
+    await disposeContext(ctx, { keep: true });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(1);
+      expect(result.outcomes[0]?.name).toBe('a');
+      expect(result.spentUsd).toBeCloseTo(1.0);
+    }
+  });
+
+  it('global backstop freezes regardless of per-stage continue policy', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-global-wins', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'b', promptTemplate: 'b', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'c', promptTemplate: 'c' },
+    ];
+    // maxCostUsd = $0.5. Each stage costs $0.4.
+    // Stage a: effectiveCap = $0.25, costs $0.4 → 'continue'. spentUsd = $0.4.
+    // Stage b: remainingGlobal = $0.1. effectiveCap = $0.1. Costs $0.4 → 'continue'. spentUsd = $0.8.
+    // Before stage c: spentUsd ($0.8) >= maxCostUsd ($0.5) → global freeze.
+    const agent: AgentProvider = {
+      name: 'cost',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 0.4 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 0.5 });
+    await disposeContext(ctx, { keep: true });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(2);
+    }
+  });
+
+  it('skip policy: stage at cap proceeds like continue (next stage runs)', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'simplifier', promptTemplate: 'simplify', stageCostFraction: 0.1, onStageBudgetExceeded: 'skip' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    // effectiveCap = $1 * 0.1 = $0.1; costs $0.5 → skip. Next stage runs.
+    const result = await runBudgetedStages(ctx, stages, { agent: recordingCostAgent(received, 0.5), maxCostUsd: 2.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') expect(result.outcomes).toHaveLength(2);
+  });
+
+  it('provider-ignored cap: orchestrator post-stage check still applies continue policy', async () => {
+    // Simulates Codex/Cursor ignoring maxBudgetUsd: the agent returns costUsd above the cap.
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-advisory', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.2, onStageBudgetExceeded: 'continue' },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    // effectiveCap = $1; agent returns $2 (ignoring cap). Policy: continue → both stages complete.
+    const agent: AgentProvider = {
+      name: 'codex',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 2.0 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 5.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') expect(result.outcomes).toHaveLength(2);
+  });
+
+  it('resumeUntilComplete: per-stage cap stops resumes when aggregate cost exceeds cap', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-resume', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    // effectiveCap = $1.0 * 0.3 = $0.3. Each call costs $0.15.
+    // Primary: stageCost = $0.15. Resume 1: stageCost = $0.30.
+    // Resume 2 condition: stageCost ($0.30) < effectiveCap ($0.30)? No → loop stops.
+    // Next stage 'b' runs.
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.3, resumeUntilComplete: 5 },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    const result = await runBudgetedStages(ctx, stages, { agent: resumableAgent(0.15), maxCostUsd: 1.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes).toHaveLength(2);
+      // stageCost for 'a' = 2 calls × $0.15 = $0.30; total spentUsd ≈ $0.60 (2 stages × $0.30)
+      expect(result.outcomes[0]?.name).toBe('a');
+      expect(result.outcomes[1]?.name).toBe('b');
+    }
+  });
+
+  it('PREVIOUS_STAGE_TRUNCATED is true when prior stage exited non-completed', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-trunc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    // Stage 'a': maxTurns:1, agent returns turns=1 → exitReason='maxTurns' (not 'completed').
+    // Stage 'b': should see PREVIOUS_STAGE_TRUNCATED='true'.
+    const agent: AgentProvider = {
+      name: 'rec',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'x', turns: 1 };
+      },
+    };
+    await runBudgetedStages(
+      ctx,
+      [
+        { name: 'a', promptTemplate: 'a', maxTurns: 1 },
+        { name: 'b', promptTemplate: '{{PREVIOUS_STAGE_TRUNCATED}}' },
+      ],
+      { agent },
+    );
+    await disposeContext(ctx);
+    // b's prompt is '{{PREVIOUS_STAGE_TRUNCATED}}' which should render to 'true'
+    expect(received[1]?.prompt).toBe('true');
+  });
+});
+
+describe('implementReviewSimplifyStages defaults', () => {
+  it('sets per-stage fraction, floor, timeout, and policy defaults', () => {
+    const stages = implementReviewSimplifyStages();
+    const byName = Object.fromEntries(stages.map((s) => [s.name, s]));
+
+    expect(byName.implementer?.stageCostFraction).toBeCloseTo(0.6);
+    expect(byName.implementer?.stageCostFloorUsd).toBeCloseTo(0.25);
+    expect(byName.implementer?.timeoutMs).toBe(25 * 60 * 1000);
+    expect(byName.implementer?.onStageBudgetExceeded).toBe('continue');
+
+    expect(byName.reviewer?.stageCostFraction).toBeCloseTo(0.25);
+    expect(byName.reviewer?.stageCostFloorUsd).toBeCloseTo(0.5);
+    expect(byName.reviewer?.timeoutMs).toBe(15 * 60 * 1000);
+    expect(byName.reviewer?.onStageBudgetExceeded).toBe('continue');
+
+    expect(byName.simplifier?.stageCostFraction).toBeCloseTo(0.15);
+    expect(byName.simplifier?.stageCostFloorUsd).toBeCloseTo(0.25);
+    expect(byName.simplifier?.timeoutMs).toBe(15 * 60 * 1000);
+    expect(byName.simplifier?.onStageBudgetExceeded).toBe('skip');
+  });
+});

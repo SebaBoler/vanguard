@@ -80,6 +80,16 @@ function makeAgent(): AgentProvider {
   };
 }
 
+function recordingCostAgent(received: AgentRunInput[], costUsd: number): AgentProvider {
+  return {
+    name: 'rec-cost',
+    async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+      received.push(input);
+      return { finalText: 'done <promise>COMPLETE</promise>', turns: 1, sessionId: 'sess', costUsd };
+    },
+  };
+}
+
 const stage: PipelineStage = { name: 'implementer', promptTemplate: 'Task: {{TITLE}}' };
 const FORK_SELECT_TEST_TIMEOUT_MS = 15_000;
 
@@ -198,6 +208,21 @@ describe('forkAndSelect', () => {
         expect(input.resumeSessionId).toBe('base-session-id');
         expect(input.forkSession).toBe(true);
       }
+    });
+  }, FORK_SELECT_TEST_TIMEOUT_MS);
+
+  it('passes rounded residual budget to each fork variant', async () => {
+    const received: AgentRunInput[] = [];
+    await withCtx('fs-budget', makeNoopSandbox(), async (ctx) => {
+      const result = await forkAndSelect(ctx, stage, {
+        agent: recordingCostAgent(received, 0.4),
+        n: 3,
+        score: makeScorer([0.5, 0.5, 0.5]),
+        stageBudgetUsd: 0.5,
+        remainingBudgetUsd: 0.5,
+      });
+      expect(result.variants).toHaveLength(2);
+      expect(received.map((input) => input.maxBudgetUsd)).toEqual([0.5, 0.1]);
     });
   }, FORK_SELECT_TEST_TIMEOUT_MS);
 });

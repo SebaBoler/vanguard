@@ -5,6 +5,7 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
+import { roundUsd } from './budget.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -38,7 +39,7 @@ export interface StageRouting {
 
 export interface PipelineStage {
   name: string;
-  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, task variables, and !`cmd`. */
+  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, {{PREVIOUS_STAGE_TRUNCATED}}, task variables, and !`cmd`. */
   promptTemplate: string;
   effort?: ReasoningEffort;
   maxTurns?: number;
@@ -67,6 +68,33 @@ export interface PipelineStage {
    * the planning provider.
    */
   fallback?: { provider: AgentProvider; model?: string };
+  /**
+   * Per-stage budget as a fraction of the run's maxCostUsd (0..1). Stored as a fraction (not an
+   * absolute USD value) so a frozen-run resume with a higher maxCostUsd re-derives the cap automatically.
+   * Undefined = the whole remaining global budget (old behavior, no per-stage cap).
+   *
+   * Note: on Claude/Zai the cap is a true mid-stage stop (--max-budget-usd). On Codex/Cursor/Pi it is
+   * advisory — those providers pass no budget flag, so the cap is only checked after the stage returns.
+   */
+  stageCostFraction?: number;
+  /**
+   * Reserved minimum USD for this stage, applied as a floor after the fraction is computed.
+   * The global budget always wins: if the floor exceeds what remains, the remaining global budget is used.
+   */
+  stageCostFloorUsd?: number;
+  /**
+   * Policy when this stage reaches its per-stage budget cap. Default 'continue'.
+   * 'continue': proceed to the next stage (reviewer runs against the partial diff — better than no review).
+   * 'freeze': return frozen/budget_exceeded immediately with outcomes so far.
+   * 'skip': same as 'continue' (useful to signal the stage is optional).
+   */
+  onStageBudgetExceeded?: 'continue' | 'freeze' | 'skip';
+  /**
+   * Per-stage wall-clock timeout in ms. Wired to StageInput.timeoutMs (already plumbed to the provider).
+   * When undefined, the per-invocation DEFAULT_TIMEOUT_MS (30 min) applies. A stage that exceeds its
+   * timeout returns exitReason 'timeout', distinct from a caller-signal abort.
+   */
+  timeoutMs?: number;
 }
 
 export interface StageOutcome {
@@ -88,6 +116,24 @@ export interface FrozenRun {
 }
 
 export type PipelineResult = { status: 'completed'; outcomes: StageOutcome[] } | FrozenRun;
+
+export function makeFrozenRun(
+  ctx: RunContext,
+  reason: FrozenRun['reason'],
+  spentUsd: number,
+  outcomes: StageOutcome[],
+): FrozenRun {
+  return {
+    status: 'frozen',
+    reason,
+    taskId: ctx.taskId,
+    worktreePath: ctx.worktreePath,
+    branch: ctx.branch,
+    shellCommand: ctx.sandbox.shellCommand(),
+    spentUsd,
+    outcomes,
+  };
+}
 
 export interface ForkOptions {
   /** Number of implementation variants to generate. Default 2. */
@@ -179,24 +225,30 @@ export async function runBudgetedStages(
   let spentUsd = 0;
   for (const stage of stages) {
     if (spentUsd >= maxCostUsd) {
-      return {
-        status: 'frozen',
-        reason: 'budget_exceeded',
-        taskId: ctx.taskId,
-        worktreePath: ctx.worktreePath,
-        branch: ctx.branch,
-        shellCommand: ctx.sandbox.shellCommand(),
-        spentUsd,
-        outcomes,
-      };
+      return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
+
+    // Per-stage effective cap: fraction → floor → min(remainingGlobal).
+    // Global always wins (Math.min) so tiny-budget runs never spend past their limit.
+    // Stored as fraction, not resolved USD, so a frozen-run resume with a higher maxCostUsd
+    // re-derives the cap automatically when the caller reconstitutes the same PipelineStage config.
+    const remainingGlobal = roundUsd(maxCostUsd - spentUsd);
+    const fromFraction = stage.stageCostFraction !== undefined
+      ? maxCostUsd * stage.stageCostFraction
+      : remainingGlobal;
+    const withFloor = Math.max(fromFraction, stage.stageCostFloorUsd ?? 0);
+    const effectiveCap = roundUsd(Math.min(withFloor, remainingGlobal));
+    const isFiniteCap = Number.isFinite(effectiveCap);
+    const isFiniteGlobal = Number.isFinite(maxCostUsd);
+
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
       PREVIOUS_DIFF: previous?.diff ?? '',
       PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
+      PREVIOUS_STAGE_TRUNCATED: previous !== undefined && previous.exitReason !== 'completed' ? 'true' : 'false',
     };
 
     if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? STAGE.IMPLEMENTER)) {
@@ -207,8 +259,11 @@ export async function runBudgetedStages(
         variables,
         ...(resume && sessionId !== undefined ? { forkFromSessionId: sessionId } : {}),
         ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+        ...(isFiniteCap ? { stageBudgetUsd: effectiveCap } : {}),
+        ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
       });
       const result = forkResult.winner;
+      const forkStageCost = roundUsd(forkResult.variants.reduce((sum, v) => sum + (v.result.costUsd ?? 0), 0));
       outcomes.push({
         name: stage.name,
         result,
@@ -218,7 +273,13 @@ export async function runBudgetedStages(
       previous = result;
       prevName = stage.name;
       if (result.sessionId !== undefined) sessionId = result.sessionId;
-      for (const v of forkResult.variants) spentUsd += v.result.costUsd ?? 0;
+      spentUsd = roundUsd(spentUsd + forkStageCost);
+
+      // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
+      if (isFiniteCap && forkStageCost >= effectiveCap) {
+        const policy = stage.onStageBudgetExceeded ?? 'continue';
+        if (policy === 'freeze') return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
+      }
       continue;
     }
 
@@ -235,6 +296,9 @@ export async function runBudgetedStages(
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
+      ...(isFiniteCap ? { maxBudgetUsd: effectiveCap, stageCapUsd: effectiveCap } : {}),
+      ...(stage.timeoutMs !== undefined ? { timeoutMs: stage.timeoutMs } : {}),
+      ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
     };
 
     let result: RunResult;
@@ -265,17 +329,20 @@ export async function runBudgetedStages(
         throw err;
       }
     }
-    let stageCost = result.costUsd ?? 0;
+    let stageCost = roundUsd(result.costUsd ?? 0);
 
     // Auto-resume an incomplete stage: some models (glm) end a turn with prose instead of a tool call
     // and stop before finishing a large, multi-file task. Re-enter the SAME session (context intact)
     // with a "finish the rest" nudge, up to stage.resumeUntilComplete times or until it signals COMPLETE.
+    // Per-stage cap gates the loop (aggregate across all resumes) and provides a residual budget to each
+    // resume call so a multi-resume stage cannot multiply its cap across iterations.
     let resumesLeft = stage.resumeUntilComplete ?? 0;
     while (
       !result.completed &&
       resumesLeft > 0 &&
       result.sessionId !== undefined &&
-      spentUsd + stageCost < maxCostUsd
+      spentUsd + stageCost < maxCostUsd &&
+      (!isFiniteCap || stageCost < effectiveCap)
     ) {
       resumesLeft -= 1;
       ctx.log.info(
@@ -288,8 +355,9 @@ export async function runBudgetedStages(
         agent: effectiveAgent,
         ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         resumeSessionId: result.sessionId,
+        ...(isFiniteCap ? { maxBudgetUsd: effectiveCap - stageCost } : {}),
       });
-      stageCost += result.costUsd ?? 0;
+      stageCost = roundUsd(stageCost + (result.costUsd ?? 0));
     }
 
     outcomes.push({
@@ -301,7 +369,14 @@ export async function runBudgetedStages(
     previous = result;
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    spentUsd += stageCost;
+    spentUsd = roundUsd(spentUsd + stageCost);
+
+    // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
+    if (isFiniteCap && stageCost >= effectiveCap) {
+      const policy = stage.onStageBudgetExceeded ?? 'continue';
+      if (policy === 'freeze') return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
+      // 'continue' and 'skip': proceed to the next stage (reviewer runs against the partial diff).
+    }
   }
   return { status: 'completed', outcomes };
 }
@@ -380,6 +455,10 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
         retrospectiveMemoryBlock() +
         '\n\nWhen done, write exactly <promise>COMPLETE</promise>.',
       maxTurns: 30,
+      stageCostFraction: 0.6,
+      stageCostFloorUsd: 0.25,
+      timeoutMs: 25 * 60 * 1000,
+      onStageBudgetExceeded: 'continue',
     },
     {
       name: STAGE.REVIEWER,
@@ -390,6 +469,10 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
         'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\n{{PREVIOUS_DIFF}}\n\nAfter completing your review and any fixes, emit a verdict: if there are no blocking issues, write exactly "No blocking issues." on its own line. If there are high or critical severity issues, also include a structured block: <findings>{"findings":[{"severity":"high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>.\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
       maxTurns: 20,
+      stageCostFraction: 0.25,
+      stageCostFloorUsd: 0.5,
+      timeoutMs: 15 * 60 * 1000,
+      onStageBudgetExceeded: 'continue',
     },
     {
       name: STAGE.SIMPLIFIER,
@@ -397,6 +480,10 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       promptTemplate:
         'Improve the changed code for clarity, reuse, and simplicity without changing behaviour. If a simplify skill is available, use it.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
       maxTurns: 20,
+      stageCostFraction: 0.15,
+      stageCostFloorUsd: 0.25,
+      timeoutMs: 15 * 60 * 1000,
+      onStageBudgetExceeded: 'skip',
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));

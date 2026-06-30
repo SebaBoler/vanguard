@@ -78,6 +78,10 @@ export interface StageInput {
    * back. The asymmetry is deliberate — do NOT add copyBack to RunOptions.
    */
   copyBack?: boolean;
+  /** Effective per-stage budget cap in USD (for metric logging only). */
+  stageCapUsd?: number;
+  /** Remaining global budget before this stage (for metric logging only). */
+  remainingBudgetUsd?: number;
 }
 
 export interface RunDeps {
@@ -262,7 +266,13 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     }
 
     const preserved = await ctx.wm.isDirty(ctx.worktreePath);
-    const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'incomplete';
+    const exitReason: ExitReason = completed
+      ? 'completed'
+      : timeout.signal.aborted
+      ? 'timeout'
+      : turns >= maxTurns
+      ? 'maxTurns'
+      : 'incomplete';
 
     const durationMs = Date.now() - startedAt;
 
@@ -282,7 +292,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(transcript !== undefined ? { transcript } : {}),
     };
     // Stage-complete logs ONLY the flat stageMetric (no finalText/diff/transcript/prompt/secrets).
-    ctx.log.info(stageMetric(result, input.stageName), 'stage complete');
+    ctx.log.info(stageMetric(result, input.stageName, input), 'stage complete');
     return result;
   } finally {
     clearTimeout(timer);
