@@ -9,6 +9,19 @@ GitHub is still the review surface — the PR opens on the linked GitHub repo an
 
 ---
 
+## 0. Pre-flight check
+
+Before dispatching an issue, verify the feature is not already implemented:
+
+```bash
+# grep for key symbols or behavior from the issue title/description
+grep -r "symbolOrBehavior" src/
+```
+
+If the implementation exists on the default branch, close the Linear task and skip the run. A full model budget spent on an empty diff is wasted budget.
+
+---
+
 ## 1. Run the watcher
 
 On a host with the repo checked out and the sandbox image built (`docker/build.sh`), set the env and start the loop. Validate first:
@@ -25,6 +38,8 @@ vanguard watch  --loop-v1 --label vanguard --repo /path/to/repo   # the loop
 
 Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md](deploy.md). The shipped Synology deploy already runs `watch --source linear --team TES --label vanguard`.
 
+**Disk management:** Docker-based sandboxes accumulate build cache silently. On long-running hosts, run `docker builder prune -f` before starting the watcher to prevent silent mid-run failures — package installs fail with no free space but no clear error message.
+
 ---
 
 ## 2. State routing (the equivalent of GitHub labels)
@@ -37,6 +52,8 @@ Run it always-on in Docker (Synology / Hetzner / any host): see [docs/deploy.md]
 
 The two-flag split is Linear-specific: `--agent-state` is the **state name** the spec pass moves a ticket to (`Todo`), while `--trigger-state` is the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box.
 
+**Single-pass variant:** The two-pass flow (Triage → spec → Todo → build) assumes tickets arrive under-specified. If your team writes detailed specs before tagging `vanguard`, the spec/triage pass is unnecessary overhead. Apply the `vanguard` label only to issues already in the agent state (`Todo`, of type `unstarted`) that satisfy the [triage contract](#3-the-triage-contract-same-as-github) — a `## Acceptance Criteria` heading followed by real bullets. A free-form "complete spec" in the description that lacks the literal heading is bounced to **Needs Info** by the agent pass, so it gains nothing — match the heading. The watcher then builds them directly, skipping the spec pass entirely.
+
 ---
 
 ## 3. The triage contract (same as GitHub)
@@ -47,6 +64,8 @@ Independent of routing, before spending model budget the agent pass refuses an u
 - a Vanguard `<tech_spec>` comment, which the spec pass writes for tickets you put in **Triage**.
 
 A ticket meeting neither is moved to **Needs Info** with a clarification comment. Same contract as the GitHub onboarding — see [the triage contract there](onboarding-another-repo.md#what-an-issue-must-contain-the-triage-contract).
+
+**Quality calibration:** Keep one or two reference issues with known-good specs bookmarked in your workspace. Link them in the issue description or team docs as calibration examples for what "ready to run" looks like. The triage gate rejects vague tickets deterministically (no model budget spent), but each bounce still costs you a round-trip of human clarification before the run can start.
 
 ---
 
@@ -63,3 +82,15 @@ A ticket meeting neither is moved to **Needs Info** with a clarification comment
   ```
 
 Models are chosen the same way as GitHub (`--spec-model` plans, `--provider`/`--provider-model` implement + simplify, `--review-provider` reviews). The Codex subscription credential and its CI caveat are identical — see [onboarding-another-repo.md](onboarding-another-repo.md#full-cross-provider-on-a-codex-subscription).
+
+---
+
+## 5. Post-run checklist
+
+After the watcher finishes and a draft PR exists:
+
+1. **Check the diff stat** — every layer the spec demanded actually landed. A schema change without the corresponding module, or a missing test, means the run stopped short → resume or finish by hand.
+2. **Read the Proof-of-Work block** — Vanguard auto-runs the verify command (auto-detected `typecheck` + test) and writes a `## Proof of work` block (command, exit code, sha256) into the PR body, plus a `vanguard:verify-failed` label if it failed. Trust that attestation; re-run locally only if the block is missing or you want a stricter gate.
+3. **Spot-check auth/security** — resolver ownership filters, webhook signature verification, feature gates. These are the areas agents most commonly skip under time pressure.
+4. **Open the review request** — push the draft PR out of draft. (Vanguard already commented the PR link onto the Linear issue.)
+5. **Close the loop** — mark the Linear issue **Done**. File any newly discovered bugs as separate issues.
