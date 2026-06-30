@@ -23,8 +23,10 @@ import {
   techSpecStage,
   retrospectiveMemoryBlock,
   assembleReviewPipeline,
+  resolveRouting,
+  STAGE,
 } from './pipeline.js';
-import type { PipelineStage } from './pipeline.js';
+import type { PipelineStage, StageName, StageRouting } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { WorktreeManager } from '../worktree/manager.js';
@@ -743,6 +745,46 @@ describe('assembleReviewPipeline', () => {
     expect(result.map((s) => s.name)).toEqual(['implementer', 'reviewer', 'conformance']);
     expect(result.find((s) => s.name === 'conformance')?.model).toBe('opus');
   });
+});
+
+describe('resolveRouting', () => {
+  const stages: PipelineStage[] = [
+    { name: STAGE.IMPLEMENTER, promptTemplate: 'impl' },
+    { name: STAGE.REVIEWER, promptTemplate: 'review' },
+    { name: STAGE.CONFORMANCE, promptTemplate: 'conf' },
+  ];
+
+  it('is order-independent: same config, different key insertion order yields identical stages', () => {
+    const a: Partial<Record<StageName, StageRouting>> = {};
+    a[STAGE.IMPLEMENTER] = { model: 'sonnet' };
+    a[STAGE.REVIEWER] = { model: 'opus' };
+    const b: Partial<Record<StageName, StageRouting>> = {};
+    b[STAGE.REVIEWER] = { model: 'opus' };
+    b[STAGE.IMPLEMENTER] = { model: 'sonnet' };
+    expect(resolveRouting(stages, a)).toEqual(resolveRouting(stages, b));
+  });
+
+  it('applies fallback only to the intended stage', () => {
+    const result = resolveRouting(stages, { [STAGE.REVIEWER]: { fallback: { provider: stubAgent('claude') } } });
+    expect(result.find((s) => s.name === STAGE.REVIEWER)?.fallback?.provider.name).toBe('claude');
+    expect(result.find((s) => s.name === STAGE.IMPLEMENTER)?.fallback).toBeUndefined();
+    expect(result.find((s) => s.name === STAGE.CONFORMANCE)?.fallback).toBeUndefined();
+  });
+
+  it('leaves stages without a config entry untouched and does not mutate inputs', () => {
+    const result = resolveRouting(stages, { [STAGE.REVIEWER]: { model: 'opus' } });
+    expect(result.find((s) => s.name === STAGE.IMPLEMENTER)).toBe(stages[0]);
+    expect(stages.every((s) => s.model === undefined)).toBe(true);
+  });
+
+  function stubAgent(name: string): AgentProvider {
+    return {
+      name,
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: '', turns: 0 };
+      },
+    };
+  }
 });
 
 describe('per-stage budget cap', () => {

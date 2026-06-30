@@ -25,6 +25,7 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  STAGE,
 } from '../pipeline/pipeline.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
@@ -210,16 +211,16 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     );
     try {
       const allStages = implementReviewSimplifyStages();
-      const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== 'simplifier') : allStages;
+      const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== STAGE.SIMPLIFIER) : allStages;
       let pipeline = agents.reviewAgent !== undefined ? withStageProvider(base, agents.reviewAgent) : base;
       if (deps.providerModel !== undefined) {
         const crossProviderReview =
           deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
         pipeline = crossProviderReview
-          ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
+          ? withStageModelExcept(pipeline, deps.providerModel, STAGE.REVIEWER)
           : withStageModel(pipeline, deps.providerModel);
       }
-      if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
+      if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, STAGE.REVIEWER);
       if (agents.reviewAgent !== undefined) {
         pipeline = withStageFallback(pipeline, {
           provider: agents.agent,
@@ -229,7 +230,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       const prompt = buildRevisionPrompt(pr, actionable);
       // Override the implementer's promptTemplate with the revision prompt.
-      pipeline = pipeline.map((stage) => (stage.name === 'implementer' ? { ...stage, promptTemplate: prompt } : stage));
+      pipeline = pipeline.map((stage) =>
+        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate: prompt } : stage,
+      );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
       await runStages(ctx, pipeline, { agent: agents.agent });

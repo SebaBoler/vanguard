@@ -13,6 +13,30 @@ import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
 
+/** Single source of truth for all canonical pipeline stage names. String values are stable. */
+export const STAGE = {
+  IMPLEMENTER: 'implementer',
+  REVIEWER: 'reviewer',
+  SIMPLIFIER: 'simplifier',
+  CONFORMANCE: 'conformance',
+  PLANNER: 'planner',
+  GENERATOR: 'generator',
+  EVALUATOR: 'evaluator',
+  REPAIRER: 'repairer',
+  ADVERSARY: 'adversary',
+  TECH_SPEC: 'tech-spec',
+} as const;
+
+/** Union of all canonical stage name string literals. A typo is a compile error. */
+export type StageName = (typeof STAGE)[keyof typeof STAGE];
+
+/** Per-stage routing overrides applied by resolveRouting. Each field is last-writer-wins. */
+export interface StageRouting {
+  provider?: AgentProvider;
+  model?: string;
+  fallback?: { provider: AgentProvider; model?: string };
+}
+
 export interface PipelineStage {
   name: string;
   /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, {{PREVIOUS_STAGE_TRUNCATED}}, task variables, and !`cmd`. */
@@ -120,7 +144,7 @@ export interface ForkOptions {
    * Name of the stage to run via forkAndSelect. Defaults to 'implementer'.
    * If no stage with this name exists in the pipeline, fork is silently ignored.
    */
-  stageName?: string;
+  stageName?: StageName;
 }
 
 export interface RunStagesOptions {
@@ -227,7 +251,7 @@ export async function runBudgetedStages(
       PREVIOUS_STAGE_TRUNCATED: previous !== undefined && previous.exitReason !== 'completed' ? 'true' : 'false',
     };
 
-    if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? 'implementer')) {
+    if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? STAGE.IMPLEMENTER)) {
       const forkResult = await forkAndSelect(ctx, stage, {
         agent,
         ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
@@ -409,7 +433,7 @@ export function defaultSystemPrompt(): string {
 export function fastStages(): PipelineStage[] {
   return [
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
       effort: 'low',
@@ -425,7 +449,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo.\n\n' +
         retrospectiveMemoryBlock() +
@@ -437,7 +461,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       onStageBudgetExceeded: 'continue',
     },
     {
-      name: 'reviewer',
+      name: STAGE.REVIEWER,
       // Fresh context (resumePrevious:false): an independent reviewer judges the diff cold, without
       // inheriting the implementer's reasoning. The files are still on disk in the shared worktree.
       resumePrevious: false,
@@ -451,7 +475,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       onStageBudgetExceeded: 'continue',
     },
     {
-      name: 'simplifier',
+      name: STAGE.SIMPLIFIER,
       resumePrevious: false,
       promptTemplate:
         'Improve the changed code for clarity, reuse, and simplicity without changing behaviour. If a simplify skill is available, use it.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
@@ -468,7 +492,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
 /** Report-only conformance pass. Appended by assembleReviewPipeline only when explicitly enabled. */
 export function conformanceStage(): PipelineStage {
   return {
-    name: 'conformance',
+    name: STAGE.CONFORMANCE,
     // Fresh context: compare the final diff against spec without inheriting prior reasoning.
     resumePrevious: false,
     // Report-only: no sandbox->worktree sync.
@@ -513,13 +537,13 @@ export function conformanceStage(): PipelineStage {
 export function withStageProvider(
   stages: PipelineStage[],
   provider: AgentProvider,
-  stageName = 'reviewer',
+  stageName: StageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, provider } : stage));
 }
 
 /** Set `model` on one named stage (default: all stages when stageName is omitted). */
-export function withStageModel(stages: PipelineStage[], model: string, stageName?: string): PipelineStage[] {
+export function withStageModel(stages: PipelineStage[], model: string, stageName?: StageName): PipelineStage[] {
   return stages.map((stage) => (stageName === undefined || stage.name === stageName ? { ...stage, model } : stage));
 }
 
@@ -542,7 +566,7 @@ export function withStageModelExcept(stages: PipelineStage[], model: string, exc
 export function withStageFallback(
   stages: PipelineStage[],
   fallback: { provider: AgentProvider; model?: string },
-  stageName = 'reviewer',
+  stageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
 }
@@ -560,43 +584,84 @@ export interface ReviewPipelineDeps {
 }
 
 /**
+ * Apply per-stage routing overrides to `baseStages` in a single, order-free pass. The result depends
+ * only on `config`'s contents, not on the order its keys were inserted: each stage is matched by name
+ * and its `provider`/`model`/`fallback` overridden when present. Stages without a config entry pass
+ * through untouched. Pure — never mutates its inputs.
+ */
+export function resolveRouting(
+  baseStages: PipelineStage[],
+  config: Partial<Record<StageName, StageRouting>>,
+): PipelineStage[] {
+  return baseStages.map((stage) => {
+    const routing = config[stage.name as StageName];
+    if (routing === undefined) return stage;
+    return {
+      ...stage,
+      ...(routing.provider !== undefined ? { provider: routing.provider } : {}),
+      ...(routing.model !== undefined ? { model: routing.model } : {}),
+      ...(routing.fallback !== undefined ? { fallback: routing.fallback } : {}),
+    };
+  });
+}
+
+/**
  * Compose the standard review pipeline transformers over `base` stages. Handles the `--no-simplify`
- * filter, cross-provider reviewer gating, per-stage model assignment, and fallback wiring in one place
- * so neither the GitHub nor Linear runner needs to inline these steps.
+ * filter, cross-provider reviewer gating, per-stage model assignment, optional conformance, and
+ * fallback wiring in one place so neither the GitHub nor Linear runner needs to inline these steps.
+ *
+ * Membership is decided first (filter/append); then a flat routing config is built and applied by
+ * resolveRouting in one pass. Two subtle rules live as explicit config-building code: (1) a
+ * cross-provider reviewer is excluded from `providerModel` — an Anthropic model name handed to a
+ * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it; and
+ * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins).
  */
 export function assembleReviewPipeline(
   base: PipelineStage[],
   agents: { agent: AgentProvider; reviewAgent?: AgentProvider },
   deps: ReviewPipelineDeps,
 ): PipelineStage[] {
-  // --no-simplify: drop the cleanup stage and run implement -> review, plus optional conformance.
-  let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== 'simplifier') : base;
+  // Membership first: drop the cleanup stage for --no-simplify, append optional conformance.
+  let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== STAGE.SIMPLIFIER) : base;
   if (deps.conformance === true) {
     pipeline = [...pipeline, conformanceStage()];
   }
-  if (agents.reviewAgent !== undefined) pipeline = withStageProvider(pipeline, agents.reviewAgent);
+
+  // Build a flat per-stage routing config; merge so later writers win on a given field.
+  const config: Partial<Record<StageName, StageRouting>> = {};
+  const route = (name: StageName, patch: StageRouting): void => {
+    config[name] = { ...config[name], ...patch };
+  };
+
   if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
-    // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
-    // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
-    // withStageModelExcept applies providerModel to conformance (planning side), keeping it same-family.
-    const crossProviderReview = deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
-    pipeline = crossProviderReview
-      ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
-      : withStageModel(pipeline, deps.providerModel);
+    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
+    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
+    // stage (incl. conformance, planning side) gets providerModel.
+    const crossProviderReview =
+      deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
+    for (const stage of pipeline) {
+      if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
+      route(stage.name as StageName, { model: deps.providerModel });
+    }
   }
-  if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
-  // Cross-provider reviewer: fall back to the planning provider on AgentError (outage/rate-limit)
-  // rather than failing the whole run. The fallback never sends the reviewer's foreign model name.
+  // Cross-provider reviewer: route it to its own provider, and fall back to the planning provider on
+  // AgentError (outage/rate-limit) rather than failing the whole run. The fallback never sends the
+  // reviewer's foreign model name.
   if (agents.reviewAgent !== undefined) {
-    pipeline = withStageFallback(pipeline, {
-      provider: agents.agent,
-      ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+    route(STAGE.REVIEWER, {
+      provider: agents.reviewAgent,
+      fallback: {
+        provider: agents.agent,
+        ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+      },
     });
   }
-  // Override conformance model only when supplied (e.g. --conformance-model opus for planner-tier).
-  if (deps.conformanceModel !== undefined) pipeline = withStageModel(pipeline, deps.conformanceModel, 'conformance');
-  return pipeline;
+  // reviewModel overrides providerModel on the reviewer only.
+  if (deps.reviewModel !== undefined) route(STAGE.REVIEWER, { model: deps.reviewModel });
+  // conformanceModel wins over providerModel on the conformance stage (last-writer-wins).
+  if (deps.conformanceModel !== undefined) route(STAGE.CONFORMANCE, { model: deps.conformanceModel });
+
+  return resolveRouting(pipeline, config);
 }
 
 /**
@@ -608,7 +673,7 @@ export function planImplementReviewStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'planner',
+      name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
       maxTurns: 10,
@@ -617,7 +682,7 @@ export function planImplementReviewStages(): PipelineStage[] {
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       model: 'sonnet',
       maxTurns: 30,
       resumePrevious: false,
@@ -625,7 +690,7 @@ export function planImplementReviewStages(): PipelineStage[] {
         'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'reviewer',
+      name: STAGE.REVIEWER,
       model: 'sonnet',
       effort: 'high',
       maxTurns: 20,
@@ -675,19 +740,19 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'generator',
+      name: STAGE.GENERATOR,
       promptTemplate:
         '<task_instructions>\nTask: {{TITLE}}\n\n{{DESCRIPTION}}\n\nGenerate a first version of the solution in the current repo. Implement, do not review. When done, write <promise>COMPLETE</promise>.\n</task_instructions>',
     },
     {
-      name: 'evaluator',
+      name: STAGE.EVALUATOR,
       promptTemplate:
         '<role>Strict reviewer. You do not change files.</role>\n<task_instructions>\nAnalyse the diff below and list ONLY violations and bugs inside <violations>...</violations>. Do not edit code.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       effort: 'high',
       resumePrevious: false,
     },
     {
-      name: 'repairer',
+      name: STAGE.REPAIRER,
       promptTemplate:
         '<task_instructions>\nApply targeted fixes based on the violations report. Fix only what is listed:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       resumePrevious: false,
@@ -725,7 +790,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'planner',
+      name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
       maxTurns: 10,
@@ -735,7 +800,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       model: 'sonnet',
       maxTurns: 30,
       resumePrevious: false,
@@ -744,7 +809,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
         'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'adversary',
+      name: STAGE.ADVERSARY,
       model: 'opus',
       effort: 'high',
       maxTurns: 12,
@@ -754,7 +819,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
         'Review the diff below. Emit ONLY <findings>{...}</findings> matching the schema (severity low|medium|high|critical, kind security|perf|correctness|style, title, evidence), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'repairer',
+      name: STAGE.REPAIRER,
       model: 'sonnet',
       maxTurns: 20,
       resumePrevious: false,
@@ -795,7 +860,7 @@ export function techSpecSystemPrompt(): string {
 export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
   return [
     {
-      name: 'tech-spec',
+      name: STAGE.TECH_SPEC,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
