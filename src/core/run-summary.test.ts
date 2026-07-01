@@ -72,4 +72,123 @@ describe('summarizeOutcomes', () => {
     expect(out).toContain('0.0000');
     expect(out).toContain('0.0s');
   });
+
+  it('includes $or-est column header', () => {
+    const out = summarizeOutcomes([]);
+    expect(out).toContain('$or-est');
+  });
+
+  it('renders per-stage OpenRouter estimate when model is known', () => {
+    const result: RunResult = {
+      ...baseResult,
+      turns: 2,
+      costUsd: 0.5,
+      durationMs: 1000,
+      usage: { inputTokens: 10_000, outputTokens: 20_000, cacheReadInputTokens: 990_000 },
+    };
+    // (10_000*3 + 20_000*15 + 990_000*0.3) / 1e6 = 0.627
+    const out = summarizeOutcomes([{ name: 'impl', result, model: 'sonnet' }]);
+    expect(out).toContain('0.6270');
+    // Provider $cost is still present
+    expect(out).toContain('0.5000');
+    // TOTAL should equal stage (all known, no ~)
+    const lines = out.split('\n');
+    const totalLine = lines.find(l => l.includes('TOTAL'))!;
+    expect(totalLine).toContain('0.6270');
+    expect(totalLine).not.toContain('~');
+  });
+
+  it('renders n/a for a stage with no model', () => {
+    const result: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.1,
+      durationMs: 500,
+      usage: { inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 1000 },
+    };
+    const out = summarizeOutcomes([{ name: 'stage', result }]);
+    expect(out).toContain('n/a');
+  });
+
+  it('renders n/a for a stage with an unmapped model', () => {
+    const result: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.1,
+      durationMs: 500,
+      usage: { inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 1000 },
+    };
+    const out = summarizeOutcomes([{ name: 'stage', result, model: 'gpt-5.3-codex' }]);
+    expect(out).toContain('n/a');
+  });
+
+  it('renders partial TOTAL (~-prefixed) when some stages are n/a', () => {
+    const knownResult: RunResult = {
+      ...baseResult,
+      turns: 2,
+      costUsd: 0.5,
+      durationMs: 1000,
+      usage: { inputTokens: 0, outputTokens: 1_000_000, cacheReadInputTokens: 0 },
+    };
+    const unknownResult: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.1,
+      durationMs: 500,
+      usage: { inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 1000 },
+    };
+    // sonnet output only: (0*3 + 1_000_000*15 + 0*0.3)/1e6 = 15.0
+    const out = summarizeOutcomes([
+      { name: 'known', result: knownResult, model: 'sonnet' },
+      { name: 'unknown', result: unknownResult },
+    ]);
+    const lines = out.split('\n');
+    const totalLine = lines.find(l => l.includes('TOTAL'))!;
+    expect(totalLine).toContain('~15.0000');
+    // Must not be plain 0.0000 or missing
+    expect(totalLine).not.toMatch(/\b0\.0000\b.*\b0\.0000\b/);
+  });
+
+  it('renders n/a in TOTAL when all stages are unknown', () => {
+    const result: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.1,
+      durationMs: 500,
+      usage: { inputTokens: 1000, outputTokens: 1000, cacheReadInputTokens: 1000 },
+    };
+    const out = summarizeOutcomes([
+      { name: 'a', result },
+      { name: 'b', result },
+    ]);
+    const lines = out.split('\n');
+    const totalLine = lines.find(l => l.includes('TOTAL'))!;
+    expect(totalLine).toContain('n/a');
+  });
+
+  it('renders exact TOTAL when all stages are known', () => {
+    const result1: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.1,
+      durationMs: 500,
+      usage: { inputTokens: 0, outputTokens: 100_000, cacheReadInputTokens: 0 },
+    };
+    const result2: RunResult = {
+      ...baseResult,
+      turns: 1,
+      costUsd: 0.2,
+      durationMs: 500,
+      usage: { inputTokens: 0, outputTokens: 200_000, cacheReadInputTokens: 0 },
+    };
+    // haiku output: 100_000*5/1e6 = 0.5, 200_000*5/1e6 = 1.0 → total 1.5
+    const out = summarizeOutcomes([
+      { name: 'a', result: result1, model: 'haiku' },
+      { name: 'b', result: result2, model: 'haiku' },
+    ]);
+    const lines = out.split('\n');
+    const totalLine = lines.find(l => l.includes('TOTAL'))!;
+    expect(totalLine).toContain('1.5000');
+    expect(totalLine).not.toContain('~');
+  });
 });
