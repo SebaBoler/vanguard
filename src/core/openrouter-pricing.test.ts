@@ -28,12 +28,18 @@ describe('estimateOpenRouterCost', () => {
     );
   });
 
-  it('sonnet alias matches dated claude-sonnet-4-6 row', () => {
+  it('sonnet alias matches the current-generation claude-sonnet-5 row', () => {
     const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 500_000 };
     expect(estimateOpenRouterCost(usage, 'sonnet')).toBeCloseTo(
-      estimateOpenRouterCost(usage, 'claude-sonnet-4-6')!,
+      estimateOpenRouterCost(usage, 'claude-sonnet-5')!,
       10,
     );
+  });
+
+  it('prices claude-sonnet-5 at its introductory $2/$10/$0.2 rate', () => {
+    const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 1_000_000 };
+    // (100_000*2 + 50_000*10 + 1_000_000*0.2) / 1e6 = (200_000 + 500_000 + 200_000) / 1e6 = 0.9
+    expect(estimateOpenRouterCost(usage, 'claude-sonnet-5')).toBeCloseTo(0.9, 6);
   });
 
   it('haiku alias matches dated claude-haiku-4-5-20251001 row', () => {
