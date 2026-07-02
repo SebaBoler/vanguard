@@ -11,6 +11,8 @@ export interface PersistOptions {
   timestamp?: string;
   /** Stage name, when persisting a single stage of a multi-stage run. */
   label?: string;
+  /** Effective model used for this run, when known. */
+  model?: string;
   /** The PR opened for this run, if any. */
   prUrl?: string;
 }
@@ -52,6 +54,7 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
     evt: 'run_complete',
     ts: timestamp,
     ...stageMetric(result, opts.label),
+    ...(opts.model !== undefined ? { model: opts.model } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
@@ -128,7 +131,7 @@ export async function persistVisualProof(
 /** Persist one record per pipeline stage under a shared timestamp (the per-task AFK trace). */
 export async function persistStageOutcomes(
   localRepoPath: string,
-  outcomes: ReadonlyArray<{ name: string; result: RunResult }>,
+  outcomes: ReadonlyArray<{ name: string; result: RunResult; model?: string }>,
   prUrl?: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -136,6 +139,7 @@ export async function persistStageOutcomes(
     await persistRunRecord(localRepoPath, outcome.result, {
       timestamp,
       label: outcome.name,
+      ...(outcome.model !== undefined ? { model: outcome.model } : {}),
       ...(prUrl !== undefined ? { prUrl } : {}),
     });
   }
