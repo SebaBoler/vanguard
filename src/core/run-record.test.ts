@@ -43,7 +43,7 @@ const result: RunResult = {
 
 describe('persistRunRecord', () => {
   it('writes a per-run JSON (without the diff) and appends a metric line', async () => {
-    const file = await persistRunRecord(repo, result, { timestamp: TS, model: 'sonnet', prUrl: 'https://pr/1' });
+    const file = await persistRunRecord(repo, result, { timestamp: TS, prUrl: 'https://pr/1' });
     expect(file).toBe(join(repo, '.vanguard', 'runs', 'TES-1', '2026-06-06T10-00-00-000Z.json'));
 
     const record = JSON.parse(await readFile(file, 'utf8'));
@@ -177,19 +177,13 @@ describe('persistRunRecord', () => {
   });
 
   it('labels a stage in the filename and appends one metric line per call', async () => {
-    await persistRunRecord(repo, result, { timestamp: TS, label: 'implementer', model: 'haiku' });
-    const file = await persistRunRecord(repo, result, {
-      timestamp: '2026-06-06T10:01:00.000Z',
-      label: 'reviewer',
-      model: 'opus',
-    });
+    await persistRunRecord(repo, result, { timestamp: TS, label: 'implementer' });
+    const file = await persistRunRecord(repo, result, { timestamp: '2026-06-06T10:01:00.000Z', label: 'reviewer' });
     expect(file.endsWith('2026-06-06T10-01-00-000Z-reviewer.json')).toBe(true);
 
     const metrics = (await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8')).trim().split('\n');
     expect(metrics).toHaveLength(2);
     expect(JSON.parse(metrics[0]!).stage).toBe('implementer');
-    expect(JSON.parse(metrics[0]!).model).toBe('haiku');
     expect(JSON.parse(metrics[1]!).stage).toBe('reviewer');
-    expect(JSON.parse(metrics[1]!).model).toBe('opus');
   });
 });

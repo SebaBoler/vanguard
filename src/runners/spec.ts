@@ -158,10 +158,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       }
 
       // techSpecStage always returns exactly one stage; persist that single outcome.
-      await persistRunRecord(deps.repoPath, specOutcome.result, {
-        label: 'spec',
-        ...(specOutcome.model !== undefined ? { model: specOutcome.model } : {}),
-      });
+      await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
 
       return spec;
     } finally {
