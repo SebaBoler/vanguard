@@ -51,7 +51,9 @@ export function summarizeOutcomes(outcomes: ReadonlyArray<SummaryOutcome>): stri
     totalDurationMs += m.durationMs;
     totalTurns += m.turns;
 
-    const est = estimateOpenRouterCost(m, model);
+    // Prefer the model the provider actually ran (RunResult.model); fall back to the configured
+    // stage model. This makes the estimate work on default-model runs where no model flag was passed.
+    const est = estimateOpenRouterCost(m, result.model ?? model);
     if (est !== undefined) {
       totalEstimate += est;
       estimateKnownCount++;

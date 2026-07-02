@@ -43,6 +43,7 @@ describe('CursorProvider', () => {
     expect(out.usage?.inputTokens).toBe(200);
     expect(out.usage?.outputTokens).toBe(40);
     expect(out.costUsd).toBe(0.02);
+    expect(out.model).toBe('cursor-small');
   });
 
   it('skips non-JSON diagnostic lines', async () => {

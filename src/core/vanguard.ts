@@ -230,6 +230,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     let usage: AgentUsage | undefined;
     let costUsd: number | undefined;
     let transcript: string | undefined;
+    let modelUsed = input.model;
 
     for (;;) {
       const next = await gen.next();
@@ -240,6 +241,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
         usage = next.value.usage;
         costUsd = next.value.costUsd;
         transcript = next.value.transcript;
+        if (next.value.model !== undefined) modelUsed = next.value.model;
         break;
       }
       if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
@@ -290,6 +292,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(transcript !== undefined ? { transcript } : {}),
+      ...(modelUsed !== undefined ? { model: modelUsed } : {}),
     };
     // Stage-complete logs ONLY the flat stageMetric (no finalText/diff/transcript/prompt/secrets).
     ctx.log.info(stageMetric(result, input.stageName, input), 'stage complete');

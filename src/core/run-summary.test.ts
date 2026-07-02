@@ -98,6 +98,21 @@ describe('summarizeOutcomes', () => {
     expect(totalLine).not.toContain('~');
   });
 
+  it('estimates from result.model (provider-reported) when no stage model flag was set', () => {
+    const result: RunResult = {
+      ...baseResult,
+      model: 'claude-sonnet-4-6', // provider reported the model; no SummaryOutcome.model override
+      turns: 2,
+      costUsd: 0.5,
+      durationMs: 1000,
+      usage: { inputTokens: 10_000, outputTokens: 20_000, cacheReadInputTokens: 990_000 },
+    };
+    // Default-model run (no `model` field on the outcome) still estimates via result.model: 0.627.
+    const out = summarizeOutcomes([{ name: 'impl', result }]);
+    expect(out).toContain('0.6270');
+    expect(out).not.toContain('n/a');
+  });
+
   it('renders n/a for a stage with no model', () => {
     const result: RunResult = {
       ...baseResult,
