@@ -12,6 +12,9 @@ import type { ProviderName } from '../agents/registry.js';
  * URL + network, and (when `--llm-proxy` is active) the trusted LLM-proxy sidecar's url/nonce/host.
  * `destroy()` tears the whole thing down in the right order.
  */
+/** Display name for each llm-proxy upstream, used in the sidecar-credential log line. */
+const UPSTREAM_LABEL: Record<Upstream, string> = { anthropic: 'Claude', openai: 'OpenAI', zai: 'z.ai', openrouter: 'OpenRouter' };
+
 export interface SandboxContext {
   /** Egress proxy URL the sandbox routes through (absent when no enclave was created). */
   proxyUrl?: string;
@@ -28,9 +31,9 @@ export interface SandboxContextOptions {
   llmProxy: boolean;
   /**
    * The primary sidecar's credential. For Anthropic (default) this is the Claude subscription/API auth;
-   * for Zai it is the z.ai key carried as an api-mode auth (`agentAuthFromEnv({provider:'zai'})` reads
-   * ZAI_API_KEY). Absent when no Anthropic-family credential is needed (e.g. codex/cursor + zai review)
-   * and --llm-proxy is not active (proxy mode always needs a primary-sidecar credential).
+   * for Zai/OpenRouter it is the provider key carried as an api-mode auth. Absent when no
+   * Anthropic-family credential is needed and --llm-proxy is not active (proxy mode always needs a
+   * primary-sidecar credential).
    */
   auth?: AgentAuth;
   /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
@@ -39,15 +42,16 @@ export interface SandboxContextOptions {
 
 /**
  * Provision the sandbox context once for a command. Builds the egress enclave when `egress` or
- * `llmProxy` is set (dropping the sidecar-owned upstream hosts — Anthropic, OpenAI, and z.ai — from the
- * allowlist in llm-proxy mode, so the sandbox has no direct route to those providers), and starts the
- * LLM-proxy sidecar on that enclave's network when requested — holding the real provider credential
- * outside the sandbox. The primary sidecar's upstream follows the provider: Anthropic by default, z.ai
- * for `--provider zai`. With neither flag, no enclave or env is created and `destroy()` is a no-op.
+ * `llmProxy` is set (dropping the sidecar-owned upstream hosts from the allowlist in llm-proxy mode,
+ * so the sandbox has no direct route to those providers), and starts the LLM-proxy sidecar on that
+ * enclave's network when requested — holding the real provider credential outside the sandbox. The
+ * primary sidecar's upstream follows the provider: Anthropic by default, z.ai for `--provider zai`,
+ * OpenRouter for `--provider openrouter`. With neither flag, no enclave or env is created and
+ * `destroy()` is a no-op.
  */
 export async function startSandboxContext(opts: SandboxContextOptions): Promise<SandboxContext> {
   // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to the
-  // sidecar-owned upstream providers (Anthropic, OpenAI, z.ai).
+  // sidecar-owned upstream providers.
   if (!opts.egress && !opts.llmProxy) {
     return { destroy: async (): Promise<void> => {} };
   }
@@ -61,21 +65,16 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { proxyUrl: enclave.proxyUrl, network: enclave.network, destroy: enclave.destroy };
   }
 
-  // The primary sidecar's upstream follows the provider (zai → api.z.ai, else Anthropic); the credential
-  // comes uniformly from `auth` (for zai, agentAuthFromEnv carries the z.ai key as an api-mode secret).
+  // The primary sidecar's upstream follows the provider; the credential comes uniformly from `auth`.
   if (opts.auth === undefined) {
     throw new Error(
-      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, or ZAI_API_KEY for --provider zai).',
+      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, ZAI_API_KEY, or OPENROUTER_API_KEY).',
     );
   }
-  const upstream: Upstream = opts.provider === 'zai' ? 'zai' : 'anthropic';
+  const upstream: Upstream = opts.provider === 'zai' || opts.provider === 'openrouter' ? opts.provider : 'anthropic';
   const auth = llmProxyAuth(opts.auth);
   const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });
-  console.log(
-    upstream === 'zai'
-      ? 'llm-proxy: z.ai credential held in a trusted sidecar; the sandbox sees only a per-run nonce.'
-      : 'llm-proxy: Claude credential held in a trusted sidecar; the sandbox sees only a per-run nonce.',
-  );
+  console.log(`llm-proxy: ${UPSTREAM_LABEL[upstream]} credential held in a trusted sidecar; the sandbox sees only a per-run nonce.`);
 
   return {
     proxyUrl: enclave.proxyUrl,

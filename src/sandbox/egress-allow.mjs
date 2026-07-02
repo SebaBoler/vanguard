@@ -13,6 +13,8 @@ export const DEFAULT_EGRESS_ALLOWLIST = [
   // z.ai (GLM Coding Plan, --provider zai) direct mode: the Claude Code CLI talks to z.ai's
   // Anthropic-compatible coding endpoint. Dropped under --llm-proxy (the sidecar owns it).
   'api.z.ai',
+  // OpenRouter direct mode (--provider openrouter --egress). Dropped under --llm-proxy.
+  'openrouter.ai',
   'api.linear.app',
   'github.com',
   'api.github.com',

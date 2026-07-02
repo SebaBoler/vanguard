@@ -69,4 +69,20 @@ describe('estimateOpenRouterCost', () => {
   it('returns 0 for zero usage with a known model', () => {
     expect(estimateOpenRouterCost({ inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 }, 'claude-sonnet-4-6')).toBe(0);
   });
+
+  it('prices the OpenRouter dotted slug the same as the vanguard model id it was priced from (openrouter provider)', () => {
+    const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 500_000 };
+    expect(estimateOpenRouterCost(usage, 'anthropic/claude-sonnet-4.6')).toBeCloseTo(
+      estimateOpenRouterCost(usage, 'claude-sonnet-4-6')!,
+      10,
+    );
+    expect(estimateOpenRouterCost(usage, 'anthropic/claude-opus-4.8')).toBeCloseTo(
+      estimateOpenRouterCost(usage, 'claude-opus-4-8')!,
+      10,
+    );
+    expect(estimateOpenRouterCost(usage, 'anthropic/claude-haiku-4.5')).toBeCloseTo(
+      estimateOpenRouterCost(usage, 'claude-haiku-4-5-20251001')!,
+      10,
+    );
+  });
 });

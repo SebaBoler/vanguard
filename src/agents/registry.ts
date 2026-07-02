@@ -2,6 +2,7 @@ import { ClaudeCodeProvider } from './claude-code.js';
 import { CodexProvider } from './codex.js';
 import { CursorProvider } from './cursor.js';
 import { ZaiProvider, ZAI_BASE_URL } from './zai.js';
+import { OpenRouterProvider, OPENROUTER_BASE_URL } from './openrouter.js';
 import { AgentError } from '../core/errors.js';
 import type { AgentProvider } from './provider.js';
 
@@ -78,6 +79,8 @@ interface ProviderSpec {
  *   transport: in normal mode its key becomes ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN; in proxy mode
  *   the key is delivered to the primary sidecar via `auth` and withheld from the sandbox (not a secondary
  *   sidecar secret — see ownsAnthropicTransport in providerSecrets).
+ * - OpenRouter is the same pattern as Zai, against OpenRouter's Anthropic-Messages-compatible "skin"
+ *   instead of z.ai's endpoint: it also owns the 'anthropic' transport and rides the primary sidecar.
  */
 const PROVIDERS = {
   claude: {
@@ -116,6 +119,16 @@ const PROVIDERS = {
       // simply withheld from the sandbox via ownsAnthropicTransport — not handed to a secondary sidecar.
     },
   },
+  openrouter: {
+    factory: () => new OpenRouterProvider(),
+    transport: 'anthropic',
+    ownsAnthropicTransport: true,
+    key: {
+      hostEnv: ['OPENROUTER_API_KEY'],
+      toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: OPENROUTER_BASE_URL, ANTHROPIC_AUTH_TOKEN: key }),
+      // No proxyKey: openrouter rides the PRIMARY sidecar, same as zai — see notes above.
+    },
+  },
 } satisfies Record<string, ProviderSpec>;
 
 /** The providers selectable on the CLI. Selection is by provider, not by model. Order = table order. */
@@ -144,6 +157,17 @@ export interface ProviderSecretOptions {
 /** Returns true if the named provider requires an explicit API key (i.e. is not auth-token Claude). */
 export function requiresApiKey(name: ProviderName): boolean {
   return spec(name).key !== undefined;
+}
+
+/**
+ * Host env var(s) an Anthropic-transport-owning provider (zai, openrouter) reads its key from, in
+ * priority order; undefined for providers that don't own the transport (they use Anthropic authSecrets
+ * instead). Lets callers like agentAuthFromEnv resolve a primary-sidecar credential generically instead
+ * of hardcoding a per-provider branch.
+ */
+export function anthropicTransportKeyEnv(name: ProviderName): string[] | undefined {
+  const s = spec(name);
+  return s.ownsAnthropicTransport === true ? s.key?.hostEnv : undefined;
 }
 
 /**

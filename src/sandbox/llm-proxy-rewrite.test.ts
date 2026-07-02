@@ -93,6 +93,15 @@ describe('isAllowedLlmPath (zai)', () => {
   });
 });
 
+describe('isAllowedLlmPath (openrouter)', () => {
+  it('accepts the Anthropic-compatible paths OpenRouter serves and rejects the rest', () => {
+    expect(isAllowedLlmPath('POST', '/v1/messages', 'openrouter')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/messages/count_tokens', 'openrouter')).toBe(true);
+    expect(isAllowedLlmPath('POST', '/v1/responses', 'openrouter')).toBe(false);
+    expect(isAllowedLlmPath('GET', '/v1/messages', 'openrouter')).toBe(false);
+  });
+});
+
 describe('constantTimeEqual', () => {
   it('matches equal strings and rejects others without leaking length via early return', () => {
     expect(constantTimeEqual('abc', 'abc')).toBe(true);
@@ -104,6 +113,9 @@ describe('constantTimeEqual', () => {
 describe('upstreamPath', () => {
   it('prepends the z.ai Coding-Plan base path for the zai upstream', () => {
     expect(upstreamPath('zai', '/v1/messages')).toBe('/api/coding/paas/v4/v1/messages');
+  });
+  it('prepends the OpenRouter Anthropic-skin base path for the openrouter upstream', () => {
+    expect(upstreamPath('openrouter', '/v1/messages')).toBe('/api/v1/messages');
   });
   it('preserves query strings when prepending', () => {
     expect(upstreamPath('zai', '/v1/messages?beta=1')).toBe('/api/coding/paas/v4/v1/messages?beta=1');

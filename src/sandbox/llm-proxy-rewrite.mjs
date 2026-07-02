@@ -45,14 +45,16 @@ export function upstreamAuthHeaders(auth, reqHeaders) {
  * - paths: the ONLY POST paths tunnelled through (query string ignored, no wildcards) — the lockdown.
  * - auth:  how the real credential is presented upstream. 'anthropic' = mode-aware x-api-key OR
  *          Bearer+oauth-beta (upstreamAuthHeaders). 'bearer' = plain Authorization: Bearer SECRET
- *          (openaiAuthHeaders). z.ai is Anthropic-Messages-compatible on the WIRE (same paths) but
- *          authenticates with a plain bearer key, so it pairs anthropic paths with bearer auth.
+ *          (openaiAuthHeaders). z.ai/OpenRouter are Anthropic-Messages-compatible on the WIRE (same
+ *          paths) but authenticate with plain bearer keys, so they pair anthropic paths with bearer auth.
  */
 export const UPSTREAMS = {
   anthropic: { host: 'api.anthropic.com', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'anthropic' },
   openai: { host: 'api.openai.com', paths: ['/v1/responses'], auth: 'bearer' },
   // basePath: keep in sync with ZAI_BASE_URL in src/agents/zai.ts
   zai: { host: 'api.z.ai', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'bearer', basePath: '/api/coding/paas/v4' },
+  // basePath: keep in sync with OPENROUTER_BASE_URL in src/agents/openrouter.ts
+  openrouter: { host: 'openrouter.ai', paths: ['/v1/messages', '/v1/messages/count_tokens'], auth: 'bearer', basePath: '/api' },
 };
 
 /** Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored). */
@@ -64,7 +66,7 @@ export function isAllowedLlmPath(method, path, upstream = 'anthropic') {
   return spec.paths.includes(p);
 }
 
-/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
+/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai, OpenRouter): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export function openaiAuthHeaders(secret) {
   return { authorization: `Bearer ${secret}` };
 }

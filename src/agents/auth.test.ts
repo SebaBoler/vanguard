@@ -30,8 +30,19 @@ describe('agentAuthFromEnv', () => {
     expect(agentAuthFromEnv({ provider: 'zai' }, { ZAI_API_KEY: 'z-key' })).toEqual({ mode: 'api', apiKey: 'z-key' });
   });
 
+  it('resolves the OpenRouter key as an api-mode auth for --provider openrouter (no Anthropic token needed)', () => {
+    expect(agentAuthFromEnv({ provider: 'openrouter' }, { OPENROUTER_API_KEY: 'or-key' })).toEqual({
+      mode: 'api',
+      apiKey: 'or-key',
+    });
+  });
+
   it('throws when ZAI_API_KEY is missing for zai', () => {
     expect(() => agentAuthFromEnv({ provider: 'zai' }, {})).toThrow(/ZAI_API_KEY/);
+  });
+
+  it('throws when OPENROUTER_API_KEY is missing for openrouter', () => {
+    expect(() => agentAuthFromEnv({ provider: 'openrouter' }, {})).toThrow(/OPENROUTER_API_KEY/);
   });
 
   it('falls back to Anthropic auth for non-zai providers', () => {
