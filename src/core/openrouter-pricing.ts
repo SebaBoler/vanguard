@@ -10,7 +10,7 @@ export interface ModelPricing {
 // Prices as of 2026-07-01, source openrouter.ai/api/v1/models; refresh by hand on model updates.
 // Base routes only — do NOT map to premium `-fast` routes.
 // Aliases (opus/sonnet/haiku) point to the current-generation base route; refresh together with dated rows.
-const PRICED_MODELS = {
+export const PRICED_MODELS = {
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, openRouterModel: 'anthropic/claude-opus-4.8' },
   'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, openRouterModel: 'anthropic/claude-sonnet-4.6' },
   // $2/$10 is Anthropic's introductory rate (through 2026-08-31); reverts to $3/$15 after — refresh then. Fetched 2026-07-02.

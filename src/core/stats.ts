@@ -32,18 +32,25 @@ function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-/** Parse metrics.jsonl text into records, tolerating blank and malformed lines. Keeps run_complete. */
-export function parseMetrics(text: string): MetricRecord[] {
-  const records: MetricRecord[] = [];
+/** Parse JSONL text into objects, tolerating blank lines and malformed JSON. */
+export function parseJsonlLines(text: string): Record<string, unknown>[] {
+  const lines: Record<string, unknown>[] = [];
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
-    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      lines.push(JSON.parse(trimmed) as Record<string, unknown>);
     } catch {
       continue;
     }
+  }
+  return lines;
+}
+
+/** Parse metrics.jsonl text into records, tolerating blank and malformed lines. Keeps run_complete. */
+export function parseMetrics(text: string): MetricRecord[] {
+  const records: MetricRecord[] = [];
+  for (const parsed of parseJsonlLines(text)) {
     if (parsed.evt !== 'run_complete' || typeof parsed.taskId !== 'string') continue;
     records.push({
       taskId: parsed.taskId,
