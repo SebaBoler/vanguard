@@ -6,6 +6,7 @@ import {
   isAllowedLlmPath,
   constantTimeEqual,
   upstreamPath,
+  UPSTREAMS,
 } from './llm-proxy-rewrite.mjs';
 
 describe('mergeAnthropicBeta', () => {
@@ -78,6 +79,11 @@ describe('openaiAuthHeaders', () => {
     expect('anthropic-beta' in h).toBe(false);
     expect('x-api-key' in h).toBe(false);
     expect(Object.keys(h)).toEqual(['authorization']);
+  });
+
+  it('presents the OpenRouter key as a plain Bearer header (openrouter upstream authenticates by bearer)', () => {
+    expect(UPSTREAMS.openrouter.auth).toBe('bearer');
+    expect(openaiAuthHeaders('sk-or')).toEqual({ authorization: 'Bearer sk-or' });
   });
 });
 
