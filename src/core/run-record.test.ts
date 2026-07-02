@@ -38,6 +38,7 @@ const result: RunResult = {
   usage: { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 80 },
   costUsd: 0.05,
   cacheEfficiency: 0.8,
+  model: 'actual-model',
 };
 
 describe('persistRunRecord', () => {
@@ -48,6 +49,7 @@ describe('persistRunRecord', () => {
     const record = JSON.parse(await readFile(file, 'utf8'));
     expect(record.taskId).toBe('TES-1');
     expect(record.costUsd).toBe(0.05);
+    expect(record.model).toBe('actual-model');
     expect(record.prUrl).toBe('https://pr/1');
     expect(record.diff).toBeUndefined(); // diff excluded from JSON
 
@@ -60,9 +62,9 @@ describe('persistRunRecord', () => {
       evt: 'run_complete',
       taskId: 'TES-1',
       exitReason: 'completed',
-      model: 'sonnet',
       costUsd: 0.05,
       inputTokens: 100,
+      model: 'actual-model',
     });
   });
 
