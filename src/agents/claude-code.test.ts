@@ -46,6 +46,37 @@ describe('ClaudeCodeProvider', () => {
     expect(out.costUsd).toBe(0.01);
   });
 
+  it('captures the model reported in the result message', async () => {
+    const resultModelStream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-1',
+        model: 'claude-sonnet-4-20250514',
+        result: 'done',
+      }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(resultModelStream));
+    expect(out.model).toBe('claude-sonnet-4-20250514');
+  });
+
+  it('captures the model reported in nested assistant messages', async () => {
+    const assistantModelStream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-4-20250514',
+          content: [{ type: 'text', text: 'working' }],
+        },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 'sess-1', result: 'done' }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(assistantModelStream));
+    expect(out.model).toBe('claude-opus-4-20250514');
+  });
+
   it('skips non-JSON diagnostic lines', async () => {
     const { out } = await drain(fakeSandbox(`WARN something\n${streamJson}`));
     expect(out.sessionId).toBe('sess-1');

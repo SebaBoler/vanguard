@@ -44,6 +44,7 @@ export class CursorProvider implements AgentProvider {
     let turns = 0;
     let usage: AgentUsage | undefined;
     let costUsd: number | undefined;
+    let model: string | undefined;
     let sawResult = false;
     let parsedAny = false;
 
@@ -58,6 +59,7 @@ export class CursorProvider implements AgentProvider {
       }
       parsedAny = true;
       if (msg.session_id !== undefined) sessionId = msg.session_id;
+      if (typeof msg.model === 'string') model = msg.model;
       if (msg.type === 'assistant') {
         const text = assistantText(msg);
         if (text !== '') {
@@ -81,6 +83,7 @@ export class CursorProvider implements AgentProvider {
     if (sessionId !== undefined) output.sessionId = sessionId;
     if (usage !== undefined) output.usage = usage;
     if (costUsd !== undefined) output.costUsd = costUsd;
+    if (model !== undefined) output.model = model;
     return output;
   }
 }

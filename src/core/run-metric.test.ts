@@ -19,6 +19,7 @@ describe('stageMetric', () => {
       costUsd: 1.23,
       cacheEfficiency: 0.5,
       durationMs: 4200,
+      model: 'claude-sonnet-4',
       usage: { inputTokens: 100, outputTokens: 200, cacheReadInputTokens: 50 },
     };
     expect(stageMetric(result)).toEqual({
@@ -32,6 +33,7 @@ describe('stageMetric', () => {
       outputTokens: 200,
       cacheReadInputTokens: 50,
       durationMs: 4200,
+      model: 'claude-sonnet-4',
     });
   });
 

@@ -6,7 +6,8 @@ interface StreamMessage {
   type?: string;
   subtype?: string;
   session_id?: string;
-  message?: { content?: Array<{ type?: string; text?: string }> };
+  model?: string;
+  message?: { content?: Array<{ type?: string; text?: string }>; model?: string };
   result?: string;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
   total_cost_usd?: number;
@@ -46,6 +47,7 @@ export async function* runClaudeCli(
   let turns = 0;
   let usage: AgentUsage | undefined;
   let costUsd: number | undefined;
+  let model: string | undefined;
   let sawResult = false;
   let parsedAny = false;
 
@@ -60,6 +62,8 @@ export async function* runClaudeCli(
     }
     parsedAny = true;
     if (msg.session_id !== undefined) sessionId = msg.session_id;
+    if (typeof msg.model === 'string') model = msg.model;
+    else if (typeof msg.message?.model === 'string') model = msg.message.model;
     if (msg.type === 'assistant') {
       const text = assistantText(msg);
       if (text !== '') {
@@ -85,5 +89,6 @@ export async function* runClaudeCli(
   if (sessionId !== undefined) output.sessionId = sessionId;
   if (usage !== undefined) output.usage = usage;
   if (costUsd !== undefined) output.costUsd = costUsd;
+  if (model !== undefined) output.model = model;
   return output;
 }

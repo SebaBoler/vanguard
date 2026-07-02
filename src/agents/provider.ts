@@ -43,6 +43,8 @@ export interface AgentRunOutput {
   costUsd?: number;
   /** Raw agent output (e.g. the stream-json), persisted as the run transcript. */
   transcript?: string;
+  /** Model the provider actually ran, parsed from its output stream when available. */
+  model?: string;
 }
 
 export interface AgentProvider {

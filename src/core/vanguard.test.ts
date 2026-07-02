@@ -264,6 +264,28 @@ describe('vanguard.run', () => {
     expect(result.diff).toContain('output.txt');
   });
 
+  it('falls back to the configured model when the provider does not report one', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const agent = fakeAgent([], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'model-fallback', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent, model: 'configured-model' });
+    await disposeContext(ctx);
+
+    expect(result.model).toBe('configured-model');
+  });
+
+  it('uses the provider-reported model over the configured model', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const agent = fakeAgent([], { finalText: 'done', turns: 1, model: 'actual-model' });
+    const ctx = await prepareContext({ taskId: 'model-reported', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent, model: 'configured-model' });
+    await disposeContext(ctx);
+
+    expect(result.model).toBe('actual-model');
+  });
+
   function sessionTrackingSandbox(sessionCopyOut: () => void): IsolatedSandboxProvider {
     return {
       id: 'fake',
