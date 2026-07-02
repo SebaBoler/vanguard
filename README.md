@@ -30,7 +30,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 - [End to end](#end-to-end)
 - [Skills](#skills) · [Custom skills (bring your own)](#custom-skills-bring-your-own)
 - [Models](#models)
-- [Providers](#providers) — Claude / Codex / Cursor / z.ai, cross-provider, Codex subscription, custom endpoint
+- [Providers](#providers) — Claude / Codex / Cursor / z.ai / OpenRouter, cross-provider, Codex subscription, custom endpoint
 - [Fork-and-select](#fork-and-select)
 - [Security](#security) · [Host LLM proxy](#host-llm-proxy)
 - [Development](#development)
@@ -244,7 +244,7 @@ An optional **conformance pass** can be appended after the reviewer with `--conf
 
 ## Providers
 
-The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), or `zai` (z.ai GLM Coding Plan). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
+The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), `zai` (z.ai GLM Coding Plan), or `openrouter` (OpenRouter's Anthropic skin). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
 
 **One provider does everything** (default)
 
@@ -285,6 +285,8 @@ vanguard run --linear TES-1 --provider codex --provider-model <model-the-endpoin
 Constraints: (1) the endpoint must implement the OpenAI **Responses** API (`/v1/responses`) — Codex no longer speaks `/chat/completions`; (2) this is **direct mode only** — it is ignored under `--llm-proxy`, whose sidecar always targets `api.openai.com` (point the sidecar elsewhere by changing the proxy upstream, not this var); (3) with `--egress` the endpoint's host must be in the allowlist, otherwise run without `--egress` so the sandbox can reach it directly. `CODEX_AUTH_JSON` (subscription) takes precedence — set `OPENAI_BASE_URL` only in the API-key path.
 
 **z.ai (GLM Coding Plan).** `--provider zai` reuses the in-sandbox Claude Code CLI, pointed at z.ai's Anthropic-Messages-compatible coding endpoint (`https://api.z.ai/api/coding/paas/v4`) with the GLM model family (default `glm-5.2`). It needs **no Anthropic token** — set `ZAI_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the z.ai key is held by the primary trusted sidecar (forwarding to `api.z.ai` as a bearer key) and the sandbox gets only the per-run nonce. (z.ai's endpoint is OpenAI-compatible too, but the Codex CLI dropped `wire_api = "chat"` support, so the Claude-CLI route is the supported one.)
+
+**OpenRouter.** `--provider openrouter` follows the same pattern as z.ai, pointed at OpenRouter's Anthropic-Messages-compatible "skin" (`https://openrouter.ai/api`) with a dotted OpenRouter slug as the model (default `anthropic/claude-sonnet-4.6`; override with `--provider-model`). It needs **no Anthropic token** — set `OPENROUTER_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the OpenRouter key is held by the primary trusted sidecar (forwarding to `openrouter.ai` as a bearer key) and the sandbox gets only the per-run nonce. **Recommended:** in your OpenRouter account, pin **Anthropic 1P** as the top-priority provider for Claude models — the Claude Code CLI expects Anthropic-1P behaviour, and this is an account-level provider-selection preference, not something the run can set per-request.
 
 ## Fork-and-select
 

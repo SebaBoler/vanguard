@@ -1,4 +1,4 @@
-import { needsAnthropicAuth } from './registry.js';
+import { anthropicTransportKeyEnv, needsAnthropicAuth } from './registry.js';
 import type { ProviderChoice } from './registry.js';
 
 export type AgentAuth = { mode: 'subscription'; token: string } | { mode: 'api'; apiKey: string };
@@ -32,20 +32,22 @@ export function authFromEnv(env: NodeJS.ProcessEnv = process.env): AgentAuth | u
 }
 
 /**
- * Resolve the run's auth for the chosen provider choice. For Zai (as primary provider), the z.ai key
- * (ZAI_API_KEY) is carried as an api-mode AgentAuth — it is NOT an Anthropic credential, but it flows
- * through the same auth slot so the proxy sidecar and dep threading stay uniform. When no used provider
- * needs an Anthropic-family credential (e.g. codex/cursor implement + zai review), returns undefined
- * rather than throwing — the Anthropic credential is genuinely not required for that combo. Throws if
- * a required credential is missing.
+ * Resolve the run's auth for the chosen provider choice. For primary providers that own the Anthropic
+ * transport (Zai/OpenRouter), their key is carried as an api-mode AgentAuth — it is NOT an Anthropic
+ * credential, but it flows through the same auth slot so the proxy sidecar and dep threading stay
+ * uniform. When no used provider needs an Anthropic-family credential, returns undefined rather than
+ * throwing. Throws if a required credential is missing.
  */
 export function agentAuthFromEnv(
   choice: ProviderChoice,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentAuth | undefined {
-  if (choice.provider === 'zai') {
-    const key = env['ZAI_API_KEY'];
-    if (key === undefined || key === '') throw new Error('Set ZAI_API_KEY before running with --provider zai.');
+  const hostEnv = choice.provider !== undefined ? anthropicTransportKeyEnv(choice.provider) : undefined;
+  if (hostEnv !== undefined) {
+    const key = hostEnv.map((k) => env[k]).find((v) => v !== undefined && v !== '');
+    if (key === undefined) {
+      throw new Error(`Set ${hostEnv.join(' or ')} before running with --provider ${choice.provider}.`);
+    }
     return { mode: 'api', apiKey: key };
   }
   if (!needsAnthropicAuth(choice)) return undefined; // suppressed (e.g. codex/cursor + zai review): no Anthropic credential is consumed

@@ -15,6 +15,7 @@ describe('makeProvider', () => {
     expect(makeProvider('codex').name).toBe('codex');
     expect(makeProvider('cursor').name).toBe('cursor');
     expect(makeProvider('zai').name).toBe('zai');
+    expect(makeProvider('openrouter').name).toBe('openrouter');
   });
 });
 
@@ -146,6 +147,27 @@ describe('providerSecrets (zai)', () => {
   });
 });
 
+describe('providerSecrets (openrouter)', () => {
+  it('injects ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN in normal mode', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['openrouter'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'or-key' },
+      proxySecrets: {},
+    });
+  });
+
+  it('withholds the OpenRouter key from the sandbox in proxy mode', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets, proxySecrets } = providerSecrets(['openrouter'], env, { proxyMode: true });
+    expect(sandboxSecrets).toEqual({});
+    expect(proxySecrets).toEqual({});
+  });
+
+  it('throws when OPENROUTER_API_KEY is missing', () => {
+    expect(() => providerSecrets(['openrouter'], {})).toThrow(/OPENROUTER_API_KEY/);
+  });
+});
+
 describe('selectAgents', () => {
   it('routes codex secrets to the sandbox in normal mode', () => {
     const env = { CODEX_API_KEY: 'c-key' } as NodeJS.ProcessEnv;
@@ -181,6 +203,14 @@ describe('selectAgents', () => {
     expect(selected.injectAnthropicAuth).toBe(false);
   });
 
+  it('keeps the OpenRouter key out of the sandbox in proxy mode (delivered to the primary sidecar via auth)', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'openrouter' }, env, { proxyMode: true });
+    expect(selected.secrets).toEqual({});
+    expect(selected.proxySecrets).toEqual({});
+    expect(selected.injectAnthropicAuth).toBe(false);
+  });
+
   it('suppresses Anthropic auth when zai is only the REVIEWER (codex implements)', () => {
     const env = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
@@ -210,6 +240,16 @@ describe('selectAgents', () => {
     );
     // default provider is claude, so an unspecified implementer + zai reviewer also collides
     expect(() => selectAgents({ reviewProvider: 'zai' }, env)).toThrow(/cannot mix "claude" and "zai"/);
+  });
+
+  it('rejects mixing openrouter with other anthropic-transport providers', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'claude', reviewProvider: 'openrouter' }, env)).toThrow(
+      /cannot mix "claude" and "openrouter"/,
+    );
+    expect(() => selectAgents({ provider: 'zai', reviewProvider: 'openrouter' }, env)).toThrow(
+      /cannot mix "openrouter" and "zai"/,
+    );
   });
 
   it('rejects zai as reviewer-only under --llm-proxy (no primary sidecar; would misroute to Anthropic)', () => {

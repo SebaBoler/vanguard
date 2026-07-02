@@ -25,6 +25,9 @@ export const OPENROUTER_PRICING: Record<string, ModelPricing> = {
   opus: PRICED_MODELS['claude-opus-4-8'],
   sonnet: PRICED_MODELS['claude-sonnet-5'],
   haiku: PRICED_MODELS['claude-haiku-4-5-20251001'],
+  // OpenRouter slug keys (the `--provider openrouter` model string, e.g. from OPENROUTER_DEFAULT_MODEL),
+  // derived from each row's own openRouterModel field so they can't drift out of sync with it.
+  ...Object.fromEntries(Object.values(PRICED_MODELS).map((p) => [p.openRouterModel, p])),
 };
 
 export interface EstimateUsage {
