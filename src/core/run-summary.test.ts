@@ -87,7 +87,7 @@ describe('summarizeOutcomes', () => {
       usage: { inputTokens: 10_000, outputTokens: 20_000, cacheReadInputTokens: 990_000 },
     };
     // (10_000*3 + 20_000*15 + 990_000*0.3) / 1e6 = 0.627
-    const out = summarizeOutcomes([{ name: 'impl', result, model: 'sonnet' }]);
+    const out = summarizeOutcomes([{ name: 'impl', result, model: 'claude-sonnet-4-6' }]);
     expect(out).toContain('0.6270');
     // Provider $cost is still present
     expect(out).toContain('0.5000');
@@ -139,7 +139,7 @@ describe('summarizeOutcomes', () => {
     };
     // sonnet output only: (0*3 + 1_000_000*15 + 0*0.3)/1e6 = 15.0
     const out = summarizeOutcomes([
-      { name: 'known', result: knownResult, model: 'sonnet' },
+      { name: 'known', result: knownResult, model: 'claude-sonnet-4-6' },
       { name: 'unknown', result: unknownResult },
     ]);
     const lines = out.split('\n');
