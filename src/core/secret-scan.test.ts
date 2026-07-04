@@ -107,4 +107,19 @@ describe('scanForSecrets', () => {
     expect(findings.find((f) => f.patternName === 'jwt')?.file).toBe('src/a.ts');
     expect(findings.find((f) => f.patternName === 'openai-key')?.file).toBe('src/b.ts');
   });
+
+  it('skips test and fixture files (their fake secrets are not real leaks)', () => {
+    const diff = diffOf([
+      { path: 'src/core/secret-scan.test.ts', lines: [`+const jwt = "${FAKE_JWT}";`] },
+      { path: 'src/cli/run-options.fixture.ts', lines: [`+const key = "${FAKE_SK_KEY}";`] },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('still flags the same secret in a non-test source file', () => {
+    const diff = diffOf([{ path: 'src/config.ts', lines: [`+const jwt = "${FAKE_JWT}";`] }]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/config.ts', patternName: 'jwt' }),
+    );
+  });
 });
