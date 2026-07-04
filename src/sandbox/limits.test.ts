@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sandboxResourceLimits, sidecarMemoryArgs } from './limits.js';
+import { sandboxResourceLimits, sandboxSecurityOpts, sidecarMemoryArgs } from './limits.js';
 
 describe('sandboxResourceLimits', () => {
   it('uses defaults when no env is set', () => {
@@ -25,6 +25,44 @@ describe('sandboxResourceLimits', () => {
   it('omits a limit on an invalid or empty value', () => {
     expect('memoryMb' in sandboxResourceLimits({ VANGUARD_SANDBOX_MEMORY_MB: '' } as NodeJS.ProcessEnv)).toBe(false);
     expect('pidsLimit' in sandboxResourceLimits({ VANGUARD_SANDBOX_PIDS: 'off' } as NodeJS.ProcessEnv)).toBe(false);
+  });
+});
+
+describe('sandboxSecurityOpts', () => {
+  it('defaults to cap-drop ALL, the chown trio added back, no-new-privileges, readonly off', () => {
+    expect(sandboxSecurityOpts({})).toEqual({
+      capDrop: ['ALL'],
+      capAdd: ['CHOWN', 'FOWNER', 'DAC_OVERRIDE'],
+      noNewPrivileges: true,
+      readOnlyRootfs: false,
+    });
+  });
+
+  it('omits no-new-privileges when VANGUARD_SANDBOX_NO_NEW_PRIVILEGES=0', () => {
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_NO_NEW_PRIVILEGES: '0' } as NodeJS.ProcessEnv).noNewPrivileges).toBe(
+      false,
+    );
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_NO_NEW_PRIVILEGES: '' } as NodeJS.ProcessEnv).noNewPrivileges).toBe(
+      false,
+    );
+  });
+
+  it('omits cap-drop when VANGUARD_SANDBOX_CAP_DROP is empty', () => {
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_CAP_DROP: '' } as NodeJS.ProcessEnv).capDrop).toEqual([]);
+  });
+
+  it('respects a custom VANGUARD_SANDBOX_CAP_ADD list', () => {
+    expect(
+      sandboxSecurityOpts({ VANGUARD_SANDBOX_CAP_ADD: 'NET_BIND_SERVICE, SETGID' } as NodeJS.ProcessEnv).capAdd,
+    ).toEqual(['NET_BIND_SERVICE', 'SETGID']);
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_CAP_ADD: '' } as NodeJS.ProcessEnv).capAdd).toEqual([]);
+  });
+
+  it('enables readOnlyRootfs only when VANGUARD_SANDBOX_READONLY is set truthy', () => {
+    expect(sandboxSecurityOpts({}).readOnlyRootfs).toBe(false);
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_READONLY: '1' } as NodeJS.ProcessEnv).readOnlyRootfs).toBe(true);
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_READONLY: 'true' } as NodeJS.ProcessEnv).readOnlyRootfs).toBe(true);
+    expect(sandboxSecurityOpts({ VANGUARD_SANDBOX_READONLY: '0' } as NodeJS.ProcessEnv).readOnlyRootfs).toBe(false);
   });
 });
 

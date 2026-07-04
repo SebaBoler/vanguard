@@ -1,3 +1,10 @@
+export interface SandboxSecurityOpts {
+  capDrop: string[];
+  capAdd: string[];
+  noNewPrivileges: boolean;
+  readOnlyRootfs: boolean;
+}
+
 export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
@@ -59,4 +66,6 @@ export interface SandboxConfig {
   pidsLimit?: number;
   /** Join this docker network instead of the default bridge (e.g. an internal egress enclave). */
   network?: string;
+  /** Overrides sandboxSecurityOpts()'s env-derived defaults (cap-drop/add, no-new-privileges, readonly). */
+  security?: Partial<SandboxSecurityOpts>;
 }
