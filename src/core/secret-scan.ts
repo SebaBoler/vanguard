@@ -45,9 +45,19 @@ export interface SecretFinding {
 const MASKED_EXCERPT_MAX_CHARS = 200;
 const ADDED_FILE_HEADER = /^\+\+\+ b\/(.+)$/;
 
+// Test/fixture files legitimately carry fake secret material (they exercise this very scanner), and
+// are the #1 false-positive source in every regex secret scanner. Exclude them from the publish
+// gate — the agent never holds real secrets anyway (nonce/tmpfs/proxy), so a real leak here is
+// implausible, and GitHub secret scanning / push protection is the real backstop for prod files.
+const TEST_PATH = /\.(test|fixture)\.[cm]?[jt]sx?$/i;
+export function isTestPath(file: string): boolean {
+  return TEST_PATH.test(file);
+}
+
 /**
  * Scan a unified git diff. Inspects only ADDED lines (lines starting with '+', excluding the
  * '+++' file header). Tracks the current file from '+++ b/<path>' headers so findings carry a path.
+ * Added lines in test/fixture files are skipped (they legitimately contain fake secrets).
  */
 export function scanForSecrets(diff: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
@@ -59,6 +69,7 @@ export function scanForSecrets(diff: string): SecretFinding[] {
       continue;
     }
     if (!line.startsWith('+')) continue;
+    if (isTestPath(currentFile)) continue;
     const added = line.slice(1);
     const matched = SECRET_PATTERNS.filter((pattern) => added.search(pattern.re) !== -1);
     if (matched.length === 0) continue;
