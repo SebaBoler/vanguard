@@ -242,7 +242,18 @@ export type Command =
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
-  | { kind: 'eval'; json: boolean; judgeModel?: string; produceModel?: string }
+  | {
+      kind: 'eval';
+      json: boolean;
+      judgeModel?: string;
+      produceModel?: string;
+      /** Draft eval-corpus candidates from retrospective memory instead of running the corpus (suggest-only). */
+      suggest: boolean;
+      repoPath: string;
+      limit?: number;
+      /** Also write the drafted candidates to this scratch path (refused if under src/evals/corpus/). */
+      out?: string;
+    }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -263,6 +274,12 @@ const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
 
 function fail(message: string): Command {
   return { kind: 'error', message };
+}
+
+/** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
+function parseLimit(raw: string | boolean | undefined): number | undefined {
+  const limit = Number(raw);
+  return Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : undefined;
 }
 
 /**
@@ -351,6 +368,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         // eval
         'judge-model': { type: 'string' },
         'produce-model': { type: 'string' },
+        // eval --suggest
+        suggest: { type: 'boolean' },
+        out: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -381,21 +401,26 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'memory') {
-    const limit = Number(values.limit);
+    const limit = parseLimit(values.limit);
     return {
       kind: 'memory',
       repoPath,
-      ...(Number.isFinite(limit) && limit >= 1 ? { limit: Math.floor(limit) } : {}),
+      ...(limit !== undefined ? { limit } : {}),
       json: values.json === true,
     };
   }
 
   if (positionals[0] === 'eval') {
+    const limit = parseLimit(values.limit);
     return {
       kind: 'eval',
       json: values.json === true,
       ...(typeof values['judge-model'] === 'string' ? { judgeModel: values['judge-model'] } : {}),
       ...(typeof values['produce-model'] === 'string' ? { produceModel: values['produce-model'] } : {}),
+      suggest: values.suggest === true,
+      repoPath,
+      ...(limit !== undefined ? { limit } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -970,6 +995,10 @@ Commands:
     --json                   Emit the raw EvalReport as JSON instead of a table
     --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for experiments)
     --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-4-6)
+    --suggest                Draft eval-corpus candidates from retrospective memory (suggest-only; never writes the corpus)
+    --repo <path>            Repo to read run artifacts from (with --suggest; default: cwd)
+    --limit <n>              Max retrospective entries to consider (with --suggest; default: 10)
+    --out <path>             Also write drafts to this scratch file (refuses paths under src/evals/corpus/)
 
     Temperature note: the claude CLI exposes no --temperature flag; run the suite 3× on a known-good
     state to measure pass-rate variance before relying on absolute regression thresholds (phase 2).

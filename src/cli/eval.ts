@@ -3,6 +3,7 @@ import { runEvals } from '../evals/run-evals.js';
 import { llmJudge } from '../evals/judges.js';
 import { corpus, JUDGE_MODEL, DEFAULT_PRODUCE_MODEL } from '../evals/corpus/index.js';
 import { formatEvalReport } from '../evals/eval-report.js';
+import { evalSuggestCommand } from './eval-suggest.js';
 import type { Command } from './args.js';
 import type { EvalCase } from '../evals/types.js';
 
@@ -24,6 +25,11 @@ export async function evalCommand(
   cmd: EvalCommand,
   makeComplete: (model: string) => (prompt: string) => Promise<string> = makeCliComplete,
 ): Promise<void> {
+  if (cmd.suggest) {
+    await evalSuggestCommand(cmd);
+    return;
+  }
+
   const judgeModel = cmd.judgeModel ?? JUDGE_MODEL;
   const produceModel = cmd.produceModel ?? DEFAULT_PRODUCE_MODEL;
 
