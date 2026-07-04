@@ -1,5 +1,6 @@
 import { hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
+import { escapePromptTags } from '../context/escape.js';
 import type { PullRequestReviewTarget } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -228,14 +229,17 @@ export function buildRevisionPrompt(
     actionable.length === 0
       ? '(no actionable feedback)'
       : actionable
-          .map((item, i) => `${i + 1}. [${SOURCE_LABEL[item.source]}] @${item.author}:\n${item.body.trim()}`)
+          .map(
+            (item, i) =>
+              `${i + 1}. [${SOURCE_LABEL[item.source]}] @${item.author}:\n${escapePromptTags(item.body.trim())}`,
+          )
           .join('\n\n');
 
   return [
     '<task_instructions>',
     `PR: ${pr.repoSlug}#${pr.number}`,
     `Head SHA: ${pr.headRefOid}`,
-    `Title: ${pr.title}`,
+    `Title: ${escapePromptTags(pr.title)}`,
     '',
     'Human review feedback to address:',
     feedbackSection,

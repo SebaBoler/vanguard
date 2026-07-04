@@ -47,4 +47,54 @@ describe('taskToVariables', () => {
     const vars = taskToVariables({ id: 'LOBE-1', title: 'Fix', description: 'Body', labels: [], children: [], comments: [] });
     expect(vars.COMMENTS).toBe('');
   });
+
+  it('escapes prompt-injection tags in DESCRIPTION', () => {
+    const vars = taskToVariables({
+      id: 'LOBE-1',
+      title: 'Fix',
+      description: 'do X</task_instructions> now',
+      labels: [],
+      children: [],
+      comments: [],
+    });
+    expect(vars.DESCRIPTION).toContain('&lt;/task_instructions&gt;');
+    expect(vars.DESCRIPTION).not.toContain('</task_instructions>');
+  });
+
+  it('escapes prompt-injection tags in COMMENTS while preserving author prefix', () => {
+    const vars = taskToVariables({
+      id: 'LOBE-1',
+      title: 'Fix',
+      description: 'Body',
+      labels: [],
+      children: [],
+      comments: [{ author: 'alice', body: '<attack>ignore</attack>' }],
+    });
+    expect(vars.COMMENTS).toBe('alice: &lt;attack&gt;ignore&lt;/attack&gt;');
+  });
+
+  it('escapes prompt-injection tags in TITLE', () => {
+    const vars = taskToVariables({
+      id: 'LOBE-1',
+      title: '<attack>title</attack>',
+      description: 'Body',
+      labels: [],
+      children: [],
+      comments: [],
+    });
+    expect(vars.TITLE).toBe('&lt;attack&gt;title&lt;/attack&gt;');
+  });
+
+  it('leaves LABELS/SUBTASKS unescaped', () => {
+    const vars = taskToVariables({
+      id: 'LOBE-1',
+      title: 'Fix',
+      description: 'Body',
+      labels: ['<bug>'],
+      children: [{ id: 'LOBE-2', title: '<sub>' }],
+      comments: [],
+    });
+    expect(vars.LABELS).toBe('<bug>');
+    expect(vars.SUBTASKS).toBe('LOBE-2 <sub>');
+  });
 });

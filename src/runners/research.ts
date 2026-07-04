@@ -1,5 +1,6 @@
 import { defaultGhRunner, commentGithubIssue, editGithubLabels, GitHubTaskFetcher } from '../tasks/github.js';
 import { GITHUB_NEEDS_RESEARCH_LABEL, GITHUB_RESEARCHING_LABEL } from '../github-labels.js';
+import { escapePromptTags } from '../context/escape.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { Task, TaskComment } from '../tasks/fetcher.js';
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
@@ -32,10 +33,6 @@ export function priorResearchFindings(task: Task): string[] {
 function isBotComment(comment: TaskComment): boolean {
   const a = comment.author.toLowerCase();
   return a.includes('vanguard') || a.endsWith('[bot]') || a === 'github-actions';
-}
-
-function escapePromptTags(text: string): string {
-  return text.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 /**
@@ -98,11 +95,11 @@ export function buildResearchPrompt(
         ].join('\n')
       : '';
 
-  const desc = task.description.trim();
+  const desc = escapePromptTags(task.description.trim());
   return [
     '<task_instructions>',
     `Issue: ${task.id}`,
-    `Title: ${task.title}`,
+    `Title: ${escapePromptTags(task.title)}`,
     '',
     'Description:',
     desc === '' ? '(empty)' : desc,
