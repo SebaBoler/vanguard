@@ -7,6 +7,8 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint 'src/**/*.ts'",
     "build": "tsc && cp src/mcp/typecheck-server.mjs dist/mcp/typecheck-server.mjs && cp src/sandbox/egress-proxy-server.mjs dist/sandbox/egress-proxy-server.mjs && cp src/sandbox/egress-allow.mjs dist/sandbox/egress-allow.mjs && cp src/sandbox/llm-proxy-server.mjs dist/sandbox/llm-proxy-server.mjs && cp src/sandbox/llm-proxy-rewrite.mjs dist/sandbox/llm-proxy-rewrite.mjs",
     "typecheck": "tsc --noEmit",
     "eval": "tsx src/cli/index.ts eval",
@@ -28,9 +30,12 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@vitest/coverage-v8": "^4.1.9",
+    "eslint": "^10.6.0",
     "pino-pretty": "^13.1.3",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1",
     "vitest": "^4.1.9"
   }
 }
