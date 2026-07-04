@@ -200,7 +200,7 @@ export async function runSourcedIssue(
         // Resolve the implementer outcome once — the loop only runs while its session is resumable,
         // so its position in `outcomes` is fixed for the duration.
         const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
-        let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx].result.sessionId : undefined;
+        let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
         let conformanceIterations = 0;
         while (!conformance.pass && resumeSessionId !== undefined && conformanceIterations < MAX_CONFORMANCE_ITERATIONS) {
           conformanceIterations += 1;
@@ -212,7 +212,8 @@ export async function runSourcedIssue(
             agent: agents.agent,
             resumeSessionId,
           });
-          outcomes[implementerIdx] = { ...outcomes[implementerIdx], result: repaired };
+          const prior = outcomes[implementerIdx];
+          if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
           resumeSessionId = repaired.sessionId ?? resumeSessionId;
           conformance = checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath));
         }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 
