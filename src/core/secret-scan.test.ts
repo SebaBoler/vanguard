@@ -43,6 +43,16 @@ describe('scanForSecrets', () => {
     );
   });
 
+  it('does NOT flag a package-lock integrity hash that happens to contain "eyJ" (real JWTs have two dots, hashes have none)', () => {
+    const diff = diffOf([
+      {
+        path: 'apps/backoffice/pnpm-lock.yaml',
+        lines: ['+      integrity: sha512-eyJabcdEFGH1234567890ijklMNOPqrstUVWXyz0123456789abcdefABCDEFghijklmnopqrIJKLMNOPqRsTuVwXyZ+/w==}'],
+      },
+    ]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'jwt')).toBe(false);
+  });
+
   it('detects a Bearer header on an added line', () => {
     const diff = diffOf([{ path: 'src/foo.ts', lines: ['+const h = "Authorization: Bearer sk-abc.DEF_123-xyz";'] }]);
     const findings = scanForSecrets(diff);
