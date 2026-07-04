@@ -17,3 +17,22 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:coverage
+      # SBOM over the installed dependency tree (node_modules present after install), SPDX JSON,
+      # uploaded as a build artifact for provenance/audit.
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          artifact-name: vanguard-sbom.spdx.json
+
+  # SCA gate: block a PR that introduces a dependency with a known high+ CVE (or a disallowed
+  # license). Uses the GitHub dependency graph enabled alongside Dependabot alerts.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
