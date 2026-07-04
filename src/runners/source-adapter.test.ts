@@ -83,6 +83,7 @@ vi.mock('../pipeline/verify.js', () => ({
   resolveVerifyCommand: vi.fn(async () => undefined),
   runVerification: vi.fn(async () => undefined),
   proofBlock: vi.fn(() => ''),
+  verifySkippedBlock: vi.fn(() => ''),
 }));
 vi.mock('../pipeline/visual-proof.js', () => ({
   resolveAndRunVisualProof: vi.fn(async () => undefined),
