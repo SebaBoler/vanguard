@@ -6,7 +6,7 @@ import { evalCommand } from './eval.js';
 describe('parseCli eval', () => {
   it('parses eval with defaults', () => {
     const cmd = parseCli(['eval'], '/repo');
-    expect(cmd).toEqual({ kind: 'eval', json: false });
+    expect(cmd).toEqual({ kind: 'eval', json: false, suggest: false, repoPath: '/repo' });
   });
 
   it('parses --json flag', () => {
@@ -48,7 +48,7 @@ describe('evalCommand', () => {
 
   it('passes JUDGE_MODEL to the judge and DEFAULT_PRODUCE_MODEL to produce by default', async () => {
     const models: string[] = [];
-    const cmd = { kind: 'eval' as const, json: false };
+    const cmd = { kind: 'eval' as const, json: false, suggest: false, repoPath: '/repo' };
     await evalCommand(cmd, makeTestFactory(models));
     expect(models).toHaveLength(2);
     expect(models).toContain(JUDGE_MODEL);
@@ -57,7 +57,7 @@ describe('evalCommand', () => {
 
   it('respects a --judge-model override', async () => {
     const models: string[] = [];
-    const cmd = { kind: 'eval' as const, json: false, judgeModel: 'claude-opus-4-8' };
+    const cmd = { kind: 'eval' as const, json: false, suggest: false, repoPath: '/repo', judgeModel: 'claude-opus-4-8' };
     await evalCommand(cmd, makeTestFactory(models));
     expect(models).toContain('claude-opus-4-8');
     expect(models).not.toContain(JUDGE_MODEL);
@@ -68,6 +68,8 @@ describe('evalCommand', () => {
     const cmd = {
       kind: 'eval' as const,
       json: false,
+      suggest: false,
+      repoPath: '/repo',
       produceModel: 'claude-opus-4-8',
     };
     await evalCommand(cmd, makeTestFactory(models));
@@ -77,7 +79,7 @@ describe('evalCommand', () => {
   it('emits a JSON EvalReport when --json is set', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const cmd = { kind: 'eval' as const, json: true };
+      const cmd = { kind: 'eval' as const, json: true, suggest: false, repoPath: '/repo' };
       await evalCommand(cmd, makeTestFactory([]));
       const call = logSpy.mock.calls[0];
       expect(call).toBeDefined();
@@ -93,7 +95,7 @@ describe('evalCommand', () => {
   it('prints a formatted table when --json is false', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const cmd = { kind: 'eval' as const, json: false };
+      const cmd = { kind: 'eval' as const, json: false, suggest: false, repoPath: '/repo' };
       await evalCommand(cmd, makeTestFactory([]));
       const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
       expect(output).toContain('EVAL RESULTS');
