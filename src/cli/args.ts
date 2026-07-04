@@ -382,7 +382,6 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   if (values.help === true) return { kind: 'help' };
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
-  const conformanceRequested = values.conformance === true || typeof values['conformance-model'] === 'string';
 
   // Provider flags (run + watch). An unknown provider name is an error.
   const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
