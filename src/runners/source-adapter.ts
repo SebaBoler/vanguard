@@ -7,6 +7,7 @@ import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publis
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
+import { scanForSecrets } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -184,6 +185,26 @@ export async function runSourcedIssue(
 
       if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
       if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
+
+      // Gate before commitStage/publishForReview: publishForReview pushes the branch before any
+      // label can be attached, so the raw secret must never reach a commit in the first place.
+      const outgoing = await ctx.wm.diff(ctx.worktreePath);
+      let findings;
+      try {
+        findings = scanForSecrets(outgoing);
+      } catch (err) {
+        console.error(`vanguard: secret scan failed for ${task.id}, blocking publish as a precaution:`, err);
+        await persistStageOutcomes(deps.repoPath, outcomes);
+        return { task };
+      }
+      if (findings.length > 0) {
+        console.error(
+          `vanguard: secret scan blocked publish for ${task.id}:`,
+          findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+        );
+        await persistStageOutcomes(deps.repoPath, outcomes);
+        return { task };
+      }
 
       const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
       if (!commit.committed) {

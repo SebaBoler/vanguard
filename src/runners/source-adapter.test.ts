@@ -63,8 +63,10 @@ vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
 }));
+const { wmDiff } = vi.hoisted(() => ({ wmDiff: vi.fn(async () => '') }));
+
 vi.mock('../core/vanguard.js', () => ({
-  prepareContext: vi.fn(async () => ({ taskId: 'gl-1', sandbox: {}, worktreePath: '/wt' })),
+  prepareContext: vi.fn(async () => ({ taskId: 'gl-1', sandbox: {}, worktreePath: '/wt', wm: { diff: wmDiff } })),
   disposeContext: vi.fn(async () => {}),
 }));
 vi.mock('../core/retrospective-memory.js', () => ({
@@ -132,6 +134,7 @@ describe('runSourcedIssue', () => {
     runStages.mockResolvedValue([stageOutcome('reviewer')]);
     commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
     publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
+    wmDiff.mockResolvedValue('');
   });
 
   it('fires publishVerdict → addFailureLabel → linkPr in order and reaches the conformance stage', async () => {
@@ -172,5 +175,26 @@ describe('runSourcedIssue', () => {
     expect(publishForReview).not.toHaveBeenCalled();
     expect(order).toEqual([]);
     expect(resolveAndRunVisualProof).toHaveBeenCalled();
+  });
+
+  it('blocks commit/push/PR and never leaks the raw secret when the outgoing diff carries one', async () => {
+    const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
+    wmDiff.mockResolvedValueOnce(['diff --git a/src/x.ts b/src/x.ts', '+++ b/src/x.ts', `+const t = "${fakeJwt}";`].join('\n'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBeUndefined();
+    expect(commitStage).not.toHaveBeenCalled();
+    expect(publishForReview).not.toHaveBeenCalled();
+    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
+    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')]]);
+
+    const logged = consoleError.mock.calls.map((args) => args.join(' ')).join('\n');
+    expect(logged).toContain('src/x.ts');
+    expect(logged).toContain('jwt');
+    expect(logged).not.toContain(fakeJwt);
+    consoleError.mockRestore();
   });
 });

@@ -1,18 +1,7 @@
 import { AgentError } from '../core/errors.js';
+import { redactTokens } from '../core/secret-scan.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote } from './shell.js';
-
-/**
- * Strip credential material before codex output is logged or surfaced (the failure string becomes a public
- * issue comment). Covers JWTs (`eyJ…`, which is what auth.json id/access tokens are), `Authorization:
- * Bearer …` headers, and the `access_token`/`refresh_token`/`id_token`/`OPENAI_API_KEY` JSON fields.
- */
-export function redactTokens(s: string): string {
-  return s
-    .replace(/eyJ[A-Za-z0-9._-]{10,}/g, '[REDACTED-JWT]')
-    .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, '$1[REDACTED]')
-    .replace(/("(?:access_token|refresh_token|id_token|OPENAI_API_KEY|api_key)"\s*:\s*")[^"]+"/gi, '$1[REDACTED]"');
-}
 
 interface CodexEvent {
   type?: string;
