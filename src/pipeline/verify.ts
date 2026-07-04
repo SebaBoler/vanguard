@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 
@@ -13,12 +13,17 @@ export interface VerificationResult {
 
 const WORKDIR = '/workspace';
 
+/** Marker files that indicate a Python project driven by pytest. */
+const PYTHON_MARKERS = ['pyproject.toml', 'pytest.ini', 'setup.cfg'];
+
 /**
  * Resolve the verification command. Precedence: explicit cmd (CLI flag) > VANGUARD_VERIFY_CMD env >
- * auto-detect from the worktree package.json > undefined (skip Proof of Work entirely).
- * Auto-detect: if package.json has a `test` script, build "<pm> install --frozen-lockfile && <pm> run
- * typecheck && <pm> test", including typecheck only when that script exists; pm from the
- * `packageManager` field (pnpm/yarn/npm), default npm.
+ * auto-detect from the worktree package.json > auto-detect Python (pytest) markers > undefined
+ * (skip Proof of Work entirely — the caller must render that skip visibly, not drop it silently).
+ * JS auto-detect: if package.json has a `test` script, build "<pm> install --frozen-lockfile && <pm>
+ * run typecheck && <pm> test", including typecheck only when that script exists; pm from the
+ * `packageManager` field (pnpm/yarn/npm), default npm. Python auto-detect: pyproject.toml/pytest.ini/
+ * setup.cfg present -> "pytest".
  */
 export async function resolveVerifyCommand(
   worktreePath: string,
@@ -27,22 +32,47 @@ export async function resolveVerifyCommand(
   if (opts.cmd !== undefined && opts.cmd !== '') return opts.cmd;
   const envCmd = (opts.env ?? process.env).VANGUARD_VERIFY_CMD;
   if (envCmd !== undefined && envCmd !== '') return envCmd;
+
+  let pkgRaw: string | undefined;
   try {
-    const pkg = JSON.parse(await readFile(join(worktreePath, 'package.json'), 'utf8')) as {
-      scripts?: Record<string, string>;
-      packageManager?: string;
-    };
-    const scripts = pkg.scripts ?? {};
-    if (scripts.test === undefined) return undefined;
-    const field = pkg.packageManager ?? '';
-    const pm = field.startsWith('pnpm') ? 'pnpm' : field.startsWith('yarn') ? 'yarn' : 'npm';
-    const parts = [`${pm} install --frozen-lockfile`];
-    if (scripts.typecheck !== undefined) parts.push(`${pm} run typecheck`);
-    parts.push(`${pm} test`);
-    return parts.join(' && ');
+    pkgRaw = await readFile(join(worktreePath, 'package.json'), 'utf8');
   } catch {
-    return undefined;
+    pkgRaw = undefined;
   }
+  if (pkgRaw !== undefined) {
+    try {
+      const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string>; packageManager?: string };
+      const scripts = pkg.scripts ?? {};
+      if (scripts.test === undefined) return undefined;
+      const field = pkg.packageManager ?? '';
+      const pm = field.startsWith('pnpm') ? 'pnpm' : field.startsWith('yarn') ? 'yarn' : 'npm';
+      const parts = [`${pm} install --frozen-lockfile`];
+      if (scripts.typecheck !== undefined) parts.push(`${pm} run typecheck`);
+      parts.push(`${pm} test`);
+      return parts.join(' && ');
+    } catch {
+      return undefined;
+    }
+  }
+
+  for (const marker of PYTHON_MARKERS) {
+    try {
+      await readFile(join(worktreePath, marker), 'utf8');
+      return 'pytest';
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/** Rendered in the PR body when no verify command could be resolved, so a skipped gate is visible, not silent. */
+export function verifySkippedBlock(): string {
+  return [
+    '## Proof of work: SKIPPED',
+    '',
+    'No verify command resolved (no package.json test script, no pytest markers, and no `VANGUARD_VERIFY_CMD`).',
+  ].join('\n');
 }
 
 /** Run the command inside the sandbox (host-driven) and attest the result. */

@@ -2,7 +2,7 @@ import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
-import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
@@ -12,10 +12,11 @@ import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
-import { resolveVerifyCommand, runVerification, proofBlock } from '../pipeline/verify.js';
+import { resolveVerifyCommand, runVerification, proofBlock, verifySkippedBlock } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
+import { parseSpecManifest, checkConformance, renderConformanceFeedback } from '../pipeline/conformance-gate.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -125,6 +126,9 @@ export interface RunIssueResult {
   prUrl?: string;
 }
 
+/** Cap on implement-session resumes triggered by a failing conformance gate, before falling back to a declared-partial PR. */
+const MAX_CONFORMANCE_ITERATIONS = 2;
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
@@ -181,6 +185,38 @@ export async function runSourcedIssue(
       });
       console.log(summarizeOutcomes(outcomes));
 
+      // Deterministic spec-manifest vs diff conformance gate. No manifest (legacy spec, or none at
+      // all) -> advisory-only, never blocks. On FAIL, resume the implementer's own session with the
+      // structured gap as feedback (bounded, budget/turn caps already apply to the resumed stage) —
+      // "iterate the implement loop", not "open PR and hope". Exhausting the cap falls through to a
+      // declared-partial PR (reviewRequestBody below), not a silent `Closes`.
+      const specText = task.comments.map((comment) => comment.body).join('\n');
+      const manifest = parseSpecManifest(specText);
+      let conformance = checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath));
+      let resumeSessionId = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.sessionId;
+      let conformanceIterations = 0;
+      while (manifest !== undefined && !conformance.pass && resumeSessionId !== undefined && conformanceIterations < MAX_CONFORMANCE_ITERATIONS) {
+        conformanceIterations += 1;
+        console.log(
+          `vanguard: conformance gate FAILED for ${task.id} (attempt ${conformanceIterations}/${MAX_CONFORMANCE_ITERATIONS}) — resuming implement session`,
+        );
+        const repaired = await runAgent(ctx, {
+          promptTemplate: `${renderConformanceFeedback(conformance)}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          agent: agents.agent,
+          resumeSessionId,
+        });
+        const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
+        const prior = implementerIdx !== -1 ? outcomes[implementerIdx] : undefined;
+        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
+        resumeSessionId = repaired.sessionId ?? resumeSessionId;
+        conformance = checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath));
+      }
+      if (manifest !== undefined) {
+        console.log(
+          `vanguard: conformance gate ${conformance.pass ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`,
+        );
+      }
+
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
       const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
 
@@ -221,10 +257,13 @@ export async function runSourcedIssue(
         await persistStageOutcomes(deps.repoPath, outcomes);
         return { task };
       }
-      const baseBody = reviewRequestBody(task.id, { closeIssueOnMerge: !!adapter.closeIssueOnMerge });
+      const baseBody = reviewRequestBody(task.id, {
+        closeIssueOnMerge: !!adapter.closeIssueOnMerge,
+        ...(manifest !== undefined ? { conformance, manifest } : {}),
+      });
       const body = [
         baseBody,
-        verification !== undefined ? proofBlock(verification) : undefined,
+        verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
         visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
       ].filter((s): s is string => s !== undefined).join('\n\n');
       const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true, ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}) });
