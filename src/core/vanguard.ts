@@ -10,7 +10,7 @@ import { stageMetric } from './run-metric.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
-import { SandboxError } from './errors.js';
+import { SandboxError, WorkflowGuardError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
@@ -29,6 +29,12 @@ const DEFAULT_MAX_TURNS = 6;
 // and .vanguard/skills (skill bodies copied in as pointer targets for codex/cursor providers).
 const COPY_BACK_SKIP =
   /(^|[\\/])(\.git|node_modules)([\\/]|$)|(^|[\\/])\.claude[\\/]skills([\\/]|$)|(^|[\\/])\.cursor[\\/]rules([\\/]|$)|(^|[\\/])\.vanguard[\\/]skills([\\/]|$)/;
+// Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
+// that gets committed and pushed — that is the exact escalation path in the disclosed
+// claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
+// next GitHub event). Kept as its own regex (not folded into COPY_BACK_SKIP) so drops can be
+// logged loudly instead of silently, like the other noisy-but-expected skips above.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
@@ -162,6 +168,26 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
+/** Paths under `.github/workflows/` touched by a unified diff. Empty ⇒ clean. */
+export function workflowPathsInDiff(diff: string): string[] {
+  const found = new Set<string>();
+  const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
+  for (const line of diff.split('\n')) {
+    if (!HEADER_LINE.test(line)) continue;
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*)/.exec(line);
+    if (match?.[2] !== undefined) found.add(match[2]);
+  }
+  return [...found].sort();
+}
+
+/** Throws WorkflowGuardError (logged) if the diff touches .github/workflows/. */
+export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskId: string): void {
+  const offending = workflowPathsInDiff(diff);
+  if (offending.length === 0) return;
+  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches .github/workflows/ (hard constraint)');
+  throw new WorkflowGuardError(`Diff touches forbidden .github/workflows path(s): ${offending.join(', ')}`);
+}
+
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
   const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
@@ -172,12 +198,23 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
-      filter: (src) => !COPY_BACK_SKIP.test(src),
+      filter: (src) => {
+        if (WORKFLOW_PATH.test(src)) {
+          ctx.log.warn(
+            { taskId: ctx.taskId, path: src },
+            'copy-back: dropped .github/workflows path (workflow files are never synced back)',
+          );
+          return false;
+        }
+        return !COPY_BACK_SKIP.test(src);
+      },
     });
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
-  return ctx.wm.diff(ctx.worktreePath);
+  const diff = await ctx.wm.diff(ctx.worktreePath);
+  assertNoWorkflowChanges(diff, ctx.log, ctx.taskId);
+  return diff;
 }
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
