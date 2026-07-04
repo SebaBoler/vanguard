@@ -61,7 +61,11 @@ function isLikelyAssignedSecret(value: string, line: string): boolean {
 }
 
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
-  { name: 'jwt', re: /eyJ[A-Za-z0-9._-]{10,}/g, replacement: '[REDACTED-JWT]' },
+  // Require the full 3-segment JWT structure (header.payload.signature, all base64url). The old
+  // `eyJ[A-Za-z0-9._-]{10,}` matched any eyJ-prefixed base64 run and false-positived on package-lock
+  // integrity hashes (e.g. pnpm-lock.yaml `integrity: sha512-...eyJ...`), which are content hashes,
+  // not secrets. Real JWTs always carry two internal dots; integrity hashes never do.
+  { name: 'jwt', re: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, replacement: '[REDACTED-JWT]' },
   { name: 'bearer', re: /(Bearer\s+)[A-Za-z0-9._-]+/gi, replacement: '$1[REDACTED]' },
   {
     name: 'json-token-field',
