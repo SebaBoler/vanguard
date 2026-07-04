@@ -10,6 +10,54 @@ export interface SecretPattern {
   re: RegExp;
   /** Replacement used by redactTokens; removes the matched secret from the output. */
   replacement: string;
+  /**
+   * Gate-only refinement. When present, scanForSecrets keeps a match ONLY if this returns true,
+   * given the matched credential value and the full added line. redactTokens IGNORES it —
+   * over-redacting logs is harmless; under-gating is not. Absent → always kept (JWT/Bearer/sk-/
+   * json-token-field detection stays unconditional).
+   */
+  refine?: (value: string, line: string) => boolean;
+}
+
+const ALLOWLIST_MARKER = /(?:vanguard-allow-secret|pragma:\s*allowlist\s*secret|gitleaks:allow)/i;
+const CODE_REFERENCE_PREFIX = /^(?:process\.env|import\.meta\.env|os\.environ|req\.|ctx\.|config\.|this\.)/;
+const UPPER_SNAKE_IDENTIFIER = /^[A-Z][A-Z0-9_]*$/;
+// Suffix restricted to digits-only, letters-only, or separator-led continuation — real secrets
+// mix letters and digits together (e.g. 'testAbc123Secret...'), which this deliberately excludes
+// so mixed-content values fall through to the entropy check instead of being dismissed outright.
+const PLACEHOLDER_VALUE =
+  /^(?:changeme|example|placeholder|redacted|your[_-]?|test|dummy|fake|sample|none|null|undefined|true|false)(?:[0-9]*|[a-z]*|[_-]\w*)$/i;
+const ANGLE_PLACEHOLDER = /^<.*>$/;
+const SAME_CHAR_RUN = /^(.)\1*$/;
+
+/** Minimum bits/char below which an assignment value is treated as low-entropy (dictionary-like), not a real secret. */
+const ASSIGNMENT_ENTROPY_THRESHOLD = 3.0;
+
+/** Shannon entropy of a string in bits/char. Higher entropy correlates with random credential material. */
+export function shannonEntropy(value: string): number {
+  if (value.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / value.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+/**
+ * Conservative (fail-closed) heuristic for the broad `assignment` pattern: reject only on clear
+ * non-secret signals (allowlist marker, code/env reference, placeholder text, low entropy). Keeps
+ * ambiguous matches as findings.
+ */
+function isLikelyAssignedSecret(value: string, line: string): boolean {
+  if (ALLOWLIST_MARKER.test(line)) return false;
+  if (CODE_REFERENCE_PREFIX.test(value)) return false;
+  if (UPPER_SNAKE_IDENTIFIER.test(value)) return false;
+  if (PLACEHOLDER_VALUE.test(value) || ANGLE_PLACEHOLDER.test(value) || SAME_CHAR_RUN.test(value)) return false;
+  if (shannonEntropy(value) < ASSIGNMENT_ENTROPY_THRESHOLD) return false;
+  return true;
 }
 
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
@@ -25,6 +73,7 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     name: 'assignment',
     re: /((?:token|api[_-]?key|secret|password|auth)\s*[=:]\s*['"]?)([A-Za-z0-9_.~+\-/=]{12,})/gi,
     replacement: '$1[REDACTED]',
+    refine: isLikelyAssignedSecret,
   },
 ];
 
@@ -71,7 +120,16 @@ export function scanForSecrets(diff: string): SecretFinding[] {
     if (!line.startsWith('+')) continue;
     if (isTestPath(currentFile)) continue;
     const added = line.slice(1);
-    const matched = SECRET_PATTERNS.filter((pattern) => added.search(pattern.re) !== -1);
+    const matched = SECRET_PATTERNS.filter((pattern) => {
+      const refine = pattern.refine ?? (() => true);
+      // Check every match on the line, not just the first — a leading placeholder-shaped
+      // assignment must not shadow a genuine secret assigned later on the same line.
+      for (const m of added.matchAll(pattern.re)) {
+        const value = m[m.length - 1] ?? m[0];
+        if (refine(value, added)) return true;
+      }
+      return false;
+    });
     if (matched.length === 0) continue;
     const masked = redactTokens(added).slice(0, MASKED_EXCERPT_MAX_CHARS);
     for (const pattern of matched) {
@@ -79,4 +137,28 @@ export function scanForSecrets(diff: string): SecretFinding[] {
     }
   }
   return findings;
+}
+
+/** Why publish was blocked by the secret scan: real findings, or the scan itself failing (precautionary block). */
+export type SecretBlock = { reason: 'findings'; findings: SecretFinding[] } | { reason: 'scan-error'; message: string };
+
+const FINDINGS_BLOCK_HEADER =
+  '🔒 Vanguard blocked publish — the secret scan found credential-shaped content in the outgoing diff. ' +
+  'No PR was opened. Findings are **masked**; review the listed lines.';
+
+const SCAN_ERROR_BLOCK_HEADER =
+  '🔒 Vanguard blocked publish as a precaution — the secret scan itself failed to run, so the outgoing ' +
+  'diff could not be verified clean. No PR was opened.';
+
+/**
+ * Render the GitHub/GitLab/Linear comment body for a secret-scan block. Uses only
+ * `SecretFinding.file/patternName/masked` (already redactTokens-masked) — the raw secret is
+ * structurally unreachable — and never interpolates the raw diff or exception payload.
+ */
+export function renderSecretBlockComment(block: SecretBlock): string {
+  if (block.reason === 'scan-error') {
+    return [SCAN_ERROR_BLOCK_HEADER, '', `Error: ${block.message}`].join('\n');
+  }
+  const lines = block.findings.map((f) => `- \`${f.file}\` [${f.patternName}] ${f.masked}`);
+  return [FINDINGS_BLOCK_HEADER, '', ...lines].join('\n');
 }
