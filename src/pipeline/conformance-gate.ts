@@ -90,7 +90,8 @@ export interface ConformanceResult extends ConformanceGap {
   pass: boolean;
 }
 
-const PASSING_RESULT: ConformanceResult = {
+/** Result for a spec with no manifest to check against — advisory-only, always passing. */
+export const PASSING_RESULT: ConformanceResult = {
   checked: false,
   pass: true,
   missingFiles: [],
