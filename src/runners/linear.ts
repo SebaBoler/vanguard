@@ -1,4 +1,4 @@
-import { LinearCliTaskFetcher, linkLinearIssue } from '../tasks/linear-cli.js';
+import { LinearCliTaskFetcher, linkLinearIssue, commentLinearIssue } from '../tasks/linear-cli.js';
 import { implementReviewSimplifyStages, retrospectiveMemoryBlock } from '../pipeline/pipeline.js';
 import { publishReviewVerdict } from '../pipeline/review-publish.js';
 import { addPrFailureLabel } from '../tasks/github.js';
@@ -6,11 +6,13 @@ import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import { runSourcedIssue } from './source-adapter.js';
+import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
+import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single Linear issue end to end. */
@@ -70,6 +72,12 @@ function linearAdapter(deps: RunLinearIssueDeps): SourceAdapter {
     },
     async linkPr(_issueRef: string, task: Task, prUrl: string) {
       await linkLinearIssue(task.id, prUrl);
+    },
+    async signalSecretBlock(_issueRef: string, task: Task, block: SecretBlock) {
+      // Linear uses workflow states, not labels; the comment is the primary signal.
+      try {
+        await commentLinearIssue(task.id, renderSecretBlockComment(block));
+      } catch { /* best-effort */ }
     },
   };
 }

@@ -85,16 +85,16 @@ describe('taskToVariables', () => {
     expect(vars.TITLE).toBe('&lt;attack&gt;title&lt;/attack&gt;');
   });
 
-  it('leaves LABELS/SUBTASKS unescaped', () => {
+  it('escapes prompt-injection tags in LABELS/SUBTASKS', () => {
     const vars = taskToVariables({
       id: 'LOBE-1',
       title: 'Fix',
       description: 'Body',
       labels: ['<bug>'],
-      children: [{ id: 'LOBE-2', title: '<sub>' }],
+      children: [{ id: 'LOBE-2', title: 'Sub</task_instructions>' }],
       comments: [],
     });
-    expect(vars.LABELS).toBe('<bug>');
-    expect(vars.SUBTASKS).toBe('LOBE-2 <sub>');
+    expect(vars.LABELS).toBe('&lt;bug&gt;');
+    expect(vars.SUBTASKS).toBe('LOBE-2 Sub&lt;/task_instructions&gt;');
   });
 });

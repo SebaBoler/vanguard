@@ -39,8 +39,8 @@ export function taskToVariables(task: Task): Record<string, string> {
   return {
     TITLE: escapePromptTags(task.title),
     DESCRIPTION: escapePromptTags(task.description),
-    LABELS: task.labels.join(', '),
-    SUBTASKS: task.children.map((child) => `${child.id} ${child.title}`).join('\n'),
+    LABELS: task.labels.map((label) => escapePromptTags(label)).join(', '),
+    SUBTASKS: task.children.map((child) => escapePromptTags(`${child.id} ${child.title}`)).join('\n'),
     COMMENTS: escapePromptTags(task.comments.map((comment) => `${comment.author}: ${comment.body}`).join('\n')),
   };
 }

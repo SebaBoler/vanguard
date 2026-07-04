@@ -5,3 +5,4 @@ export const GITHUB_NEEDS_RESEARCH_LABEL = 'needs research';
 export const GITHUB_RESEARCHING_LABEL = 'vanguard:researching';
 export const GITHUB_VERIFY_FAILED_LABEL = 'vanguard:verify-failed';
 export const GITHUB_VISUAL_PROOF_FAILED_LABEL = 'vanguard:visual-proof-failed';
+export const GITHUB_SECRET_BLOCKED_LABEL = 'vanguard:secret-blocked';

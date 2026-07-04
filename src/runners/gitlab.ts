@@ -1,14 +1,16 @@
 import { execa } from 'execa';
-import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel } from '../tasks/gitlab.js';
+import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
-import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL } from '../gitlab-labels.js';
+import { renderSecretBlockComment } from '../core/secret-scan.js';
+import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL, GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
+import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitLab issue end to end. */
@@ -82,6 +84,12 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
     },
     async linkPr(issueRef: string, _task: Task, mrUrl: string) {
       await linkMergeRequest(deps.project, issueRef, mrUrl, glab);
+    },
+    async signalSecretBlock(issueRef: string, _task: Task, block: SecretBlock) {
+      await Promise.all([
+        editGitlabLabels(deps.project, issueRef, { add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab).catch(() => undefined),
+        commentGitlabIssue(deps.project, issueRef, renderSecretBlockComment(block), glab).catch(() => undefined),
+      ]);
     },
   };
 }

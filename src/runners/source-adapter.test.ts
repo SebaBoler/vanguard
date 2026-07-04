@@ -97,6 +97,11 @@ vi.mock('../pipeline/pipeline.js', async (importActual) => {
     publishForReview: (...args: unknown[]) => publishForReview(...(args as [])),
   };
 });
+const { scanForSecrets } = vi.hoisted(() => ({ scanForSecrets: vi.fn() }));
+vi.mock('../core/secret-scan.js', async (importActual) => {
+  const actual = await importActual<typeof import('../core/secret-scan.js')>();
+  return { ...actual, scanForSecrets: (...args: unknown[]) => scanForSecrets(...(args as [string])) };
+});
 
 const MR_URL = 'https://gitlab.com/group/project/-/merge_requests/1';
 const task: Task = { id: 'group/project#1', title: 't', description: '', labels: [], children: [], comments: [] };
@@ -120,6 +125,7 @@ function fakeAdapter(order: string[], stages: PipelineStage[]): SourceAdapter {
     publishVerdict: vi.fn(async () => { order.push('publishVerdict'); }),
     addFailureLabel: vi.fn(async () => { order.push('addFailureLabel'); }),
     linkPr: vi.fn(async () => { order.push('linkPr'); }),
+    signalSecretBlock: vi.fn(async () => { order.push('signalSecretBlock'); }),
   };
 }
 
@@ -129,12 +135,14 @@ const STAGES: PipelineStage[] = [
 ];
 
 describe('runSourcedIssue', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     runStages.mockResolvedValue([stageOutcome('reviewer')]);
     commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
     publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
     wmDiff.mockResolvedValue('');
+    const actual = await vi.importActual<typeof import('../core/secret-scan.js')>('../core/secret-scan.js');
+    scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
 
   it('fires publishVerdict → addFailureLabel → linkPr in order and reaches the conformance stage', async () => {
@@ -177,12 +185,13 @@ describe('runSourcedIssue', () => {
     expect(resolveAndRunVisualProof).toHaveBeenCalled();
   });
 
-  it('blocks commit/push/PR and never leaks the raw secret when the outgoing diff carries one', async () => {
+  it('blocks commit/push/PR, never leaks the raw secret, and signals the block on the issue', async () => {
     const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
     wmDiff.mockResolvedValueOnce(['diff --git a/src/x.ts b/src/x.ts', '+++ b/src/x.ts', `+const t = "${fakeJwt}";`].join('\n'));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const adapter = fakeAdapter([], STAGES);
+    const order: string[] = [];
+    const adapter = fakeAdapter(order, STAGES);
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(result.prUrl).toBeUndefined();
@@ -191,10 +200,55 @@ describe('runSourcedIssue', () => {
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
     expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')]]);
 
+    expect(order).toEqual(['signalSecretBlock']);
+    expect(adapter.signalSecretBlock).toHaveBeenCalledTimes(1);
+    const [issueRef, signalledTask, block] = vi.mocked(adapter.signalSecretBlock).mock.calls[0]!;
+    expect(issueRef).toBe('group/project#1');
+    expect(signalledTask).toBe(task);
+    expect(block.reason).toBe('findings');
+    const serialisedBlock = JSON.stringify(block);
+    expect(serialisedBlock).not.toContain(fakeJwt);
+    expect(serialisedBlock).toContain('src/x.ts');
+
     const logged = consoleError.mock.calls.map((args) => args.join(' ')).join('\n');
     expect(logged).toContain('src/x.ts');
     expect(logged).toContain('jwt');
     expect(logged).not.toContain(fakeJwt);
+    consoleError.mockRestore();
+  });
+
+  it('signals a scan-error precautionary block when scanForSecrets throws', async () => {
+    wmDiff.mockResolvedValueOnce('diff --git a/src/x.ts b/src/x.ts\n+++ b/src/x.ts\n+const t = 1;');
+    scanForSecrets.mockImplementationOnce(() => {
+      throw new Error('scan blew up');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const order: string[] = [];
+    const adapter = fakeAdapter(order, STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBeUndefined();
+    expect(commitStage).not.toHaveBeenCalled();
+    expect(publishForReview).not.toHaveBeenCalled();
+    expect(order).toEqual(['signalSecretBlock']);
+    expect(adapter.signalSecretBlock).toHaveBeenCalledWith(
+      'group/project#1',
+      task,
+      { reason: 'scan-error', message: 'scan blew up' },
+    );
+    consoleError.mockRestore();
+  });
+
+  it('does not throw when signalSecretBlock itself rejects (best-effort)', async () => {
+    const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
+    wmDiff.mockResolvedValueOnce(`+const t = "${fakeJwt}";`);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const adapter = fakeAdapter([], STAGES);
+    vi.mocked(adapter.signalSecretBlock).mockRejectedValueOnce(new Error('label API down'));
+
+    await expect(runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter)).rejects.toThrow('label API down');
     consoleError.mockRestore();
   });
 });

@@ -8,6 +8,7 @@ import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
 import { scanForSecrets } from '../core/secret-scan.js';
+import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -107,6 +108,12 @@ export interface SourceAdapter {
   publishVerdict(input: PublishVerdictInput): Promise<void>;
   /** Add a proof-failure label to the opened PR/MR (best-effort; must never throw). */
   addFailureLabel(prUrl: string, kind: ProofFailureKind): Promise<void>;
+  /**
+   * Surface a secret-scan block on the source issue (label + masked comment). Best-effort: must
+   * never throw (mirrors addFailureLabel). Called for BOTH the findings block and the scan-error
+   * precautionary block.
+   */
+  signalSecretBlock(issueRef: string, task: Task, block: SecretBlock): Promise<void>;
   /** Write the PR link back onto the source issue. */
   linkPr(issueRef: string, task: Task, prUrl: string): Promise<void>;
 }
@@ -189,20 +196,23 @@ export async function runSourcedIssue(
       // Gate before commitStage/publishForReview: publishForReview pushes the branch before any
       // label can be attached, so the raw secret must never reach a commit in the first place.
       const outgoing = await ctx.wm.diff(ctx.worktreePath);
-      let findings;
+      let block: SecretBlock | undefined;
       try {
-        findings = scanForSecrets(outgoing);
+        const findings = scanForSecrets(outgoing);
+        if (findings.length > 0) {
+          console.error(
+            `vanguard: secret scan blocked publish for ${task.id}:`,
+            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+          );
+          block = { reason: 'findings', findings };
+        }
       } catch (err) {
         console.error(`vanguard: secret scan failed for ${task.id}, blocking publish as a precaution:`, err);
-        await persistStageOutcomes(deps.repoPath, outcomes);
-        return { task };
+        block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
       }
-      if (findings.length > 0) {
-        console.error(
-          `vanguard: secret scan blocked publish for ${task.id}:`,
-          findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
-        );
+      if (block !== undefined) {
         await persistStageOutcomes(deps.repoPath, outcomes);
+        await adapter.signalSecretBlock(issueRef, task, block);
         return { task };
       }
 
