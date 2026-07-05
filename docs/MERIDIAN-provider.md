@@ -61,6 +61,18 @@ vanguard run --provider meridian --review-provider codex --repo <path> ...
 Do **not** pass `--provider-model` here — it overrides the model on every stage and would flatten the
 planner off `opus`. Leave it unset to keep the opus-plan / sonnet-implement default.
 
+> **Cross-provider review keeps its own credential local.** Meridian only bridges the Claude/Anthropic
+> path — it does **not** proxy Codex. A `--review-provider codex` reviewer runs its CLI in the sandbox
+> on the Vanguard host and talks to OpenAI directly, so `CODEX_AUTH_JSON` (or `CODEX_API_KEY`) must be
+> set on that host and its egress leaves from there. If the goal is to keep the machine fully clean
+> (no local credentials at all), review with Claude instead — e.g. bump the reviewer with
+> `--review-model opus` and drop `--review-provider`, so every stage runs through Meridian:
+>
+> ```bash
+> export MERIDIAN_BASE_URL=http://<meridian-host>:3456
+> vanguard run --provider meridian --review-model opus --repo <path> ...
+> ```
+
 ## Backwards compatibility
 
 No breaking changes. Every existing provider path is byte-identical — `meridian` is one more entry in
