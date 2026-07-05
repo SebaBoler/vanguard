@@ -3,6 +3,7 @@ import {
   watchOnce,
   specOnce,
   runLoopV1,
+  linearWatchPrimitives,
   githubProjectWatchPrimitives,
   githubSpecPrimitives,
   githubIssueWatchPrimitives,
@@ -12,6 +13,7 @@ import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } 
 import type { SpecWatchPrimitives, WatchPrimitives, WatchGitlabOptions } from './watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { TaskFetcher } from '../tasks/fetcher.js';
+import type { LinearCliRunner } from '../tasks/linear-cli.js';
 
 describe('watchOnce', () => {
   it('claims, runs, reviews each ready issue and categorizes the outcomes', async () => {
@@ -30,6 +32,9 @@ describe('watchOnce', () => {
       review: async (id) => {
         calls.push(`review:${id}`);
       },
+      onNoChange: async (id) => {
+        calls.push(`nochange:${id}`);
+      },
       onFailure: async (id) => {
         calls.push(`fail:${id}`);
       },
@@ -45,7 +50,33 @@ describe('watchOnce', () => {
     expect(calls.indexOf('claim:A')).toBeLessThan(calls.indexOf('run:A')); // claim precedes run
     expect(calls).toContain('review:A');
     expect(calls).not.toContain('review:B'); // no PR -> no review
+    expect(calls).toEqual(expect.arrayContaining(['nochange:B']));
+    expect(calls).not.toContain('nochange:A');
+    expect(calls).not.toContain('nochange:C');
     expect(calls).toContain('fail:C');
+  });
+
+  it('does not call onNoChange when runOne reports the outcome is already parked', async () => {
+    const calls: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runOne: async () => ({ parked: true }),
+      review: async () => {
+        calls.push('review');
+      },
+      onNoChange: async () => {
+        calls.push('nochange');
+      },
+      onFailure: async () => {
+        calls.push('fail');
+      },
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1 });
+
+    expect(tick.noChange).toEqual(['A']);
+    expect(calls).toEqual([]);
   });
 
   it('emits compact operator logs for each watch outcome', async () => {
@@ -60,6 +91,7 @@ describe('watchOnce', () => {
         return id === 'B' ? {} : { prUrl: `pr/${id}` };
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -127,6 +159,7 @@ describe('runLoopV1', () => {
       review: async () => {
         controller.abort();
       },
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -165,6 +198,7 @@ describe('runLoopV1', () => {
         return {};
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -193,6 +227,7 @@ describe('runLoopV1', () => {
         return { prUrl: `pr/${id}` };
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -221,6 +256,7 @@ describe('runLoopV1', () => {
         return { prUrl: `pr/${id}` };
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -247,6 +283,7 @@ describe('runLoopV1', () => {
         return { prUrl: `pr/${id}` };
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -269,6 +306,7 @@ describe('runLoopV1', () => {
       claim: async () => {},
       runOne: async () => ({ prUrl: 'pr/x' }),
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -416,6 +454,32 @@ describe('githubProjectWatchPrimitives', () => {
     const bodyIdx = commentCall?.indexOf('--body') ?? -1;
     expect(commentCall?.[bodyIdx + 1]).toContain('agent exploded');
   });
+
+  it('onNoChange comments and reverts status to the trigger status', async () => {
+    const ghCalls: string[][] = [];
+    const primitives = githubProjectWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'test' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      projectNumber: 1,
+      label: 'vanguard',
+      triggerStatus: 'Todo',
+      claimedStatus: 'In Progress',
+      reviewStatus: 'In Review',
+      gh: makeFakeGh(ghCalls),
+    });
+
+    await primitives.listReady(); // seeds the item-node-id cache setStatus depends on
+    await primitives.onNoChange('owner/repo#1');
+
+    const commentCall = ghCalls.find((a) => a[0] === 'issue' && a[1] === 'comment');
+    expect(commentCall).toBeDefined();
+    const bodyIdx = commentCall?.indexOf('--body') ?? -1;
+    expect(commentCall?.[bodyIdx + 1]).toContain('no changes');
+
+    // revert sets status back to "Todo" (opt_todo)
+    const revertCall = ghCalls.find((a) => a[1] === 'item-edit' && a.includes('opt_todo'));
+    expect(revertCall).toBeDefined();
+    expect(revertCall).toContain('PVTI_1');
+  });
 });
 
 /** Build a minimal TaskFetcher stub for spec/agent primitives tests. */
@@ -518,6 +582,56 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     expect(labelIdx).toBeGreaterThan(-1);
     expect(firstArgs[labelIdx + 1]).toBe('ready for agent');
   });
+
+  it('onNoChange removes the claimed label and posts a no-change comment', async () => {
+    const gh = makeGhSpy();
+    const primitives = githubIssueWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      label: 'ready for agent',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
+      gh,
+    });
+
+    await primitives.onNoChange('1');
+
+    const calls = (gh as ReturnType<typeof vi.fn>).mock.calls as Array<[string[]]>;
+    const editCall = calls.map(([args]) => args).find((args) => args[0] === 'issue' && args[1] === 'edit');
+    expect(editCall).toBeDefined();
+    expect(editCall).toContain('--remove-label');
+    expect(editCall?.[editCall.indexOf('--remove-label') + 1]).toBe(GITHUB_CLAIMED_LABEL);
+    expect(editCall).not.toContain('--add-label');
+
+    const commentCall = calls.map(([args]) => args).find((args) => args[0] === 'issue' && args[1] === 'comment');
+    expect(commentCall).toBeDefined();
+    const bodyIdx = commentCall?.indexOf('--body') ?? -1;
+    expect(commentCall?.[bodyIdx + 1]).toContain('no changes');
+  });
+});
+
+describe('linearWatchPrimitives', () => {
+  it('onNoChange comments and reverts to the trigger state name when configured', async () => {
+    const calls: string[][] = [];
+    const linear: LinearCliRunner = async (args) => {
+      calls.push(args);
+      return '[]';
+    };
+    const primitives = linearWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'x' }, linearKey: 'k', repoPath: '/tmp', skillsDir: '/s' } as never,
+      label: 'vanguard',
+      triggerStateName: 'Todo',
+      claimedState: 'In Progress',
+      reviewState: 'In Review',
+      linear,
+    });
+
+    await primitives.onNoChange('ENG-1');
+
+    const comment = calls.find((a) => a[0] === 'issue' && a[1] === 'comment');
+    expect(comment?.join(' ')).toContain('no changes');
+    const revert = calls.find((a) => a[0] === 'issue' && a[1] === 'update' && a.includes('Todo'));
+    expect(revert).toBeDefined();
+  });
 });
 
 describe('gitlabWatchPrimitives', () => {
@@ -584,5 +698,22 @@ describe('gitlabWatchPrimitives', () => {
     const noteCall = calls.find((c) => c[0] === 'issue' && c[1] === 'note');
     expect(noteCall).toBeDefined();
     expect(noteCall?.some((arg) => arg.includes('boom'))).toBe(true);
+  });
+
+  it('onNoChange removes the claimed label and posts a no-change comment, without re-adding the trigger label', async () => {
+    const { glab, calls } = makeGlab();
+    const opts = makeOpts();
+    const primitives = gitlabWatchPrimitives({ ...opts, gl: glab });
+    await primitives.onNoChange('g/p#1');
+
+    const updateCall = calls.find((c) => c[0] === 'issue' && c[1] === 'update');
+    expect(updateCall).toBeDefined();
+    expect(updateCall).toContain('--unlabel');
+    expect(updateCall?.[(updateCall?.indexOf('--unlabel') ?? -1) + 1]).toBe('vanguard::running');
+    expect(updateCall).not.toContain('--label');
+
+    const noteCall = calls.find((c) => c[0] === 'issue' && c[1] === 'note');
+    expect(noteCall).toBeDefined();
+    expect(noteCall?.some((arg) => arg.includes('no changes'))).toBe(true);
   });
 });
