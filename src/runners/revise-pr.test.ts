@@ -1,13 +1,44 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { WorktreeManager } from '../worktree/manager.js';
 import { runRevisePullRequest } from './revise-pr.js';
+import { selectAgents } from '../agents/registry.js';
 import type { GhRunner } from '../tasks/github.js';
-import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
+import type { IsolatedSandboxProvider, ExecResult, SandboxConfig } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
+
+const dockerSandboxConfigs = vi.hoisted(() => [] as SandboxConfig[]);
+
+vi.mock('../sandbox/docker.js', () => ({
+  DockerSandboxProvider: class {
+    readonly id = 'fake-docker';
+
+    constructor(config: SandboxConfig = {}) {
+      dockerSandboxConfigs.push(config);
+    }
+
+    start = async (): Promise<void> => {};
+    exec = async (command: string): Promise<ExecResult> =>
+      command.includes('$HOME') ? { stdout: '/root', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 };
+    execStream = (): ReturnType<IsolatedSandboxProvider['execStream']> => ({
+      stdout: (async function* (): AsyncIterable<string> {})(),
+      result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+    });
+    copyIn = async (): Promise<void> => {};
+    copyFileOut = async (sandboxPath: string, hostPath: string): Promise<void> => {
+      if (sandboxPath === '/workspace') {
+        await mkdir(hostPath, { recursive: true });
+        await writeFile(join(hostPath, 'fix.txt'), 'fix applied');
+      }
+    };
+    exists = async (): Promise<boolean> => true;
+    destroy = async (): Promise<void> => {};
+    shellCommand = (): string => 'docker exec -it vg-fake bash';
+  },
+}));
 
 let repo: string;
 
@@ -231,6 +262,141 @@ describe('runRevisePullRequest happy path', () => {
     expect(editCall).toBeDefined();
     expect(editCall).toContain('--remove-label');
     expect(editCall).toContain('needs revision');
+  });
+});
+
+describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
+  const ORIGINAL_TOKEN = process.env.VANGUARD_PUSH_TOKEN;
+
+  afterEach(() => {
+    if (ORIGINAL_TOKEN === undefined) delete process.env.VANGUARD_PUSH_TOKEN;
+    else process.env.VANGUARD_PUSH_TOKEN = ORIGINAL_TOKEN;
+  });
+
+  it('when set, the push argv carries the extraheader override and still targets HEAD:feature-branch', async () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (file, args, cwd) => {
+        pushCalls.push({ file, args, cwd });
+        return '';
+      },
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    const b64 = Buffer.from('x-access-token:test-pat').toString('base64');
+    const pushCall = pushCalls.find((c) => c.file === 'git' && c.args.includes('push'));
+    expect(pushCall?.args).toEqual([
+      '-c',
+      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+      'push',
+      'origin',
+      'HEAD:feature-branch',
+    ]);
+  });
+
+  it('when unset, the push argv is unchanged (no -c prefix)', async () => {
+    delete process.env.VANGUARD_PUSH_TOKEN;
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (file, args, cwd) => {
+        pushCalls.push({ file, args, cwd });
+        return '';
+      },
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    const pushCall = pushCalls.find((c) => c.file === 'git' && c.args[0] === 'push');
+    expect(pushCall?.args).toEqual(['push', 'origin', 'HEAD:feature-branch']);
+  });
+
+  it('is never forwarded into the sandbox secrets map (host-only credential)', () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    const selected = selectAgents({ provider: 'claude' }, process.env);
+    expect(Object.keys(selected.secrets)).not.toContain('VANGUARD_PUSH_TOKEN');
+    expect(Object.values(selected.secrets)).not.toContain('test-pat');
+    expect(Object.keys(selected.proxySecrets)).not.toContain('VANGUARD_PUSH_TOKEN');
+  });
+
+  it('does not pass VANGUARD_PUSH_TOKEN to the constructed sandbox provider', async () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    dockerSandboxConfigs.length = 0;
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(dockerSandboxConfigs).toHaveLength(1);
+    expect(dockerSandboxConfigs[0]?.secrets ?? {}).not.toHaveProperty('VANGUARD_PUSH_TOKEN');
+    expect(Object.values(dockerSandboxConfigs[0]?.secrets ?? {})).not.toContain('test-pat');
   });
 });
 

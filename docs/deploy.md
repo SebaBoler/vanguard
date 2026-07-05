@@ -78,6 +78,9 @@ Write `/volume1/docker/vanguard/.env` (root, chmod 600). Use the subscription to
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
 LINEAR_API_KEY=lin_api_...
 GH_TOKEN=ghp_...
+# Optional for GitHub Actions revise flow: fine-grained, repo-scoped PAT with Contents: Read and write.
+# Expose this as VANGUARD_PUSH_TOKEN in vanguard-revise.yml so revision pushes use a PAT and trigger CI.
+VANGUARD_PUSH_TOKEN=<your-fine-grained-pat>
 VANGUARD_SANDBOX_CPUS=0        # required: kernel without CFS scheduler
 VANGUARD_SANDBOX_PIDS=0        # silences a harmless pids-limit warning
 VANGUARD_SANDBOX_MEMORY_MB=1536

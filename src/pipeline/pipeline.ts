@@ -931,8 +931,32 @@ export interface PushToExistingBranchOptions {
   /** The PR head branch name on the remote (e.g. 'fix-auth'). */
   prHeadRef: string;
   remote?: string;
+  /**
+   * When set (non-empty), the push authenticates with this token instead of the ambient
+   * credential — this is what makes the push fire a `synchronize` event instead of being
+   * suppressed by GitHub's GITHUB_TOKEN recursion guard.
+   */
+  pushToken?: string;
+  /** GitHub host for the credential scope; default 'github.com'. */
+  host?: string;
   /** Injected for tests; defaults to running git via execa. */
   runner?: CommandRunner;
+}
+
+function encodeBasicAuthToken(token: string): string {
+  return Buffer.from(`x-access-token:${token}`).toString('base64');
+}
+
+/** Build the `git -c …` prefix that overrides the ambient credential for one push. */
+export function pushAuthConfigArgs(token: string, host = 'github.com'): string[] {
+  return ['-c', `http.https://${host}/.extraheader=AUTHORIZATION: basic ${encodeBasicAuthToken(token)}`];
+}
+
+/** Strip a leaked basic-auth credential (base64 of x-access-token:<PAT>) from an error message. */
+function redactPushAuthError(err: unknown, token: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const redacted = message.split(encodeBasicAuthToken(token)).join('***');
+  return new Error(redacted);
 }
 
 /**
@@ -942,7 +966,15 @@ export interface PushToExistingBranchOptions {
  */
 export async function pushToExistingBranch(ctx: RunContext, opts: PushToExistingBranchOptions): Promise<void> {
   const run = opts.runner ?? defaultRunner;
-  await run('git', ['push', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+  const auth = opts.pushToken ? pushAuthConfigArgs(opts.pushToken, opts.host) : [];
+  try {
+    await run('git', [...auth, 'push', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+  } catch (err) {
+    if (opts.pushToken) {
+      throw redactPushAuthError(err, opts.pushToken);
+    }
+    throw err;
+  }
 }
 
 /**
