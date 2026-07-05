@@ -69,6 +69,16 @@ describe('scanForSecrets', () => {
     );
   });
 
+  it('does NOT flag an assignment whose value is a code reference (request.cookies), not a literal secret', () => {
+    const diff = diffOf([
+      {
+        path: 'apps/backoffice/src/lib/e2e-bypass.ts',
+        lines: ['+  const cookieToken = request.cookies?.get(E2E_BYPASS_COOKIE);'],
+      },
+    ]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'assignment')).toBe(false);
+  });
+
   it('never leaks the raw secret value in the serialised findings', () => {
     const diff = diffOf([
       { path: 'src/foo.ts', lines: [`+const jwt = "${FAKE_JWT}";`, `+const key = "${FAKE_SK_KEY}";`] },

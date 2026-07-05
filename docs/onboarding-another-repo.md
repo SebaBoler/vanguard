@@ -161,6 +161,8 @@ Replace `YOUR_LOGIN` in both workflows with your GitHub login. The `if:` gate re
 
 ### Optional: `VANGUARD_PUSH_TOKEN` — CI on revision pushes
 
+**When you need it:** your default branch is protected **and** its required status checks gate merges. Only then does this token buy hands-free revision merges. No branch protection, or no required checks? Skip this section; revisions still merge, they just miss a fresh CI run.
+
 **The problem.** The revise pass (`needs revision` label) pushes fix commits with the workflow's built-in `GITHUB_TOKEN` — and GitHub's recursion guard means **events created by `GITHUB_TOKEN` trigger no workflows**. A revised PR therefore gets no fresh CI run. If the repo has branch protection with required checks, the PR sits `BLOCKED` until a human nudges it (close/reopen); without protection it can be merged with stale CI. Either way, revisions land unvalidated.
 
 **The fix.** A fine-grained Personal Access Token: pushes made with a PAT count as user events, so `pull_request: synchronize` fires and CI runs normally. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
