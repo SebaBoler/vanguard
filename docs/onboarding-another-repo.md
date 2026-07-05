@@ -155,8 +155,32 @@ assignees: ''
 1. **Secret `CLAUDE_CODE_OAUTH_TOKEN`** — Settings → Secrets and variables → Actions → New repository secret. Generate it locally with `claude setup-token`.
 2. **Repo setting** — Settings → Actions → General → Workflow permissions → enable **"Allow GitHub Actions to create and approve pull requests"**. Without it the agent does all the work and then `gh pr create` fails. (CLI: `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -F can_approve_pull_request_reviews=true`.)
 3. (Full tier only) **Secret `CODEX_AUTH_JSON`** — see below.
+4. (Recommended) **Secret `VANGUARD_PUSH_TOKEN`** — see [CI on revision pushes](#optional-vanguard_push_token--ci-on-revision-pushes).
 
 Replace `YOUR_LOGIN` in both workflows with your GitHub login. The `if:` gate restricts runs to your own issues, so a stranger labelling an issue cannot start a run.
+
+### Optional: `VANGUARD_PUSH_TOKEN` — CI on revision pushes
+
+**The problem.** The revise pass (`needs revision` label) pushes fix commits with the workflow's built-in `GITHUB_TOKEN` — and GitHub's recursion guard means **events created by `GITHUB_TOKEN` trigger no workflows**. A revised PR therefore gets no fresh CI run. If the repo has branch protection with required checks, the PR sits `BLOCKED` until a human nudges it (close/reopen); without protection it can be merged with stale CI. Either way, revisions land unvalidated.
+
+**The fix.** A fine-grained Personal Access Token: pushes made with a PAT count as user events, so `pull_request: synchronize` fires and CI runs normally. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
+
+1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** — nothing else (Metadata: Read is added automatically). Set an expiration (e.g. 90 days).
+2. Store it: `gh secret set VANGUARD_PUSH_TOKEN --repo OWNER/REPO` (repeat per repo — Actions secrets are per-repo, even when the PAT itself covers several).
+3. Expose it to the revise workflow — add one line to `vanguard-revise.yml`'s job `env:` block:
+
+   ```yaml
+   env:
+     GH_TOKEN: ${{ github.token }}
+     CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+     VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
+   ```
+
+The revise CLI picks it up automatically when present and falls back to `GITHUB_TOKEN` when absent (pushes still work — they just don't trigger CI). Push errors are redacted so the token cannot leak into logs or comments.
+
+**Renewal.** Fine-grained PATs expire; GitHub emails you before expiry. Renew = generate a new token with the same scope and re-run `gh secret set` for each repo. Nothing else to change.
+
+**Trust note.** The PAT acts as you, limited to `contents: write` on the selected repos. It cannot edit workflows (no `workflow` scope) and cannot bypass branch protection required checks.
 
 ---
 
