@@ -133,6 +133,8 @@ export type Command =
       conformance?: boolean;
       /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
       conformanceModel?: string;
+      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
+      commitAuthor?: { name: string; email: string };
     }
   | {
       kind: 'watch';
@@ -172,6 +174,8 @@ export type Command =
       conformance?: boolean;
       /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
       conformanceModel?: string;
+      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
+      commitAuthor?: { name: string; email: string };
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -285,6 +289,21 @@ function parseLimit(raw: string | boolean | undefined): number | undefined {
 }
 
 /**
+ * Parse a `--commit-author` value in git's `Name <email>` form into { name, email }. Returns undefined
+ * when absent. Throws (as a caught string) on a malformed value so the caller can `return fail(...)`.
+ */
+function parseCommitAuthor(raw: string | boolean | undefined): { name: string; email: string } | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const match = /^\s*(.+?)\s*<([^<>]+)>\s*$/.exec(raw);
+  const name = match?.[1];
+  const email = match?.[2];
+  if (name === undefined || email === undefined) {
+    throw `Invalid --commit-author "${raw}". Use the form: "Name <email@example.com>".`;
+  }
+  return { name, email };
+}
+
+/**
  * Parse argv (without the node/script prefix) into a typed command. Pure: cwd is passed in so this is
  * unit-testable. Unknown options or a missing/unknown command resolve to `help`; invalid flag
  * combinations for a recognised command resolve to `error` with an actionable message.
@@ -355,6 +374,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // conformance review pass (opt-in; planner-tier model checks diff against spec)
         conformance: { type: 'boolean' },
         'conformance-model': { type: 'string' },
+        // git author for the commit (run + watch); default `Vanguard <vanguard@local>`
+        'commit-author': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -397,6 +418,13 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
+
+  let commitAuthor: { name: string; email: string } | undefined;
+  try {
+    commitAuthor = parseCommitAuthor(values['commit-author']);
+  } catch (message) {
+    return fail(String(message));
+  }
 
   if (positionals[0] === 'stats') {
     return { kind: 'stats', repoPath, json: values.json === true };
@@ -629,6 +657,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
       ...(values.conformance === true ? { conformance: true } : {}),
       ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
 
@@ -742,6 +771,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -825,6 +855,7 @@ Commands:
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
+    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -892,6 +923,7 @@ Commands:
     --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
+    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo

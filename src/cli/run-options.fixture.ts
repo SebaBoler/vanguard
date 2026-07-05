@@ -13,4 +13,5 @@ export const RUN_OPTIONS = {
   visualProofCmd: 'pnpm screenshots',
   conformance: true,
   conformanceModel: 'opus',
+  commitAuthor: { name: 'Sebastian Pietrzak', email: 'spietrza@gmail.com' },
 } as const;

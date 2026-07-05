@@ -44,6 +44,8 @@ export interface RunOptions extends ProviderChoice {
   conformance?: boolean;
   /** Model override for the conformance stage (e.g. 'opus'). */
   conformanceModel?: string;
+  /** Git author for the commit (default: `Vanguard <vanguard@local>`). Set via --commit-author. */
+  commitAuthor?: { name: string; email: string };
 }
 
 /**
@@ -64,6 +66,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
     ...(cmd.conformance !== undefined ? { conformance: cmd.conformance } : {}),
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
+    ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
   };
 }
 
@@ -274,7 +277,12 @@ export async function runSourcedIssue(
         return { task };
       }
 
-      const commit = await commitStage(ctx, { message: `feat: ${task.title} (${task.id})` });
+      const commit = await commitStage(ctx, {
+        message: `feat: ${task.title} (${task.id})`,
+        ...(deps.commitAuthor !== undefined
+          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
+          : {}),
+      });
       if (!commit.committed) {
         await persistStageOutcomes(deps.repoPath, outcomes);
         return { task };
