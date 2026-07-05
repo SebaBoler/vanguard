@@ -63,11 +63,21 @@ vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
 }));
-const { wmDiff } = vi.hoisted(() => ({ wmDiff: vi.fn(async () => '') }));
+const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
+  wmDiff: vi.fn(async () => ''),
+  wmCommitMessages: vi.fn(async () => [] as string[]),
+}));
+const { runAgent } = vi.hoisted(() => ({ runAgent: vi.fn() }));
 
 vi.mock('../core/vanguard.js', () => ({
-  prepareContext: vi.fn(async () => ({ taskId: 'gl-1', sandbox: {}, worktreePath: '/wt', wm: { diff: wmDiff } })),
+  prepareContext: vi.fn(async () => ({
+    taskId: 'gl-1',
+    sandbox: {},
+    worktreePath: '/wt',
+    wm: { diff: wmDiff, commitMessages: wmCommitMessages },
+  })),
   disposeContext: vi.fn(async () => {}),
+  runAgent: (...args: unknown[]) => runAgent(...(args as [])),
 }));
 vi.mock('../core/retrospective-memory.js', () => ({
   loadRetrospectiveMemory: vi.fn(async () => ''),
@@ -82,6 +92,7 @@ vi.mock('../core/run-summary.js', () => ({ summarizeOutcomes: vi.fn(() => '') })
 vi.mock('../pipeline/verify.js', () => ({
   resolveVerifyCommand: vi.fn(async () => undefined),
   runVerification: vi.fn(async () => undefined),
+  renderVerificationFeedback: vi.fn(() => 'verify-feedback'),
   proofBlock: vi.fn(() => ''),
   verifySkippedBlock: vi.fn(() => ''),
 }));
@@ -107,12 +118,13 @@ vi.mock('../core/secret-scan.js', async (importActual) => {
 const MR_URL = 'https://gitlab.com/group/project/-/merge_requests/1';
 const task: Task = { id: 'group/project#1', title: 't', description: '', labels: [], children: [], comments: [] };
 
-function stageOutcome(name: string): StageOutcome {
+function stageOutcome(name: string, sessionId?: string): StageOutcome {
   return {
     name,
     result: {
       taskId: 'gl-1', completed: true, exitReason: 'completed', turns: 1,
       worktreePath: '/wt', worktreePreserved: true, finalText: 'No blocking findings.',
+      ...(sessionId !== undefined ? { sessionId } : {}),
     },
   };
 }
@@ -142,6 +154,7 @@ describe('runSourcedIssue', () => {
     commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
     publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
     wmDiff.mockResolvedValue('');
+    wmCommitMessages.mockResolvedValue([]);
     const actual = await vi.importActual<typeof import('../core/secret-scan.js')>('../core/secret-scan.js');
     scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
@@ -251,5 +264,69 @@ describe('runSourcedIssue', () => {
 
     await expect(runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter)).rejects.toThrow('label API down');
     consoleError.mockRestore();
+  });
+
+  it('resumes the implement session on red verification, and closes cleanly once it recovers', async () => {
+    runStages.mockResolvedValueOnce([stageOutcome('implementer', 'sess-1'), stageOutcome('reviewer')]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1' });
+    expect(adapter.addFailureLabel).not.toHaveBeenCalledWith(MR_URL, 'verify');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('exhausts the shared repair cap on persistent red verification and declares partial scope', async () => {
+    runStages.mockResolvedValueOnce([stageOutcome('implementer', 'sess-1'), stageOutcome('reviewer')]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-1' } as never).mockResolvedValueOnce({ sessionId: 'sess-1' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(2); // MAX_CONFORMANCE_ITERATIONS
+    expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Part of ${task.id}`);
+    expect(body).not.toContain(`Closes ${task.id}`);
+  });
+
+  it('surfaces a commit-message close-leak warning in the body on a partial (red-verification) result', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValueOnce({ passed: false } as never);
+    wmCommitMessages.mockResolvedValueOnce([`Closes ${task.id}`]);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain('Commit message closes the issue on rebase merge');
+    expect(body).toContain(`\`Closes ${task.id}\``);
+  });
+
+  it('omits the commit-leak warning on a full green pass', async () => {
+    wmCommitMessages.mockResolvedValueOnce([`Closes ${task.id}`]);
+
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(wmCommitMessages).not.toHaveBeenCalled();
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).not.toContain('Commit message closes the issue on rebase merge');
   });
 });

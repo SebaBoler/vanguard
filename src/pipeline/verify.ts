@@ -89,6 +89,22 @@ export async function runVerification(
   return { command, exitCode: res.exitCode, passed: res.exitCode === 0, sha256, outputTail };
 }
 
+/**
+ * Minimal failing-witness feedback for the verification repair loop (CEGIS-style, mirrors
+ * renderConformanceFeedback): just the command, exit code, and output tail, so the resumed
+ * implement session stays small and targeted.
+ */
+export function renderVerificationFeedback(result: VerificationResult): string {
+  return [
+    'The verification command failed. Make it pass:',
+    `- command: \`${result.command}\``,
+    `- exit code: ${result.exitCode}`,
+    '',
+    'Output tail:',
+    result.outputTail,
+  ].join('\n');
+}
+
 /** Markdown Proof of Work block for the PR body. */
 export function proofBlock(result: VerificationResult): string {
   const status = result.passed ? 'PASS' : 'FAIL';

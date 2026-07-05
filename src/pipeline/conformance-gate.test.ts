@@ -7,6 +7,8 @@ import {
   renderConformanceFeedback,
   renderScopeChecklist,
   extractTaskIdFromPrBody,
+  scanCommitClosingKeywords,
+  commitLeakWarningBlock,
   type SpecManifest,
 } from './conformance-gate.js';
 
@@ -171,5 +173,52 @@ describe('extractTaskIdFromPrBody', () => {
 
   it('returns undefined when no ref is present', () => {
     expect(extractTaskIdFromPrBody('no references here')).toBeUndefined();
+  });
+});
+
+describe('scanCommitClosingKeywords', () => {
+  it('detects a bare closing ref matching the task issue number', () => {
+    expect(scanCommitClosingKeywords(['Closes #900'], 'owner/repo#900')).toEqual([{ keyword: 'Closes', ref: '#900' }]);
+  });
+
+  it('detects an owner/repo-qualified closing ref', () => {
+    expect(scanCommitClosingKeywords(['Fixes owner/repo#900'], 'owner/repo#900')).toEqual([
+      { keyword: 'Fixes', ref: 'owner/repo#900' },
+    ]);
+  });
+
+  it('detects case-insensitively', () => {
+    expect(scanCommitClosingKeywords(['resolves #900'], 'owner/repo#900')).toEqual([
+      { keyword: 'resolves', ref: '#900' },
+    ]);
+  });
+
+  it('ignores "Part of" — it never auto-closes on merge', () => {
+    expect(scanCommitClosingKeywords(['Part of #900'], 'owner/repo#900')).toEqual([]);
+  });
+
+  it('ignores a closing keyword for a different issue number', () => {
+    expect(scanCommitClosingKeywords(['Closes #123'], 'owner/repo#900')).toEqual([]);
+  });
+
+  it('returns [] for messages with no closing keyword', () => {
+    expect(scanCommitClosingKeywords(['just a commit message'], 'owner/repo#900')).toEqual([]);
+  });
+
+  it('handles multi-line %B messages and multiple commits', () => {
+    const messages = ['feat: add thing\n\nCloses #900\n', 'chore: tweak\n\nPart of #900'];
+    expect(scanCommitClosingKeywords(messages, 'owner/repo#900')).toEqual([{ keyword: 'Closes', ref: '#900' }]);
+  });
+});
+
+describe('commitLeakWarningBlock', () => {
+  it('renders a labeled blocking warning listing each leak', () => {
+    const block = commitLeakWarningBlock([{ keyword: 'Closes', ref: '#900' }]);
+    expect(block).toContain('Commit message closes the issue on rebase merge');
+    expect(block).toContain('`Closes #900`');
+  });
+
+  it('returns an empty block for no leaks', () => {
+    expect(commitLeakWarningBlock([])).toBe('');
   });
 });
