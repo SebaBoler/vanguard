@@ -133,3 +133,30 @@ describe('scanForSecrets', () => {
     );
   });
 });
+
+describe('assignment refine: identifier chains', () => {
+  it('does not flag a dotted code reference assigned to an auth-ish name', () => {
+    const diff = [
+      'diff --git a/src/x.ts b/src/x.ts',
+      '--- a/src/x.ts',
+      '+++ b/src/x.ts',
+      '@@ -1,1 +1,2 @@',
+      '+const auth = opts.pushToken ? pushAuthConfigArgs(opts.pushToken, opts.host) : [];',
+      '+const token = deps.auth.accessToken;',
+    ].join('\n');
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('still flags a realistic secret-like value on the same shape of line', () => {
+    const diff = [
+      'diff --git a/src/x.ts b/src/x.ts',
+      '--- a/src/x.ts',
+      '+++ b/src/x.ts',
+      '@@ -1,1 +1,1 @@',
+      '+const auth = "q7Rw2xZk9mP4vN8s";',
+    ].join('\n');
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/x.ts', patternName: 'assignment' }),
+    );
+  });
+});
