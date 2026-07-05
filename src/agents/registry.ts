@@ -3,6 +3,7 @@ import { CodexProvider } from './codex.js';
 import { CursorProvider } from './cursor.js';
 import { ZaiProvider, ZAI_BASE_URL } from './zai.js';
 import { OpenRouterProvider, OPENROUTER_BASE_URL } from './openrouter.js';
+import { MeridianProvider, MERIDIAN_PLACEHOLDER_TOKEN } from './meridian.js';
 import { AgentError } from '../core/errors.js';
 import type { AgentProvider } from './provider.js';
 
@@ -64,6 +65,12 @@ interface ProviderSpec {
    * would make the Claude CLI prefer api.anthropic.com over this provider's endpoint).
    */
   ownsAnthropicTransport?: boolean;
+  /**
+   * When true, the provider cannot run under --llm-proxy: it owns the Anthropic transport but has no
+   * upstream a trusted sidecar could target (it carries only a base URL and authenticates on its own
+   * host, e.g. Meridian). Without this guard --llm-proxy would fall the sidecar back to api.anthropic.com.
+   */
+  directOnly?: boolean;
 }
 
 /**
@@ -128,6 +135,20 @@ const PROVIDERS = {
       toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: OPENROUTER_BASE_URL, ANTHROPIC_AUTH_TOKEN: key }),
       // No proxyKey: openrouter rides the PRIMARY sidecar, same as zai — see notes above.
     },
+  },
+  meridian: {
+    factory: () => new MeridianProvider(),
+    transport: 'anthropic',
+    ownsAnthropicTransport: true,
+    key: {
+      // Meridian's base URL is operator-specific (its NAS/host address), so the "key" IS the base URL:
+      // it flows through the same api-key slot but expands to ANTHROPIC_BASE_URL + a placeholder token
+      // (Meridian authenticates on its own host and ignores the token — see meridian.ts).
+      hostEnv: ['MERIDIAN_BASE_URL'],
+      toSandboxSecrets: (url) => ({ ANTHROPIC_BASE_URL: url, ANTHROPIC_AUTH_TOKEN: MERIDIAN_PLACEHOLDER_TOKEN }),
+      // No proxyKey: meridian is direct-mode only (no upstream credential to hand a sidecar) — see meridian.ts.
+    },
+    directOnly: true,
   },
 } satisfies Record<string, ProviderSpec>;
 
@@ -300,6 +321,18 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
       `Cross-provider review cannot mix ${names}: they share the ${spec(provider).transport} transport and ` +
         `collide in one sandbox. Use the same provider for both stages, or pick providers on different transports.`,
     );
+  }
+
+  // A direct-only provider (meridian) has no upstream a sidecar could target, so --llm-proxy would
+  // silently fall the sidecar back to api.anthropic.com. Reject the combination outright.
+  if (opts.proxyMode === true) {
+    const directOnly = [provider, ...(review !== undefined ? [review] : [])].find((n) => spec(n).directOnly === true);
+    if (directOnly !== undefined) {
+      throw new AgentError(
+        `Provider "${directOnly}" is direct-mode only and cannot run under --llm-proxy: it authenticates ` +
+          `on its own host and exposes no upstream for a trusted sidecar. Run it without --llm-proxy.`,
+      );
+    }
   }
 
   // Under --llm-proxy, a provider that owns the Anthropic transport (zai) is served by the PRIMARY sidecar,

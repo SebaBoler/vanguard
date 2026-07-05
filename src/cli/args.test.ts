@@ -561,6 +561,20 @@ describe('parseCli', () => {
     expect(watch.kind === 'watch' && watch.conformanceModel).toBe('opus');
   });
 
+  it('parses --commit-author "Name <email>" on run and watch', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <spietrza@gmail.com>'], '/work');
+    expect(run.kind === 'run' && run.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 'spietrza@gmail.com' });
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--commit-author', 'A B <a@b.co>'], '/work');
+    expect(watch.kind === 'watch' && watch.commitAuthor).toEqual({ name: 'A B', email: 'a@b.co' });
+  });
+
+  it('rejects a malformed --commit-author', () => {
+    const cmd = parseCli(['run', '--github', 'o/r#1', '--commit-author', 'no-email-here'], '/work');
+    expect(cmd.kind).toBe('error');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/Invalid --commit-author/);
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {

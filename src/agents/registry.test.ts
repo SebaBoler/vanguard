@@ -168,6 +168,27 @@ describe('providerSecrets (openrouter)', () => {
   });
 });
 
+describe('providerSecrets (meridian)', () => {
+  it('injects the operator base URL + a placeholder token in normal mode', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['meridian'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'http://192.168.1.10:3456', ANTHROPIC_AUTH_TOKEN: 'meridian' },
+      proxySecrets: {},
+    });
+  });
+
+  it('withholds the base URL from the sandbox in proxy mode (owns the primary transport)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets, proxySecrets } = providerSecrets(['meridian'], env, { proxyMode: true });
+    expect(sandboxSecrets).toEqual({});
+    expect(proxySecrets).toEqual({});
+  });
+
+  it('throws when MERIDIAN_BASE_URL is missing', () => {
+    expect(() => providerSecrets(['meridian'], {})).toThrow(/MERIDIAN_BASE_URL/);
+  });
+});
+
 describe('selectAgents', () => {
   it('routes codex secrets to the sandbox in normal mode', () => {
     const env = { CODEX_API_KEY: 'c-key' } as NodeJS.ProcessEnv;
@@ -209,6 +230,22 @@ describe('selectAgents', () => {
     expect(selected.secrets).toEqual({});
     expect(selected.proxySecrets).toEqual({});
     expect(selected.injectAnthropicAuth).toBe(false);
+  });
+
+  it('injects Meridian transport secrets and suppresses Anthropic auth', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'meridian' }, env);
+    expect(selected.secrets).toEqual({
+      ANTHROPIC_BASE_URL: 'http://192.168.1.10:3456',
+      ANTHROPIC_AUTH_TOKEN: 'meridian',
+    });
+    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.proxySecrets).toEqual({});
+  });
+
+  it('rejects meridian under --llm-proxy (direct-mode only)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'meridian' }, env, { proxyMode: true })).toThrow(/direct-mode only/);
   });
 
   it('suppresses Anthropic auth when zai is only the REVIEWER (codex implements)', () => {
