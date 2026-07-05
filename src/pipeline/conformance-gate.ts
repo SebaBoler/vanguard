@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { extractJson } from '../structured/extract.js';
 import { StructuredOutputError } from '../core/errors.js';
 
+/** Tag the tech-spec stage wraps its machine-checkable manifest in (see pipeline.ts's prompt). */
+export const SPEC_MANIFEST_TAG = 'spec_manifest';
+
 /** Machine-checkable obligations a tech spec declares, emitted as a `<spec_manifest>` JSON block. */
 export const specManifestSchema = z.object({
   files: z.array(z.object({ path: z.string(), required: z.boolean().optional() })).optional(),
@@ -26,7 +29,7 @@ export type SpecManifest = z.infer<typeof specManifestSchema>;
 /** Parse the `<spec_manifest>` block from a tech spec. Returns undefined for legacy specs (no manifest) — never throws, so absence is always advisory-only, never a hard fail. */
 export function parseSpecManifest(specText: string): SpecManifest | undefined {
   try {
-    return extractJson(specText, 'spec_manifest', specManifestSchema);
+    return extractJson(specText, SPEC_MANIFEST_TAG, specManifestSchema);
   } catch (err) {
     if (err instanceof StructuredOutputError) return undefined;
     throw err;

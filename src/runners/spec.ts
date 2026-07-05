@@ -12,6 +12,7 @@ import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { extractTag } from '../structured/extract.js';
 import { VanguardError } from '../core/errors.js';
 import { SPEC_TAG } from '../tasks/triage.js';
+import { SPEC_MANIFEST_TAG } from '../pipeline/conformance-gate.js';
 import type { Task, TaskFetcher } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, ProviderProxySecrets } from '../agents/registry.js';
@@ -160,7 +161,12 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       // techSpecStage always returns exactly one stage; persist that single outcome.
       await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
 
-      return spec;
+      // Carry the manifest verbatim inside the returned spec so watch.ts's <tech_spec> wrapper still
+      // lands it in the posted comment — parseSpecManifest regexes for the tag anywhere in the comment
+      // text, so nesting inside <tech_spec> doesn't stop the conformance gate from reading it.
+      const manifest = extractTag(specOutcome.result.finalText, SPEC_MANIFEST_TAG);
+      if (manifest === undefined || manifest === '') return spec;
+      return `${spec}\n\n<${SPEC_MANIFEST_TAG}>\n${manifest}\n</${SPEC_MANIFEST_TAG}>`;
     } finally {
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
         deps.logger?.warn({ err }, 'retrospective memory refresh failed (non-fatal)');
