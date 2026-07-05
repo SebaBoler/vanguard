@@ -520,6 +520,106 @@ describe('runRevisePullRequest — best-effort label hand-back', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Revise-pass verification + body re-derivation
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — revise-pass verification', () => {
+  const VERIFY_CMD = 'run-verify';
+
+  // Clone the happy-path sandbox but drive the resolved verify command's exit code.
+  function makeSandboxVerify(exit: number): IsolatedSandboxProvider {
+    const base = makeSandbox() as unknown as Record<string, unknown>;
+    return {
+      ...base,
+      exec: async (command: string): Promise<ExecResult> => {
+        if (command.includes('$HOME')) return { stdout: '/root', stderr: '', exitCode: 0 };
+        if (command === VERIFY_CMD) return { stdout: 'verify output', stderr: '', exitCode: exit };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+  }
+
+  // gh runner referencing an issue via a closing keyword in the PR body, capturing pr-edit bodies.
+  function makeGh(ghCalls: string[][], editBodies: string[]): GhRunner {
+    return async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) {
+        return makePrViewJson({ body: 'Adds guard.\n\nCloses o/r#42' });
+      }
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') {
+        const bodyIdx = args.indexOf('--body');
+        if (bodyIdx !== -1) editBodies.push(args[bodyIdx + 1] ?? '');
+        return '';
+      }
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+  }
+
+  it('runs the verify command and re-derives the body to Closes on a green pass', async () => {
+    const ghCalls: string[][] = [];
+    const editBodies: string[] = [];
+    const agentInputs: AgentRunInput[] = [];
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh(ghCalls, editBodies),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(0),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    // Green verification → no repair resume (implement/review/simplify only).
+    expect(agentInputs).toHaveLength(3);
+    // Body re-derived to a closing reference for the issue recovered from the PR body.
+    const body = editBodies.find((b) => b.includes('o/r#42'));
+    expect(body).toBeDefined();
+    expect(body).toContain('Closes o/r#42');
+  });
+
+  it('resumes the implement session once on red verification and re-derives the body to Part of', async () => {
+    const ghCalls: string[][] = [];
+    const editBodies: string[] = [];
+    const agentInputs: AgentRunInput[] = [];
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh(ghCalls, editBodies),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(1),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    // One bounded repair iteration on red: implement/review/simplify + a single resumed repair.
+    expect(agentInputs).toHaveLength(4);
+    // A red verification forces the Part-of path — never a silent stale Closes.
+    const body = editBodies.find((b) => b.includes('o/r#42'));
+    expect(body).toBeDefined();
+    expect(body).toContain('Part of o/r#42');
+    expect(body).not.toContain('Closes o/r#42');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // pushToExistingBranch (pipeline function)
 // ---------------------------------------------------------------------------
 

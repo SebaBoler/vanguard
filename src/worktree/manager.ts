@@ -113,6 +113,23 @@ export class WorktreeManager {
     }
   }
 
+  /**
+   * Commit messages in `<baseRef>..HEAD`, for the commit-message closing-keyword scan (a rebase
+   * merge closes an issue per commit message, regardless of the PR body). Best-effort: returns []
+   * (never throws) when `baseRef` can't be resolved locally.
+   */
+  async commitMessages(worktreePath: string, baseRef: string): Promise<string[]> {
+    try {
+      const { stdout } = await execa('git', ['log', `${baseRef}..HEAD`, '--format=%B%x00'], { cwd: worktreePath });
+      return stdout
+        .split('\0')
+        .map((m) => m.trim())
+        .filter((m) => m !== '');
+    } catch {
+      return [];
+    }
+  }
+
   async remove(worktreePath: string, force: boolean = false): Promise<void> {
     try {
       await execa('git', ['worktree', 'remove', ...(force ? ['--force'] : []), worktreePath], { cwd: this.repoPath });

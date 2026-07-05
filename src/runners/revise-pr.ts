@@ -15,7 +15,11 @@ import {
   guardedPoint,
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
-import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
+import { reviewRequestBody } from './review-body.js';
+import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
+import type { VerificationResult } from '../pipeline/verify.js';
 import {
   implementReviewSimplifyStages,
   runStages,
@@ -50,6 +54,9 @@ const VANGUARD_REVISING_LABEL = 'vanguard:revising';
 const DEFAULT_MAX_ROUNDS = 2;
 const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL], add: [GITHUB_REVIEW_LABEL] };
 
+/** Cap on implement-session resumes triggered by a red verification in the revise pass — one bounded repair. */
+const MAX_VERIFY_REPAIRS = 1;
+
 export interface ReviseGithubPrDeps extends ProviderChoice {
   auth?: AgentAuth;
   repoPath: string;
@@ -69,6 +76,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   noSimplify?: boolean;
   /** Maximum revision rounds before capping (default 2). */
   maxRounds?: number;
+  /** Explicit verification command (else auto-detected from the worktree). */
+  verifyCmd?: string;
   /** Extra logins to treat as bots (beyond the built-in heuristic). */
   botLogins?: string[];
   log?: (line: string) => void;
@@ -235,7 +244,33 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
-      await runStages(ctx, pipeline, { agent: agents.agent });
+      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent });
+
+      // Run the resolved verification command after applying changes and before pushing, with one
+      // bounded repair iteration on red — reusing renderVerificationFeedback and the same resume
+      // pattern as runSourcedIssue so a red revision never silently ships (alpha-window#901: 5
+      // NameError tests pushed through revise). Auto-detect only touches the worktree, no manifest.
+      const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
+      let resumeSessionId = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.sessionId;
+      let verification: VerificationResult | undefined;
+      if (verifyCmd !== undefined) {
+        let verifyRepairs = 0;
+        for (;;) {
+          verification = await runVerification(ctx.sandbox, verifyCmd);
+          if (verification.passed || verifyRepairs >= MAX_VERIFY_REPAIRS || resumeSessionId === undefined) {
+            break;
+          }
+          verifyRepairs += 1;
+          log(`revise-pr ${target.repoSlug}#${target.number}: verify FAILED (attempt ${verifyRepairs}/${MAX_VERIFY_REPAIRS}) — resuming implement session`);
+          const repaired = await runAgent(ctx, {
+            promptTemplate: `${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`,
+            agent: agents.agent,
+            resumeSessionId,
+          });
+          resumeSessionId = repaired.sessionId ?? resumeSessionId;
+        }
+      }
+      const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
@@ -257,6 +292,23 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       });
 
       const sha = commit.sha ?? 'unknown';
+
+      // Re-derive the PR body from the CURRENT diff on every cycle so a stale `Closes #N` can never
+      // survive a revision that regressed (alpha-window#901 kept a stale Closes through two review
+      // requests). The referenced issue is recovered from the existing body; a red verification
+      // forces the `Part of #N` path, and a commit-level closing keyword is downgraded to `Part of`.
+      const issueTaskId = extractTaskIdFromPrBody(pr.body);
+      if (issueTaskId !== undefined) {
+        const closeIssueOnMerge = scanCommitClosingKeywords([pr.body], issueTaskId).length > 0;
+        const newBody = reviewRequestBody(issueTaskId, {
+          closeIssueOnMerge,
+          ...(verificationFailed ? { verificationFailed: true } : {}),
+        });
+        if (newBody !== pr.body) {
+          log(`revise-pr ${target.repoSlug}#${target.number}: body -> re-derived (${verificationFailed ? 'Part of' : closeIssueOnMerge ? 'Closes' : 'no-close'})`);
+          await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--body', newBody]);
+        }
+      }
 
       // Derive a diff-true "what changed" point for each feedback item.
       const diffFiles = parseRevisionDiff(revisionDiff);
@@ -289,6 +341,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       );
 
       // Post the single final round summary.
+      const verificationStatus = verification === undefined ? 'unknown' : verification.passed ? 'pass' : 'fail';
       const summaryText = buildRevisionSummary({
         repoSlug: target.repoSlug,
         number: target.number,
@@ -296,7 +349,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         commitSha: sha,
         addressed: actionable.map((item) => ({ item, point: pointFor(item) })),
         deferred: [],
-        verification: { typecheck: 'unknown', test: 'unknown' },
+        verification: { typecheck: verificationStatus, test: verificationStatus },
       });
       await commentPullRequest(target, summaryText, gh);
 

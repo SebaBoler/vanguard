@@ -12,12 +12,21 @@ import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
-import { resolveVerifyCommand, runVerification, proofBlock, verifySkippedBlock } from '../pipeline/verify.js';
+import { resolveVerifyCommand, runVerification, renderVerificationFeedback, proofBlock, verifySkippedBlock } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
-import { parseSpecManifest, checkConformance, renderConformanceFeedback, PASSING_RESULT } from '../pipeline/conformance-gate.js';
+import {
+  parseSpecManifest,
+  checkConformance,
+  renderConformanceFeedback,
+  scanCommitClosingKeywords,
+  commitLeakWarningBlock,
+  PASSING_RESULT,
+} from '../pipeline/conformance-gate.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
+import type { ConformanceResult } from '../pipeline/conformance-gate.js';
+import type { VerificationResult } from '../pipeline/verify.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice } from '../agents/registry.js';
@@ -126,8 +135,8 @@ export interface RunIssueResult {
   prUrl?: string;
 }
 
-/** Cap on implement-session resumes triggered by a failing conformance gate, before falling back to a declared-partial PR. */
-const MAX_CONFORMANCE_ITERATIONS = 2;
+/** Cap on implement-session resumes triggered by a failing conformance/verify gate, before falling back to a declared-partial PR. */
+const MAX_REPAIR_ITERATIONS = 2;
 
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
@@ -185,45 +194,53 @@ export async function runSourcedIssue(
       });
       console.log(summarizeOutcomes(outcomes));
 
-      // Deterministic spec-manifest vs diff conformance gate. No manifest (legacy spec, or none at
-      // all) -> advisory-only, never blocks. On FAIL, resume the implementer's own session with the
-      // structured gap as feedback (bounded, budget/turn caps already apply to the resumed stage) —
-      // "iterate the implement loop", not "open PR and hope". Exhausting the cap falls through to a
-      // declared-partial PR (reviewRequestBody below), not a silent `Closes`.
+      // Deterministic spec-manifest vs diff conformance gate, joined with the verify command into a
+      // single shared-cap repair loop: either gate failing resumes the implementer's own session with
+      // a combined gap report (bounded, budget/turn caps already apply to the resumed stage) —
+      // "iterate the implement loop", not "open PR and hope". Exhausting the cap (or having no
+      // resumable session) falls through to a declared-partial PR (reviewRequestBody below), never a
+      // silent `Closes` with either gate red.
       const specText = task.comments.map((comment) => comment.body).join('\n');
       const manifest = parseSpecManifest(specText);
-      // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
-      // spec skips the gate entirely (zero extra work, and no spurious `wm.diff` call).
-      let conformance = PASSING_RESULT;
-      if (manifest !== undefined) {
-        conformance = checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath));
-        // Resolve the implementer outcome once — the loop only runs while its session is resumable,
-        // so its position in `outcomes` is fixed for the duration.
-        const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
-        let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
-        let conformanceIterations = 0;
-        while (!conformance.pass && resumeSessionId !== undefined && conformanceIterations < MAX_CONFORMANCE_ITERATIONS) {
-          conformanceIterations += 1;
-          console.log(
-            `vanguard: conformance gate FAILED for ${task.id} (attempt ${conformanceIterations}/${MAX_CONFORMANCE_ITERATIONS}) — resuming implement session`,
-          );
-          const repaired = await runAgent(ctx, {
-            promptTemplate: `${renderConformanceFeedback(conformance)}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
-            agent: agents.agent,
-            resumeSessionId,
-          });
-          const prior = outcomes[implementerIdx];
-          if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
-          resumeSessionId = repaired.sessionId ?? resumeSessionId;
-          conformance = checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath));
-        }
-        console.log(
-          `vanguard: conformance gate ${conformance.pass ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`,
-        );
-      }
-
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
-      const verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
+
+      // Resolve the implementer outcome once — the loop only runs while its session is resumable,
+      // so its position in `outcomes` is fixed for the duration.
+      const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
+      let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
+
+      let conformance: ConformanceResult = PASSING_RESULT;
+      let verification: VerificationResult | undefined;
+      let gatePassed = false;
+      let repairIterations = 0;
+      for (;;) {
+        // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
+        // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
+        conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
+        verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
+        gatePassed = conformance.pass && (verification === undefined || verification.passed);
+        if (gatePassed || repairIterations >= MAX_REPAIR_ITERATIONS || resumeSessionId === undefined) break;
+
+        repairIterations += 1;
+        console.log(
+          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${MAX_REPAIR_ITERATIONS}) — resuming implement session`,
+        );
+        const feedback = [
+          !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
+          verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
+        ]
+          .filter((s): s is string => s !== undefined)
+          .join('\n\n');
+        const repaired = await runAgent(ctx, {
+          promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          agent: agents.agent,
+          resumeSessionId,
+        });
+        const prior = outcomes[implementerIdx];
+        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
+        resumeSessionId = repaired.sessionId ?? resumeSessionId;
+      }
+      console.log(`vanguard: gate ${gatePassed ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`);
 
       const visualProof = await resolveAndRunVisualProof(
         ctx.sandbox,
@@ -262,12 +279,25 @@ export async function runSourcedIssue(
         await persistStageOutcomes(deps.repoPath, outcomes);
         return { task };
       }
+
+      // Verification participates in the Closes/Part-of decision alongside conformance: a red result
+      // forces the declared-partial path even when conformance itself passed.
+      const verificationFailed = verification !== undefined && !verification.passed;
+      const partial = !gatePassed;
       const baseBody = reviewRequestBody(task.id, {
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
         ...(manifest !== undefined ? { conformance, manifest } : {}),
+        ...(verificationFailed ? { verificationFailed: true } : {}),
       });
+      // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
+      // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
+      // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
+      const commitLeaks = partial
+        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, 'main'), task.id)
+        : [];
       const body = [
         baseBody,
+        commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
         verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
         visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
       ].filter((s): s is string => s !== undefined).join('\n\n');

@@ -178,9 +178,61 @@ export function renderScopeChecklist(manifest: SpecManifest, result: Conformance
   return lines.join('\n');
 }
 
-const TASK_REF_RE = /\b(?:closes|close|closed|fix|fixes|fixed|resolve|resolves|resolved|part of)\s+([^\s,;]+#\d+)/i;
+/** Keywords GitHub/GitLab treat as auto-closing on merge — deliberately excludes `part of`. */
+const CLOSING_KEYWORDS = 'closes|close|closed|fix|fixes|fixed|resolve|resolves|resolved';
+
+const TASK_REF_RE = new RegExp(`\\b(?:${CLOSING_KEYWORDS}|part of)\\s+([^\\s,;]+#\\d+)`, 'i');
 
 /** Extract the taskId (e.g. `owner/repo#900`) a PR body references via a closing keyword or `Part of`. */
 export function extractTaskIdFromPrBody(body: string): string | undefined {
   return TASK_REF_RE.exec(body)?.[1];
+}
+
+/** Close-only subset of TASK_REF_RE — deliberately excludes `part of`, which never auto-closes on merge. */
+const CLOSE_KEYWORD_RE = new RegExp(`\\b(${CLOSING_KEYWORDS})\\s+([^\\s,;#]*#\\d+)`, 'gi');
+
+/** Trailing `#N` issue number off a bare or `owner/repo#N` ref. */
+function issueNumberOf(ref: string): string | undefined {
+  return /#(\d+)$/.exec(ref)?.[1];
+}
+
+export interface CommitClosingLeak {
+  keyword: string;
+  ref: string;
+}
+
+/**
+ * Scan branch commit messages for closing keywords that would auto-close an issue on a rebase
+ * merge, regardless of the PR body. Matches Closes/Close/Closed/Fix/Fixes/Fixed/Resolve/Resolves/
+ * Resolved #N (bare or owner/repo#N) whose issue number equals `taskId`'s. `Part of` is not a
+ * closing keyword and is never matched. Pure and git-free: the caller supplies the messages.
+ */
+export function scanCommitClosingKeywords(messages: string[], taskId: string): CommitClosingLeak[] {
+  const issueNumber = issueNumberOf(taskId);
+  if (issueNumber === undefined) return [];
+
+  const leaks: CommitClosingLeak[] = [];
+  for (const message of messages) {
+    for (const match of message.matchAll(CLOSE_KEYWORD_RE)) {
+      const keyword = match[1];
+      const ref = match[2];
+      if (keyword === undefined || ref === undefined) continue;
+      if (issueNumberOf(ref) === issueNumber) leaks.push({ keyword, ref });
+    }
+  }
+  return leaks;
+}
+
+/** Blocking-warning markdown block surfaced in the PR body when a commit-level close leak is found. */
+export function commitLeakWarningBlock(leaks: CommitClosingLeak[]): string {
+  if (leaks.length === 0) return '';
+  return [
+    '## ⚠️ Commit message closes the issue on rebase merge',
+    '',
+    'A rebase merge closes the linked issue per-commit regardless of this PR body. The following branch commit message(s) contain a closing keyword, but this PR is only a partial delivery:',
+    '',
+    ...leaks.map((l) => `- \`${l.keyword} ${l.ref}\``),
+    '',
+    'Reword the offending commit(s), or squash-merge instead of rebase-merging.',
+  ].join('\n');
 }

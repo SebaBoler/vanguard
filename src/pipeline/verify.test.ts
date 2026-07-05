@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
-import { resolveVerifyCommand, runVerification, proofBlock } from './verify.js';
+import { resolveVerifyCommand, runVerification, renderVerificationFeedback, proofBlock } from './verify.js';
 
 // ---------------------------------------------------------------------------
 // Fake sandbox
@@ -162,6 +162,32 @@ describe('runVerification', () => {
     const sandbox = fakeSandbox('hello', 'world', 0);
     const result = await runVerification(sandbox, 'cmd');
     expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderVerificationFeedback
+// ---------------------------------------------------------------------------
+describe('renderVerificationFeedback', () => {
+  const failed = {
+    command: 'pnpm test',
+    exitCode: 1,
+    passed: false,
+    sha256: 'abc123',
+    outputTail: 'FAIL src/foo.test.ts\n  1 failing',
+  };
+
+  it('renders the command, exit code, and output tail', () => {
+    const feedback = renderVerificationFeedback(failed);
+    expect(feedback).toContain('pnpm test');
+    expect(feedback).toContain('1');
+    expect(feedback).toContain('FAIL src/foo.test.ts');
+  });
+
+  it('is compact and actionable — no full diff embedded', () => {
+    const feedback = renderVerificationFeedback(failed);
+    expect(feedback).not.toContain('diff --git');
+    expect(feedback.length).toBeLessThan(500);
   });
 });
 
