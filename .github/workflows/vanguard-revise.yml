@@ -24,6 +24,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # PAT for revision pushes: GITHUB_TOKEN events fire no workflows (recursion guard), so
+      # revised PRs would never get CI and stay BLOCKED under branch protection (#256).
+      VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
     steps:
       # Check out the DEFAULT branch (trusted) so the revise tool is always main's version, not the
       # PR-under-revision's code — which may lack the command or be untrusted (pull_request_target).
