@@ -285,9 +285,11 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
 
-      log(`revise-pr ${target.repoSlug}#${target.number}: push -> ${pr.headRefName}`);
+      const pushToken = process.env.VANGUARD_PUSH_TOKEN;
+      log(`revise-pr ${target.repoSlug}#${target.number}: push -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
       await pushToExistingBranch(ctx, {
         prHeadRef: pr.headRefName,
+        ...(pushToken ? { pushToken, host: 'github.com' } : {}),
         ...(deps._pushRunner !== undefined ? { runner: deps._pushRunner } : {}),
       });
 

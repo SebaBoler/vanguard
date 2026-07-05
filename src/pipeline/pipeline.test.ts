@@ -13,6 +13,8 @@ import {
   fastStages,
   defaultSystemPrompt,
   publishForReview,
+  pushToExistingBranch,
+  pushAuthConfigArgs,
   planImplementReviewStages,
   planImplementAdversaryStages,
   adversarySystemPrompt,
@@ -338,6 +340,70 @@ describe('publishForReview', () => {
     expect(mrCall?.args).toContain('--description');
     expect(mrCall?.args).toContain('--draft');
     expect(out.prUrl).toBe('https://gitlab.com/owner/repo/-/merge_requests/1');
+    await disposeContext(ctx);
+  });
+});
+
+describe('pushAuthConfigArgs', () => {
+  it('builds the extraheader override with the base64-encoded token, defaulting to github.com', () => {
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(pushAuthConfigArgs('TOK')).toEqual(['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`]);
+  });
+
+  it('honors a custom host', () => {
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(pushAuthConfigArgs('TOK', 'github.example.com')).toEqual([
+      '-c',
+      `http.https://github.example.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+    ]);
+  });
+});
+
+describe('pushToExistingBranch', () => {
+  it('with pushToken set, prepends the extraheader override before push', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-token', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push({ file, args });
+      return '';
+    };
+    await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', pushToken: 'TOK', runner });
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(calls[0]?.file).toBe('git');
+    expect(calls[0]?.args).toEqual([
+      '-c',
+      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+      'push',
+      'origin',
+      'HEAD:feature-branch',
+    ]);
+    await disposeContext(ctx);
+  });
+
+  it('with pushToken absent, argv is exactly the baseline (no -c prefix)', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-notoken', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push({ file, args });
+      return '';
+    };
+    await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', runner });
+    expect(calls[0]?.args).toEqual(['push', 'origin', 'HEAD:feature-branch']);
+    await disposeContext(ctx);
+  });
+
+  it('redacts the base64 credential from a push failure when a token is in use', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-fail', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    const runner = async (): Promise<string> => {
+      throw new Error(`git push failed: -c http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`);
+    };
+    await expect(pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', pushToken: 'TOK', runner })).rejects.toThrow(
+      expect.not.stringContaining(b64),
+    );
     await disposeContext(ctx);
   });
 });
