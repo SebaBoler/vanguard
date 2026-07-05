@@ -816,8 +816,8 @@ Commands:
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
                            watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
-    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
@@ -882,8 +882,8 @@ Commands:
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
@@ -897,7 +897,7 @@ Commands:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
-    --provider <claude|codex|cursor|zai>          Provider used for the PR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -907,14 +907,14 @@ Commands:
     --github-repo <o/r>     Required for bare issue numbers
     --web                   Declare that web egress/search is available; otherwise comments say model-knowledge only
     --research-model <m>    Model for the research pass
-    --provider <claude|codex|cursor|zai>          Provider used for research (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   revise-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
-    --provider <claude|codex|cursor|zai>          Provider for the implementer/review stages (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage
     --max-rounds <n>       Maximum revision rounds (default: 2)
     --egress --llm-proxy --repo <path>         As for run/watch
@@ -932,7 +932,7 @@ Commands:
     --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --concurrency <n>      Max PRs reviewed at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider used for PR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -960,7 +960,7 @@ Commands:
     --author <username>      Only review MRs opened by this GitLab username
     --interval <seconds>     Poll interval (default: 60); --once does a single pass
     --concurrency <n>        Max MRs reviewed at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider used for MR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for MR review (default: claude)
     --review-model <m>       Model for the MR review
     --egress --llm-proxy --repo <path>         As for run/watch
 

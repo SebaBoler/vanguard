@@ -244,7 +244,7 @@ An optional **conformance pass** can be appended after the reviewer with `--conf
 
 ## Providers
 
-The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), `zai` (z.ai GLM Coding Plan), or `openrouter` (OpenRouter's Anthropic skin). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
+The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), `zai` (z.ai GLM Coding Plan), `openrouter` (OpenRouter's Anthropic skin), or `meridian` (self-hosted [Meridian](https://github.com/rynfar/meridian) proxy — share a Claude Max subscription from another host; see [docs/MERIDIAN-provider.md](docs/MERIDIAN-provider.md)). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
 
 **One provider does everything** (default)
 
