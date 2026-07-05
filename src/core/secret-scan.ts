@@ -21,6 +21,11 @@ export interface SecretPattern {
 
 const ALLOWLIST_MARKER = /(?:vanguard-allow-secret|pragma:\s*allowlist\s*secret|gitleaks:allow)/i;
 const CODE_REFERENCE_PREFIX = /^(?:process\.env|import\.meta\.env|os\.environ|req\.|ctx\.|config\.|this\.)/;
+// A dotted identifier chain (`opts.pushToken`, `deps.auth.token`) is a code reference, not a
+// credential — real secrets never look like short identifier segments joined by dots. JWTs also
+// contain dots but their base64url segments don't parse as identifiers (and the unconditional
+// `jwt` pattern covers them regardless of this refinement).
+const IDENTIFIER_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
 const UPPER_SNAKE_IDENTIFIER = /^[A-Z][A-Z0-9_]*$/;
 // Suffix restricted to digits-only, letters-only, or separator-led continuation — real secrets
 // mix letters and digits together (e.g. 'testAbc123Secret...'), which this deliberately excludes
@@ -54,6 +59,7 @@ export function shannonEntropy(value: string): number {
 function isLikelyAssignedSecret(value: string, line: string): boolean {
   if (ALLOWLIST_MARKER.test(line)) return false;
   if (CODE_REFERENCE_PREFIX.test(value)) return false;
+  if (IDENTIFIER_CHAIN.test(value)) return false;
   if (UPPER_SNAKE_IDENTIFIER.test(value)) return false;
   if (PLACEHOLDER_VALUE.test(value) || ANGLE_PLACEHOLDER.test(value) || SAME_CHAR_RUN.test(value)) return false;
   if (shannonEntropy(value) < ASSIGNMENT_ENTROPY_THRESHOLD) return false;
