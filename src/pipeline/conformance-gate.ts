@@ -91,6 +91,10 @@ export interface ConformanceResult extends ConformanceGap {
   /** False when there is no manifest to check against (legacy spec / no spec) — always advisory-only then. */
   checked: boolean;
   pass: boolean;
+  /** Optional (required:false) manifest entries absent from the diff — for checklist annotation only; never cause a FAIL. */
+  optionalMissingFiles: string[];
+  optionalMissingTests: { id: string; file: string }[];
+  optionalMissingArtifacts: { id: string; artifact: string }[];
 }
 
 /** Result for a spec with no manifest to check against — advisory-only, always passing. */
@@ -101,6 +105,9 @@ export const PASSING_RESULT: ConformanceResult = {
   missingTests: [],
   missingArtifacts: [],
   danglingConsumers: [],
+  optionalMissingFiles: [],
+  optionalMissingTests: [],
+  optionalMissingArtifacts: [],
 };
 
 /**
@@ -110,24 +117,55 @@ export const PASSING_RESULT: ConformanceResult = {
  * diff are all unambiguous, hard-fail signals. Everything fuzzier is out of scope here — the
  * declared-phasing PR body (`Part of #N` + deferred checklist) is the escape hatch for the rest.
  */
+/** Splits `items` on their `required` flag (default true) among those failing `isSatisfied`. */
+function partitionByRequired<T extends { required?: boolean | undefined }>(
+  items: T[],
+  isSatisfied: (item: T) => boolean,
+): { missing: T[]; optionalMissing: T[] } {
+  const missing: T[] = [];
+  const optionalMissing: T[] = [];
+  for (const item of items) {
+    if (isSatisfied(item)) continue;
+    (item.required === false ? optionalMissing : missing).push(item);
+  }
+  return { missing, optionalMissing };
+}
+
 export function checkConformance(manifest: SpecManifest | undefined, diff: string): ConformanceResult {
   if (manifest === undefined) return PASSING_RESULT;
 
   const touched = new Set(extractDiffFiles(diff));
   const sections = diffSections(diff);
-  const missingFiles = (manifest.files ?? [])
-    .filter((f) => f.required !== false && !touched.has(f.path))
-    .map((f) => f.path);
-  const missingTests = (manifest.tests ?? [])
-    .filter((t) => t.required !== false && !(touched.has(t.file) && sectionAddsTestContent(sections.get(t.file))))
-    .map((t) => ({ id: t.id, file: t.file }));
-  const missingArtifacts = (manifest.acceptance ?? [])
-    .filter((a): a is typeof a & { artifact: string } => a.required !== false && a.artifact !== undefined && !touched.has(a.artifact))
-    .map((a) => ({ id: a.id, artifact: a.artifact }));
+
+  const files = partitionByRequired(manifest.files ?? [], (f) => touched.has(f.path));
+  const missingFiles = files.missing.map((f) => f.path);
+  const optionalMissingFiles = files.optionalMissing.map((f) => f.path);
+
+  const tests = partitionByRequired(manifest.tests ?? [], (t) => touched.has(t.file) && sectionAddsTestContent(sections.get(t.file)));
+  const missingTests = tests.missing.map((t) => ({ id: t.id, file: t.file }));
+  const optionalMissingTests = tests.optionalMissing.map((t) => ({ id: t.id, file: t.file }));
+
+  const acceptanceWithArtifact = (manifest.acceptance ?? []).filter(
+    (a): a is typeof a & { artifact: string } => a.artifact !== undefined,
+  );
+  const artifacts = partitionByRequired(acceptanceWithArtifact, (a) => touched.has(a.artifact));
+  const missingArtifacts = artifacts.missing.map((a) => ({ id: a.id, artifact: a.artifact }));
+  const optionalMissingArtifacts = artifacts.optionalMissing.map((a) => ({ id: a.id, artifact: a.artifact }));
+
   const danglingConsumers = (manifest.dependencies ?? []).filter((d) => touched.has(d.consumer) && !touched.has(d.producer));
 
   const pass = missingFiles.length === 0 && missingTests.length === 0 && missingArtifacts.length === 0 && danglingConsumers.length === 0;
-  return { checked: true, pass, missingFiles, missingTests, missingArtifacts, danglingConsumers };
+  return {
+    checked: true,
+    pass,
+    missingFiles,
+    missingTests,
+    missingArtifacts,
+    danglingConsumers,
+    optionalMissingFiles,
+    optionalMissingTests,
+    optionalMissingArtifacts,
+  };
 }
 
 /**
@@ -153,29 +191,46 @@ export function renderConformanceFeedback(gap: ConformanceGap): string {
   return lines.join('\n');
 }
 
+/** Annotation appended to an optional obligation absent from the diff (unchecked, non-FAIL). */
+const OPTIONAL_NOT_DELIVERED = ' (optional — not delivered)';
+
+/** Renders one checklist line's checkbox + annotation state given required/optional-missing membership. */
+function renderItem(label: string, requiredMissing: boolean, optionalMissing: boolean): string {
+  if (optionalMissing) return `- [ ] ${label}${OPTIONAL_NOT_DELIVERED}`;
+  if (requiredMissing) return `- [ ] ${label}`;
+  return `- [x] ${label}`;
+}
+
 /** GFM task-list checklist of every spec-manifest obligation, checked when satisfied per `result`. */
 export function renderScopeChecklist(manifest: SpecManifest, result: ConformanceResult): string {
   const missingFilePaths = new Set(result.missingFiles);
+  const optionalMissingFilePaths = new Set(result.optionalMissingFiles);
   const missingTestIds = new Set(result.missingTests.map((t) => t.id));
+  const optionalMissingTestIds = new Set(result.optionalMissingTests.map((t) => t.id));
   const missingArtifactIds = new Set(result.missingArtifacts.map((a) => a.id));
+  const optionalMissingArtifactIds = new Set(result.optionalMissingArtifacts.map((a) => a.id));
   const lines: string[] = [];
 
   const files = manifest.files ?? [];
   if (files.length > 0) {
     lines.push('**Spec files:**');
-    for (const f of files) lines.push(`- [${missingFilePaths.has(f.path) ? ' ' : 'x'}] \`${f.path}\``);
+    for (const f of files) lines.push(renderItem(`\`${f.path}\``, missingFilePaths.has(f.path), optionalMissingFilePaths.has(f.path)));
   }
   const tests = manifest.tests ?? [];
   if (tests.length > 0) {
     lines.push('', '**Tests:**');
-    for (const t of tests) lines.push(`- [${missingTestIds.has(t.id) ? ' ' : 'x'}] ${t.id} (\`${t.file}\`)`);
+    for (const t of tests) {
+      lines.push(renderItem(`${t.id} (\`${t.file}\`)`, missingTestIds.has(t.id), optionalMissingTestIds.has(t.id)));
+    }
   }
   const acceptance = manifest.acceptance ?? [];
   if (acceptance.length > 0) {
     lines.push('', '**Acceptance criteria:**');
     for (const a of acceptance) {
-      const blocked = a.artifact !== undefined && missingArtifactIds.has(a.id);
-      lines.push(`- [${blocked ? ' ' : 'x'}] ${a.id}${a.description !== undefined && a.description !== '' ? `: ${a.description}` : ''}`);
+      const label = `${a.id}${a.description !== undefined && a.description !== '' ? `: ${a.description}` : ''}`;
+      const requiredMissing = a.artifact !== undefined && missingArtifactIds.has(a.id);
+      const optionalMissing = a.artifact !== undefined && optionalMissingArtifactIds.has(a.id);
+      lines.push(renderItem(label, requiredMissing, optionalMissing));
     }
   }
   return lines.join('\n');
