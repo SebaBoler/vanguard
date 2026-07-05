@@ -76,6 +76,7 @@ export type Command =
       project?: string;
       team?: string;
       triggerState?: string;
+      triggerStateName?: string;
       claimedState?: string;
       reviewState?: string;
       repoSlug?: string;
@@ -144,6 +145,7 @@ export type Command =
       project?: string;
       team?: string;
       triggerState?: string;
+      triggerStateName?: string;
       claimedState?: string;
       reviewState?: string;
       repoSlug?: string;
@@ -325,6 +327,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         // watch
         team: { type: 'string' },
         'trigger-state': { type: 'string' },
+        'trigger-state-name': { type: 'string' },
         'claimed-state': { type: 'string' },
         'review-state': { type: 'string' },
         interval: { type: 'string' },
@@ -728,6 +731,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['gitlab-project'] === 'string' ? { project: values['gitlab-project'] } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
       ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
+      ...(typeof values['trigger-state-name'] === 'string' ? { triggerStateName: values['trigger-state-name'] } : {}),
       ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
       ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -799,6 +803,9 @@ Commands:
     --project <number>     (project) GitHub Projects v2 project number (required with --source project)
     --trigger-state <x>    Status option name for ready items (project default: "Todo";
                            linear: state type, default "unstarted")
+    --trigger-state-name <x>
+                           Linear display state name matching --trigger-state; used to restore
+                           no-change issues (default for Linear single-pass: "Todo")
     --claimed-state <x>    Status/label set on claim (project default: "In Progress";
                            linear: state default "In Progress"; github: label "vanguard:running")
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";

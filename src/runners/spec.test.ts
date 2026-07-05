@@ -102,6 +102,7 @@ describe('runLoopV1', () => {
         return {};
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 

@@ -31,14 +31,30 @@ function specComment(spec: string): string {
   return `Vanguard tech spec:\n\n<${SPEC_TAG}>\n${spec}\n</${SPEC_TAG}>`;
 }
 
+/** Comment posted when a genuine no-change outcome un-sticks the claimed marker. */
+const NO_CHANGE_MSG =
+  'Vanguard run produced no changes — no PR was opened. Cleared `vanguard:running`; re-apply the trigger label to retry. See the run log.';
+
+/** Post the no-change comment and (optionally) revert the claim — independent I/O, run concurrently. */
+async function commentAndRevert(comment: Promise<void>, revert?: Promise<void>): Promise<void> {
+  await Promise.all(revert === undefined ? [comment] : [comment, revert]);
+}
+
 export interface WatchPrimitives {
   /** List issues currently ready to run (trigger state + label). */
   listReady: () => Promise<Array<{ id: string }>>;
   /** Claim an issue so a later poll won't pick it again (e.g. move it out of the trigger state). */
   claim: (id: string) => Promise<void>;
-  runOne: (id: string) => Promise<{ prUrl?: string }>;
+  /**
+   * `parked` distinguishes a genuine no-change (agent ran, empty diff) from a triage-park (agent
+   * never ran because the ticket was already routed elsewhere, e.g. needs-info). Only the former
+   * should trigger `onNoChange`.
+   */
+  runOne: (id: string) => Promise<{ prUrl?: string; parked?: boolean }>;
   /** Mark an issue as in review (a PR opened). */
   review: (id: string) => Promise<void>;
+  /** No PR AND not parked: undo the claim so the issue is not stuck on the claimed marker. */
+  onNoChange: (id: string) => Promise<void>;
   onFailure: (id: string, error: unknown) => Promise<void>;
 }
 
@@ -85,8 +101,9 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
         return { id: item.id, kind: 'skipped' };
       }
       try {
-        const { prUrl } = await primitives.runOne(item.id);
+        const { prUrl, parked } = await primitives.runOne(item.id);
         if (prUrl === undefined) {
+          if (parked !== true) await primitives.onNoChange(item.id);
           operatorLog(opts, `${phase} ${item.id}: no change -> idle`);
           return { id: item.id, kind: 'noChange' };
         }
@@ -177,6 +194,13 @@ export interface WatchLinearOptions {
   label: string;
   /** Linear state TYPE to poll (triage/backlog/unstarted/started/...); default 'unstarted' (Todo-like). */
   triggerState?: string;
+  /**
+   * The display NAME of the same state as `triggerState` (which is a TYPE). Needed because
+   * `setLinearState` takes a state NAME, not a type. Used by `onNoChange` to revert a genuine
+   * no-change issue back to the trigger state so a later poll re-picks it. Absent => onNoChange
+   * only comments (no state revert).
+   */
+  triggerStateName?: string;
   /** State NAME to move an issue to on claim, e.g. 'In Progress'. */
   claimedState: string;
   /** State NAME after a PR opens, e.g. 'In Review'. */
@@ -215,6 +239,11 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
               toNeedsInfo: () => setLinearState(id, needsInfoState, opts.linear),
             }),
     review: (id) => setLinearState(id, opts.reviewState, opts.linear),
+    onNoChange: (id) =>
+      commentAndRevert(
+        commentLinearIssue(id, NO_CHANGE_MSG, opts.linear),
+        opts.triggerStateName !== undefined ? setLinearState(id, opts.triggerStateName, opts.linear) : undefined,
+      ),
     onFailure: (id, error) => commentLinearIssue(id, `Vanguard run failed: ${String(error)}`, opts.linear),
   };
 }
@@ -291,8 +320,9 @@ async function runSpecCore(
  * Shared agent-pass triage gate used by both Linear and GitHub issue watch primitives.
  *
  * When the needs-info option is set: fetch the task, run assessTaskReadiness in 'agent' mode,
- * and if vague post the clarification comment and move to needs-info (returns {} so watchOnce
- * counts this as noChange — no implement budget spent). Otherwise delegate to the real runner.
+ * and if vague post the clarification comment and move to needs-info (returns { parked: true } so
+ * watchOnce counts this as noChange but skips onNoChange — the ticket is already correctly routed,
+ * no implement budget spent). Otherwise delegate to the real runner.
  *
  * When the needs-info option is absent: delegate directly without fetching (behaviour unchanged).
  */
@@ -304,12 +334,12 @@ async function triageAgentRun(
     comment: (body: string) => Promise<void>;
     toNeedsInfo: () => Promise<void>;
   },
-): Promise<{ prUrl?: string }> {
+): Promise<{ prUrl?: string; parked?: boolean }> {
   const task = await fetcher.fetch(id);
   if (assessTaskReadiness(task, 'agent') === 'needs_info') {
     await action.comment(clarifyMessage('agent'));
     await action.toNeedsInfo();
-    return {}; // no PR -> watchOnce categorises as noChange, no implement budget spent
+    return { parked: true }; // no PR, already routed -> watchOnce skips onNoChange
   }
   return runner(id);
 }
@@ -492,6 +522,11 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
               toNeedsInfo: () => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, opts.gh),
             }),
     review: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, opts.gh),
+    onNoChange: (id) =>
+      commentAndRevert(
+        commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
+        editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
+      ),
     onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, opts.gh),
   };
 }
@@ -675,6 +710,7 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
     claim: (id) => setStatus(id, opts.claimedStatus),
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
+    onNoChange: (id) => commentAndRevert(commentGithubIssue(repo, id, NO_CHANGE_MSG, gh), setStatus(id, opts.triggerStatus)),
     onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, gh),
   };
 }
@@ -736,6 +772,10 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
     review: (id) =>
       // Explicitly remove claimedLabel for robustness when non-scoped labels are configured.
       editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, glab),
+    onNoChange: async (id) => {
+      await commentGitlabIssue(project, id, NO_CHANGE_MSG, glab);
+      await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
+    },
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, `Vanguard run failed: ${String(error)}`, glab),
   };
