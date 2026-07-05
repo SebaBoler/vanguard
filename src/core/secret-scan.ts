@@ -20,7 +20,11 @@ export interface SecretPattern {
 }
 
 const ALLOWLIST_MARKER = /(?:vanguard-allow-secret|pragma:\s*allowlist\s*secret|gitleaks:allow)/i;
-const CODE_REFERENCE_PREFIX = /^(?:process\.env|import\.meta\.env|os\.environ|req\.|ctx\.|config\.|this\.)/;
+// An assignment RHS that is a code reference (a member access), not a string literal, is never a
+// secret. Covers common request/context/web objects so e.g. `const cookieToken = request.cookies…`
+// (a cookie read, not a hardcoded credential) isn't flagged.
+const CODE_REFERENCE_PREFIX =
+  /^(?:process\.env|import\.meta\.env|os\.environ|req\.|request\.|res\.|response\.|ctx\.|context\.|config\.|this\.|event\.|params\.|props\.|state\.|headers\.|cookies\.|session\.|window\.|document\.|globalThis\.|env\.)/;
 // A dotted identifier chain (`opts.pushToken`, `deps.auth.token`) is a code reference, not a
 // credential — real secrets never look like short identifier segments joined by dots. JWTs also
 // contain dots but their base64url segments don't parse as identifiers (and the unconditional
