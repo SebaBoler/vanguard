@@ -135,6 +135,44 @@ describe('checkConformance', () => {
     const manifest: SpecManifest = { files: [{ path: 'src/optional.ts', required: false }] };
     expect(checkConformance(manifest, fileSection('src/other.ts', ['x'])).pass).toBe(true);
   });
+
+  it('T1: tracks an optional file absent from the diff as optionalMissingFiles, not missingFiles', () => {
+    const manifest: SpecManifest = { files: [{ path: 'src/optional.ts', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/other.ts', ['x']));
+    expect(result.pass).toBe(true);
+    expect(result.missingFiles).toEqual([]);
+    expect(result.optionalMissingFiles).toEqual(['src/optional.ts']);
+  });
+
+  it('T2: an optional file present in the diff has an empty optionalMissingFiles', () => {
+    const manifest: SpecManifest = { files: [{ path: 'src/optional.ts', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/optional.ts', ['x']));
+    expect(result.pass).toBe(true);
+    expect(result.optionalMissingFiles).toEqual([]);
+  });
+
+  it('T3: tracks an optional test file absent (or adding no test content) as optionalMissingTests', () => {
+    const manifest: SpecManifest = { tests: [{ id: 'T1', file: 'src/foo.test.ts', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/foo.test.ts', ['const noTestsHere = 1;']));
+    expect(result.pass).toBe(true);
+    expect(result.missingTests).toEqual([]);
+    expect(result.optionalMissingTests).toEqual([{ id: 'T1', file: 'src/foo.test.ts' }]);
+  });
+
+  it('T4: tracks an optional acceptance-with-artifact whose artifact is absent as optionalMissingArtifacts', () => {
+    const manifest: SpecManifest = { acceptance: [{ id: 'AC-1', artifact: 'golden/base.txt', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/foo.ts', ['x']));
+    expect(result.pass).toBe(true);
+    expect(result.missingArtifacts).toEqual([]);
+    expect(result.optionalMissingArtifacts).toEqual([{ id: 'AC-1', artifact: 'golden/base.txt' }]);
+  });
+
+  it('T5: PASSING_RESULT exposes empty optional-missing lists', () => {
+    const result = checkConformance(undefined, fullCoverageDiff());
+    expect(result.optionalMissingFiles).toEqual([]);
+    expect(result.optionalMissingTests).toEqual([]);
+    expect(result.optionalMissingArtifacts).toEqual([]);
+  });
 });
 
 describe('renderConformanceFeedback', () => {
@@ -150,15 +188,70 @@ describe('renderConformanceFeedback', () => {
     expect(feedback).toContain('AC-1 (golden/base.txt)');
     expect(feedback).toContain('src/consumer.ts depends on src/producer.ts');
   });
+
+  it('T11: excludes optional-missing entries when only optional gaps exist', () => {
+    const manifest: SpecManifest = { files: [{ path: 'README.md', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/other.ts', ['x']));
+    const feedback = renderConformanceFeedback(result);
+    expect(feedback).not.toContain('README.md');
+    expect(feedback).not.toContain('Untouched required files');
+  });
 });
 
 describe('renderScopeChecklist', () => {
-  it('checks satisfied obligations and leaves gaps unchecked', () => {
+  it('T10: checks satisfied obligations and leaves gaps unchecked', () => {
     const result = checkConformance(MANIFEST, fileSection('src/foo.ts', ['x']));
     const checklist = renderScopeChecklist(MANIFEST, result);
     expect(checklist).toContain('- [x] `src/foo.ts`');
     expect(checklist).toContain('- [ ] T1 (`src/foo.test.ts`)');
     expect(checklist).toContain('- [ ] AC-1: golden baseline');
+  });
+
+  it('T6: annotates an optional+missing file as unchecked with "(optional — not delivered)"', () => {
+    const manifest: SpecManifest = { files: [{ path: 'README.md', required: false }] };
+    const result = checkConformance(manifest, fileSection('src/other.ts', ['x']));
+    const checklist = renderScopeChecklist(manifest, result);
+    expect(checklist).toContain('- [ ] `README.md` (optional — not delivered)');
+    expect(checklist).not.toContain('- [x] `README.md`');
+  });
+
+  it('T7: an optional+delivered file renders [x] with no annotation', () => {
+    const manifest: SpecManifest = { files: [{ path: 'README.md', required: false }] };
+    const result = checkConformance(manifest, fileSection('README.md', ['x']));
+    const checklist = renderScopeChecklist(manifest, result);
+    expect(checklist).toContain('- [x] `README.md`');
+    expect(checklist).not.toContain('(optional — not delivered)');
+  });
+
+  it('T8: a required+missing file renders [ ] with no annotation', () => {
+    const manifest: SpecManifest = { files: [{ path: 'src/bar.ts' }] };
+    const result = checkConformance(manifest, fileSection('src/other.ts', ['x']));
+    const checklist = renderScopeChecklist(manifest, result);
+    expect(checklist).toContain('- [ ] `src/bar.ts`');
+    expect(checklist).not.toContain('(optional — not delivered)');
+  });
+
+  it('T9: optional+missing test and acceptance render annotated; delivered ones render [x]', () => {
+    const manifest: SpecManifest = {
+      tests: [
+        { id: 'T-missing', file: 'src/missing.test.ts', required: false },
+        { id: 'T-delivered', file: 'src/delivered.test.ts', required: false },
+      ],
+      acceptance: [
+        { id: 'AC-missing', description: 'optional artifact missing', artifact: 'golden/missing.txt', required: false },
+        { id: 'AC-delivered', description: 'optional artifact delivered', artifact: 'golden/delivered.txt', required: false },
+      ],
+    };
+    const diff = [
+      fileSection('src/delivered.test.ts', ['it("works", () => {});']),
+      fileSection('golden/delivered.txt', ['baseline']),
+    ].join('\n');
+    const result = checkConformance(manifest, diff);
+    const checklist = renderScopeChecklist(manifest, result);
+    expect(checklist).toContain('- [ ] T-missing (`src/missing.test.ts`) (optional — not delivered)');
+    expect(checklist).toContain('- [x] T-delivered (`src/delivered.test.ts`)');
+    expect(checklist).toContain('- [ ] AC-missing: optional artifact missing (optional — not delivered)');
+    expect(checklist).toContain('- [x] AC-delivered: optional artifact delivered');
   });
 });
 
