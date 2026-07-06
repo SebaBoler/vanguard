@@ -236,6 +236,24 @@ describe('commitStage', () => {
     expect(out.committed).toBe(false);
     await disposeContext(ctx);
   });
+
+  it('commits despite a failing pre-commit hook (--no-verify skips the target repo hooks)', async () => {
+    // A worktree shares the main repo's hooks; a target project's husky hook (eslint/nx) fails in the
+    // isolated worktree because node_modules is absent. Simulate with a hook that always exits non-zero.
+    const hook = join(repo, '.git', 'hooks', 'pre-commit');
+    await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    try {
+      const wm = new WorktreeManager(repo, undefined, () => 'r4');
+      const ctx = await prepareContext({ taskId: 'p4', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+      await writeFile(join(ctx.worktreePath, 'y.txt'), 'data');
+      const out = await commitStage(ctx, { message: 'feat: work' });
+      expect(out.committed).toBe(true);
+      expect(out.sha).toBeTruthy();
+      await disposeContext(ctx);
+    } finally {
+      await rm(hook, { force: true });
+    }
+  });
 });
 
 describe('generateEvaluateRepairStages', () => {

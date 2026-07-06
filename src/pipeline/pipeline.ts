@@ -723,9 +723,16 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
   const name = opts.authorName ?? 'Vanguard';
   const email = opts.authorEmail ?? 'vanguard@local';
   await execa('git', ['add', '-A'], { cwd: ctx.worktreePath });
-  await execa('git', ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-m', opts.message], {
-    cwd: ctx.worktreePath,
-  });
+  // --no-verify skips the target repo's husky/pre-commit hooks. Vanguard commits in an isolated worktree
+  // without the project's node_modules, so hooks that run eslint/nx/tests (e.g. an `@nx/eslint-plugin`
+  // lint or `nx run api:test-unit`) fail to resolve and would block every commit. Vanguard has its own
+  // reviewer/verification pipeline and the PR's CI re-runs these checks, so the local pre-commit gate is
+  // redundant here.
+  await execa(
+    'git',
+    ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '--no-verify', '-m', opts.message],
+    { cwd: ctx.worktreePath },
+  );
   const { stdout } = await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath });
   return { committed: true, branch: ctx.branch, sha: stdout.trim() };
 }
