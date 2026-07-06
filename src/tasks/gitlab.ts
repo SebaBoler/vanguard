@@ -68,8 +68,11 @@ export class GitLabTaskFetcher implements TaskFetcher {
       'issue', 'list',
       '--repo', this.project,
       '--output', 'json',
-      '--state', filter?.state ?? 'opened',
     ];
+    // glab has no `--state <value>` flag: opened is the default, closed/all are booleans.
+    const state = filter?.state ?? 'opened';
+    if (state === 'closed') args.push('--closed');
+    else if (state === 'all') args.push('--all');
     for (const label of filter?.labels ?? []) args.push('--label', label);
     const out = await this.glab(args);
     // comments are not fetched on bulk list() — avoids N+1; only fetch() returns them
