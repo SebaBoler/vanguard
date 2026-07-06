@@ -15,4 +15,5 @@ export const RUN_OPTIONS = {
   conformanceModel: 'opus',
   commitAuthor: { name: 'Sebastian Pietrzak', email: 'spietrza@gmail.com' },
   plan: true,
+  baseBranch: 'dev',
 } as const;

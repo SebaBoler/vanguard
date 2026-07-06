@@ -586,6 +586,17 @@ describe('parseCli', () => {
     expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
   });
 
+  it('parses --base on run and watch (defaults to undefined)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--base', 'dev'], '/work');
+    expect(run.kind === 'run' && run.baseBranch).toBe('dev');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base', 'dev'], '/work');
+    expect(watch.kind === 'watch' && watch.baseBranch).toBe('dev');
+
+    const noBase = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {
