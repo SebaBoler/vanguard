@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
-import { pickRunOptions, runSourcedIssue } from './source-adapter.js';
+import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
@@ -211,6 +211,18 @@ describe('runSourcedIssue', () => {
     // PR body is the plain Closes line — no "Vanguard", no "Proof of work" artifact.
     const body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
     expect(body).not.toMatch(/Vanguard|Proof of work/);
+    // Commit message is Conventional-Commits-safe (lower-case subject, trailing #issue).
+    const message = (commitStage.mock.calls[0]?.[1] as { message: string }).message;
+    expect(message).toBe('feat: t (#1)');
+  });
+
+  it('conventionalCommitMessage: lower-case subject, ≤100-char header, trailing #issue', () => {
+    const title = 'CP: deleted CP is not fully removed (409 during adding CP with the name of deleted one)';
+    const msg = conventionalCommitMessage(title, 'gh-pwc-pl-tax-itbc-data-controls-engine-904');
+    expect(msg.length).toBeLessThanOrEqual(100);
+    expect(msg.startsWith('feat: ')).toBe(true);
+    expect(msg).toMatch(/\(#904\)$/);
+    expect(msg.replace('feat: ', '')).not.toMatch(/[A-Z]/); // fully lower-case → passes commitlint subject-case
   });
 
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {

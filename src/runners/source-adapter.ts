@@ -158,6 +158,20 @@ function branchIdFromTaskId(taskId: string): string {
   return slug === '' ? 'task' : slug;
 }
 
+/**
+ * Conventional-Commits-safe commit message for white-label mode: `feat: <lower-case subject> (#<issue>)`
+ * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
+ * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
+ */
+export function conventionalCommitMessage(title: string, taskId: string): string {
+  const prefix = 'feat: ';
+  const suffix = ` (#${branchIdFromTaskId(taskId)})`;
+  const subject = title.toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
+  const room = 100 - prefix.length - suffix.length;
+  const clipped = subject.length > room ? subject.slice(0, room).trimEnd() : subject;
+  return `${prefix}${clipped}${suffix}`;
+}
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
@@ -304,7 +318,11 @@ export async function runSourcedIssue(
       }
 
       const commit = await commitStage(ctx, {
-        message: `feat: ${task.title} (${task.id})`,
+        // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
+        // (≤100-char header, lower-case subject, trailing #issue). Default keeps the readable form.
+        message: whiteLabel
+          ? conventionalCommitMessage(task.title, adapter.taskId(task))
+          : `feat: ${task.title} (${task.id})`,
         ...(deps.commitAuthor !== undefined
           ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
           : {}),
