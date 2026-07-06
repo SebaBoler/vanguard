@@ -276,6 +276,7 @@ The commit is authored `Vanguard <vanguard@local>` by default; override with `--
 - Branch becomes `feat/<issue-number>-<hash>` (e.g. `feat/904-9d414a3d`) instead of `chore/vanguard-…`.
 - The PR body is just the `Closes #N` / `Part of #N` line — no "Automated implementation … by Vanguard" attribution and no `## Proof of work` block.
 - No Vanguard review comment is posted on the PR, and no "opened a PR" comment is posted back on the issue.
+- The commit message is Conventional-Commits-safe — `feat: <lower-case subject> (#N)`, header ≤100 chars — so a target repo's `commitlint` passes.
 
 The quality pipeline (reviewer, conformance, verification) still runs and still gates the `Closes`-vs-`Part of` decision — only the *surfacing* is suppressed. Default (no `--commit-author`) keeps the full Vanguard branding and review comment. Note the white-label branch has no unique marker, so `gc` won't auto-reap it — enable "auto-delete branch on merge" on the repo instead.
 
