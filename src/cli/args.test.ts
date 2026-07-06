@@ -575,6 +575,17 @@ describe('parseCli', () => {
     expect(cmd.kind === 'error' && cmd.message).toMatch(/Invalid --commit-author/);
   });
 
+  it('parses --plan on run and watch (off by default)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--plan'], '/work');
+    expect(run.kind === 'run' && run.plan).toBe(true);
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--plan'], '/work');
+    expect(watch.kind === 'watch' && watch.plan).toBe(true);
+
+    const noPlan = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {

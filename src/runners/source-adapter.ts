@@ -3,7 +3,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -46,6 +46,11 @@ export interface RunOptions extends ProviderChoice {
   conformanceModel?: string;
   /** Git author for the commit (default: `Vanguard <vanguard@local>`). Set via --commit-author. */
   commitAuthor?: { name: string; email: string };
+  /**
+   * When true, run a dedicated planning stage first (opus, high effort) before implement/review — the
+   * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
+   */
+  plan?: boolean;
 }
 
 /**
@@ -67,6 +72,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformance !== undefined ? { conformance: cmd.conformance } : {}),
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
+    ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
   };
 }
 
@@ -185,7 +191,10 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      const pipeline = assembleReviewPipeline(adapter.stages(), agents, deps);
+      // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
+      // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
+      const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
+      const pipeline = assembleReviewPipeline(baseStages, agents, deps);
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {

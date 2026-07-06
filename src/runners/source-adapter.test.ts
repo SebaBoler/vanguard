@@ -177,6 +177,15 @@ describe('runSourcedIssue', () => {
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
   });
 
+  it('--plan swaps in the plan-implement-review pipeline (a dedicated planner stage runs first)', async () => {
+    const adapter = fakeAdapter([], STAGES); // adapter's own stages are implementer→reviewer (no planner)
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', plan: true }, adapter);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled[0]?.name).toBe('planner'); // planning runs before the implementer
+    expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
+  });
+
   it('persists stage outcomes WITH pr.prUrl on the committed path', async () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
