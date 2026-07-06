@@ -51,6 +51,8 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
+  baseBranch?: string;
 }
 
 /**
@@ -73,6 +75,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
   };
 }
 
@@ -217,6 +220,7 @@ export async function runSourcedIssue(
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
         ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
+        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
       },
       skills !== undefined ? { skills } : {},
@@ -359,7 +363,13 @@ export async function runSourcedIssue(
             verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
             visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
           ].filter((s): s is string => s !== undefined).join('\n\n');
-      const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true, ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}) });
+      const pr = await publishForReview(ctx, {
+        title: `${task.title} (${task.id})`,
+        body,
+        draft: true,
+        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+        ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
+      });
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       if (!whiteLabel) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);

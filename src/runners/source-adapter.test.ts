@@ -225,6 +225,14 @@ describe('runSourcedIssue', () => {
     expect(msg.replace('feat: ', '')).not.toMatch(/[A-Z]/); // fully lower-case → passes commitlint subject-case
   });
 
+  it('--base targets the PR at the given base branch', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'dev' }, adapter);
+
+    const publishOpts = publishForReview.mock.calls[0]?.[1] as { baseBranch?: string };
+    expect(publishOpts.baseBranch).toBe('dev');
+  });
+
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
     commitStage.mockResolvedValueOnce({ committed: false, branch: 'b' });
     const order: string[] = [];
