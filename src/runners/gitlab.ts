@@ -116,6 +116,13 @@ export async function gitlabDepsFromEnv(
   provider?: ProviderName,
   reviewProvider?: ProviderName,
 ): Promise<RunGitlabIssueDeps> {
+  // Resolve auth first (mirrors githubDepsFromEnv order), so a missing-credential error surfaces
+  // before git-remote detection. Without this, deps.auth is undefined and runSourcedIssue injects
+  // no token into the sandbox — `run --gitlab` agents fail "Not logged in".
+  const auth = agentAuthFromEnv({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+  });
   let resolvedProject = project;
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
@@ -126,12 +133,6 @@ export async function gitlabDepsFromEnv(
     resolvedProject = parseGitlabProjectFromRemote(remote);
     if (resolvedProject === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
   }
-  // Resolve Anthropic auth here (mirrors githubDepsFromEnv). Without it deps.auth is undefined and
-  // runSourcedIssue injects no token into the sandbox — `run --gitlab` agents fail "Not logged in".
-  const auth = agentAuthFromEnv({
-    ...(provider !== undefined ? { provider } : {}),
-    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-  });
   return {
     ...(auth !== undefined ? { auth } : {}),
     repoPath,
