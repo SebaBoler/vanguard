@@ -28,6 +28,8 @@ export type Command =
       webAccess?: boolean;
       provider?: ProviderName;
       researchModel?: string;
+      /** White-label the research comment (drop "Vanguard" heading/marker). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
     }
   | {
       kind: 'revise-pr';
@@ -517,6 +519,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
 
@@ -959,6 +962,7 @@ Commands:
     --github-repo <o/r>     Required for bare issue numbers
     --web                   Declare that web egress/search is available; otherwise comments say model-knowledge only
     --research-model <m>    Model for the research pass
+    --commit-author <a>     White-label the comment (drop "Vanguard" heading/marker); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 

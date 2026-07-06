@@ -597,6 +597,12 @@ describe('parseCli', () => {
     expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
   });
 
+  it('parses --commit-author on research (white-label toggle)', () => {
+    const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
+    expect(cmd.kind).toBe('research');
+    expect(cmd.kind === 'research' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {
