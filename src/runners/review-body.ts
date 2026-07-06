@@ -9,6 +9,8 @@ export interface ReviewRequestBodyOptions {
   manifest?: SpecManifest;
   /** Force the Part-of/non-closing path even when conformance passed (or wasn't checked) — set when verification (typecheck/tests) is red. */
   verificationFailed?: boolean;
+  /** White-label mode: drop the "Automated implementation … by Vanguard" attribution line entirely. */
+  hideAttribution?: boolean;
 }
 
 /**
@@ -20,36 +22,30 @@ export interface ReviewRequestBodyOptions {
  * either path to `Part of #N` — a red test run must never ship as a silent `Closes`.
  */
 export function reviewRequestBody(taskId: string, opts: ReviewRequestBodyOptions = {}): string {
-  const base = `Automated implementation of ${taskId} by Vanguard.`;
   const { conformance, manifest, verificationFailed } = opts;
+  // White-label mode drops the attribution line; `join` then omits it (and its blank separator).
+  const base = opts.hideAttribution === true ? undefined : `Automated implementation of ${taskId} by Vanguard.`;
+  const join = (...parts: (string | undefined)[]): string =>
+    parts.filter((p): p is string => p !== undefined && p !== '').join('\n\n');
 
   if (conformance === undefined || !conformance.checked || manifest === undefined) {
-    if (verificationFailed === true) return [`Part of ${taskId}`, '', base].join('\n');
-    return opts.closeIssueOnMerge ? `Closes ${taskId}\n\n${base}` : base;
+    if (verificationFailed === true) return join(`Part of ${taskId}`, base);
+    return opts.closeIssueOnMerge ? join(`Closes ${taskId}`, base) : (base ?? '');
   }
 
   const checklist = renderScopeChecklist(manifest, conformance);
   if (conformance.pass && verificationFailed !== true) {
-    return [`Closes ${taskId}`, '', base, '', '## Spec conformance', '', checklist].join('\n');
+    return join(`Closes ${taskId}`, base, '## Spec conformance', checklist);
   }
   const gapDetail = conformance.pass
     ? 'Spec conformance passed, but verification (typecheck/tests) is currently failing.'
     : renderConformanceFeedback(conformance);
-  return [
+  return join(
     `Part of ${taskId}`,
-    '',
     base,
-    '',
     '## Spec conformance (partial delivery)',
-    '',
     'This PR does not cover the full spec. Deferred sections are unchecked below.',
-    '',
     checklist,
-    '',
-    '<details><summary>Conformance gap detail</summary>',
-    '',
-    gapDetail,
-    '',
-    '</details>',
-  ].join('\n');
+    ['<details><summary>Conformance gap detail</summary>', '', gapDetail, '', '</details>'].join('\n'),
+  );
 }
