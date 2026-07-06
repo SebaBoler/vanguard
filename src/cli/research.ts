@@ -25,7 +25,13 @@ export async function researchCommand(cmd: ResearchCommand, deps: ResearchComman
   const repoSlug = resolveRepoSlug(cmd.issueRef, cmd.repoSlug);
 
   const runWith = async (researcher: Researcher): Promise<void> => {
-    const result = await runResearch(cmd.issueRef, { repoSlug, researcher, webAccess: cmd.webAccess ?? false, log });
+    const result = await runResearch(cmd.issueRef, {
+      repoSlug,
+      researcher,
+      webAccess: cmd.webAccess ?? false,
+      whiteLabel: cmd.commitAuthor !== undefined,
+      log,
+    });
     log(`research ${cmd.issueRef}: iteration ${result.iteration} posted`);
   };
 

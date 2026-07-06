@@ -5,6 +5,8 @@ import type { GhRunner } from '../tasks/github.js';
 import type { Task, TaskComment } from '../tasks/fetcher.js';
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 const RESEARCH_MARKER = 'vanguard-research';
+/** Neutral marker used in white-label mode so the comment source carries no "vanguard" token. */
+const WHITE_LABEL_RESEARCH_MARKER = 'research-iter';
 
 export type Researcher = (prompt: string) => Promise<string>;
 
@@ -12,6 +14,8 @@ export interface ResearchDeps {
   repoSlug: string;
   researcher: Researcher;
   webAccess?: boolean;
+  /** White-label: drop "Vanguard" from the heading and use the neutral marker. Set via --commit-author. */
+  whiteLabel?: boolean;
   gh?: GhRunner;
   log?: (line: string) => void;
 }
@@ -23,7 +27,8 @@ export interface ResearchResult {
 }
 
 export function isResearchComment(comment: TaskComment): boolean {
-  return comment.body.includes(`<!-- ${RESEARCH_MARKER}:`);
+  // Match either marker so iteration/watermark logic works across default and white-label comments.
+  return comment.body.includes(`<!-- ${RESEARCH_MARKER}:`) || comment.body.includes(`<!-- ${WHITE_LABEL_RESEARCH_MARKER}:`);
 }
 
 export function priorResearchFindings(task: Task): string[] {
@@ -131,15 +136,17 @@ export function buildResearchPrompt(
  */
 export function formatResearchComment(
   agentText: string,
-  opts: { webAccess: boolean; iteration: number },
+  opts: { webAccess: boolean; iteration: number; whiteLabel?: boolean },
 ): string {
-  const { webAccess, iteration } = opts;
+  const { webAccess, iteration, whiteLabel } = opts;
   const body = agentText.replace(PROMISE_RE, '').trim();
   const modeLabel = webAccess ? 'web research' : 'model-knowledge only (no web egress)';
-  const heading = `## Vanguard Research (iteration ${iteration})`;
+  // White-label drops "Vanguard" from the visible heading and uses a neutral hidden marker.
+  const heading = whiteLabel === true ? `## Research (iteration ${iteration})` : `## Vanguard Research (iteration ${iteration})`;
   const modeLine = `_Mode: ${modeLabel}_`;
   const content = body === '' ? 'No findings produced.' : body;
-  const marker = `<!-- ${RESEARCH_MARKER}: ${iteration} -->`;
+  const markerName = whiteLabel === true ? WHITE_LABEL_RESEARCH_MARKER : RESEARCH_MARKER;
+  const marker = `<!-- ${markerName}: ${iteration} -->`;
   return `${heading}\n\n${modeLine}\n\n${content}\n\n${marker}`;
 }
 
@@ -177,7 +184,7 @@ export async function runResearch(issueRef: string, deps: ResearchDeps): Promise
     logR('agent → researching');
     const agentText = await deps.researcher(prompt);
 
-    const commentBody = formatResearchComment(agentText, { webAccess, iteration });
+    const commentBody = formatResearchComment(agentText, { webAccess, iteration, whiteLabel: deps.whiteLabel === true });
 
     // Post comment BEFORE declaiming — so a crash between the two leaves the issue claimed (retry-safe).
     logR('posting findings');
