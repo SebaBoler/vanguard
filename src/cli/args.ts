@@ -135,6 +135,8 @@ export type Command =
       conformanceModel?: string;
       /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
       commitAuthor?: { name: string; email: string };
+      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
+      plan?: boolean;
     }
   | {
       kind: 'watch';
@@ -176,6 +178,8 @@ export type Command =
       conformanceModel?: string;
       /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
       commitAuthor?: { name: string; email: string };
+      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
+      plan?: boolean;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -376,6 +380,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'conformance-model': { type: 'string' },
         // git author for the commit (run + watch); default `Vanguard <vanguard@local>`
         'commit-author': { type: 'string' },
+        // run a dedicated opus planning stage before implement/review (run + watch)
+        plan: { type: 'boolean' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -658,6 +664,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values.conformance === true ? { conformance: true } : {}),
       ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(values.plan === true ? { plan: true } : {}),
     };
   }
 
@@ -772,6 +779,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(values.plan === true ? { plan: true } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -856,6 +864,7 @@ Commands:
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
     --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -924,6 +933,7 @@ Commands:
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
     --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
