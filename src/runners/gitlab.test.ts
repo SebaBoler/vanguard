@@ -184,8 +184,12 @@ describe('gitlabAdapter', () => {
 describe('gitlabDepsFromEnv', () => {
   const prev = { oat: process.env.CLAUDE_CODE_OAUTH_TOKEN, key: process.env.ANTHROPIC_API_KEY };
   afterEach(() => {
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = prev.oat;
-    process.env.ANTHROPIC_API_KEY = prev.key;
+    // Restore by delete-if-was-unset: assigning `undefined` coerces to the string "undefined",
+    // which authFromEnv would accept as a bogus token and flake later missing-auth tests.
+    if (prev.oat === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    else process.env.CLAUDE_CODE_OAUTH_TOKEN = prev.oat;
+    if (prev.key === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = prev.key;
   });
 
   it('populates auth from the subscription token (so run --gitlab injects it into the sandbox)', async () => {
