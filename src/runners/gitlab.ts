@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { agentAuthFromEnv } from '../agents/auth.js';
 import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
@@ -125,7 +126,14 @@ export async function gitlabDepsFromEnv(
     resolvedProject = parseGitlabProjectFromRemote(remote);
     if (resolvedProject === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
   }
+  // Resolve Anthropic auth here (mirrors githubDepsFromEnv). Without it deps.auth is undefined and
+  // runSourcedIssue injects no token into the sandbox — `run --gitlab` agents fail "Not logged in".
+  const auth = agentAuthFromEnv({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+  });
   return {
+    ...(auth !== undefined ? { auth } : {}),
     repoPath,
     project: resolvedProject,
     ...(provider !== undefined ? { provider } : {}),

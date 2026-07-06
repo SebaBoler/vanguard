@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { parseGitlabProjectFromRemote, runGitlabIssue, gitlabAdapter } from './gitlab.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { parseGitlabProjectFromRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
 import type { RunGitlabIssueDeps } from './gitlab.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
@@ -178,5 +178,21 @@ describe('gitlabAdapter', () => {
     const adapter = gitlabAdapter(makeDeps(), glab);
     await adapter.linkPr('group/project#5', { id: 'group/project#5', title: 't', description: '', labels: [], children: [], comments: [] }, 'https://gitlab.com/group/project/-/merge_requests/9');
     expect(calls.some((c) => c.join(' ').includes('opened an MR'))).toBe(true);
+  });
+});
+
+describe('gitlabDepsFromEnv', () => {
+  const prev = { oat: process.env.CLAUDE_CODE_OAUTH_TOKEN, key: process.env.ANTHROPIC_API_KEY };
+  afterEach(() => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = prev.oat;
+    process.env.ANTHROPIC_API_KEY = prev.key;
+  });
+
+  it('populates auth from the subscription token (so run --gitlab injects it into the sandbox)', async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    delete process.env.ANTHROPIC_API_KEY;
+    const deps = await gitlabDepsFromEnv('/repo', 'group/project');
+    expect(deps.auth).toEqual({ mode: 'subscription', token: 'sk-ant-oat-test' });
+    expect(deps.project).toBe('group/project');
   });
 });
