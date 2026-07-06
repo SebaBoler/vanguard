@@ -8,8 +8,16 @@ export interface Worktree {
   branch: string;
 }
 
+/**
+ * Branch prefix for every Vanguard run. Conventional-Branch compliant (`<type>/<description>`, lowercase,
+ * hyphens): the type is `chore` and `vanguard-` marks the namespace so `gc` reaps only Vanguard branches,
+ * not humans' `chore/*`. A plain `vanguard/` prefix is rejected by repos that enforce Conventional Branch
+ * (the type must be one of feat/fix/bugfix/hotfix/release/chore/refactor/docs/test/ci).
+ */
+export const VANGUARD_BRANCH_PREFIX = 'chore/vanguard-';
+
 export interface CreateOptions {
-  /** Reuse an existing vanguard/<taskId>-* branch instead of minting a new run id. */
+  /** Reuse an existing chore/vanguard-<taskId>-* branch instead of minting a new run id. */
   reuse?: boolean;
 }
 
@@ -46,9 +54,9 @@ export class WorktreeManager {
       if (existing) return existing;
     }
     // Append a unique run id: disposeContext removes the worktree but not the branch, and a prior
-    // run also leaves a remote branch, so reusing `vanguard/<taskId>` collides on re-run.
+    // run also leaves a remote branch, so reusing `chore/vanguard-<taskId>` collides on re-run.
     const name = `${taskId}-${this.newRunId()}`;
-    const branch = `vanguard/${name}`;
+    const branch = `${VANGUARD_BRANCH_PREFIX}${name}`;
     const path = join(this.baseDir, name);
     try {
       await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
@@ -63,7 +71,7 @@ export class WorktreeManager {
     let wtOut: string;
     try {
       [{ stdout: branchOut }, { stdout: wtOut }] = await Promise.all([
-        execa('git', ['branch', '--list', `vanguard/${taskId}-*`], { cwd: this.repoPath }),
+        execa('git', ['branch', '--list', `${VANGUARD_BRANCH_PREFIX}${taskId}-*`], { cwd: this.repoPath }),
         execa('git', ['worktree', 'list', '--porcelain'], { cwd: this.repoPath }),
       ]);
     } catch (cause) {
@@ -77,7 +85,7 @@ export class WorktreeManager {
 
     // Use create()'s own path form: git reports a symlink-resolved path (e.g. /private/var on macOS),
     // which would not string-equal the join(baseDir, name) that create() returns.
-    const name = branch.slice('vanguard/'.length);
+    const name = branch.slice(VANGUARD_BRANCH_PREFIX.length);
     const path = join(this.baseDir, name);
 
     // If a live worktree already uses this branch, reuse it.
