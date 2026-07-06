@@ -223,7 +223,7 @@ describe('commitStage', () => {
     await writeFile(join(ctx.worktreePath, 'x.txt'), 'data');
     const out = await commitStage(ctx, { message: 'feat: agent work' });
     expect(out.committed).toBe(true);
-    expect(out.branch).toBe('vanguard/p2-r1');
+    expect(out.branch).toBe('chore/vanguard-p2-r1');
     expect(out.sha).toBeTruthy();
     expect(await wm.isDirty(ctx.worktreePath)).toBe(false);
     await disposeContext(ctx);
@@ -323,12 +323,12 @@ describe('publishForReview', () => {
     };
     const out = await publishForReview(ctx, { title: 'PR', body: 'b', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/42');
-    expect(out.branch).toBe('vanguard/pub-r1');
+    expect(out.branch).toBe('chore/vanguard-pub-r1');
     expect(calls[0]?.file).toBe('git');
     expect(calls[0]?.args).toContain('push');
     expect(calls[1]?.file).toBe('gh');
     expect(calls[1]?.args).toEqual(
-      expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub-r1', '--base', 'main', '--title', 'PR']),
+      expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
     );
     await disposeContext(ctx);
   });
@@ -393,6 +393,7 @@ describe('pushToExistingBranch', () => {
       '-c',
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
       'push',
+      '--no-verify',
       'origin',
       'HEAD:feature-branch',
     ]);
@@ -408,7 +409,7 @@ describe('pushToExistingBranch', () => {
       return '';
     };
     await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', runner });
-    expect(calls[0]?.args).toEqual(['push', 'origin', 'HEAD:feature-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
     await disposeContext(ctx);
   });
 

@@ -313,6 +313,7 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
       '-c',
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
       'push',
+      '--no-verify',
       'origin',
       'HEAD:feature-branch',
     ]);
@@ -353,7 +354,7 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
     });
 
     const pushCall = pushCalls.find((c) => c.file === 'git' && c.args[0] === 'push');
-    expect(pushCall?.args).toEqual(['push', 'origin', 'HEAD:feature-branch']);
+    expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
   });
 
   it('is never forwarded into the sandbox secrets map (host-only credential)', () => {
@@ -812,7 +813,7 @@ describe('pushToExistingBranch', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toEqual(['push', 'origin', 'HEAD:fix-auth']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:fix-auth']);
     expect(calls[0]?.cwd).toBe('/fake/worktree');
   });
 
@@ -835,6 +836,6 @@ describe('pushToExistingBranch', () => {
     } as unknown as import('../core/vanguard.js').RunContext;
 
     await pushToExistingBranch(fakeCtx, { prHeadRef: 'my-branch', remote: 'upstream', runner });
-    expect(calls[0]?.args).toEqual(['push', 'upstream', 'HEAD:my-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'upstream', 'HEAD:my-branch']);
   });
 });

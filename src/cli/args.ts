@@ -831,7 +831,7 @@ Commands:
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
-         remote vanguard/* branches.
+         remote chore/vanguard-* branches.
 
   watch options (trigger = state/label + label):
     --source <linear|github|project|gitlab>  Task source (default: linear)
@@ -917,7 +917,7 @@ Commands:
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
     --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude + Codex; Cursor stays direct)
-    --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
+    --reuse                Reuse an existing chore/vanguard-<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
@@ -1026,7 +1026,7 @@ Commands:
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
-    --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
+    --remote <owner/repo>  Also delete merged remote chore/vanguard-* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
 
