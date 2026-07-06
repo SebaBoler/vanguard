@@ -194,6 +194,25 @@ describe('runSourcedIssue', () => {
     expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], MR_URL]);
   });
 
+  it('white-label (--commit-author): no review comment, no issue link-back, clean PR body', async () => {
+    const order: string[] = [];
+    const adapter = fakeAdapter(order, STAGES);
+    await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', commitAuthor: { name: 'Sebastian Pietrzak', email: 's@p.co' } },
+      adapter,
+    );
+
+    // Vanguard-branded surfaces are suppressed.
+    expect(adapter.publishVerdict).not.toHaveBeenCalled();
+    expect(adapter.linkPr).not.toHaveBeenCalled();
+    expect(order).not.toContain('publishVerdict');
+    expect(order).not.toContain('linkPr');
+    // PR body is the plain Closes line — no "Vanguard", no "Proof of work" artifact.
+    const body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
+    expect(body).not.toMatch(/Vanguard|Proof of work/);
+  });
+
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
     commitStage.mockResolvedValueOnce({ committed: false, branch: 'b' });
     const order: string[] = [];

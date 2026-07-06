@@ -23,6 +23,13 @@ describe('reviewRequestBody', () => {
     expect(body).toBe('Automated implementation of LIN-42 by Vanguard.');
   });
 
+  it('drops the Vanguard attribution line under hideAttribution (white-label)', () => {
+    const taskId = 'owner/repo#42';
+    const body = reviewRequestBody(taskId, { closeIssueOnMerge: true, hideAttribution: true });
+    expect(body).toBe(`Closes ${taskId}`);
+    expect(body).not.toMatch(/Vanguard/);
+  });
+
   it('uses Closes with a full checklist when conformance passes', () => {
     const diff = [fileSection('src/foo.ts', ['export const foo = 1;']), fileSection('src/foo.test.ts', ['it("x", () => {});'])].join(
       '\n',

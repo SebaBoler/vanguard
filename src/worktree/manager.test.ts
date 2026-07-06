@@ -31,6 +31,12 @@ describe('WorktreeManager', () => {
     expect(await wm.isDirty(wt.path)).toBe(false);
   });
 
+  it('honours branchPrefix/branchId overrides (white-label mode)', async () => {
+    const wt = await wm.create('gh-owner-repo-904', 'main', { branchPrefix: 'feat/', branchId: '904' });
+    expect(wt.branch).toBe('feat/904-r1');
+    expect(wt.path.endsWith('904-r1')).toBe(true);
+  });
+
   it('gives the same task a fresh branch and path on each run (no collision)', async () => {
     const first = await wm.create('dup', 'main');
     const second = await wm.create('dup', 'main');

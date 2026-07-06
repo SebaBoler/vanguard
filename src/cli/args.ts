@@ -863,7 +863,7 @@ Commands:
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
@@ -932,7 +932,7 @@ Commands:
     --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
 
   review-pr options:
