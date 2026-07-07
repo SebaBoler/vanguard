@@ -1,14 +1,18 @@
-import { useState } from 'react';
-import { Chip, ThemeToggle, type Theme } from 'chunks-ui';
-import { Logo } from './Logo';
+import { useEffect, useState } from 'react';
+import { type Theme } from 'chunks-ui';
+import { open } from '@tauri-apps/plugin-dialog';
+import { Rail } from './Rail';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
+import { listProjects, addProject, removeProject } from './ipc';
+import type { Project } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
   document.documentElement.classList.toggle('dark', theme === 'dark');
 }
 
 export default function App() {
+  const [projects, setProjects] = useState<Project[]>([]);
   const [active, setActive] = useState<{ path: string; name: string } | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('vg-theme');
@@ -22,6 +26,42 @@ export default function App() {
     return initial;
   });
 
+  // Poll projects so rail running-dots + dashboard metrics stay live.
+  useEffect(() => {
+    let alive = true;
+    const tick = (): void => {
+      listProjects()
+        .then((p) => {
+          if (alive) setProjects(p);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const add = async (): Promise<void> => {
+    try {
+      const dir = await open({ directory: true, title: 'Add a repo (contains .vanguard/)' });
+      if (typeof dir === 'string') setProjects(await addProject(dir));
+    } catch {
+      // ignore dialog/add errors
+    }
+  };
+
+  const remove = async (path: string): Promise<void> => {
+    try {
+      setProjects(await removeProject(path));
+      setActive((a) => (a?.path === path ? null : a));
+    } catch {
+      // ignore
+    }
+  };
+
   const toggleTheme = (): void => {
     const next: Theme = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
@@ -30,20 +70,21 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-background/80 px-4 py-2.5 backdrop-blur">
-        <Logo className="size-5 text-primary" />
-        <span className="font-semibold">Vanguard</span>
-        <Chip color="secondary" variant="outlined">Inspector</Chip>
-        <div className="ml-auto">
-          <ThemeToggle theme={theme} onClick={toggleTheme} />
-        </div>
-      </header>
-      <main className="mx-auto max-w-4xl p-4">
+    <div className="flex h-screen bg-background text-foreground">
+      <Rail
+        projects={projects}
+        activePath={active?.path ?? null}
+        onSelect={setActive}
+        onHome={() => setActive(null)}
+        onAdd={add}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+      <main className="flex-1 overflow-auto p-6">
         {active ? (
-          <Inspector project={active.path} name={active.name} onExit={() => setActive(null)} />
+          <Inspector key={active.path} project={active.path} name={active.name} onExit={() => setActive(null)} />
         ) : (
-          <Dashboard onOpen={setActive} />
+          <Dashboard projects={projects} onOpen={setActive} onAdd={add} onRemove={remove} />
         )}
       </main>
     </div>

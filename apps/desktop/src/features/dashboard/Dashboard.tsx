@@ -1,8 +1,5 @@
-import { useEffect, useState } from 'react';
 import { Button, Card, Chip, Empty } from 'chunks-ui';
-import { open } from '@tauri-apps/plugin-dialog';
 import { FolderPlus, LayoutGrid, X } from 'lucide-react';
-import { listProjects, addProject, removeProject } from '../../ipc';
 import type { Project } from '../../vanguard-output';
 
 function relTime(iso?: string): string | null {
@@ -25,48 +22,17 @@ function Stat({ label, value, accent }: { label: string; value: string | number;
   );
 }
 
-export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string }) => void }) {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  // Poll so running counts + metrics stay live. ponytail: re-aggregates every project's runs
-  // each tick — fine for a handful of projects; cache/watch if the list grows large.
-  useEffect(() => {
-    let alive = true;
-    const tick = (): void => {
-      listProjects()
-        .then((p) => {
-          if (alive) setProjects(p);
-        })
-        .catch(() => {});
-    };
-    tick();
-    const id = setInterval(tick, 5000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  const add = async (): Promise<void> => {
-    setError(null);
-    try {
-      const dir = await open({ directory: true, title: 'Add a repo (contains .vanguard/)' });
-      if (typeof dir === 'string') setProjects(await addProject(dir));
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
-  const remove = async (path: string): Promise<void> => {
-    setError(null);
-    try {
-      setProjects(await removeProject(path));
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
+export function Dashboard({
+  projects,
+  onOpen,
+  onAdd,
+  onRemove,
+}: {
+  projects: Project[];
+  onOpen: (p: { path: string; name: string }) => void;
+  onAdd: () => void;
+  onRemove: (path: string) => void;
+}) {
   const totals = {
     projects: projects.length,
     running: projects.reduce((n, p) => n + p.runningCount, 0),
@@ -76,19 +42,13 @@ export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string
   };
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex items-center gap-3">
         <h2 className="font-semibold">Projects</h2>
-        <Button className="ml-auto" onClick={add} startIcon={<FolderPlus className="size-4" />}>
+        <Button className="ml-auto" onClick={onAdd} startIcon={<FolderPlus className="size-4" />}>
           Add project
         </Button>
       </div>
-
-      {error && (
-        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      )}
 
       {projects.length === 0 ? (
         <Empty.Root>
@@ -100,7 +60,7 @@ export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string
             Add a repo containing <code>.vanguard/runs</code> to track its runs and spend.
           </Empty.Description>
           <Empty.Actions>
-            <Button onClick={add} startIcon={<FolderPlus className="size-4" />}>
+            <Button onClick={onAdd} startIcon={<FolderPlus className="size-4" />}>
               Add project
             </Button>
           </Empty.Actions>
@@ -115,7 +75,7 @@ export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string
             <Stat label="Spend" value={`$${totals.spend.toFixed(2)}`} />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => {
               const last = relTime(p.lastRun);
               return (
@@ -131,7 +91,7 @@ export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string
                         {p.runningCount > 0 && (
                           <span className="flex items-center gap-1 text-xs font-normal text-green-600 dark:text-green-400">
                             <span className="size-2 animate-pulse rounded-full bg-green-500" />
-                            {p.runningCount} running
+                            {p.runningCount}
                           </span>
                         )}
                       </Card.Title>
@@ -142,7 +102,7 @@ export function Dashboard({ onOpen }: { onOpen: (p: { path: string; name: string
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void remove(p.path);
+                        onRemove(p.path);
                       }}
                       aria-label={`Remove ${p.name}`}
                       className="text-muted-foreground transition-colors hover:text-destructive"
