@@ -17,6 +17,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "chunks-ui": "^0.1.4",
     "class-variance-authority": "^0.7.1",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^1.23.0",
     "motion": "^12.42.2",
     "react": "^19.1.0",

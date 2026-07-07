@@ -1,5 +1,5 @@
 import { Card, Chip } from 'chunks-ui';
-import { Markdown } from '../../components/Markdown';
+import { AgentText } from '../../components/AgentText';
 import type { StageDetail } from '../../vanguard-output';
 
 export function StageCard({ stage }: { stage: StageDetail }) {
@@ -27,7 +27,7 @@ export function StageCard({ stage }: { stage: StageDetail }) {
             <span key={i}>{m}</span>
           ))}
         </div>
-        {r.finalText && <Markdown>{r.finalText}</Markdown>}
+        {r.finalText && <AgentText>{r.finalText}</AgentText>}
       </Card.Content>
     </Card.Root>
   );

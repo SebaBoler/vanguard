@@ -14,6 +14,11 @@ body {
   @apply bg-background text-foreground antialiased;
 }
 
+/* Let the CodeBlock's own dark <pre> provide the background; keep hljs token colors. */
+.hljs {
+  background: transparent;
+}
+
 /* Subtle scrollbars (match the app chrome instead of the OS default). */
 *::-webkit-scrollbar {
   width: 8px;
