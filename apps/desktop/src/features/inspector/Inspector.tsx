@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from 'chunks-ui';
 import { listen } from '@tauri-apps/api/event';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
-import { listRuns, readRun, watchProject, unwatchProject } from '../../ipc';
+import { listRuns, listActive, readRun, watchProject, unwatchProject } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
-import type { RunSummary, RunDetail as RunDetailT } from '../../vanguard-output';
+import { RunningRuns } from './RunningRuns';
+import { LiveRun } from './LiveRun';
+import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
 export function Inspector({
   project,
@@ -17,12 +19,17 @@ export function Inspector({
   onExit: () => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [active, setActive] = useState<ActiveRun[]>([]);
   const [detail, setDetail] = useState<RunDetailT | null>(null);
+  const [liveRun, setLiveRun] = useState<ActiveRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [live, setLive] = useState(false);
-  // The currently-open run, tracked in a ref so the watch listener re-reads the right one
-  // without re-subscribing on every detail change.
+  const [watching, setWatching] = useState(false);
+  // Bumped on each file-change event so the open LiveRun re-reads its session.
+  const [tick, setTick] = useState(0);
+
+  // Track the open completed run in a ref so the change listener re-reads the right one
+  // without re-subscribing on every state change.
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
     openRef.current = detail ? { taskId: detail.taskId, timestamp: detail.timestamp } : null;
@@ -31,9 +38,12 @@ export function Inspector({
   const load = async (): Promise<void> => {
     setError(null);
     setDetail(null);
+    setLiveRun(null);
     setLoading(true);
     try {
-      setRuns(await listRuns(project));
+      const [r, a] = await Promise.all([listRuns(project), listActive(project)]);
+      setRuns(r);
+      setActive(a);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -44,7 +54,10 @@ export function Inspector({
   // Silent refresh on file changes — keep the current view, no spinner.
   const refresh = async (): Promise<void> => {
     try {
-      setRuns(await listRuns(project));
+      const [r, a] = await Promise.all([listRuns(project), listActive(project)]);
+      setRuns(r);
+      setActive(a);
+      setTick((t) => t + 1); // re-read the open LiveRun's session
       const o = openRef.current;
       if (o) setDetail(await readRun(project, o.taskId, o.timestamp));
     } catch {
@@ -55,13 +68,13 @@ export function Inspector({
   useEffect(() => {
     void load();
     void watchProject(project)
-      .then(() => setLive(true))
-      .catch(() => setLive(false));
+      .then(() => setWatching(true))
+      .catch(() => setWatching(false));
     const unlisten = listen<string>('vanguard:changed', (e) => {
       if (e.payload === project) void refresh();
     });
     return () => {
-      setLive(false);
+      setWatching(false);
       void unwatchProject(project);
       void unlisten.then((f) => f());
     };
@@ -84,7 +97,7 @@ export function Inspector({
           Projects
         </Button>
         <h2 className="font-semibold">{name}</h2>
-        {live && (
+        {watching && (
           <span
             className="flex items-center gap-1 text-xs text-muted-foreground"
             title="Watching .vanguard for changes"
@@ -93,10 +106,7 @@ export function Inspector({
             live
           </span>
         )}
-        <span
-          className="ml-auto min-w-0 max-w-[20rem] truncate text-sm text-muted-foreground"
-          title={project}
-        >
+        <span className="ml-auto min-w-0 max-w-[20rem] truncate text-sm text-muted-foreground" title={project}>
           {project}
         </span>
         <Button
@@ -109,15 +119,22 @@ export function Inspector({
           Reload
         </Button>
       </div>
+
       {error && (
         <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       )}
+
       {detail ? (
         <RunDetail detail={detail} onBack={() => setDetail(null)} />
+      ) : liveRun ? (
+        <LiveRun active={liveRun} refreshKey={tick} onBack={() => setLiveRun(null)} />
       ) : (
-        <RunList runs={runs} onSelect={open} />
+        <>
+          <RunningRuns active={active} onOpen={setLiveRun} />
+          <RunList runs={runs} onSelect={open} />
+        </>
       )}
     </div>
   );

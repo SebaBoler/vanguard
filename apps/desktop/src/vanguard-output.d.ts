@@ -31,6 +31,17 @@ export interface Proof {
   outputTail: string;
 }
 
+export interface ActiveRun {
+  taskId: string;
+  sessionFile: string;
+  lastActivityMs: number;
+}
+
+export interface TranscriptEntry {
+  role: 'assistant' | 'tool';
+  text: string;
+}
+
 export interface Project {
   path: string;
   name: string;

@@ -1,3 +1,4 @@
+mod active;
 mod projects;
 mod runs;
 mod watch;
@@ -42,6 +43,19 @@ async fn remove_project(
 }
 
 #[tauri::command]
+async fn list_active(repo_path: String) -> Result<Vec<active::ActiveRun>, String> {
+    active::list_active(Path::new(&repo_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn read_session(session_file: String) -> Result<Vec<active::TranscriptEntry>, String> {
+    if !active::is_session_path(&session_file) {
+        return Err("invalid session path".into());
+    }
+    active::read_session(Path::new(&session_file)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn watch_project(
     app: tauri::AppHandle,
     state: tauri::State<'_, watch::WatchState>,
@@ -70,6 +84,8 @@ pub fn run() {
             list_projects,
             add_project,
             remove_project,
+            list_active,
+            read_session,
             watch_project,
             unwatch_project
         ])
