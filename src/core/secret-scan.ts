@@ -112,9 +112,18 @@ const ADDED_FILE_HEADER = /^\+\+\+ b\/(.+)$/;
 // are the #1 false-positive source in every regex secret scanner. Exclude them from the publish
 // gate — the agent never holds real secrets anyway (nonce/tmpfs/proxy), so a real leak here is
 // implausible, and GitHub secret scanning / push protection is the real backstop for prod files.
-const TEST_PATH = /\.(test|fixture)\.[cm]?[jt]sx?$/i;
+// One rule per naming convention (mirrors SECRET_PATTERNS above) so each is independently testable
+// and adding a new language's convention never grows the others. The `tests/`/`__tests__/` directory
+// rule is intentionally broad — it also covers non-test helper modules that sit alongside tests
+// (e.g. tests/helpers.py) and carry the same fixture secrets, and is the one that matched the live
+// incident path (apps/.../tests/...).
+const TEST_PATH_RULES: readonly RegExp[] = [
+  /\.(?:test|fixture)\.[cm]?[jt]sx?$/i, // JS/TS: *.test.ts, *.fixture.tsx (+ cjs/mjs variants)
+  /(?:^|\/)(?:test_[^/]*|[^/]*_test|conftest)\.py$/i, // Python: test_*.py, *_test.py, conftest.py
+  /(?:^|\/)(?:tests|__tests__)\//i, // any path under a tests/ or __tests__/ directory
+];
 export function isTestPath(file: string): boolean {
-  return TEST_PATH.test(file);
+  return TEST_PATH_RULES.some((re) => re.test(file));
 }
 
 /**
@@ -125,14 +134,16 @@ export function isTestPath(file: string): boolean {
 export function scanForSecrets(diff: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
   let currentFile = '(unknown)';
+  let currentFileIsTest = false;
   for (const line of diff.split('\n')) {
     if (line.startsWith('+++ ')) {
       const m = ADDED_FILE_HEADER.exec(line);
       if (m !== null && m[1] !== undefined) currentFile = m[1];
+      currentFileIsTest = isTestPath(currentFile);
       continue;
     }
     if (!line.startsWith('+')) continue;
-    if (isTestPath(currentFile)) continue;
+    if (currentFileIsTest) continue;
     const added = line.slice(1);
     const matched = SECRET_PATTERNS.filter((pattern) => {
       const refine = pattern.refine ?? (() => true);
