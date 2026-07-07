@@ -27,9 +27,15 @@ pub fn fetch_spec(repo_path: &Path, task_id: &str) -> Result<String, String> {
     let lower = task_id.to_lowercase();
     if let Some(rest) = lower.strip_prefix("linear-") {
         let id = rest.to_uppercase(); // dev-639 -> DEV-639
+        // Guard against argv flag-smuggling: a Linear id is TEAM-NNN (alnum + a dash), never
+        // flag-like. Reject anything that could be read as an option before it reaches the CLI.
+        if id.starts_with('-') || !id.contains('-') || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(format!("Invalid Linear id in task `{task_id}`."));
+        }
         let json = run_cli(repo_path, "linear", &["issue", "view", &id, "--json"])?;
         return title_body(&json, "description");
     }
+    // All-digits: cannot be flag-like, so it's safe to pass as a positional.
     if !task_id.is_empty() && task_id.chars().all(|c| c.is_ascii_digit()) {
         let json = run_cli(repo_path, "gh", &["issue", "view", task_id, "--json", "title,body"])?;
         return title_body(&json, "body");
@@ -50,6 +56,13 @@ mod tests {
         let out = title_body(json, "description").unwrap();
         assert!(out.starts_with("# Fix the widget"));
         assert!(out.contains("It is broken."));
+    }
+
+    #[test]
+    fn rejects_flag_smuggling_linear_id() {
+        // `linear--version` -> id `-VERSION` (flag-like) must be rejected before shelling out.
+        let err = fetch_spec(&PathBuf::from("/nonexistent"), "linear--version").unwrap_err();
+        assert!(err.contains("Invalid Linear id"));
     }
 
     #[test]
