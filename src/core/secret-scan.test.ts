@@ -144,6 +144,58 @@ describe('scanForSecrets', () => {
   });
 });
 
+describe('python test-path exclusion', () => {
+  it('skips a test_*.py file (pytest prefix convention)', () => {
+    const diff = diffOf([
+      {
+        path: 'apps/prefect_flows/tests/test_export_exceptions.py',
+        lines: [`+    assert posted["headers"]["Authorization"] == "Bearer ${FAKE_JWT}"`],
+      },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips a *_test.py file (pytest suffix convention)', () => {
+    const diff = diffOf([{ path: 'apps/svc/foo_test.py', lines: [`+key = "${FAKE_SK_KEY}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips conftest.py', () => {
+    const diff = diffOf([{ path: 'apps/x/conftest.py', lines: [`+jwt = "${FAKE_JWT}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips non-test helper modules under a tests/ directory (language-agnostic dir rule)', () => {
+    const diff = diffOf([{ path: 'apps/x/tests/helpers.py', lines: [`+key = "${FAKE_SK_KEY}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('still flags the same secret in a non-test .py source file', () => {
+    const diff = diffOf([{ path: 'src/service.py', lines: [`+jwt = "${FAKE_JWT}"`] }]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/service.py', patternName: 'jwt' }),
+    );
+  });
+
+  it('does NOT over-match files whose names merely contain "test"/"latest"', () => {
+    const diff = diffOf([
+      { path: 'contest.py', lines: [`+jwt = "${FAKE_JWT}"`] },
+      { path: 'latest_data.py', lines: [`+key = "${FAKE_SK_KEY}"`] },
+    ]);
+    const findings = scanForSecrets(diff);
+    expect(findings.some((f) => f.file === 'contest.py')).toBe(true);
+    expect(findings.some((f) => f.file === 'latest_data.py')).toBe(true);
+  });
+
+  it('is case-insensitive for the new Python branches', () => {
+    const diff = diffOf([
+      { path: 'apps/x/TEST_FOO.PY', lines: [`+jwt = "${FAKE_JWT}"`] },
+      { path: 'apps/x/Conftest.py', lines: [`+key = "${FAKE_SK_KEY}"`] },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+});
+
 describe('assignment refine: identifier chains', () => {
   it('does not flag a dotted code reference assigned to an auth-ish name', () => {
     const diff = [
