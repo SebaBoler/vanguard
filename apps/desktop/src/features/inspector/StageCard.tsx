@@ -1,20 +1,33 @@
-import { Card } from '../../components/atoms/Card';
+import { Card, Chip } from 'chunks-ui';
 import type { StageDetail } from '../../vanguard-output';
 
 export function StageCard({ stage }: { stage: StageDetail }) {
   const r = stage.record;
   const seconds = r.durationMs ? Math.round(r.durationMs / 1000) : 0;
+  const meta = [
+    `${r.turns} turns`,
+    `${seconds}s`,
+    r.usage ? `${r.usage.inputTokens}/${r.usage.outputTokens} tok` : null,
+    r.costUsd != null ? `$${r.costUsd.toFixed(2)}` : null,
+    r.model ?? 'unknown model',
+  ].filter((x): x is string => x !== null);
+
   return (
-    <Card>
-      <div className="font-semibold">
-        {r.stage ?? 'run'} · {r.exitReason}
-      </div>
-      <div className="text-sm opacity-80">
-        {r.turns} turns · {seconds}s
-        {r.usage ? ` · ${r.usage.inputTokens}/${r.usage.outputTokens} tok` : ''}
-        {r.costUsd != null ? ` · $${r.costUsd.toFixed(2)}` : ''} · {r.model ?? 'unknown model'}
-      </div>
-      <p className="mt-2 text-sm whitespace-pre-wrap">{r.finalText}</p>
-    </Card>
+    <Card.Root>
+      <Card.Header className="flex flex-row items-center justify-between gap-2 pb-2">
+        <Card.Title className="text-sm">{r.stage ?? 'run'}</Card.Title>
+        <Chip variant="outlined" color={r.completed ? 'success' : 'warning'}>
+          {r.exitReason}
+        </Chip>
+      </Card.Header>
+      <Card.Content className="pt-0">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+          {meta.map((m, i) => (
+            <span key={i}>{m}</span>
+          ))}
+        </div>
+        {r.finalText && <p className="mt-2 whitespace-pre-wrap text-sm">{r.finalText}</p>}
+      </Card.Content>
+    </Card.Root>
   );
 }

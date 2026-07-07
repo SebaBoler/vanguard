@@ -16,6 +16,7 @@
     "@tauri-apps/api": "^2",
     "chunks-ui": "^0.1.4",
     "class-variance-authority": "^0.7.1",
+    "lucide-react": "^1.23.0",
     "motion": "^12.42.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

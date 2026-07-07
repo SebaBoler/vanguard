@@ -1,19 +1,27 @@
+import { Card, Chip } from 'chunks-ui';
 import type { Proof } from '../../vanguard-output';
 
 export function ProofGate({ proof }: { proof?: Proof }) {
   if (!proof) {
-    return <div className="text-sm opacity-60">No proof-of-work recorded.</div>;
+    return <div className="text-sm text-muted-foreground">No proof-of-work recorded.</div>;
   }
   const ok = proof.passed;
   return (
-    <div className={`pl-3 border-l-4 ${ok ? 'border-green-500' : 'border-red-500'}`}>
-      <div className="font-semibold">Proof of work: {ok ? 'PASS' : 'FAIL'}</div>
-      <div className="text-sm">
-        command: <code>{proof.command}</code> · exit {proof.exitCode}
-      </div>
-      <pre className={`mt-2 text-xs whitespace-pre-wrap ${ok ? '' : 'text-red-600'}`}>
-        {proof.outputTail}
-      </pre>
-    </div>
+    <Card.Root className={ok ? undefined : 'border-destructive/40'}>
+      <Card.Header className="flex flex-row items-center justify-between gap-2 pb-3">
+        <Card.Title className="text-base">Proof of work</Card.Title>
+        <Chip color={ok ? 'success' : 'destructive'}>{ok ? 'passed' : 'failed'}</Chip>
+      </Card.Header>
+      <Card.Content className="pt-0">
+        <div className="text-sm text-muted-foreground">
+          <code className="rounded bg-muted px-1 py-0.5">{proof.command}</code> · exit {proof.exitCode}
+        </div>
+        <pre
+          className={`mt-3 max-h-64 overflow-auto rounded bg-muted p-3 text-xs ${ok ? '' : 'text-destructive'}`}
+        >
+          {proof.outputTail}
+        </pre>
+      </Card.Content>
+    </Card.Root>
   );
 }
