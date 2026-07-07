@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { type Theme } from 'chunks-ui';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Rail } from './Rail';
+import { TopBar } from './TopBar';
+import { Rail, type Screen } from './Rail';
 import { CommandPalette } from './CommandPalette';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
-import { listProjects, addProject, removeProject } from './ipc';
-import type { Project } from './vanguard-output';
+import { listProjects, addProject, removeProject, listActive } from './ipc';
+import type { Project, ActiveRun } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
   document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -14,7 +15,10 @@ function applyTheme(theme: Theme): void {
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [active, setActive] = useState<{ path: string; name: string } | null>(null);
+  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [screen, setScreen] = useState<Screen>('dashboard');
+  const [railRunning, setRailRunning] = useState<ActiveRun[]>([]);
+  const [focusRunning, setFocusRunning] = useState<ActiveRun | null>(null);
   const [palette, setPalette] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('vg-theme');
@@ -28,7 +32,6 @@ export default function App() {
     return initial;
   });
 
-  // Poll projects so rail running-dots + dashboard metrics stay live.
   useEffect(() => {
     let alive = true;
     const tick = (): void => {
@@ -46,6 +49,33 @@ export default function App() {
     };
   }, []);
 
+  // Default the current project to the first once projects load.
+  useEffect(() => {
+    if (!activeProject && projects.length) setActiveProject(projects[0].path);
+  }, [projects, activeProject]);
+
+  // Poll the current project's in-flight runs for the rail's Running section.
+  useEffect(() => {
+    if (!activeProject) {
+      setRailRunning([]);
+      return;
+    }
+    let alive = true;
+    const tick = (): void => {
+      listActive(activeProject)
+        .then((a) => {
+          if (alive) setRailRunning(a);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [activeProject]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -62,16 +92,16 @@ export default function App() {
       const dir = await open({ directory: true, title: 'Add a repo (contains .vanguard/)' });
       if (typeof dir === 'string') setProjects(await addProject(dir));
     } catch {
-      // ignore dialog/add errors
+      /* ignore */
     }
   };
 
   const remove = async (path: string): Promise<void> => {
     try {
       setProjects(await removeProject(path));
-      setActive((a) => (a?.path === path ? null : a));
+      if (activeProject === path) setActiveProject(null);
     } catch {
-      // ignore
+      /* ignore */
     }
   };
 
@@ -82,30 +112,58 @@ export default function App() {
     localStorage.setItem('vg-theme', next);
   };
 
+  const enterProject = (path: string): void => {
+    setActiveProject(path);
+    setScreen('runs');
+  };
+
+  const active = projects.find((p) => p.path === activeProject) ?? null;
+  const showDashboard = screen === 'dashboard' || !active;
+
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <Rail
-        projects={projects}
-        activePath={active?.path ?? null}
-        onSelect={setActive}
-        onHome={() => setActive(null)}
-        onAdd={add}
-        onCommandK={() => setPalette(true)}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-      />
-      <main className="flex-1 overflow-auto p-6">
-        {active ? (
-          <Inspector key={active.path} project={active.path} name={active.name} onExit={() => setActive(null)} />
-        ) : (
-          <Dashboard projects={projects} onOpen={setActive} onAdd={add} onRemove={remove} />
-        )}
-      </main>
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <TopBar onCommandK={() => setPalette(true)} theme={theme} onToggleTheme={toggleTheme} />
+      <div className="flex min-h-0 flex-1">
+        <Rail
+          projects={projects}
+          activePath={activeProject}
+          screen={screen}
+          running={railRunning}
+          onProject={(path) => {
+            setActiveProject(path);
+            setScreen((s) => (s === 'dashboard' ? 'runs' : s));
+          }}
+          onScreen={setScreen}
+          onOpenRunning={(r) => {
+            setScreen('runs');
+            setFocusRunning(r);
+          }}
+        />
+        <main className="min-w-0 flex-1 overflow-auto p-6">
+          {showDashboard ? (
+            <Dashboard
+              projects={projects}
+              onOpen={(p) => enterProject(p.path)}
+              onAdd={add}
+              onRemove={remove}
+            />
+          ) : (
+            <Inspector
+              key={active.path}
+              project={active.path}
+              name={active.name}
+              screen={screen}
+              focusRunning={focusRunning}
+              onExit={() => setScreen('dashboard')}
+            />
+          )}
+        </main>
+      </div>
       {palette && (
         <CommandPalette
           projects={projects}
-          onOpenProject={setActive}
-          onHome={() => setActive(null)}
+          onOpenProject={(p) => enterProject(p.path)}
+          onHome={() => setScreen('dashboard')}
           onAddProject={add}
           onToggleTheme={toggleTheme}
           onClose={() => setPalette(false)}

@@ -30,10 +30,14 @@ const DEFAULT_CMD = 'vanguard run --github <issue> --provider zai --llm-proxy';
 export function Inspector({
   project,
   name,
+  screen,
+  focusRunning,
   onExit,
 }: {
   project: string;
   name: string;
+  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
+  focusRunning: ActiveRun | null;
   onExit: () => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -46,13 +50,24 @@ export function Inspector({
   const [tick, setTick] = useState(0);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
   const [showNewRun, setShowNewRun] = useState(false);
-  const [view, setView] = useState<'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings'>('runs');
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
     openRef.current = detail ? { taskId: detail.taskId, timestamp: detail.timestamp } : null;
   }, [detail]);
+
+  // Rail navigation drops any open drill-down.
+  useEffect(() => {
+    setDetail(null);
+    setLiveRun(null);
+    setTaskDetailId(null);
+  }, [screen]);
+
+  // The rail "Running" click opens that live run.
+  useEffect(() => {
+    if (focusRunning) setLiveRun(focusRunning);
+  }, [focusRunning]);
 
   const load = async (): Promise<void> => {
     setError(null);
@@ -147,6 +162,7 @@ export function Inspector({
 
   return (
     <div className="space-y-4">
+      {screen === 'runs' && (
       <div className="flex items-center gap-3">
         <Breadcrumb.Root>
           <Breadcrumb.List>
@@ -200,6 +216,7 @@ export function Inspector({
           </Button>
         </div>
       </div>
+      )}
 
       {error && (
         <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -245,30 +262,17 @@ export function Inspector({
         />
       ) : (
         <>
-          <div className="flex gap-1 border-b border-border pb-2">
-            {(['runs', 'board', 'fleet', 'remote', 'workflow', 'settings'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded px-2.5 py-1 text-xs capitalize transition-colors ${
-                  view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                {v === 'remote' ? 'Remote (CI)' : v}
-              </button>
-            ))}
-          </div>
-          {view === 'runs' && (
+          {screen === 'runs' && (
             <>
               <RunningRuns active={active} onOpen={setLiveRun} />
               <RunList runs={runs} onSelect={open} />
             </>
           )}
-          {view === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
-          {view === 'fleet' && <Fleet project={project} active={active} />}
-          {view === 'remote' && <RemoteRuns project={project} />}
-          {view === 'workflow' && <WorkflowEditor project={project} name={name} />}
-          {view === 'settings' && <Settings project={project} />}
+          {screen === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
+          {screen === 'fleet' && <Fleet project={project} active={active} />}
+          {screen === 'remote' && <RemoteRuns project={project} />}
+          {screen === 'workflow' && <WorkflowEditor project={project} name={name} />}
+          {screen === 'settings' && <Settings project={project} />}
         </>
       )}
     </div>
