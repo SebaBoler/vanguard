@@ -5,6 +5,7 @@ mod remote;
 mod runs;
 mod spawn;
 mod spec;
+mod tasks;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -75,6 +76,11 @@ async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, S
 }
 
 #[tauri::command]
+async fn list_tasks(repo_path: String) -> Result<Vec<tasks::Task>, String> {
+    tasks::list_tasks(Path::new(&repo_path))
+}
+
+#[tauri::command]
 async fn fetch_spec(repo_path: String, task_id: String) -> Result<String, String> {
     spec::fetch_spec(Path::new(&repo_path), &task_id)
 }
@@ -125,6 +131,7 @@ pub fn run() {
             read_app_config,
             write_app_config,
             list_remote_runs,
+            list_tasks,
             fetch_spec,
             spawn_run,
             kill_run,

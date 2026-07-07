@@ -18,6 +18,8 @@ import { LiveRun } from './LiveRun';
 import { RemoteRuns } from './RemoteRuns';
 import { Fleet } from '../fleet/Fleet';
 import { Settings } from '../settings/Settings';
+import { TaskBoard } from '../board/TaskBoard';
+import { TaskDetail } from '../board/TaskDetail';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -43,7 +45,8 @@ export function Inspector({
   const [tick, setTick] = useState(0);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
   const [showNewRun, setShowNewRun] = useState(false);
-  const [view, setView] = useState<'runs' | 'fleet' | 'remote' | 'settings'>('runs');
+  const [view, setView] = useState<'runs' | 'board' | 'fleet' | 'remote' | 'settings'>('runs');
+  const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -228,10 +231,21 @@ export function Inspector({
         <RunDetail detail={detail} project={project} />
       ) : liveRun ? (
         <LiveRun active={liveRun} refreshKey={tick} />
+      ) : taskDetailId ? (
+        <TaskDetail
+          project={project}
+          taskId={taskDetailId}
+          runs={runs}
+          onBack={() => setTaskDetailId(null)}
+          onNewRun={() => {
+            setTaskDetailId(null);
+            setShowNewRun(true);
+          }}
+        />
       ) : (
         <>
           <div className="flex gap-1 border-b border-border pb-2">
-            {(['runs', 'fleet', 'remote', 'settings'] as const).map((v) => (
+            {(['runs', 'board', 'fleet', 'remote', 'settings'] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -249,6 +263,7 @@ export function Inspector({
               <RunList runs={runs} onSelect={open} />
             </>
           )}
+          {view === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
           {view === 'fleet' && <Fleet project={project} active={active} />}
           {view === 'remote' && <RemoteRuns project={project} />}
           {view === 'settings' && <Settings project={project} />}

@@ -1,5 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RunSummary, RunDetail, Project, ActiveRun, SessionRead, RemoteRun, AppConfig } from './vanguard-output';
+import type {
+  RunSummary,
+  RunDetail,
+  Project,
+  ActiveRun,
+  SessionRead,
+  RemoteRun,
+  AppConfig,
+  Task,
+} from './vanguard-output';
 
 export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return invoke<RunSummary[]>('list_runs', { repoPath });
@@ -39,6 +48,10 @@ export function writeAppConfig(repoPath: string, config: AppConfig): Promise<voi
 
 export function listRemoteRuns(repoPath: string): Promise<RemoteRun[]> {
   return invoke<RemoteRun[]>('list_remote_runs', { repoPath });
+}
+
+export function listTasks(repoPath: string): Promise<Task[]> {
+  return invoke<Task[]>('list_tasks', { repoPath });
 }
 
 export function fetchSpec(repoPath: string, taskId: string): Promise<string> {

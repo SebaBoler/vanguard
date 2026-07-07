@@ -48,6 +48,13 @@ export interface SessionRead {
   outputTokens: number;
 }
 
+export interface Task {
+  id: string;
+  title: string;
+  column: string;
+  state: string;
+}
+
 export interface AppConfig {
   source?: string;
   label?: string;
