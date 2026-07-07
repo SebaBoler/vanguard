@@ -179,11 +179,14 @@ pub fn run() {
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "@tauri-apps/api": "^2",
-    "chunks-ui": "^1"
+    "chunks-ui": "^0.1.4",
+    "@base-ui/react": "^1.6.0",
+    "class-variance-authority": "^0.7.1",
+    "motion": "^12"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "@vitejs/plugin-react": "^6",
+    "@vitejs/plugin-react": "^5",
     "@tailwindcss/vite": "^4",
     "tailwindcss": "^4",
     "typescript": "~5.9.0",
@@ -199,7 +202,7 @@ pub fn run() {
 }
 ```
 
-> If `chunks-ui` is not published, replace the dependency with a link: `pnpm add link:../../../chunks-ui/packages/ui` (adjust depth to the local checkout) and re-run install.
+> `chunks-ui` (published, `0.1.4`) declares `motion`, `@base-ui/react`, and `class-variance-authority` as peers — they're listed above so `vite build` (rollup) can resolve chunks-ui's internal imports. (Vitest alone won't catch a missing peer if the dynamic import isn't triggered; the production build will.)
 
 - [ ] **Step 9: Create `apps/desktop/index.html`**
 
