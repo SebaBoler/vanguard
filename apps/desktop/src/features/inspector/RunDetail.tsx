@@ -1,18 +1,22 @@
+import { useState } from 'react';
 import { Tabs } from 'chunks-ui';
 import { ProofGate } from './ProofGate';
 import { StageCard } from './StageCard';
 import { DiffView } from './DiffView';
 import { TranscriptView } from './TranscriptView';
+import { SpecPane } from './SpecPane';
 import type { RunDetail as RunDetailT } from '../../vanguard-output';
 
-export function RunDetail({ detail }: { detail: RunDetailT }) {
+export function RunDetail({ detail, project }: { detail: RunDetailT; project: string }) {
+  const [tab, setTab] = useState('overview');
   const firstDiff = detail.stages.find((s) => s.diff)?.diff;
   const firstTranscript = detail.stages.find((s) => s.transcript)?.transcript;
 
   return (
-    <Tabs.Root defaultValue="overview">
+    <Tabs.Root value={tab} onValueChange={(v) => setTab(String(v))}>
       <Tabs.List>
         <Tabs.Tab value="overview">Overview</Tabs.Tab>
+        <Tabs.Tab value="spec">Spec</Tabs.Tab>
         <Tabs.Tab value="diff">Diff</Tabs.Tab>
         <Tabs.Tab value="transcript">Transcript</Tabs.Tab>
         <Tabs.Indicator />
@@ -25,6 +29,10 @@ export function RunDetail({ detail }: { detail: RunDetailT }) {
             <StageCard key={i} stage={s} />
           ))}
         </div>
+      </Tabs.Panel>
+
+      <Tabs.Panel value="spec" className="pt-4">
+        {tab === 'spec' && <SpecPane project={project} taskId={detail.taskId} />}
       </Tabs.Panel>
 
       <Tabs.Panel value="diff" className="pt-4">

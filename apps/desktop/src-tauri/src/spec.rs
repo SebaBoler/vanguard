@@ -1,0 +1,61 @@
+use std::path::Path;
+use std::process::Command;
+
+fn run_cli(cwd: &Path, bin: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new(bin)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .map_err(|e| format!("`{bin}` not available: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("`{bin}` failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn title_body(json: &str, body_key: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("");
+    let body = v.get(body_key).and_then(|b| b.as_str()).unwrap_or("");
+    Ok(format!("# {title}\n\n{body}").trim().to_string())
+}
+
+/// Best-effort fetch of a Task's source spec, inferring the Task Source from the task id:
+/// `linear-*` → Linear (`linear` CLI), all-numeric → GitHub (`gh` CLI). Runs in the repo dir so
+/// the runner detects the project; auth is the operator's env. Falls back to a clear error.
+pub fn fetch_spec(repo_path: &Path, task_id: &str) -> Result<String, String> {
+    let lower = task_id.to_lowercase();
+    if let Some(rest) = lower.strip_prefix("linear-") {
+        let id = rest.to_uppercase(); // dev-639 -> DEV-639
+        let json = run_cli(repo_path, "linear", &["issue", "view", &id, "--json"])?;
+        return title_body(&json, "description");
+    }
+    if !task_id.is_empty() && task_id.chars().all(|c| c.is_ascii_digit()) {
+        let json = run_cli(repo_path, "gh", &["issue", "view", task_id, "--json", "title,body"])?;
+        return title_body(&json, "body");
+    }
+    Err(format!(
+        "Couldn't infer a Task Source from task id `{task_id}`. Supported: `linear-*` (Linear) and numeric GitHub issue ids."
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_title_and_body() {
+        let json = r#"{"title":"Fix the widget","description":"It is broken.\n- step 1"}"#;
+        let out = title_body(json, "description").unwrap();
+        assert!(out.starts_with("# Fix the widget"));
+        assert!(out.contains("It is broken."));
+    }
+
+    #[test]
+    fn errors_on_uninferrable_task_id() {
+        // A non-linear, non-numeric id must not shell out — it returns the guidance error.
+        let err = fetch_spec(&PathBuf::from("/nonexistent"), "owner/repo#weird").unwrap_err();
+        assert!(err.contains("Couldn't infer"));
+    }
+}

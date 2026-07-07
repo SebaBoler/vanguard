@@ -221,7 +221,7 @@ export function Inspector({
       )}
 
       {detail ? (
-        <RunDetail detail={detail} />
+        <RunDetail detail={detail} project={project} />
       ) : liveRun ? (
         <LiveRun active={liveRun} refreshKey={tick} />
       ) : (

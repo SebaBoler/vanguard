@@ -29,6 +29,10 @@ export function readSession(sessionFile: string): Promise<TranscriptEntry[]> {
   return invoke<TranscriptEntry[]>('read_session', { sessionFile });
 }
 
+export function fetchSpec(repoPath: string, taskId: string): Promise<string> {
+  return invoke<string>('fetch_spec', { repoPath, taskId });
+}
+
 export function spawnRun(cwd: string, command: string): Promise<number> {
   return invoke<number>('spawn_run', { cwd, command });
 }

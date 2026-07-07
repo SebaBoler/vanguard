@@ -2,6 +2,7 @@ mod active;
 mod projects;
 mod runs;
 mod spawn;
+mod spec;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -57,6 +58,11 @@ async fn read_session(session_file: String) -> Result<Vec<active::TranscriptEntr
 }
 
 #[tauri::command]
+async fn fetch_spec(repo_path: String, task_id: String) -> Result<String, String> {
+    spec::fetch_spec(Path::new(&repo_path), &task_id)
+}
+
+#[tauri::command]
 async fn spawn_run(app: tauri::AppHandle, cwd: String, command: String) -> Result<u32, String> {
     spawn::spawn(app, cwd, command).map_err(|e| e.to_string())
 }
@@ -99,6 +105,7 @@ pub fn run() {
             remove_project,
             list_active,
             read_session,
+            fetch_spec,
             spawn_run,
             kill_run,
             watch_project,
