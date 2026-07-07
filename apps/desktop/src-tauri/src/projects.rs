@@ -1,0 +1,152 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub path: String,
+    pub name: String,
+    pub run_count: usize,
+    pub task_count: usize,
+    pub total_cost_usd: f64,
+    pub failed_count: usize,
+    pub last_run: Option<String>,
+}
+
+fn projects_file(config_dir: &Path) -> PathBuf {
+    config_dir.join("projects.json")
+}
+
+/// The persisted project list is just an array of repo paths; metrics are recomputed on read.
+pub fn load_paths(config_dir: &Path) -> io::Result<Vec<String>> {
+    match fs::read_to_string(projects_file(config_dir)) {
+        Ok(s) => Ok(serde_json::from_str(&s).unwrap_or_default()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn save_paths(config_dir: &Path, paths: &[String]) -> io::Result<()> {
+    fs::create_dir_all(config_dir)?;
+    let json = serde_json::to_string_pretty(paths).map_err(io::Error::other)?;
+    fs::write(projects_file(config_dir), json)
+}
+
+/// Aggregate a repo's `.vanguard/runs` into a dashboard summary (static — no live "running" count).
+pub fn aggregate(repo_path: &Path) -> Project {
+    let name = repo_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| repo_path.to_string_lossy().into_owned());
+    let summaries = crate::runs::list_run_summaries(repo_path).unwrap_or_default();
+
+    let mut tasks = BTreeSet::new();
+    let mut total_cost_usd = 0.0;
+    let mut failed_count = 0;
+    let mut last_run: Option<String> = None;
+    for s in &summaries {
+        tasks.insert(s.task_id.clone());
+        total_cost_usd += s.total_cost_usd;
+        if s.any_failed {
+            failed_count += 1;
+        }
+        if last_run.as_deref().is_none_or(|l| s.timestamp.as_str() > l) {
+            last_run = Some(s.timestamp.clone());
+        }
+    }
+
+    Project {
+        path: repo_path.to_string_lossy().into_owned(),
+        name,
+        run_count: summaries.len(),
+        task_count: tasks.len(),
+        total_cost_usd,
+        failed_count,
+        last_run,
+    }
+}
+
+pub fn list(config_dir: &Path) -> io::Result<Vec<Project>> {
+    Ok(load_paths(config_dir)?
+        .iter()
+        .map(|p| aggregate(Path::new(p)))
+        .collect())
+}
+
+pub fn add(config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
+    let mut paths = load_paths(config_dir)?;
+    if !paths.iter().any(|p| p == path) {
+        paths.push(path.to_string());
+    }
+    save_paths(config_dir, &paths)?;
+    list(config_dir)
+}
+
+pub fn remove(config_dir: &Path, path: &str) -> io::Result<Vec<Project>> {
+    let paths: Vec<String> = load_paths(config_dir)?
+        .into_iter()
+        .filter(|p| p != path)
+        .collect();
+    save_paths(config_dir, &paths)?;
+    list(config_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_run_repo(repo: &Path) {
+        let f = repo.join(".vanguard/runs/task-1/2026-07-06T19-12-02-123Z-implement.json");
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(
+            &f,
+            r#"{"taskId":"task-1","completed":true,"exitReason":"completed","turns":3,
+                "worktreePath":"/tmp/wt","worktreePreserved":false,"finalText":"ok",
+                "costUsd":0.10,"timestamp":"2026-07-06T19:12:02.123Z","stage":"implement"}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn aggregate_counts_a_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("proj-a");
+        one_run_repo(&repo);
+        let p = aggregate(&repo);
+        assert_eq!(p.name, "proj-a");
+        assert_eq!(p.run_count, 1);
+        assert_eq!(p.task_count, 1);
+        assert!((p.total_cost_usd - 0.10).abs() < 1e-9);
+        assert_eq!(p.failed_count, 0);
+        assert_eq!(p.last_run.as_deref(), Some("2026-07-06T19:12:02.123Z"));
+    }
+
+    #[test]
+    fn add_list_remove_roundtrip() {
+        let cfg = tempfile::tempdir().unwrap();
+        let repo_tmp = tempfile::tempdir().unwrap();
+        let repo = repo_tmp.path().join("proj-a");
+        one_run_repo(&repo);
+        let repo_str = repo.to_string_lossy().into_owned();
+
+        let after_add = add(cfg.path(), &repo_str).unwrap();
+        assert_eq!(after_add.len(), 1);
+        assert_eq!(after_add[0].run_count, 1);
+
+        // dedup: adding the same path again keeps a single entry
+        assert_eq!(add(cfg.path(), &repo_str).unwrap().len(), 1);
+
+        let after_remove = remove(cfg.path(), &repo_str).unwrap();
+        assert!(after_remove.is_empty());
+    }
+
+    #[test]
+    fn missing_store_lists_empty() {
+        let cfg = tempfile::tempdir().unwrap();
+        assert!(list(cfg.path()).unwrap().is_empty());
+    }
+}

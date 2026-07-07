@@ -31,6 +31,16 @@ export interface Proof {
   outputTail: string;
 }
 
+export interface Project {
+  path: string;
+  name: string;
+  runCount: number;
+  taskCount: number;
+  totalCostUsd: number;
+  failedCount: number;
+  lastRun?: string;
+}
+
 export interface RunSummary {
   taskId: string;
   timestamp: string;
