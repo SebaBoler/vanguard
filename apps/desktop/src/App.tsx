@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { type Theme } from 'chunks-ui';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Rail } from './Rail';
+import { CommandPalette } from './CommandPalette';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
 import { listProjects, addProject, removeProject } from './ipc';
@@ -14,6 +15,7 @@ function applyTheme(theme: Theme): void {
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [active, setActive] = useState<{ path: string; name: string } | null>(null);
+  const [palette, setPalette] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('vg-theme');
     const initial: Theme =
@@ -42,6 +44,17 @@ export default function App() {
       alive = false;
       clearInterval(id);
     };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   const add = async (): Promise<void> => {
@@ -77,6 +90,7 @@ export default function App() {
         onSelect={setActive}
         onHome={() => setActive(null)}
         onAdd={add}
+        onCommandK={() => setPalette(true)}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -87,6 +101,16 @@ export default function App() {
           <Dashboard projects={projects} onOpen={setActive} onAdd={add} onRemove={remove} />
         )}
       </main>
+      {palette && (
+        <CommandPalette
+          projects={projects}
+          onOpenProject={setActive}
+          onHome={() => setActive(null)}
+          onAddProject={add}
+          onToggleTheme={toggleTheme}
+          onClose={() => setPalette(false)}
+        />
+      )}
     </div>
   );
 }
