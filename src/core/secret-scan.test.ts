@@ -222,3 +222,52 @@ describe('assignment refine: identifier chains', () => {
     );
   });
 });
+
+describe('allowlist marker (global suppression)', () => {
+  it.each([
+    ['bearer', '+const h = "Authorization: Bearer sk-abc.DEF_123-xyz"', '// gitleaks:allow'],
+    ['jwt', `+const token = "${FAKE_JWT}"`, '// pragma: allowlist secret'],
+    ['openai-key', `+const key = "${FAKE_SK_KEY}"`, '// vanguard-allow-secret'],
+    ['json-token-field', '+const payload = {"access_token":"rt_secret_value"}', '// gitleaks:allow'],
+    ['assignment', '+const auth = "q7Rw2xZk9mP4vN8s"', '// gitleaks:allow'],
+  ])('suppresses a %s finding when the marker is on the same line (control: flags without it)', (patternName, code, marker) => {
+    const withMarker = diffOf([{ path: 'src/config.ts', lines: [`${code}; ${marker}`] }]);
+    expect(scanForSecrets(withMarker).some((f) => f.patternName === patternName)).toBe(false);
+
+    const withoutMarker = diffOf([{ path: 'src/config.ts', lines: [`${code};`] }]);
+    expect(scanForSecrets(withoutMarker).some((f) => f.patternName === patternName)).toBe(true);
+  });
+
+  it('does not suppress a secret on the next added line (marker scope is per-line)', () => {
+    const diff = diffOf([
+      {
+        path: 'src/config.ts',
+        lines: ['+const note = "see docs"; // gitleaks:allow', `+const key = "${FAKE_SK_KEY}";`],
+      },
+    ]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/config.ts', patternName: 'openai-key' }),
+    );
+  });
+
+  it('does not suppress a secret on a different added line even when the marker is standalone', () => {
+    const diff = diffOf([
+      { path: 'src/config.ts', lines: [`+const key = "${FAKE_SK_KEY}";`, '+// gitleaks:allow'] },
+    ]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/config.ts', patternName: 'openai-key' }),
+    );
+  });
+
+  it('is case-insensitive for the marker', () => {
+    const diff = diffOf([
+      { path: 'src/config.ts', lines: [`+const key = "${FAKE_SK_KEY}"; // GITLEAKS:ALLOW`] },
+    ]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'openai-key')).toBe(false);
+
+    const diff2 = diffOf([
+      { path: 'src/config.ts', lines: [`+const token = "${FAKE_JWT}"; // Pragma: Allowlist Secret`] },
+    ]);
+    expect(scanForSecrets(diff2).some((f) => f.patternName === 'jwt')).toBe(false);
+  });
+});

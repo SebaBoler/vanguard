@@ -12,11 +12,11 @@ export interface SecretPattern {
   replacement: string;
   /**
    * Gate-only refinement. When present, scanForSecrets keeps a match ONLY if this returns true,
-   * given the matched credential value and the full added line. redactTokens IGNORES it —
-   * over-redacting logs is harmless; under-gating is not. Absent → always kept (JWT/Bearer/sk-/
-   * json-token-field detection stays unconditional).
+   * given the matched credential value. redactTokens IGNORES it — over-redacting logs is
+   * harmless; under-gating is not. Absent → always kept (JWT/Bearer/sk-/json-token-field
+   * detection stays unconditional).
    */
-  refine?: (value: string, line: string) => boolean;
+  refine?: (value: string) => boolean;
 }
 
 const ALLOWLIST_MARKER = /(?:vanguard-allow-secret|pragma:\s*allowlist\s*secret|gitleaks:allow)/i;
@@ -57,11 +57,10 @@ export function shannonEntropy(value: string): number {
 
 /**
  * Conservative (fail-closed) heuristic for the broad `assignment` pattern: reject only on clear
- * non-secret signals (allowlist marker, code/env reference, placeholder text, low entropy). Keeps
- * ambiguous matches as findings.
+ * non-secret signals (code/env reference, placeholder text, low entropy). Keeps ambiguous matches
+ * as findings. The allowlist marker is handled globally in scanForSecrets, not here.
  */
-function isLikelyAssignedSecret(value: string, line: string): boolean {
-  if (ALLOWLIST_MARKER.test(line)) return false;
+function isLikelyAssignedSecret(value: string): boolean {
   if (CODE_REFERENCE_PREFIX.test(value)) return false;
   if (IDENTIFIER_CHAIN.test(value)) return false;
   if (UPPER_SNAKE_IDENTIFIER.test(value)) return false;
@@ -129,7 +128,8 @@ export function isTestPath(file: string): boolean {
 /**
  * Scan a unified git diff. Inspects only ADDED lines (lines starting with '+', excluding the
  * '+++' file header). Tracks the current file from '+++ b/<path>' headers so findings carry a path.
- * Added lines in test/fixture files are skipped (they legitimately contain fake secrets).
+ * Added lines in test/fixture files are skipped (they legitimately contain fake secrets), as are
+ * lines carrying an ALLOWLIST_MARKER comment.
  */
 export function scanForSecrets(diff: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
@@ -145,13 +145,14 @@ export function scanForSecrets(diff: string): SecretFinding[] {
     if (!line.startsWith('+')) continue;
     if (currentFileIsTest) continue;
     const added = line.slice(1);
+    if (ALLOWLIST_MARKER.test(added)) continue;
     const matched = SECRET_PATTERNS.filter((pattern) => {
       const refine = pattern.refine ?? (() => true);
       // Check every match on the line, not just the first — a leading placeholder-shaped
       // assignment must not shadow a genuine secret assigned later on the same line.
       for (const m of added.matchAll(pattern.re)) {
         const value = m[m.length - 1] ?? m[0];
-        if (refine(value, added)) return true;
+        if (refine(value)) return true;
       }
       return false;
     });
