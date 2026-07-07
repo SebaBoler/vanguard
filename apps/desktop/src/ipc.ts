@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RunSummary, RunDetail, Project, ActiveRun, SessionRead, RemoteRun } from './vanguard-output';
+import type { RunSummary, RunDetail, Project, ActiveRun, SessionRead, RemoteRun, AppConfig } from './vanguard-output';
 
 export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return invoke<RunSummary[]>('list_runs', { repoPath });
@@ -27,6 +27,14 @@ export function listActive(repoPath: string): Promise<ActiveRun[]> {
 
 export function readSession(sessionFile: string): Promise<SessionRead> {
   return invoke<SessionRead>('read_session', { sessionFile });
+}
+
+export function readAppConfig(repoPath: string): Promise<AppConfig> {
+  return invoke<AppConfig>('read_app_config', { repoPath });
+}
+
+export function writeAppConfig(repoPath: string, config: AppConfig): Promise<void> {
+  return invoke<void>('write_app_config', { repoPath, config });
 }
 
 export function listRemoteRuns(repoPath: string): Promise<RemoteRun[]> {

@@ -16,6 +16,8 @@ import { RunDetail } from './RunDetail';
 import { RunningRuns } from './RunningRuns';
 import { LiveRun } from './LiveRun';
 import { RemoteRuns } from './RemoteRuns';
+import { Fleet } from '../fleet/Fleet';
+import { Settings } from '../settings/Settings';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -41,7 +43,7 @@ export function Inspector({
   const [tick, setTick] = useState(0);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
   const [showNewRun, setShowNewRun] = useState(false);
-  const [view, setView] = useState<'local' | 'remote'>('local');
+  const [view, setView] = useState<'runs' | 'fleet' | 'remote' | 'settings'>('runs');
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -228,27 +230,28 @@ export function Inspector({
         <LiveRun active={liveRun} refreshKey={tick} />
       ) : (
         <>
-          <div className="flex gap-1">
-            {(['local', 'remote'] as const).map((v) => (
+          <div className="flex gap-1 border-b border-border pb-2">
+            {(['runs', 'fleet', 'remote', 'settings'] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                className={`rounded px-2.5 py-1 text-xs capitalize transition-colors ${
                   view === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
                 }`}
               >
-                {v === 'local' ? 'Local' : 'Remote (CI)'}
+                {v === 'remote' ? 'Remote (CI)' : v}
               </button>
             ))}
           </div>
-          {view === 'local' ? (
+          {view === 'runs' && (
             <>
               <RunningRuns active={active} onOpen={setLiveRun} />
               <RunList runs={runs} onSelect={open} />
             </>
-          ) : (
-            <RemoteRuns project={project} />
           )}
+          {view === 'fleet' && <Fleet project={project} active={active} />}
+          {view === 'remote' && <RemoteRuns project={project} />}
+          {view === 'settings' && <Settings project={project} />}
         </>
       )}
     </div>

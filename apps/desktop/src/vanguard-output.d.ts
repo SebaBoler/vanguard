@@ -48,6 +48,17 @@ export interface SessionRead {
   outputTokens: number;
 }
 
+export interface AppConfig {
+  source?: string;
+  label?: string;
+  provider?: string;
+  reviewProvider?: string;
+  verifyCmd?: string;
+  concurrency?: number;
+  budgetUsd?: number;
+  runCommand?: string;
+}
+
 export interface RemoteRun {
   id: number;
   status: string;

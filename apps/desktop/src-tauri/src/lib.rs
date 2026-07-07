@@ -1,4 +1,5 @@
 mod active;
+mod appconfig;
 mod projects;
 mod remote;
 mod runs;
@@ -59,6 +60,16 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 }
 
 #[tauri::command]
+async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    Ok(appconfig::read(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn write_app_config(repo_path: String, config: appconfig::AppConfig) -> Result<(), String> {
+    appconfig::write(Path::new(&repo_path), &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
     remote::list_remote_runs(Path::new(&repo_path))
 }
@@ -111,6 +122,8 @@ pub fn run() {
             remove_project,
             list_active,
             read_session,
+            read_app_config,
+            write_app_config,
             list_remote_runs,
             fetch_spec,
             spawn_run,
