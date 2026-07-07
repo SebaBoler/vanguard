@@ -1,5 +1,5 @@
 import { Table, Chip, Empty } from 'chunks-ui';
-import { Inbox } from 'lucide-react';
+import { Inbox, FolderOpen } from 'lucide-react';
 import type { RunSummary } from '../../vanguard-output';
 
 /** `2026-07-06T19:12:02.123Z` -> `2026-07-06 19:12`. */
@@ -10,19 +10,29 @@ function when(ts: string): string {
 export function RunList({
   runs,
   onSelect,
+  hasFolder = true,
 }: {
   runs: RunSummary[];
   onSelect: (r: RunSummary) => void;
+  hasFolder?: boolean;
 }) {
   if (runs.length === 0) {
     return (
       <Empty.Root>
         <Empty.Media>
-          <Inbox />
+          {hasFolder ? <Inbox /> : <FolderOpen />}
         </Empty.Media>
-        <Empty.Title>No runs found</Empty.Title>
+        <Empty.Title>{hasFolder ? 'No runs found' : 'Open a folder'}</Empty.Title>
         <Empty.Description>
-          Point at a repo containing <code>.vanguard/runs</code> and hit Load.
+          {hasFolder ? (
+            <>
+              This repo has no <code>.vanguard/runs</code> yet.
+            </>
+          ) : (
+            <>
+              Pick a repo containing <code>.vanguard/runs</code> to inspect its runs.
+            </>
+          )}
         </Empty.Description>
       </Empty.Root>
     );

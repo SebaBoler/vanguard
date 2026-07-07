@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Button, Input, Chip, ThemeToggle, type Theme } from 'chunks-ui';
-import { FolderGit2, RefreshCw } from 'lucide-react';
+import { Button, Chip, ThemeToggle, type Theme } from 'chunks-ui';
+import { open } from '@tauri-apps/plugin-dialog';
+import { FolderOpen, RefreshCw } from 'lucide-react';
 import { listRuns, readRun } from './ipc';
 import { RunList } from './features/inspector/RunList';
 import { RunDetail } from './features/inspector/RunDetail';
@@ -11,7 +12,7 @@ function applyTheme(theme: Theme): void {
 }
 
 export default function App() {
-  const [repoPath, setRepoPath] = useState('.');
+  const [repoPath, setRepoPath] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [detail, setDetail] = useState<RunDetailT | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,12 +23,12 @@ export default function App() {
     return initial;
   });
 
-  const load = async (): Promise<void> => {
+  const load = async (path: string): Promise<void> => {
     setError(null);
     setDetail(null);
     setLoading(true);
     try {
-      setRuns(await listRuns(repoPath));
+      setRuns(await listRuns(path));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -35,7 +36,16 @@ export default function App() {
     }
   };
 
-  const open = async (r: RunSummary): Promise<void> => {
+  const pick = async (): Promise<void> => {
+    const dir = await open({ directory: true, title: 'Select a repo (contains .vanguard/)' });
+    if (typeof dir === 'string') {
+      setRepoPath(dir);
+      await load(dir);
+    }
+  };
+
+  const open_ = async (r: RunSummary): Promise<void> => {
+    if (repoPath === null) return;
     setError(null);
     try {
       setDetail(await readRun(repoPath, r.taskId, r.timestamp));
@@ -55,17 +65,31 @@ export default function App() {
       <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-background/80 px-4 py-2.5 backdrop-blur">
         <span className="font-semibold">Vanguard</span>
         <Chip color="secondary" variant="outlined">Inspector</Chip>
-        <div className="ml-auto flex items-center gap-2">
-          <Input
-            value={repoPath}
-            onChange={(e) => setRepoPath(e.target.value)}
-            startAdornment={<FolderGit2 className="size-4" />}
-            placeholder="repo path (.vanguard/)"
-            className="w-64"
-          />
-          <Button onClick={load} loading={loading} startIcon={<RefreshCw className="size-4" />}>
-            Load
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          {repoPath && (
+            <span className="min-w-0 max-w-[18rem] truncate text-sm text-muted-foreground" title={repoPath}>
+              {repoPath}
+            </span>
+          )}
+          <Button
+            variant={repoPath ? 'outlined' : 'contained'}
+            color="secondary"
+            onClick={pick}
+            loading={loading}
+            startIcon={<FolderOpen className="size-4" />}
+          >
+            {repoPath ? 'Change folder' : 'Open folder…'}
           </Button>
+          {repoPath && (
+            <Button
+              variant="text"
+              color="secondary"
+              onClick={() => load(repoPath)}
+              startIcon={<RefreshCw className="size-4" />}
+            >
+              Reload
+            </Button>
+          )}
           <ThemeToggle theme={theme} onClick={toggleTheme} />
         </div>
       </header>
@@ -78,7 +102,7 @@ export default function App() {
         {detail ? (
           <RunDetail detail={detail} onBack={() => setDetail(null)} />
         ) : (
-          <RunList runs={runs} onSelect={open} />
+          <RunList runs={runs} onSelect={open_} hasFolder={repoPath !== null} />
         )}
       </main>
     </div>
