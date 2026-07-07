@@ -29,6 +29,14 @@ export function readSession(sessionFile: string): Promise<TranscriptEntry[]> {
   return invoke<TranscriptEntry[]>('read_session', { sessionFile });
 }
 
+export function spawnRun(cwd: string, command: string): Promise<number> {
+  return invoke<number>('spawn_run', { cwd, command });
+}
+
+export function killRun(pid: number): Promise<void> {
+  return invoke<void>('kill_run', { pid });
+}
+
 export function watchProject(repoPath: string): Promise<void> {
   return invoke<void>('watch_project', { repoPath });
 }

@@ -1,6 +1,7 @@
 mod active;
 mod projects;
 mod runs;
+mod spawn;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -56,6 +57,17 @@ async fn read_session(session_file: String) -> Result<Vec<active::TranscriptEntr
 }
 
 #[tauri::command]
+async fn spawn_run(app: tauri::AppHandle, cwd: String, command: String) -> Result<u32, String> {
+    spawn::spawn(app, cwd, command).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn kill_run(state: tauri::State<'_, spawn::SpawnState>, pid: u32) -> Result<(), String> {
+    spawn::kill(&state, pid);
+    Ok(())
+}
+
+#[tauri::command]
 async fn watch_project(
     app: tauri::AppHandle,
     state: tauri::State<'_, watch::WatchState>,
@@ -78,6 +90,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(watch::WatchState::default())
+        .manage(spawn::SpawnState::default())
         .invoke_handler(tauri::generate_handler![
             list_runs,
             read_run,
@@ -86,6 +99,8 @@ pub fn run() {
             remove_project,
             list_active,
             read_session,
+            spawn_run,
+            kill_run,
             watch_project,
             unwatch_project
         ])
