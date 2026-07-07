@@ -20,3 +20,11 @@ export function addProject(path: string): Promise<Project[]> {
 export function removeProject(path: string): Promise<Project[]> {
   return invoke<Project[]>('remove_project', { path });
 }
+
+export function watchProject(repoPath: string): Promise<void> {
+  return invoke<void>('watch_project', { repoPath });
+}
+
+export function unwatchProject(repoPath: string): Promise<void> {
+  return invoke<void>('unwatch_project', { repoPath });
+}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from 'chunks-ui';
+import { listen } from '@tauri-apps/api/event';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
-import { listRuns, readRun } from '../../ipc';
+import { listRuns, readRun, watchProject, unwatchProject } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
 import type { RunSummary, RunDetail as RunDetailT } from '../../vanguard-output';
@@ -19,6 +20,13 @@ export function Inspector({
   const [detail, setDetail] = useState<RunDetailT | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [live, setLive] = useState(false);
+  // The currently-open run, tracked in a ref so the watch listener re-reads the right one
+  // without re-subscribing on every detail change.
+  const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
+  useEffect(() => {
+    openRef.current = detail ? { taskId: detail.taskId, timestamp: detail.timestamp } : null;
+  }, [detail]);
 
   const load = async (): Promise<void> => {
     setError(null);
@@ -33,8 +41,30 @@ export function Inspector({
     }
   };
 
+  // Silent refresh on file changes — keep the current view, no spinner.
+  const refresh = async (): Promise<void> => {
+    try {
+      setRuns(await listRuns(project));
+      const o = openRef.current;
+      if (o) setDetail(await readRun(project, o.taskId, o.timestamp));
+    } catch {
+      // transient mid-write; the next debounced event resyncs
+    }
+  };
+
   useEffect(() => {
     void load();
+    void watchProject(project)
+      .then(() => setLive(true))
+      .catch(() => setLive(false));
+    const unlisten = listen<string>('vanguard:changed', (e) => {
+      if (e.payload === project) void refresh();
+    });
+    return () => {
+      setLive(false);
+      void unwatchProject(project);
+      void unlisten.then((f) => f());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
@@ -54,11 +84,22 @@ export function Inspector({
           Projects
         </Button>
         <h2 className="font-semibold">{name}</h2>
-        <span className="min-w-0 max-w-[20rem] truncate text-sm text-muted-foreground" title={project}>
+        {live && (
+          <span
+            className="flex items-center gap-1 text-xs text-muted-foreground"
+            title="Watching .vanguard for changes"
+          >
+            <span className="size-2 animate-pulse rounded-full bg-green-500" />
+            live
+          </span>
+        )}
+        <span
+          className="ml-auto min-w-0 max-w-[20rem] truncate text-sm text-muted-foreground"
+          title={project}
+        >
           {project}
         </span>
         <Button
-          className="ml-auto"
           variant="text"
           color="secondary"
           onClick={load}
