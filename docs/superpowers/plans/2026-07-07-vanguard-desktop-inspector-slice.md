@@ -104,11 +104,19 @@ fn main() {
   },
   "app": {
     "windows": [{ "title": "Vanguard Desktop", "width": 1100, "height": 800 }],
-    "security": { "csp": null }
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
+    }
   },
-  "bundle": { "active": true, "targets": "all", "icon": [] }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"]
+  }
 }
 ```
+
+> `generate_context!` needs a real app icon or `cargo` won't compile. Generate `src-tauri/icons/{32x32,128x128,128x128@2x,icon}.png` — from a source PNG via `pnpm tauri icon <src.png>`, or a solid-color placeholder for the scaffold. (`.icns`/`.ico` are only needed for `tauri build` bundling, not `cargo test`/`tauri dev`.)
 
 - [ ] **Step 4: Create `apps/desktop/src-tauri/capabilities/default.json`**
 
