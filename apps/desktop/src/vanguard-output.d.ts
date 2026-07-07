@@ -48,6 +48,18 @@ export interface SessionRead {
   outputTokens: number;
 }
 
+export interface RemoteRun {
+  id: number;
+  status: string;
+  conclusion: string;
+  title: string;
+  branch: string;
+  workflow: string;
+  createdAt: string;
+  event: string;
+  url: string;
+}
+
 export interface Project {
   path: string;
   name: string;

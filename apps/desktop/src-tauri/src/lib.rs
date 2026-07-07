@@ -1,5 +1,6 @@
 mod active;
 mod projects;
+mod remote;
 mod runs;
 mod spawn;
 mod spec;
@@ -58,6 +59,11 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 }
 
 #[tauri::command]
+async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
+    remote::list_remote_runs(Path::new(&repo_path))
+}
+
+#[tauri::command]
 async fn fetch_spec(repo_path: String, task_id: String) -> Result<String, String> {
     spec::fetch_spec(Path::new(&repo_path), &task_id)
 }
@@ -105,6 +111,7 @@ pub fn run() {
             remove_project,
             list_active,
             read_session,
+            list_remote_runs,
             fetch_spec,
             spawn_run,
             kill_run,
