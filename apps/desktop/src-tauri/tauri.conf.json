@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "vanguard-desktop",
+  "version": "0.1.0",
+  "identifier": "dev.vanguard.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Vanguard Desktop", "width": 1100, "height": 800 }],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": true, "targets": "all", "icon": [] }
+}
