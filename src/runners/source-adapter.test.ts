@@ -41,6 +41,16 @@ describe('pickRunOptions', () => {
       conformanceModel: 'opus',
     });
   });
+
+  it('copies maxTurns and maxRepairIterations when defined, omits when absent', () => {
+    expect(pickRunOptions({ maxTurns: 80, maxRepairIterations: 5 })).toEqual({
+      maxTurns: 80,
+      maxRepairIterations: 5,
+    });
+    const withoutOverrides = pickRunOptions({});
+    expect('maxTurns' in withoutOverrides).toBe(false);
+    expect('maxRepairIterations' in withoutOverrides).toBe(false);
+  });
 });
 
 // --- Integration-style coverage of runSourcedIssue with a fully faked SourceAdapter. ---
@@ -143,8 +153,8 @@ function fakeAdapter(order: string[], stages: PipelineStage[]): SourceAdapter {
 }
 
 const STAGES: PipelineStage[] = [
-  { name: 'implementer', promptTemplate: '' },
-  { name: 'reviewer', promptTemplate: '' },
+  { name: 'implementer', promptTemplate: '', maxTurns: 30 },
+  { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
 ];
 
 describe('runSourcedIssue', () => {
@@ -184,6 +194,29 @@ describe('runSourcedIssue', () => {
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled[0]?.name).toBe('planner'); // planning runs before the implementer
     expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
+  });
+
+  it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', maxTurns: 80 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+
+    vi.clearAllMocks();
+    runStages.mockResolvedValue([stageOutcome('reviewer')]);
+    commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
+    publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
+    const adapter2 = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter2);
+    const assembledNoOverride = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembledNoOverride.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('--max-turns survives the --plan pipeline', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', plan: true, maxTurns: 80 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
   });
 
   it('persists stage outcomes WITH pr.prUrl on the committed path', async () => {
@@ -346,11 +379,27 @@ describe('runSourcedIssue', () => {
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(result.prUrl).toBe(MR_URL);
-    expect(runAgent).toHaveBeenCalledTimes(2); // MAX_CONFORMANCE_ITERATIONS
+    expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
     expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Part of ${task.id}`);
     expect(body).not.toContain(`Closes ${task.id}`);
+  });
+
+  it('--max-repair-iterations 5 allows up to 5 loop-back passes on persistent red verification', async () => {
+    runStages.mockResolvedValueOnce([stageOutcome('implementer', 'sess-1'), stageOutcome('reviewer')]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValue({ passed: false } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo', maxRepairIterations: 5 }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(5);
+    expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Part of ${task.id}`);
   });
 
   it('surfaces a commit-message close-leak warning in the body on a partial (red-verification) result', async () => {

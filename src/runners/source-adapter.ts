@@ -3,7 +3,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -53,6 +53,16 @@ export interface RunOptions extends ProviderChoice {
   plan?: boolean;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
   baseBranch?: string;
+  /**
+   * Override the implementer stage's turn cap (default: 30; base/fast stays 12). Opt-in, higher
+   * token cost — lets one run finish a deliberately large, multi-file task. Set via --max-turns.
+   */
+  maxTurns?: number;
+  /**
+   * Override the conformance/verify repair loop-back cap (default: 2). Opt-in — gives the
+   * manifest-driven loop-back more passes on large tasks. Set via --max-repair-iterations.
+   */
+  maxRepairIterations?: number;
 }
 
 /**
@@ -76,6 +86,8 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
+    ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+    ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
   };
 }
 
@@ -229,7 +241,8 @@ export async function runSourcedIssue(
       // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
       // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
       const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
-      const pipeline = assembleReviewPipeline(baseStages, agents, deps);
+      const scopedStages = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
+      const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
@@ -256,6 +269,7 @@ export async function runSourcedIssue(
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
 
+      const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
       let gatePassed = false;
@@ -266,11 +280,11 @@ export async function runSourcedIssue(
         conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
         verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
         gatePassed = conformance.pass && (verification === undefined || verification.passed);
-        if (gatePassed || repairIterations >= MAX_REPAIR_ITERATIONS || resumeSessionId === undefined) break;
+        if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
         console.log(
-          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${MAX_REPAIR_ITERATIONS}) — resuming implement session`,
+          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
         );
         const feedback = [
           !conformance.pass ? renderConformanceFeedback(conformance) : undefined,

@@ -204,6 +204,10 @@ function makeDiffScorer(complete: Complete): (diff: string, result: RunResult) =
  * and returns a frozen `budget_exceeded` result with the outcomes so far; the caller keeps the
  * context alive and may resume with a higher limit.
  */
+/** Appended to implementer prompts: forbid stopping at a partial milestone on a large task. */
+export const DELIVER_FULL_SCOPE_CLAUSE =
+  "Deliver EVERY acceptance criterion and EVERY file in the task's scope. Do not stop at a single layer or a partial milestone. If the task is large, work through all of it. Only write <promise>COMPLETE</promise> when the entire task is implemented; if you genuinely cannot finish, state precisely what remains.";
+
 /** Nudge used when auto-resuming an incomplete stage (see PipelineStage.resumeUntilComplete). */
 const RESUME_NUDGE = [
   'You stopped before signaling completion. Review what the task still requires versus what you have',
@@ -453,7 +457,7 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo.\n\n' +
         retrospectiveMemoryBlock() +
-        '\n\nWhen done, write exactly <promise>COMPLETE</promise>.',
+        `\n\n${DELIVER_FULL_SCOPE_CLAUSE}\n\nWhen done, write exactly <promise>COMPLETE</promise>.`,
       maxTurns: 30,
       stageCostFraction: 0.6,
       stageCostFloorUsd: 0.25,
@@ -545,6 +549,18 @@ export function withStageProvider(
 /** Set `model` on one named stage (default: all stages when stageName is omitted). */
 export function withStageModel(stages: PipelineStage[], model: string, stageName?: StageName): PipelineStage[] {
   return stages.map((stage) => (stageName === undefined || stage.name === stageName ? { ...stage, model } : stage));
+}
+
+/**
+ * Override `maxTurns` on one named stage (default: 'implementer'). Backs `--max-turns`: an opt-in
+ * override of the implementer's hardcoded turn cap so one run can finish a deliberately large task.
+ */
+export function withStageMaxTurns(
+  stages: PipelineStage[],
+  maxTurns: number,
+  stageName: StageName = STAGE.IMPLEMENTER,
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, maxTurns } : stage));
 }
 
 /**
@@ -687,7 +703,7 @@ export function planImplementReviewStages(): PipelineStage[] {
       maxTurns: 30,
       resumePrevious: false,
       promptTemplate:
-        'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        `Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\n${DELIVER_FULL_SCOPE_CLAUSE}\n\nWhen done, write <promise>COMPLETE</promise>.`,
     },
     {
       name: STAGE.REVIEWER,
