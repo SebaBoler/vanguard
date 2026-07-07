@@ -6,6 +6,25 @@
 
 ---
 
+## 0. Ponytail review — scope cut
+
+The reported bug needs **one thing**: built-in parsers for the `gh-` / `gl-` / `linear-` prefixes, via
+plain string ops. That is the entire fix, shipped now. Everything else here is **deferred until a real
+project needs it** (no known case):
+
+- **Per-project regex patterns · `taskParsers` config · Settings editor (§4.3, §5)** — YAGNI. The
+  built-ins cover every convention Vanguard mints today. Add when some project actually has a
+  non-standard id, not before.
+- **`regex` crate (§4.5)** — not needed for three fixed prefixes; `strip_prefix` + a trailing-digit scan
+  is enough. Only the deferred user-patterns would want it.
+- **Registry / `TaskParser` abstraction** — a single `resolve(task_id) -> Option<ResolvedTask>`, not a
+  registry.
+
+**Shipping now:** a ~30-line `taskid.rs::resolve` + rewire `fetch_spec`. §4.3–§5 and §9 phases 2–3 stay
+as the documented extension path, on-demand only.
+
+---
+
 ## 1. Problem
 
 Vanguard Desktop stores each Run under `.vanguard/runs/<taskId>/`. Several features must turn that

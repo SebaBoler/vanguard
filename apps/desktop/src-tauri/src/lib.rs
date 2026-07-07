@@ -5,6 +5,7 @@ mod remote;
 mod runs;
 mod spawn;
 mod spec;
+mod taskid;
 mod tasks;
 mod watch;
 

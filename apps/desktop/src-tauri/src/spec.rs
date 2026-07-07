@@ -24,25 +24,31 @@ fn title_body(json: &str, body_key: &str) -> Result<String, String> {
 /// `linear-*` → Linear (`linear` CLI), all-numeric → GitHub (`gh` CLI). Runs in the repo dir so
 /// the runner detects the project; auth is the operator's env. Falls back to a clear error.
 pub fn fetch_spec(repo_path: &Path, task_id: &str) -> Result<String, String> {
-    let lower = task_id.to_lowercase();
-    if let Some(rest) = lower.strip_prefix("linear-") {
-        let id = rest.to_uppercase(); // dev-639 -> DEV-639
-        // Guard against argv flag-smuggling: a Linear id is TEAM-NNN (alnum + a dash), never
-        // flag-like. Reject anything that could be read as an option before it reaches the CLI.
-        if id.starts_with('-') || !id.contains('-') || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return Err(format!("Invalid Linear id in task `{task_id}`."));
+    let Some(resolved) = crate::taskid::resolve(task_id) else {
+        return Err(format!(
+            "Couldn't resolve a Task Source from task id `{task_id}`. Recognized prefixes: `gh-` (GitHub), `gl-` (GitLab), `linear-` (Linear)."
+        ));
+    };
+    // GitHub/GitLab refs are trailing digits (flag-safe); guard the Linear identifier.
+    match resolved.source.as_str() {
+        "linear" => {
+            let id = &resolved.reference;
+            if id.starts_with('-') || !id.contains('-') || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err(format!("Invalid Linear id in task `{task_id}`."));
+            }
+            let json = run_cli(repo_path, "linear", &["issue", "view", id, "--json"])?;
+            title_body(&json, "description")
         }
-        let json = run_cli(repo_path, "linear", &["issue", "view", &id, "--json"])?;
-        return title_body(&json, "description");
+        "github" => {
+            let json = run_cli(repo_path, "gh", &["issue", "view", &resolved.reference, "--json", "title,body"])?;
+            title_body(&json, "body")
+        }
+        "gitlab" => {
+            let json = run_cli(repo_path, "glab", &["issue", "view", &resolved.reference, "-F", "json"])?;
+            title_body(&json, "description")
+        }
+        other => Err(format!("Unsupported Task Source `{other}`.")),
     }
-    // All-digits: cannot be flag-like, so it's safe to pass as a positional.
-    if !task_id.is_empty() && task_id.chars().all(|c| c.is_ascii_digit()) {
-        let json = run_cli(repo_path, "gh", &["issue", "view", task_id, "--json", "title,body"])?;
-        return title_body(&json, "body");
-    }
-    Err(format!(
-        "Couldn't infer a Task Source from task id `{task_id}`. Supported: `linear-*` (Linear) and numeric GitHub issue ids."
-    ))
 }
 
 #[cfg(test)]
@@ -69,6 +75,6 @@ mod tests {
     fn errors_on_uninferrable_task_id() {
         // A non-linear, non-numeric id must not shell out — it returns the guidance error.
         let err = fetch_spec(&PathBuf::from("/nonexistent"), "owner/repo#weird").unwrap_err();
-        assert!(err.contains("Couldn't infer"));
+        assert!(err.contains("Couldn't resolve"));
     }
 }
