@@ -11,7 +11,13 @@ function applyTheme(theme: Theme): void {
 export default function App() {
   const [active, setActive] = useState<{ path: string; name: string } | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
-    const initial: Theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    const saved = localStorage.getItem('vg-theme');
+    const initial: Theme =
+      saved === 'dark' || saved === 'light'
+        ? saved
+        : window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
     applyTheme(initial);
     return initial;
   });
@@ -20,6 +26,7 @@ export default function App() {
     const next: Theme = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     applyTheme(next);
+    localStorage.setItem('vg-theme', next);
   };
 
   return (
