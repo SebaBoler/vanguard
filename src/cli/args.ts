@@ -349,6 +349,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         plan: { type: 'boolean' },
         // base branch to branch off and target the PR at (run + watch); default main
         base: { type: 'string' },
+        // opt-in overrides to let a single run finish a large task (run + watch)
+        'max-turns': { type: 'string' },
+        'max-repair-iterations': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -398,6 +401,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   } catch (message) {
     return fail(String(message));
   }
+
+  // Opt-in overrides to let a single run finish a large task (run + watch). Positive integers only;
+  // 0/negative/non-numeric are rejected at parse (no override set), same semantics as parseLimit.
+  const maxTurns = parseLimit(values['max-turns']);
+  const maxRepairIterations = parseLimit(values['max-repair-iterations']);
 
   if (positionals[0] === 'stats') {
     return { kind: 'stats', repoPath, json: values.json === true };
@@ -634,6 +642,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
     };
   }
 
@@ -750,6 +760,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -836,6 +848,8 @@ Commands:
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -906,6 +920,8 @@ Commands:
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo

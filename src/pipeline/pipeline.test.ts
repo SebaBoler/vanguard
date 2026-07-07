@@ -22,6 +22,8 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  withStageMaxTurns,
+  DELIVER_FULL_SCOPE_CLAUSE,
   techSpecStage,
   retrospectiveMemoryBlock,
   assembleReviewPipeline,
@@ -473,6 +475,32 @@ describe('withStageModel', () => {
   it('does not mutate the original stages array', () => {
     withStageModel(stages, 'sonnet');
     expect(stages[0]?.model).toBeUndefined();
+  });
+});
+
+describe('withStageMaxTurns', () => {
+  it('overrides maxTurns on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageMaxTurns(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(20);
+    expect(result.find((s) => s.name === 'simplifier')?.maxTurns).toBe(20);
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageMaxTurns(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: 'review', maxTurns: 20 },
+    ];
+    const result = withStageMaxTurns(stages, 40, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(40);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
   });
 });
 
@@ -1126,5 +1154,27 @@ describe('implementReviewSimplifyStages defaults', () => {
     expect(byName.simplifier?.stageCostFloorUsd).toBeCloseTo(0.25);
     expect(byName.simplifier?.timeoutMs).toBe(15 * 60 * 1000);
     expect(byName.simplifier?.onStageBudgetExceeded).toBe('skip');
+  });
+
+  it('defaults the implementer maxTurns to 30 (unaffected without --max-turns)', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
+  });
+});
+
+describe('planImplementReviewStages defaults', () => {
+  it('defaults the implementer maxTurns to 30', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
   });
 });

@@ -164,6 +164,40 @@ describe('parseCli', () => {
     expect('noSimplify' in parseCli(['run', '--linear', 'TES-1'], '/work')).toBe(false);
   });
 
+  it('parses --max-turns and --max-repair-iterations on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--max-turns', '80'], '/work');
+    expect(cmd.kind === 'run' && cmd.maxTurns).toBe(80);
+    const cmd2 = parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '5'], '/work');
+    expect(cmd2.kind === 'run' && cmd2.maxRepairIterations).toBe(5);
+  });
+
+  it('parses --max-turns and --max-repair-iterations on watch', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'github', '--github-repo', 'o/r', '--max-turns', '80', '--max-repair-iterations', '5'],
+      '/work',
+    );
+    expect(cmd.kind === 'watch' && cmd.maxTurns).toBe(80);
+    expect(cmd.kind === 'watch' && cmd.maxRepairIterations).toBe(5);
+  });
+
+  it('rejects --max-turns 0, negative, or non-numeric (no override set)', () => {
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '0'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '-3'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', 'x'], '/work')).toBe(false);
+  });
+
+  it('rejects --max-repair-iterations 0, negative, or non-numeric (no override set)', () => {
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '0'], '/work')).toBe(false);
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '-3'], '/work')).toBe(false);
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', 'x'], '/work')).toBe(false);
+  });
+
+  it('omits maxTurns and maxRepairIterations when neither flag is passed', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect('maxTurns' in cmd).toBe(false);
+    expect('maxRepairIterations' in cmd).toBe(false);
+  });
+
   it('parses review-pr with a GitHub PR URL', () => {
     expect(
       parseCli(['review-pr', 'https://github.com/o/r/pull/12', '--repo', '/work', '--provider', 'codex', '--review-model', 'gpt-5'], '/cwd'),
