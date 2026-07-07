@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
+import type { RunOptions } from '../runners/source-adapter.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
@@ -101,7 +102,7 @@ export type Command =
       specClaimedState?: string;
       llmProxy?: boolean;
     }
-  | {
+  | ({
       kind: 'run';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       id: string;
@@ -118,31 +119,10 @@ export type Command =
       label?: string;
       /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
       project?: string;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
       /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
       forkN?: number;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
-      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
-      conformance?: boolean;
-      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
-      conformanceModel?: string;
-      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
-      commitAuthor?: { name: string; email: string };
-      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
-      plan?: boolean;
-      /** Base branch to branch off and target the PR at (default: main). Set via --base. */
-      baseBranch?: string;
-    }
-  | {
+    } & RunOptions)
+  | ({
       kind: 'watch';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       /** Required for linear/github; optional for project (label-filter on the board). */
@@ -165,27 +145,6 @@ export type Command =
       egress: boolean;
       /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
-      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
-      conformance?: boolean;
-      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
-      conformanceModel?: string;
-      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
-      commitAuthor?: { name: string; email: string };
-      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
-      plan?: boolean;
-      /** Base branch to branch off and target the PR at (default: main). Set via --base. */
-      baseBranch?: string;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -218,7 +177,7 @@ export type Command =
        * (default: 'Speccing'). Omitted when absent — the default is used.
        */
       specClaimedState?: string;
-    }
+    } & RunOptions)
   | {
       kind: 'review-mr';
       iid: number;
