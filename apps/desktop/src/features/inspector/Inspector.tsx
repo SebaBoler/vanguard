@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Breadcrumb, Button, Chip } from 'chunks-ui';
+import { Button, Chip } from 'chunks-ui';
 import { listen } from '@tauri-apps/api/event';
-import { Home, Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw } from 'lucide-react';
 import {
   listRuns,
   listActive,
@@ -32,13 +32,15 @@ export function Inspector({
   name,
   screen,
   focusRunning,
-  onExit,
+  clearNonce,
+  onCrumb,
 }: {
   project: string;
   name: string;
   screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
   focusRunning: ActiveRun | null;
-  onExit: () => void;
+  clearNonce: number;
+  onCrumb: (c: string | null) => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [active, setActive] = useState<ActiveRun[]>([]);
@@ -68,6 +70,21 @@ export function Inspector({
   useEffect(() => {
     if (focusRunning) setLiveRun(focusRunning);
   }, [focusRunning]);
+
+  // Report the current drill-down up to the top-bar breadcrumb.
+  useEffect(() => {
+    onCrumb(detail ? detail.taskId : liveRun ? liveRun.taskId : (taskDetailId ?? null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, liveRun, taskDetailId]);
+
+  // A breadcrumb crumb click clears the open drill-down.
+  useEffect(() => {
+    if (clearNonce > 0) {
+      setDetail(null);
+      setLiveRun(null);
+      setTaskDetailId(null);
+    }
+  }, [clearNonce]);
 
   const load = async (): Promise<void> => {
     setError(null);
@@ -151,12 +168,6 @@ export function Inspector({
     }
   };
 
-  const clearRun = (): void => {
-    setDetail(null);
-    setLiveRun(null);
-  };
-
-  const runTaskId = detail?.taskId ?? liveRun?.taskId ?? null;
   const detailPassed =
     detail && (detail.proof ? detail.proof.passed : !detail.stages.some((s) => !s.record.completed));
 
@@ -164,34 +175,6 @@ export function Inspector({
     <div className="space-y-4">
       {screen === 'runs' && (
       <div className="flex items-center gap-3">
-        <Breadcrumb.Root>
-          <Breadcrumb.List>
-            <Breadcrumb.Item>
-              <Breadcrumb.Link onClick={onExit} className="flex cursor-pointer items-center" title="Projects">
-                <Home className="size-4" />
-              </Breadcrumb.Link>
-            </Breadcrumb.Item>
-            <Breadcrumb.Separator />
-            <Breadcrumb.Item>
-              {runTaskId ? (
-                <Breadcrumb.Link onClick={clearRun} className="cursor-pointer" title={project}>
-                  {name}
-                </Breadcrumb.Link>
-              ) : (
-                <Breadcrumb.Page title={project}>{name}</Breadcrumb.Page>
-              )}
-            </Breadcrumb.Item>
-            {runTaskId && (
-              <>
-                <Breadcrumb.Separator />
-                <Breadcrumb.Item>
-                  <Breadcrumb.Page>{runTaskId}</Breadcrumb.Page>
-                </Breadcrumb.Item>
-              </>
-            )}
-          </Breadcrumb.List>
-        </Breadcrumb.Root>
-
         {watching && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground" title="Watching .vanguard for changes">
             <span className="size-2 animate-pulse rounded-full bg-green-500" />
