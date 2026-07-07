@@ -4,11 +4,14 @@ import { Minus, Plus } from 'lucide-react';
 import { spawnRun, killRun, readAppConfig } from '../../ipc';
 import type { ActiveRun } from '../../vanguard-output';
 
+const SOURCES = ['github', 'gitlab', 'linear'];
+
 export function Fleet({ project, active }: { project: string; active: ActiveRun[] }) {
   const [concurrency, setConcurrency] = useState(3);
   const [loopV1, setLoopV1] = useState(false);
   const [source, setSource] = useState('github');
   const [watchPid, setWatchPid] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     readAppConfig(project)
@@ -22,7 +25,14 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
   const running = watchPid !== null;
 
   const start = async (): Promise<void> => {
-    const cmd = `vanguard watch --${source} --concurrency ${concurrency}${loopV1 ? ' --loop-v1' : ''} --provider zai --llm-proxy`;
+    // The command is built from config, so validate before it reaches the shell launcher.
+    if (!SOURCES.includes(source)) {
+      setError(`Invalid Task Source "${source}" — set github / gitlab / linear in Settings.`);
+      return;
+    }
+    setError(null);
+    const n = Math.max(1, Math.floor(concurrency) || 1);
+    const cmd = `vanguard watch --${source} --concurrency ${n}${loopV1 ? ' --loop-v1' : ''} --provider zai --llm-proxy`;
     try {
       setWatchPid(await spawnRun(project, cmd));
     } catch {
@@ -46,6 +56,12 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
           </Button>
         )}
       </div>
+
+      {error && (
+        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-4 rounded-lg border border-border p-5">
         <div className="flex items-center gap-2">
