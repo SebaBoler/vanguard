@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from 'chunks-ui';
+import { Breadcrumb, Button, Chip } from 'chunks-ui';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import { Home, RefreshCw } from 'lucide-react';
 import { listRuns, listActive, readRun, watchProject, unwatchProject } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
@@ -25,11 +25,8 @@ export function Inspector({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [watching, setWatching] = useState(false);
-  // Bumped on each file-change event so the open LiveRun re-reads its session.
   const [tick, setTick] = useState(0);
 
-  // Track the open completed run in a ref so the change listener re-reads the right one
-  // without re-subscribing on every state change.
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
     openRef.current = detail ? { taskId: detail.taskId, timestamp: detail.timestamp } : null;
@@ -51,17 +48,16 @@ export function Inspector({
     }
   };
 
-  // Silent refresh on file changes — keep the current view, no spinner.
   const refresh = async (): Promise<void> => {
     try {
       const [r, a] = await Promise.all([listRuns(project), listActive(project)]);
       setRuns(r);
       setActive(a);
-      setTick((t) => t + 1); // re-read the open LiveRun's session
+      setTick((t) => t + 1);
       const o = openRef.current;
       if (o) setDetail(await readRun(project, o.taskId, o.timestamp));
     } catch {
-      // transient mid-write; the next debounced event resyncs
+      // transient mid-write; next event resyncs
     }
   };
 
@@ -90,34 +86,61 @@ export function Inspector({
     }
   };
 
+  const clearRun = (): void => {
+    setDetail(null);
+    setLiveRun(null);
+  };
+
+  const runTaskId = detail?.taskId ?? liveRun?.taskId ?? null;
+  const detailPassed =
+    detail && (detail.proof ? detail.proof.passed : !detail.stages.some((s) => !s.record.completed));
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="text" color="secondary" onClick={onExit} startIcon={<ArrowLeft className="size-4" />}>
-          Projects
-        </Button>
-        <h2 className="font-semibold">{name}</h2>
+        <Breadcrumb.Root>
+          <Breadcrumb.List>
+            <Breadcrumb.Item>
+              <Breadcrumb.Link onClick={onExit} className="flex cursor-pointer items-center" title="Projects">
+                <Home className="size-4" />
+              </Breadcrumb.Link>
+            </Breadcrumb.Item>
+            <Breadcrumb.Separator />
+            <Breadcrumb.Item>
+              {runTaskId ? (
+                <Breadcrumb.Link onClick={clearRun} className="cursor-pointer" title={project}>
+                  {name}
+                </Breadcrumb.Link>
+              ) : (
+                <Breadcrumb.Page title={project}>{name}</Breadcrumb.Page>
+              )}
+            </Breadcrumb.Item>
+            {runTaskId && (
+              <>
+                <Breadcrumb.Separator />
+                <Breadcrumb.Item>
+                  <Breadcrumb.Page>{runTaskId}</Breadcrumb.Page>
+                </Breadcrumb.Item>
+              </>
+            )}
+          </Breadcrumb.List>
+        </Breadcrumb.Root>
+
         {watching && (
-          <span
-            className="flex items-center gap-1 text-xs text-muted-foreground"
-            title="Watching .vanguard for changes"
-          >
+          <span className="flex items-center gap-1 text-xs text-muted-foreground" title="Watching .vanguard for changes">
             <span className="size-2 animate-pulse rounded-full bg-green-500" />
             live
           </span>
         )}
-        <span className="ml-auto min-w-0 max-w-[20rem] truncate text-sm text-muted-foreground" title={project}>
-          {project}
-        </span>
-        <Button
-          variant="text"
-          color="secondary"
-          onClick={load}
-          loading={loading}
-          startIcon={<RefreshCw className="size-4" />}
-        >
-          Reload
-        </Button>
+
+        <div className="ml-auto flex items-center gap-3">
+          {detail && <span className="tabular-nums text-xs text-muted-foreground">{detail.timestamp}</span>}
+          {liveRun && <Chip color="success" variant="outlined">running</Chip>}
+          {detail && <Chip color={detailPassed ? 'success' : 'destructive'}>{detailPassed ? 'passed' : 'failed'}</Chip>}
+          <Button variant="text" color="secondary" onClick={load} loading={loading} startIcon={<RefreshCw className="size-4" />}>
+            Reload
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -127,9 +150,9 @@ export function Inspector({
       )}
 
       {detail ? (
-        <RunDetail detail={detail} onBack={() => setDetail(null)} />
+        <RunDetail detail={detail} />
       ) : liveRun ? (
-        <LiveRun active={liveRun} refreshKey={tick} onBack={() => setLiveRun(null)} />
+        <LiveRun active={liveRun} refreshKey={tick} />
       ) : (
         <>
           <RunningRuns active={active} onOpen={setLiveRun} />

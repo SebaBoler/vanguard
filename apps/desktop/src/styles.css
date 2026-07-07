@@ -6,6 +6,8 @@
 @source './';
 @source '../node_modules/chunks-ui/dist';
 
+@plugin "@tailwindcss/typography";
+
 @custom-variant dark (&:is(.dark *));
 
 body {

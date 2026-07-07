@@ -1,4 +1,5 @@
 import { Card, Chip } from 'chunks-ui';
+import { Markdown } from '../../components/Markdown';
 import type { StageDetail } from '../../vanguard-output';
 
 export function StageCard({ stage }: { stage: StageDetail }) {
@@ -21,12 +22,12 @@ export function StageCard({ stage }: { stage: StageDetail }) {
         </Chip>
       </Card.Header>
       <Card.Content className="pt-0">
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+        <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
           {meta.map((m, i) => (
             <span key={i}>{m}</span>
           ))}
         </div>
-        {r.finalText && <p className="mt-2 whitespace-pre-wrap text-sm">{r.finalText}</p>}
+        {r.finalText && <Markdown>{r.finalText}</Markdown>}
       </Card.Content>
     </Card.Root>
   );
