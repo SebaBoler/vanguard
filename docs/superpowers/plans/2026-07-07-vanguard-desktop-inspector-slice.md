@@ -633,10 +633,19 @@ pub fn read_run_detail(repo_path: &Path, task_id: &str, timestamp: &str) -> io::
 }
 ```
 
+> Security: `task_id` reaches `read_run_detail` from the frontend, so guard against path traversal. Add near `is_run_record_file`:
+> ```rust
+> fn is_safe_task_id(task_id: &str) -> bool {
+>     !task_id.is_empty() && !task_id.contains('/') && !task_id.contains('\\')
+>         && !task_id.contains("..") && !Path::new(task_id).is_absolute()
+> }
+> ```
+> and at the top of `read_run_detail`: `if !is_safe_task_id(task_id) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid task id")); }`. (`timestamp` is already safe — it's run through `sanitize_timestamp`.)
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd apps/desktop/src-tauri && cargo test`
-Expected: all four tests PASS.
+Expected: all tests PASS (including a traversal-rejection test).
 
 - [ ] **Step 6: Commit**
 

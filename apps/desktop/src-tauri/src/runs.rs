@@ -86,6 +86,15 @@ pub fn sanitize_timestamp(ts: &str) -> String {
         .collect()
 }
 
+/// Guard against path traversal: a task id must name a single direct child of the runs dir.
+fn is_safe_task_id(task_id: &str) -> bool {
+    !task_id.is_empty()
+        && !task_id.contains('/')
+        && !task_id.contains('\\')
+        && !task_id.contains("..")
+        && !Path::new(task_id).is_absolute()
+}
+
 fn is_run_record_file(name: &str) -> bool {
     name.ends_with(".json")
         && !name.ends_with(".proof.json")
@@ -141,6 +150,9 @@ pub fn list_run_summaries(repo_path: &Path) -> io::Result<Vec<RunSummary>> {
 }
 
 pub fn read_run_detail(repo_path: &Path, task_id: &str, timestamp: &str) -> io::Result<RunDetail> {
+    if !is_safe_task_id(task_id) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid task id"));
+    }
     let task_dir = runs_dir(repo_path).join(task_id);
     let mut stages: Vec<StageDetail> = Vec::new();
 
@@ -249,6 +261,15 @@ mod tests {
         let proof = d.proof.as_ref().unwrap();
         assert!(!proof.passed);
         assert_eq!(proof.exit_code, 1);
+    }
+
+    #[test]
+    fn rejects_path_traversal_task_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        fixture(tmp.path());
+        assert!(read_run_detail(tmp.path(), "../task-7", "x").is_err());
+        assert!(read_run_detail(tmp.path(), "a/b", "x").is_err());
+        assert!(read_run_detail(tmp.path(), "", "x").is_err());
     }
 
     #[test]
