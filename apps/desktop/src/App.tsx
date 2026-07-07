@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Chip, ThemeToggle, type Theme } from 'chunks-ui';
+import { Logo } from './Logo';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
 
@@ -24,6 +25,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border bg-background/80 px-4 py-2.5 backdrop-blur">
+        <Logo className="size-5 text-primary" />
         <span className="font-semibold">Vanguard</span>
         <Chip color="secondary" variant="outlined">Inspector</Chip>
         <div className="ml-auto">
