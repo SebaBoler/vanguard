@@ -32,6 +32,12 @@ Gates: `cd src-tauri && cargo test` · `pnpm vitest run` · `pnpm build`.
 - **Launch (P1)** — a **New run** form (presets: Run issue / Watch fleet / GitLab MR) spawns a command in
   the project dir inheriting your env; streamed output panel + **Kill**. The launched run then shows live.
 - **Remote runs (P4 slice)** — a Local/Remote toggle lists GitHub Actions runs via `gh run list`.
+- **Per-project screens** (Inspector sub-nav) — **Runs · Board · Fleet · Remote · Workflow · Settings**:
+  - **Task board** — tasks from the configured source (`linear`/`gh`) bucketed into lifecycle columns;
+    card → **Task/spec detail** (source spec + run history + New Run). Best-effort (auth-dependent).
+  - **Fleet** — Watch Loop start/stop, concurrency, Loop-v1, slot meter (spawns `vanguard watch`).
+  - **Workflow** — visual block composer over `.vanguard/app.json` (blocks + inspector + Canvas/Source HCL).
+  - **Settings** — the `.vanguard/app.json` config form (source, label, provider, verify, concurrency, budget).
 - **Rich output** — markdown rendering, `highlight.js` code/JSON blocks, agent `<plan>`/`<findings>`/
   `<promise>` tags as colored callouts. Light + dark, persisted.
 
@@ -66,13 +72,15 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
   in the project dir. Not untrusted input.
 - **Spec / remote** fetches require an authed `gh` / `linear` on `PATH`; they fail gracefully otherwise.
 
-## Deferred (need the design brief + per-project config + live iteration)
+## Remaining / to harden
 
-See `../../design/brief.md` for the full-product design.
+Full-product design in `../../design/brief.md`; rendered mockups in `../../docs/design/screens/`.
 
-- **Task board** — issues from the Task Source as a lifecycle kanban (needs per-project source/label
-  config, i.e. the `.vanguard/app.json` config store, spec §6).
-- **Workflow editor** — the visual flag-composer + HCL/JSONC round-trip (spec §13; needs the format spike).
-- **Settings** — the per-project config store surfaced as UI.
+- **Workflow editor** — currently a config-backed block composer; the full drag-graph + HCL/JSONC
+  round-trip (spec §13) awaits the format spike ("spike both").
+- **Task board / spec fetch** — best-effort via CLI (`gh`/`linear`); needs live verification against
+  authed sources + refined state→column mapping.
 - **Remote depth** — live log tail (`glab ci trace`), artifact-download-into-inspector, GitHub↔GitLab
   parity (spec §14).
+- **Shell** — the design puts the per-project screens in the left rail (project switcher); the build
+  hosts them as an Inspector sub-nav. Cosmetic alignment to the mockups is pending.
