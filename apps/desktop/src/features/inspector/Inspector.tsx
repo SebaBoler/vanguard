@@ -20,6 +20,7 @@ import { Fleet } from '../fleet/Fleet';
 import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
+import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -45,7 +46,7 @@ export function Inspector({
   const [tick, setTick] = useState(0);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
   const [showNewRun, setShowNewRun] = useState(false);
-  const [view, setView] = useState<'runs' | 'board' | 'fleet' | 'remote' | 'settings'>('runs');
+  const [view, setView] = useState<'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings'>('runs');
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
@@ -245,7 +246,7 @@ export function Inspector({
       ) : (
         <>
           <div className="flex gap-1 border-b border-border pb-2">
-            {(['runs', 'board', 'fleet', 'remote', 'settings'] as const).map((v) => (
+            {(['runs', 'board', 'fleet', 'remote', 'workflow', 'settings'] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -266,6 +267,7 @@ export function Inspector({
           {view === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
           {view === 'fleet' && <Fleet project={project} active={active} />}
           {view === 'remote' && <RemoteRuns project={project} />}
+          {view === 'workflow' && <WorkflowEditor project={project} name={name} />}
           {view === 'settings' && <Settings project={project} />}
         </>
       )}
