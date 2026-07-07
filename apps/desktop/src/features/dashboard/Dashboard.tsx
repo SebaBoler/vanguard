@@ -11,13 +11,24 @@ function relTime(iso?: string): string | null {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-function Stat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
+function Stat({
+  label,
+  value,
+  accent,
+  dot,
+}: {
+  label: string;
+  value: string | number;
+  accent?: boolean;
+  dot?: boolean;
+}) {
   return (
-    <div className="flex flex-col">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className={`text-lg font-semibold tabular-nums ${accent ? 'text-green-600 dark:text-green-400' : ''}`}>
+    <div className="rounded-lg border border-border p-4">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className={`mt-1 flex items-center gap-1.5 text-2xl font-semibold tabular-nums ${accent ? 'text-green-600 dark:text-green-400' : ''}`}>
+        {dot && <span className="size-2 rounded-full bg-green-500" />}
         {value}
-      </span>
+      </div>
     </div>
   );
 }
@@ -67,9 +78,9 @@ export function Dashboard({
         </Empty.Root>
       ) : (
         <>
-          <div className="flex flex-wrap gap-6 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <Stat label="Projects" value={totals.projects} />
-            <Stat label="Running" value={totals.running} accent={totals.running > 0} />
+            <Stat label="Running" value={totals.running} accent={totals.running > 0} dot={totals.running > 0} />
             <Stat label="Runs" value={totals.runs} />
             <Stat label="Last 24h" value={totals.last24h} />
             <Stat label="Spend" value={`$${totals.spend.toFixed(2)}`} />
