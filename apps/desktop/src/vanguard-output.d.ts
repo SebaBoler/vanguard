@@ -50,6 +50,8 @@ export interface Project {
   totalCostUsd: number;
   failedCount: number;
   lastRun?: string;
+  runningCount: number;
+  runsLast24h: number;
 }
 
 export interface RunSummary {

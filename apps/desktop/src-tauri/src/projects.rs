@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -15,6 +16,10 @@ pub struct Project {
     pub total_cost_usd: f64,
     pub failed_count: usize,
     pub last_run: Option<String>,
+    /// In-flight runs right now (from active sessions).
+    pub running_count: usize,
+    /// Completed runs whose timestamp is within the last 24h (velocity).
+    pub runs_last_24h: usize,
 }
 
 fn projects_file(config_dir: &Path) -> PathBuf {
@@ -36,17 +41,23 @@ pub fn save_paths(config_dir: &Path, paths: &[String]) -> io::Result<()> {
     fs::write(projects_file(config_dir), json)
 }
 
-/// Aggregate a repo's `.vanguard/runs` into a dashboard summary (static — no live "running" count).
+/// Aggregate a repo's `.vanguard/runs` into a dashboard summary (+ live running count).
 pub fn aggregate(repo_path: &Path) -> Project {
+    aggregate_at(repo_path, Utc::now())
+}
+
+fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
     let name = repo_path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| repo_path.to_string_lossy().into_owned());
     let summaries = crate::runs::list_run_summaries(repo_path).unwrap_or_default();
+    let cutoff = now - Duration::hours(24);
 
     let mut tasks = BTreeSet::new();
     let mut total_cost_usd = 0.0;
     let mut failed_count = 0;
+    let mut runs_last_24h = 0;
     let mut last_run: Option<String> = None;
     for s in &summaries {
         tasks.insert(s.task_id.clone());
@@ -57,7 +68,14 @@ pub fn aggregate(repo_path: &Path) -> Project {
         if last_run.as_deref().is_none_or(|l| s.timestamp.as_str() > l) {
             last_run = Some(s.timestamp.clone());
         }
+        if let Ok(dt) = DateTime::parse_from_rfc3339(&s.timestamp) {
+            if dt.with_timezone(&Utc) >= cutoff {
+                runs_last_24h += 1;
+            }
+        }
     }
+
+    let running_count = crate::active::list_active(repo_path).map(|a| a.len()).unwrap_or(0);
 
     Project {
         path: repo_path.to_string_lossy().into_owned(),
@@ -67,6 +85,8 @@ pub fn aggregate(repo_path: &Path) -> Project {
         total_cost_usd,
         failed_count,
         last_run,
+        running_count,
+        runs_last_24h,
     }
 }
 
@@ -116,13 +136,19 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("proj-a");
         one_run_repo(&repo);
-        let p = aggregate(&repo);
+        // Fixed "now" ~48m after the fixture run so the 24h velocity window is deterministic.
+        let now = DateTime::parse_from_rfc3339("2026-07-06T20:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let p = aggregate_at(&repo, now);
         assert_eq!(p.name, "proj-a");
         assert_eq!(p.run_count, 1);
         assert_eq!(p.task_count, 1);
         assert!((p.total_cost_usd - 0.10).abs() < 1e-9);
         assert_eq!(p.failed_count, 0);
         assert_eq!(p.last_run.as_deref(), Some("2026-07-06T19:12:02.123Z"));
+        assert_eq!(p.running_count, 0);
+        assert_eq!(p.runs_last_24h, 1);
     }
 
     #[test]
