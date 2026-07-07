@@ -24,6 +24,14 @@ pub struct TranscriptEntry {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRead {
+    pub entries: Vec<TranscriptEntry>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 fn within(t: SystemTime, now: SystemTime, w: Duration) -> bool {
     // A future mtime (clock skew) counts as "just now".
     now.duration_since(t).map(|d| d <= w).unwrap_or(true)
@@ -112,15 +120,21 @@ pub fn is_session_path(p: &str) -> bool {
 
 /// Parse a Claude session `.jsonl` into a readable stream: assistant prose + tool-invocation names.
 /// Tool results, attachments and queue ops are skipped (noise for a live view).
-pub fn read_session(session_file: &Path) -> io::Result<Vec<TranscriptEntry>> {
+pub fn read_session(session_file: &Path) -> io::Result<SessionRead> {
     let content = fs::read_to_string(session_file)?;
     let mut entries = Vec::new();
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
         if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
+        }
+        if let Some(u) = v.pointer("/message/usage") {
+            input_tokens += u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            output_tokens += u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
         }
         let Some(blocks) = v.pointer("/message/content").and_then(|c| c.as_array()) else {
             continue;
@@ -142,7 +156,7 @@ pub fn read_session(session_file: &Path) -> io::Result<Vec<TranscriptEntry>> {
             }
         }
     }
-    Ok(entries)
+    Ok(SessionRead { entries, input_tokens, output_tokens })
 }
 
 #[cfg(test)]
@@ -163,7 +177,7 @@ mod tests {
             .join("\n"),
         )
         .unwrap();
-        let out = read_session(&f).unwrap();
+        let out = read_session(&f).unwrap().entries;
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].role, "assistant");
         assert_eq!(out[0].text, "Working on it");

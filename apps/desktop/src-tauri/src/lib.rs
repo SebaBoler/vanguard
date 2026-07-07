@@ -50,7 +50,7 @@ async fn list_active(repo_path: String) -> Result<Vec<active::ActiveRun>, String
 }
 
 #[tauri::command]
-async fn read_session(session_file: String) -> Result<Vec<active::TranscriptEntry>, String> {
+async fn read_session(session_file: String) -> Result<active::SessionRead, String> {
     if !active::is_session_path(&session_file) {
         return Err("invalid session path".into());
     }

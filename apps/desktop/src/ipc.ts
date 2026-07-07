@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RunSummary, RunDetail, Project, ActiveRun, TranscriptEntry } from './vanguard-output';
+import type { RunSummary, RunDetail, Project, ActiveRun, SessionRead } from './vanguard-output';
 
 export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return invoke<RunSummary[]>('list_runs', { repoPath });
@@ -25,8 +25,8 @@ export function listActive(repoPath: string): Promise<ActiveRun[]> {
   return invoke<ActiveRun[]>('list_active', { repoPath });
 }
 
-export function readSession(sessionFile: string): Promise<TranscriptEntry[]> {
-  return invoke<TranscriptEntry[]>('read_session', { sessionFile });
+export function readSession(sessionFile: string): Promise<SessionRead> {
+  return invoke<SessionRead>('read_session', { sessionFile });
 }
 
 export function fetchSpec(repoPath: string, taskId: string): Promise<string> {

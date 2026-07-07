@@ -42,6 +42,12 @@ export interface TranscriptEntry {
   text: string;
 }
 
+export interface SessionRead {
+  entries: TranscriptEntry[];
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface Project {
   path: string;
   name: string;
