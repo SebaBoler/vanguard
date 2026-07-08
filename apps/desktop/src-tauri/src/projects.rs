@@ -1,10 +1,47 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
+
+use crate::runs::RunSummary;
+
+/// Parsed run summaries per repo, reused across dashboard polls while the runs tree is unchanged.
+/// `list_run_summaries` reads + JSON-parses every run record; without this the whole history is
+/// re-parsed for every project on each poll (`App.tsx` ticks `listProjects()` every 5s). Keyed by
+/// repo path; the tree fingerprint invalidates it when a record is added, removed, or rewritten.
+/// ponytail: `list_active` still stat-scans session dirs each tick, but that's stat-only (no reads)
+/// and its result is time-sensitive anyway; only the heavy parse is worth caching.
+/// Per-repo cache entry: (runs-tree fingerprint, parsed summaries at that fingerprint).
+type SummaryCache = HashMap<String, (u64, Vec<RunSummary>)>;
+
+fn summaries_cache() -> &'static Mutex<SummaryCache> {
+    static CACHE: OnceLock<Mutex<SummaryCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_summaries(repo_path: &Path) -> Vec<RunSummary> {
+    let key = repo_path.to_string_lossy().into_owned();
+    let fp = crate::runs::runs_fingerprint(repo_path);
+    if let Some((cached_fp, summaries)) = summaries_cache().lock().unwrap().get(&key) {
+        if *cached_fp == fp {
+            return summaries.clone();
+        }
+    }
+    // Only cache a successful parse. Caching a transient error's empty result would pin the dashboard
+    // at 0 runs until the tree fingerprint next shifts; returning the default un-cached self-heals on
+    // the next poll instead.
+    match crate::runs::list_run_summaries(repo_path) {
+        Ok(summaries) => {
+            summaries_cache().lock().unwrap().insert(key, (fp, summaries.clone()));
+            summaries
+        }
+        Err(_) => Vec::new(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +90,7 @@ fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| repo_path.to_string_lossy().into_owned());
-    let summaries = crate::runs::list_run_summaries(repo_path).unwrap_or_default();
+    let summaries = cached_summaries(repo_path);
     let cutoff = now - Duration::hours(24);
 
     let mut tasks = BTreeSet::new();
@@ -176,6 +213,26 @@ mod tests {
     fn missing_store_lists_empty() {
         let cfg = tempfile::tempdir().unwrap();
         assert!(list(cfg.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn cache_invalidates_when_a_run_is_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("proj-cache");
+        one_run_repo(&repo);
+        // First aggregate populates the summaries cache for this repo path.
+        assert_eq!(aggregate(&repo).run_count, 1);
+        // A second run under a new task dir must shift the fingerprint and bust the cache.
+        let f = repo.join(".vanguard/runs/task-2/2026-07-06T20-00-00-000Z-implement.json");
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(
+            &f,
+            r#"{"taskId":"task-2","completed":true,"exitReason":"completed","turns":1,
+                "worktreePath":"/tmp/wt","worktreePreserved":false,"finalText":"ok",
+                "costUsd":0.20,"timestamp":"2026-07-06T20:00:00.000Z","stage":"implement"}"#,
+        )
+        .unwrap();
+        assert_eq!(aggregate(&repo).run_count, 2);
     }
 
     #[test]

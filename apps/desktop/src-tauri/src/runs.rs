@@ -1,7 +1,10 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +104,55 @@ fn is_run_record_file(name: &str) -> bool {
         && !name.ends_with(".visual-proof.json")
 }
 
+/// Read a file's text but refuse a symlinked leaf: a repo under inspection could plant a
+/// `.diff`/`.transcript.log`/`.jsonl` pointing at an arbitrary file and have its contents shown in
+/// the UI. ponytail: guards the leaf symlink only — a symlinked *parent dir* still resolves, and a
+/// hardlink isn't caught at all (needs dev/inode/nlink checks, not canonicalize). Acceptable for the
+/// operator's-own-repo model (the agent could exfil directly anyway); revisit if trust ever lowers.
+pub fn read_text_no_symlink(path: &Path) -> io::Result<String> {
+    if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "refusing to read a symlinked file"));
+    }
+    fs::read_to_string(path)
+}
+
+/// Cheap change-detector for a repo's runs tree: folds each record file's name + mtime together
+/// without reading contents, so the dashboard can skip re-parsing the whole history when nothing
+/// changed. Order-independent (read_dir order is unspecified); a record added, removed, or rewritten
+/// shifts the result. Empty/missing tree → 0.
+pub fn runs_fingerprint(repo_path: &Path) -> u64 {
+    let Ok(task_dirs) = fs::read_dir(runs_dir(repo_path)) else {
+        return 0;
+    };
+    let mut fp: u64 = 0;
+    for task in task_dirs.flatten() {
+        if !task.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let Ok(files) = fs::read_dir(task.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let name = file.file_name().to_string_lossy().into_owned();
+            if !is_run_record_file(&name) {
+                continue;
+            }
+            let mtime = file
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let mut h = DefaultHasher::new();
+            name.hash(&mut h);
+            mtime.hash(&mut h);
+            fp = fp.wrapping_add(h.finish());
+        }
+    }
+    fp
+}
+
 pub fn list_run_summaries(repo_path: &Path) -> io::Result<Vec<RunSummary>> {
     let runs = runs_dir(repo_path);
     let mut summaries: Vec<RunSummary> = Vec::new();
@@ -173,8 +225,8 @@ pub fn read_run_detail(repo_path: &Path, task_id: &str, timestamp: &str) -> io::
         }
         let path_str = path.to_string_lossy();
         let base = path_str.strip_suffix(".json").unwrap_or(&path_str);
-        let diff = fs::read_to_string(format!("{base}.diff")).ok();
-        let transcript = fs::read_to_string(format!("{base}.transcript.log")).ok();
+        let diff = read_text_no_symlink(Path::new(&format!("{base}.diff"))).ok();
+        let transcript = read_text_no_symlink(Path::new(&format!("{base}.transcript.log"))).ok();
         stages.push(StageDetail { record, diff, transcript });
     }
 
@@ -276,5 +328,34 @@ mod tests {
     fn missing_runs_dir_is_empty_not_error() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(list_run_summaries(tmp.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn fingerprint_stable_then_shifts_on_new_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        fixture(tmp.path());
+        let a = runs_fingerprint(tmp.path());
+        assert_ne!(a, 0);
+        assert_eq!(a, runs_fingerprint(tmp.path())); // unchanged tree → same fingerprint
+        write(
+            &tmp.path().join(".vanguard/runs/task-7/2026-07-06T20-00-00-000Z-implement.json"),
+            r#"{"taskId":"task-7","completed":true,"exitReason":"completed","turns":1,
+                "worktreePath":"/tmp/wt","worktreePreserved":false,"finalText":"x",
+                "timestamp":"2026-07-06T20:00:00.000Z","stage":"implement"}"#,
+        );
+        assert_ne!(a, runs_fingerprint(tmp.path())); // added record → different fingerprint
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_text_no_symlink_rejects_symlinked_leaf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real.diff");
+        fs::write(&real, "diff body").unwrap();
+        assert_eq!(read_text_no_symlink(&real).unwrap(), "diff body");
+
+        let link = tmp.path().join("link.diff");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(read_text_no_symlink(&link).is_err()); // must not follow the symlink
     }
 }

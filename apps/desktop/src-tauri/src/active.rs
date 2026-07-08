@@ -133,7 +133,7 @@ pub fn is_session_path(p: &str) -> bool {
 /// Parse a Claude session `.jsonl` into a readable stream: assistant prose + tool-invocation names.
 /// Tool results, attachments and queue ops are skipped (noise for a live view).
 pub fn read_session(session_file: &Path) -> io::Result<SessionRead> {
-    let content = fs::read_to_string(session_file)?;
+    let content = crate::runs::read_text_no_symlink(session_file)?;
     let mut entries = Vec::new();
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
