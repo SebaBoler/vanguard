@@ -187,6 +187,14 @@ describe('providerSecrets (meridian)', () => {
   it('throws when MERIDIAN_BASE_URL is missing', () => {
     expect(() => providerSecrets(['meridian'], {})).toThrow(/MERIDIAN_BASE_URL/);
   });
+
+  it('overrides the placeholder token with MERIDIAN_API_KEY when set (keyed proxy)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3000', MERIDIAN_API_KEY: 'real-key' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['meridian'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'http://192.168.1.10:3000', ANTHROPIC_AUTH_TOKEN: 'real-key' },
+      proxySecrets: {},
+    });
+  });
 });
 
 describe('selectAgents', () => {

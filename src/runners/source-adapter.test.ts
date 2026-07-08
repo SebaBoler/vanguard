@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
-import { pickRunOptions, runSourcedIssue } from './source-adapter.js';
+import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
@@ -40,6 +40,16 @@ describe('pickRunOptions', () => {
       conformance: false,
       conformanceModel: 'opus',
     });
+  });
+
+  it('copies maxTurns and maxRepairIterations when defined, omits when absent', () => {
+    expect(pickRunOptions({ maxTurns: 80, maxRepairIterations: 5 })).toEqual({
+      maxTurns: 80,
+      maxRepairIterations: 5,
+    });
+    const withoutOverrides = pickRunOptions({});
+    expect('maxTurns' in withoutOverrides).toBe(false);
+    expect('maxRepairIterations' in withoutOverrides).toBe(false);
   });
 });
 
@@ -143,8 +153,8 @@ function fakeAdapter(order: string[], stages: PipelineStage[]): SourceAdapter {
 }
 
 const STAGES: PipelineStage[] = [
-  { name: 'implementer', promptTemplate: '' },
-  { name: 'reviewer', promptTemplate: '' },
+  { name: 'implementer', promptTemplate: '', maxTurns: 30 },
+  { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
 ];
 
 describe('runSourcedIssue', () => {
@@ -186,12 +196,74 @@ describe('runSourcedIssue', () => {
     expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
   });
 
+  it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', maxTurns: 80 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+
+    vi.clearAllMocks();
+    runStages.mockResolvedValue([stageOutcome('reviewer')]);
+    commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
+    publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
+    const adapter2 = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter2);
+    const assembledNoOverride = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembledNoOverride.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('--max-turns survives the --plan pipeline', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', plan: true, maxTurns: 80 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+  });
+
   it('persists stage outcomes WITH pr.prUrl on the committed path', async () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
     expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], MR_URL]);
+  });
+
+  it('white-label (--commit-author): no review comment, no issue link-back, clean PR body', async () => {
+    const order: string[] = [];
+    const adapter = fakeAdapter(order, STAGES);
+    await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', commitAuthor: { name: 'Sebastian Pietrzak', email: 's@p.co' } },
+      adapter,
+    );
+
+    // Vanguard-branded surfaces are suppressed.
+    expect(adapter.publishVerdict).not.toHaveBeenCalled();
+    expect(adapter.linkPr).not.toHaveBeenCalled();
+    expect(order).not.toContain('publishVerdict');
+    expect(order).not.toContain('linkPr');
+    // PR body is the plain Closes line — no "Vanguard", no "Proof of work" artifact.
+    const body = (publishForReview.mock.calls[0]?.[1] as { body: string }).body;
+    expect(body).not.toMatch(/Vanguard|Proof of work/);
+    // Commit message is Conventional-Commits-safe (lower-case subject, trailing #issue).
+    const message = (commitStage.mock.calls[0]?.[1] as { message: string }).message;
+    expect(message).toBe('feat: t (#1)');
+  });
+
+  it('conventionalCommitMessage: lower-case subject, ≤100-char header, trailing #issue', () => {
+    const title = 'CP: deleted CP is not fully removed (409 during adding CP with the name of deleted one)';
+    const msg = conventionalCommitMessage(title, 'gh-pwc-pl-tax-itbc-data-controls-engine-904');
+    expect(msg.length).toBeLessThanOrEqual(100);
+    expect(msg.startsWith('feat: ')).toBe(true);
+    expect(msg).toMatch(/\(#904\)$/);
+    expect(msg.replace('feat: ', '')).not.toMatch(/[A-Z]/); // fully lower-case → passes commitlint subject-case
+  });
+
+  it('--base targets the PR at the given base branch', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'dev' }, adapter);
+
+    const publishOpts = publishForReview.mock.calls[0]?.[1] as { baseBranch?: string };
+    expect(publishOpts.baseBranch).toBe('dev');
   });
 
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
@@ -307,11 +379,27 @@ describe('runSourcedIssue', () => {
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(result.prUrl).toBe(MR_URL);
-    expect(runAgent).toHaveBeenCalledTimes(2); // MAX_CONFORMANCE_ITERATIONS
+    expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
     expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Part of ${task.id}`);
     expect(body).not.toContain(`Closes ${task.id}`);
+  });
+
+  it('--max-repair-iterations 5 allows up to 5 loop-back passes on persistent red verification', async () => {
+    runStages.mockResolvedValueOnce([stageOutcome('implementer', 'sess-1'), stageOutcome('reviewer')]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValue({ passed: false } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo', maxRepairIterations: 5 }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(5);
+    expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Part of ${task.id}`);
   });
 
   it('surfaces a commit-message close-leak warning in the body on a partial (red-verification) result', async () => {

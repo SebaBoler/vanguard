@@ -12,11 +12,11 @@ export interface SecretPattern {
   replacement: string;
   /**
    * Gate-only refinement. When present, scanForSecrets keeps a match ONLY if this returns true,
-   * given the matched credential value and the full added line. redactTokens IGNORES it —
-   * over-redacting logs is harmless; under-gating is not. Absent → always kept (JWT/Bearer/sk-/
-   * json-token-field detection stays unconditional).
+   * given the matched credential value. redactTokens IGNORES it — over-redacting logs is
+   * harmless; under-gating is not. Absent → always kept (JWT/Bearer/sk-/json-token-field
+   * detection stays unconditional).
    */
-  refine?: (value: string, line: string) => boolean;
+  refine?: (value: string) => boolean;
 }
 
 const ALLOWLIST_MARKER = /(?:vanguard-allow-secret|pragma:\s*allowlist\s*secret|gitleaks:allow)/i;
@@ -57,11 +57,10 @@ export function shannonEntropy(value: string): number {
 
 /**
  * Conservative (fail-closed) heuristic for the broad `assignment` pattern: reject only on clear
- * non-secret signals (allowlist marker, code/env reference, placeholder text, low entropy). Keeps
- * ambiguous matches as findings.
+ * non-secret signals (code/env reference, placeholder text, low entropy). Keeps ambiguous matches
+ * as findings. The allowlist marker is handled globally in scanForSecrets, not here.
  */
-function isLikelyAssignedSecret(value: string, line: string): boolean {
-  if (ALLOWLIST_MARKER.test(line)) return false;
+function isLikelyAssignedSecret(value: string): boolean {
   if (CODE_REFERENCE_PREFIX.test(value)) return false;
   if (IDENTIFIER_CHAIN.test(value)) return false;
   if (UPPER_SNAKE_IDENTIFIER.test(value)) return false;
@@ -112,35 +111,48 @@ const ADDED_FILE_HEADER = /^\+\+\+ b\/(.+)$/;
 // are the #1 false-positive source in every regex secret scanner. Exclude them from the publish
 // gate — the agent never holds real secrets anyway (nonce/tmpfs/proxy), so a real leak here is
 // implausible, and GitHub secret scanning / push protection is the real backstop for prod files.
-const TEST_PATH = /\.(test|fixture)\.[cm]?[jt]sx?$/i;
+// One rule per naming convention (mirrors SECRET_PATTERNS above) so each is independently testable
+// and adding a new language's convention never grows the others. The `tests/`/`__tests__/` directory
+// rule is intentionally broad — it also covers non-test helper modules that sit alongside tests
+// (e.g. tests/helpers.py) and carry the same fixture secrets, and is the one that matched the live
+// incident path (apps/.../tests/...).
+const TEST_PATH_RULES: readonly RegExp[] = [
+  /[.-](?:test|spec|fixture)\.[cm]?[jt]sx?$/i, // JS/TS: *.test.ts, *.spec.ts, *.fixture.tsx, *.e2e-spec.ts (+ cjs/mjs)
+  /(?:^|\/)(?:test_[^/]*|[^/]*_test|conftest)\.py$/i, // Python: test_*.py, *_test.py, conftest.py
+  /(?:^|\/)(?:tests|__tests__)\//i, // any path under a tests/ or __tests__/ directory
+];
 export function isTestPath(file: string): boolean {
-  return TEST_PATH.test(file);
+  return TEST_PATH_RULES.some((re) => re.test(file));
 }
 
 /**
  * Scan a unified git diff. Inspects only ADDED lines (lines starting with '+', excluding the
  * '+++' file header). Tracks the current file from '+++ b/<path>' headers so findings carry a path.
- * Added lines in test/fixture files are skipped (they legitimately contain fake secrets).
+ * Added lines in test/fixture files are skipped (they legitimately contain fake secrets), as are
+ * lines carrying an ALLOWLIST_MARKER comment.
  */
 export function scanForSecrets(diff: string): SecretFinding[] {
   const findings: SecretFinding[] = [];
   let currentFile = '(unknown)';
+  let currentFileIsTest = false;
   for (const line of diff.split('\n')) {
     if (line.startsWith('+++ ')) {
       const m = ADDED_FILE_HEADER.exec(line);
       if (m !== null && m[1] !== undefined) currentFile = m[1];
+      currentFileIsTest = isTestPath(currentFile);
       continue;
     }
     if (!line.startsWith('+')) continue;
-    if (isTestPath(currentFile)) continue;
+    if (currentFileIsTest) continue;
     const added = line.slice(1);
+    if (ALLOWLIST_MARKER.test(added)) continue;
     const matched = SECRET_PATTERNS.filter((pattern) => {
       const refine = pattern.refine ?? (() => true);
       // Check every match on the line, not just the first — a leading placeholder-shaped
       // assignment must not shadow a genuine secret assigned later on the same line.
       for (const m of added.matchAll(pattern.re)) {
         const value = m[m.length - 1] ?? m[0];
-        if (refine(value, added)) return true;
+        if (refine(value)) return true;
       }
       return false;
     });

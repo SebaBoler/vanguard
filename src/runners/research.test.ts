@@ -245,6 +245,19 @@ describe('formatResearchComment', () => {
     expect(body).toContain('_Mode: model-knowledge only (no web egress)_');
   });
 
+  it('white-label: drops "Vanguard" from heading and uses the neutral marker', () => {
+    const body = formatResearchComment('Findings.', { webAccess: false, iteration: 3, whiteLabel: true });
+    expect(body).toMatch(/^## Research \(iteration 3\)/);
+    expect(body).not.toMatch(/Vanguard/);
+    expect(body).toContain('<!-- research-iter: 3 -->');
+  });
+
+  it('isResearchComment detects both the default and the white-label marker', () => {
+    expect(isResearchComment({ author: 'x', body: 'a\n<!-- vanguard-research: 1 -->' })).toBe(true);
+    expect(isResearchComment({ author: 'x', body: 'b\n<!-- research-iter: 2 -->' })).toBe(true);
+    expect(isResearchComment({ author: 'x', body: 'no marker' })).toBe(false);
+  });
+
   it('includes correct mode line for web mode', () => {
     const body = formatResearchComment('Findings.', { webAccess: true, iteration: 1 });
     expect(body).toContain('_Mode: web research_');

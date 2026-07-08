@@ -164,6 +164,40 @@ describe('parseCli', () => {
     expect('noSimplify' in parseCli(['run', '--linear', 'TES-1'], '/work')).toBe(false);
   });
 
+  it('parses --max-turns and --max-repair-iterations on run', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1', '--max-turns', '80'], '/work');
+    expect(cmd.kind === 'run' && cmd.maxTurns).toBe(80);
+    const cmd2 = parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '5'], '/work');
+    expect(cmd2.kind === 'run' && cmd2.maxRepairIterations).toBe(5);
+  });
+
+  it('parses --max-turns and --max-repair-iterations on watch', () => {
+    const cmd = parseCli(
+      ['watch', '--source', 'github', '--github-repo', 'o/r', '--max-turns', '80', '--max-repair-iterations', '5'],
+      '/work',
+    );
+    expect(cmd.kind === 'watch' && cmd.maxTurns).toBe(80);
+    expect(cmd.kind === 'watch' && cmd.maxRepairIterations).toBe(5);
+  });
+
+  it('rejects --max-turns 0, negative, or non-numeric (no override set)', () => {
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '0'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '-3'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', 'x'], '/work')).toBe(false);
+  });
+
+  it('rejects --max-repair-iterations 0, negative, or non-numeric (no override set)', () => {
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '0'], '/work')).toBe(false);
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', '-3'], '/work')).toBe(false);
+    expect('maxRepairIterations' in parseCli(['run', '--linear', 'TES-1', '--max-repair-iterations', 'x'], '/work')).toBe(false);
+  });
+
+  it('omits maxTurns and maxRepairIterations when neither flag is passed', () => {
+    const cmd = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect('maxTurns' in cmd).toBe(false);
+    expect('maxRepairIterations' in cmd).toBe(false);
+  });
+
   it('parses review-pr with a GitHub PR URL', () => {
     expect(
       parseCli(['review-pr', 'https://github.com/o/r/pull/12', '--repo', '/work', '--provider', 'codex', '--review-model', 'gpt-5'], '/cwd'),
@@ -584,6 +618,23 @@ describe('parseCli', () => {
 
     const noPlan = parseCli(['run', '--github', 'o/r#1'], '/work');
     expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
+  });
+
+  it('parses --base on run and watch (defaults to undefined)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--base', 'dev'], '/work');
+    expect(run.kind === 'run' && run.baseBranch).toBe('dev');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base', 'dev'], '/work');
+    expect(watch.kind === 'watch' && watch.baseBranch).toBe('dev');
+
+    const noBase = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
+  });
+
+  it('parses --commit-author on research (white-label toggle)', () => {
+    const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
+    expect(cmd.kind).toBe('research');
+    expect(cmd.kind === 'research' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
   });
 
   // --- Loop v1 flag tests ---

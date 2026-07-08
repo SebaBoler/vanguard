@@ -3,7 +3,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -51,6 +51,18 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
+  baseBranch?: string;
+  /**
+   * Override the implementer stage's turn cap (default: 30; base/fast stays 12). Opt-in, higher
+   * token cost — lets one run finish a deliberately large, multi-file task. Set via --max-turns.
+   */
+  maxTurns?: number;
+  /**
+   * Override the conformance/verify repair loop-back cap (default: 2). Opt-in — gives the
+   * manifest-driven loop-back more passes on large tasks. Set via --max-repair-iterations.
+   */
+  maxRepairIterations?: number;
 }
 
 /**
@@ -73,6 +85,9 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
+    ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+    ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
   };
 }
 
@@ -142,10 +157,37 @@ export interface RunIssueResult {
   task: Task;
   /** Absent when the agent produced no changes (no PR opened). */
   prUrl?: string;
+  /** True when a PR was withheld because the secret scan flagged the outgoing diff — NOT "no changes". */
+  secretBlocked?: boolean;
 }
 
 /** Cap on implement-session resumes triggered by a failing conformance/verify gate, before falling back to a declared-partial PR. */
 const MAX_REPAIR_ITERATIONS = 2;
+
+/**
+ * White-label branch id: the trailing issue number (e.g. `gh-…-904` → `904`), else a
+ * Conventional-Branch-safe slug of the taskId. Used for `feat/<id>-<hash>` branches in white-label mode.
+ */
+function branchIdFromTaskId(taskId: string): string {
+  const trailingNumber = /(\d+)$/.exec(taskId)?.[1];
+  if (trailingNumber !== undefined) return trailingNumber;
+  const slug = taskId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return slug === '' ? 'task' : slug;
+}
+
+/**
+ * Conventional-Commits-safe commit message for white-label mode: `feat: <lower-case subject> (#<issue>)`
+ * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
+ * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
+ */
+export function conventionalCommitMessage(title: string, taskId: string): string {
+  const prefix = 'feat: ';
+  const suffix = ` (#${branchIdFromTaskId(taskId)})`;
+  const subject = title.toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
+  const room = 100 - prefix.length - suffix.length;
+  const clipped = subject.length > room ? subject.slice(0, room).trimEnd() : subject;
+  return `${prefix}${clipped}${suffix}`;
+}
 
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
@@ -154,6 +196,11 @@ export async function runSourcedIssue(
   adapter: SourceAdapter,
 ): Promise<RunIssueResult> {
   const { task, skills } = await adapter.prepare(issueRef);
+
+  // White-label mode (triggered by --commit-author): the PR is delivered as a plain, human-looking PR.
+  // Branch becomes `feat/<issue-number>-<hash>`, the "by Vanguard" attribution and the Vanguard review
+  // comment / issue link-back are suppressed. Off by default — everything stays branded as Vanguard.
+  const whiteLabel = deps.commitAuthor !== undefined;
 
   const agents = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
 
@@ -187,6 +234,8 @@ export async function runSourcedIssue(
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
         ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
+        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+        ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
       },
       skills !== undefined ? { skills } : {},
     );
@@ -194,7 +243,14 @@ export async function runSourcedIssue(
       // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
       // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
       const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
-      const pipeline = assembleReviewPipeline(baseStages, agents, deps);
+      const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
+      // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
+      // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
+      const scopedStages =
+        deps.maxRepairIterations !== undefined
+          ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
+          : turnScoped;
+      const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
@@ -221,6 +277,7 @@ export async function runSourcedIssue(
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
 
+      const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
       let gatePassed = false;
@@ -231,11 +288,11 @@ export async function runSourcedIssue(
         conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
         verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
         gatePassed = conformance.pass && (verification === undefined || verification.passed);
-        if (gatePassed || repairIterations >= MAX_REPAIR_ITERATIONS || resumeSessionId === undefined) break;
+        if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
         console.log(
-          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${MAX_REPAIR_ITERATIONS}) — resuming implement session`,
+          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
         );
         const feedback = [
           !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
@@ -283,11 +340,15 @@ export async function runSourcedIssue(
       if (block !== undefined) {
         await persistStageOutcomes(deps.repoPath, outcomes);
         await adapter.signalSecretBlock(issueRef, task, block);
-        return { task };
+        return { task, secretBlocked: true };
       }
 
       const commit = await commitStage(ctx, {
-        message: `feat: ${task.title} (${task.id})`,
+        // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
+        // (≤100-char header, lower-case subject, trailing #issue). Default keeps the readable form.
+        message: whiteLabel
+          ? conventionalCommitMessage(task.title, adapter.taskId(task))
+          : `feat: ${task.title} (${task.id})`,
         ...(deps.commitAuthor !== undefined
           ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
           : {}),
@@ -305,6 +366,7 @@ export async function runSourcedIssue(
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
         ...(manifest !== undefined ? { conformance, manifest } : {}),
         ...(verificationFailed ? { verificationFailed: true } : {}),
+        ...(whiteLabel ? { hideAttribution: true } : {}),
       });
       // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
       // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
@@ -312,27 +374,41 @@ export async function runSourcedIssue(
       const commitLeaks = partial
         ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, 'main'), task.id)
         : [];
-      const body = [
-        baseBody,
-        commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
-        verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
-        visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
-      ].filter((s): s is string => s !== undefined).join('\n\n');
-      const pr = await publishForReview(ctx, { title: `${task.title} (${task.id})`, body, draft: true, ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}) });
-      const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
-      const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
-      await adapter.publishVerdict({
-        prUrl: pr.prUrl,
-        headSha: commit.sha!,
-        reviewerOutcome,
-        conformanceOutcome,
-        attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),
-        ...(deps.reviewGate === true ? { gate: true } : {}),
+      // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
+      // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the
+      // Closes-vs-Part-of decision baked into baseBody.
+      const body = whiteLabel
+        ? baseBody
+        : [
+            baseBody,
+            commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
+            verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
+            visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
+          ].filter((s): s is string => s !== undefined).join('\n\n');
+      const pr = await publishForReview(ctx, {
+        title: `${task.title} (${task.id})`,
+        body,
+        draft: true,
+        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+        ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
       });
+      // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
+      if (!whiteLabel) {
+        const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
+        const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
+        await adapter.publishVerdict({
+          prUrl: pr.prUrl,
+          headSha: commit.sha!,
+          reviewerOutcome,
+          conformanceOutcome,
+          attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),
+          ...(deps.reviewGate === true ? { gate: true } : {}),
+        });
+      }
       await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
-      await adapter.linkPr(issueRef, task, pr.prUrl);
+      if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
       return { task, prUrl: pr.prUrl };
     } finally {
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {

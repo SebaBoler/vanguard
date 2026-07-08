@@ -8,9 +8,21 @@ export interface Worktree {
   branch: string;
 }
 
+/**
+ * Branch prefix for every Vanguard run. Conventional-Branch compliant (`<type>/<description>`, lowercase,
+ * hyphens): the type is `chore` and `vanguard-` marks the namespace so `gc` reaps only Vanguard branches,
+ * not humans' `chore/*`. A plain `vanguard/` prefix is rejected by repos that enforce Conventional Branch
+ * (the type must be one of feat/fix/bugfix/hotfix/release/chore/refactor/docs/test/ci).
+ */
+export const VANGUARD_BRANCH_PREFIX = 'chore/vanguard-';
+
 export interface CreateOptions {
-  /** Reuse an existing vanguard/<taskId>-* branch instead of minting a new run id. */
+  /** Reuse an existing <prefix><id>-* branch instead of minting a new run id. */
   reuse?: boolean;
+  /** Override the branch prefix (default VANGUARD_BRANCH_PREFIX). White-label mode uses e.g. `feat/`. */
+  branchPrefix?: string;
+  /** Override the branch/path id (default taskId). White-label mode uses the bare issue number. */
+  branchId?: string;
 }
 
 /** Short, unique-per-run id so re-running the same task never collides on an existing branch/path. */
@@ -41,14 +53,16 @@ export class WorktreeManager {
   ) {}
 
   async create(taskId: string, baseBranch: string = 'main', opts: CreateOptions = {}): Promise<Worktree> {
+    const prefix = opts.branchPrefix ?? VANGUARD_BRANCH_PREFIX;
+    const id = opts.branchId ?? taskId;
     if (opts.reuse) {
-      const existing = await this.findExistingBranch(taskId);
+      const existing = await this.findExistingBranch(id, prefix);
       if (existing) return existing;
     }
     // Append a unique run id: disposeContext removes the worktree but not the branch, and a prior
-    // run also leaves a remote branch, so reusing `vanguard/<taskId>` collides on re-run.
-    const name = `${taskId}-${this.newRunId()}`;
-    const branch = `vanguard/${name}`;
+    // run also leaves a remote branch, so reusing `<prefix><id>` collides on re-run.
+    const name = `${id}-${this.newRunId()}`;
+    const branch = `${prefix}${name}`;
     const path = join(this.baseDir, name);
     try {
       await execa('git', ['worktree', 'add', '-b', branch, path, baseBranch], { cwd: this.repoPath });
@@ -58,16 +72,16 @@ export class WorktreeManager {
     }
   }
 
-  private async findExistingBranch(taskId: string): Promise<Worktree | null> {
+  private async findExistingBranch(id: string, prefix: string = VANGUARD_BRANCH_PREFIX): Promise<Worktree | null> {
     let branchOut: string;
     let wtOut: string;
     try {
       [{ stdout: branchOut }, { stdout: wtOut }] = await Promise.all([
-        execa('git', ['branch', '--list', `vanguard/${taskId}-*`], { cwd: this.repoPath }),
+        execa('git', ['branch', '--list', `${prefix}${id}-*`], { cwd: this.repoPath }),
         execa('git', ['worktree', 'list', '--porcelain'], { cwd: this.repoPath }),
       ]);
     } catch (cause) {
-      throw new WorktreeError(`Failed to query git state for ${taskId}`, { cause });
+      throw new WorktreeError(`Failed to query git state for ${id}`, { cause });
     }
     const branch = branchOut
       .split('\n')
@@ -77,7 +91,7 @@ export class WorktreeManager {
 
     // Use create()'s own path form: git reports a symlink-resolved path (e.g. /private/var on macOS),
     // which would not string-equal the join(baseDir, name) that create() returns.
-    const name = branch.slice('vanguard/'.length);
+    const name = branch.slice(prefix.length);
     const path = join(this.baseDir, name);
 
     // If a live worktree already uses this branch, reuse it.
@@ -89,7 +103,7 @@ export class WorktreeManager {
       await execa('git', ['worktree', 'add', path, branch], { cwd: this.repoPath });
       return { path, branch };
     } catch (cause) {
-      throw new WorktreeError(`Failed to reuse worktree for ${taskId}`, { cause });
+      throw new WorktreeError(`Failed to reuse worktree for ${id}`, { cause });
     }
   }
 

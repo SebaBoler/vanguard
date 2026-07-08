@@ -41,6 +41,10 @@ export interface PrepareOptions {
   localRepoPath: string;
   baseBranch?: string;
   reuse?: boolean;
+  /** Override the run branch prefix (white-label mode: e.g. `feat/`). Default VANGUARD_BRANCH_PREFIX. */
+  branchPrefix?: string;
+  /** Override the run branch/path id (white-label mode: bare issue number). Default taskId. */
+  branchId?: string;
   skills?: string[];
   /** Provider name (AgentProvider.name) used to select the skill injection target format. */
   agentName?: string;
@@ -107,7 +111,11 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
-  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', opts.reuse !== undefined ? { reuse: opts.reuse } : {});
+  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', {
+    ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
+    ...(opts.branchPrefix !== undefined ? { branchPrefix: opts.branchPrefix } : {}),
+    ...(opts.branchId !== undefined ? { branchId: opts.branchId } : {}),
+  });
   // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
   // sandboxes than the host can hold (blocks until a slot frees).
   await acquireSandboxSlot(opts.sandbox);

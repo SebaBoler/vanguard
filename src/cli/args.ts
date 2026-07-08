@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
+import type { RunOptions } from '../runners/source-adapter.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
@@ -28,6 +29,8 @@ export type Command =
       webAccess?: boolean;
       provider?: ProviderName;
       researchModel?: string;
+      /** White-label the research comment (drop "Vanguard" heading/marker). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
     }
   | {
       kind: 'revise-pr';
@@ -99,7 +102,7 @@ export type Command =
       specClaimedState?: string;
       llmProxy?: boolean;
     }
-  | {
+  | ({
       kind: 'run';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       id: string;
@@ -116,29 +119,10 @@ export type Command =
       label?: string;
       /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
       project?: string;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
       /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
       forkN?: number;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
-      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
-      conformance?: boolean;
-      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
-      conformanceModel?: string;
-      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
-      commitAuthor?: { name: string; email: string };
-      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
-      plan?: boolean;
-    }
-  | {
+    } & RunOptions)
+  | ({
       kind: 'watch';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       /** Required for linear/github; optional for project (label-filter on the board). */
@@ -161,25 +145,6 @@ export type Command =
       egress: boolean;
       /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
-      /** When true, run the conformance stage after the reviewer (opt-in; default off). */
-      conformance?: boolean;
-      /** Model override for the conformance stage (e.g. 'opus' for planner-tier). */
-      conformanceModel?: string;
-      /** Git author for the commit (default `Vanguard <vanguard@local>`); parsed from --commit-author. */
-      commitAuthor?: { name: string; email: string };
-      /** Run a dedicated opus planning stage before implement/review (plan-implement-review pipeline). */
-      plan?: boolean;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -212,7 +177,7 @@ export type Command =
        * (default: 'Speccing'). Omitted when absent — the default is used.
        */
       specClaimedState?: string;
-    }
+    } & RunOptions)
   | {
       kind: 'review-mr';
       iid: number;
@@ -382,6 +347,11 @@ export function parseCli(argv: string[], cwd: string): Command {
         'commit-author': { type: 'string' },
         // run a dedicated opus planning stage before implement/review (run + watch)
         plan: { type: 'boolean' },
+        // base branch to branch off and target the PR at (run + watch); default main
+        base: { type: 'string' },
+        // opt-in overrides to let a single run finish a large task (run + watch)
+        'max-turns': { type: 'string' },
+        'max-repair-iterations': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -431,6 +401,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   } catch (message) {
     return fail(String(message));
   }
+
+  // Opt-in overrides to let a single run finish a large task (run + watch). Positive integers only;
+  // 0/negative/non-numeric are rejected at parse (no override set), same semantics as parseLimit.
+  const maxTurns = parseLimit(values['max-turns']);
+  const maxRepairIterations = parseLimit(values['max-repair-iterations']);
 
   if (positionals[0] === 'stats') {
     return { kind: 'stats', repoPath, json: values.json === true };
@@ -511,6 +486,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
 
@@ -665,6 +641,9 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
+      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
     };
   }
 
@@ -780,6 +759,9 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
+      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -831,7 +813,7 @@ Commands:
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
-         remote vanguard/* branches.
+         remote chore/vanguard-* branches.
 
   watch options (trigger = state/label + label):
     --source <linear|github|project|gitlab>  Task source (default: linear)
@@ -863,8 +845,11 @@ Commands:
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+    --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -917,7 +902,7 @@ Commands:
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
     --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude + Codex; Cursor stays direct)
-    --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
+    --reuse                Reuse an existing chore/vanguard-<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
@@ -932,8 +917,11 @@ Commands:
     --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (default: Vanguard <vanguard@local>)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+    --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
@@ -949,6 +937,7 @@ Commands:
     --github-repo <o/r>     Required for bare issue numbers
     --web                   Declare that web egress/search is available; otherwise comments say model-knowledge only
     --research-model <m>    Model for the research pass
+    --commit-author <a>     White-label the comment (drop "Vanguard" heading/marker); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -1026,7 +1015,7 @@ Commands:
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
-    --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
+    --remote <owner/repo>  Also delete merged remote chore/vanguard-* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
 
