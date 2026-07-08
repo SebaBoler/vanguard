@@ -1,6 +1,7 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { runGitlabIssue, gitlabDepsFromEnv } from '../runners/gitlab.js';
+import type { RunIssueResult } from '../runners/source-adapter.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
@@ -90,7 +91,7 @@ async function runLinear(
   const deps = linearDeps(cmd, auth, proxyUrl, network, llmProxy);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
-    report(result.task.id, result.prUrl);
+    report(result);
     return;
   }
   const { parent, outcomes } = await runLinearParent(cmd.id, deps, { concurrency: cmd.concurrency });
@@ -112,7 +113,7 @@ export async function runGithub(
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   Object.assign(deps, pickRunOptions(cmd));
   const result = await runGithubIssue(cmd.id, deps);
-  report(result.task.id, result.prUrl);
+  report(result);
 }
 
 export async function runGitlab(
@@ -134,7 +135,7 @@ export async function runGitlab(
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
   Object.assign(deps, pickRunOptions(cmd));
   const result = await runGitlabIssue(cmd.id, deps);
-  report(result.task.id, result.prUrl);
+  report(result);
 }
 
 export async function runProject(
@@ -159,12 +160,21 @@ export async function runProject(
   reportFanOut(outcomes, tasks.length);
 }
 
-function report(id: string, prUrl: string | undefined): void {
-  console.log(prUrl !== undefined ? `PR for review: ${prUrl} (linked back onto ${id})` : `No changes — no PR for ${id}.`);
+function report(result: RunIssueResult): void {
+  const { id } = result.task;
+  if (result.prUrl !== undefined) {
+    console.log(`PR for review: ${result.prUrl} (linked back onto ${id})`);
+    return;
+  }
+  console.log(
+    result.secretBlocked === true
+      ? `Secret scan blocked publish — no PR for ${id} (findings commented on the issue).`
+      : `No changes — no PR for ${id}.`,
+  );
 }
 
 /** Print a fan-out summary (one line per task + totals). Shared by --parent and --project. */
-function reportFanOut<I extends { id: string }, T extends { prUrl?: string }>(
+function reportFanOut<I extends { id: string }, T extends { prUrl?: string; secretBlocked?: boolean }>(
   outcomes: ReadonlyArray<FanOutOutcome<I, T>>,
   total: number,
 ): void {
@@ -173,7 +183,10 @@ function reportFanOut<I extends { id: string }, T extends { prUrl?: string }>(
   for (const outcome of outcomes) {
     if (outcome.status === 'fulfilled') {
       if (outcome.value.prUrl !== undefined) opened += 1;
-      console.log(`  ${outcome.item.id}: ${outcome.value.prUrl ?? 'no changes (no PR)'}`);
+      const status =
+        outcome.value.prUrl ??
+        (outcome.value.secretBlocked === true ? 'secret scan blocked (no PR)' : 'no changes (no PR)');
+      console.log(`  ${outcome.item.id}: ${status}`);
     } else {
       failed += 1;
       console.log(`  ${outcome.item.id}: FAILED — ${String(outcome.reason)}`);

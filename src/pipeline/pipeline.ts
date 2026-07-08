@@ -564,6 +564,20 @@ export function withStageMaxTurns(
 }
 
 /**
+ * Set `resumeUntilComplete` on one named stage (default: 'implementer'). Backs `--max-repair-iterations`
+ * for the *incomplete* case: when the implementer ends a turn without `<promise>COMPLETE</promise>` while
+ * still under budget, re-enter the same session with a "finish the rest" nudge up to N times (see the
+ * auto-resume loop in runBudgetedStages). Complements the gate-repair loop, which only fires on gate failure.
+ */
+export function withStageResumeUntilComplete(
+  stages: PipelineStage[],
+  resumeUntilComplete: number,
+  stageName: StageName = STAGE.IMPLEMENTER,
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, resumeUntilComplete } : stage));
+}
+
+/**
  * Set `model` on every stage EXCEPT `exceptStage`. Applies the implement provider's `--provider-model`
  * to the main stages without leaking it onto a cross-provider reviewer: an Anthropic model name (e.g.
  * `sonnet`) handed to a Codex/ChatGPT reviewer is rejected by the backend. The reviewer keeps its own
@@ -839,7 +853,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
       resumePrevious: false,
       systemPrompt: adversarySystemPrompt(),
       promptTemplate:
-        'Review the diff below. Emit ONLY <findings>{...}</findings> matching the schema (severity low|medium|high|critical, kind security|perf|correctness|style, title, evidence), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'Review the diff below. Emit ONLY a single <findings> block of this exact shape:\n<findings>{"findings":[{"severity":"low|medium|high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>\nThe top-level value is an object with a "findings" array (not a bare array), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
       name: STAGE.REPAIRER,
