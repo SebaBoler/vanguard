@@ -29,7 +29,9 @@ fn projects_file(config_dir: &Path) -> PathBuf {
 /// The persisted project list is just an array of repo paths; metrics are recomputed on read.
 pub fn load_paths(config_dir: &Path) -> io::Result<Vec<String>> {
     match fs::read_to_string(projects_file(config_dir)) {
-        Ok(s) => Ok(serde_json::from_str(&s).unwrap_or_default()),
+        // Surface a corrupt store as an error — do NOT default to empty, or the next
+        // add/remove would save_paths over it and wipe the user's whole project list.
+        Ok(s) => serde_json::from_str(&s).map_err(io::Error::other),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e),
     }
@@ -174,5 +176,17 @@ mod tests {
     fn missing_store_lists_empty() {
         let cfg = tempfile::tempdir().unwrap();
         assert!(list(cfg.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn corrupt_store_errors_and_does_not_wipe() {
+        let cfg = tempfile::tempdir().unwrap();
+        let store = projects_file(cfg.path());
+        fs::write(&store, "{ not valid json").unwrap();
+        // load errors instead of defaulting to empty...
+        assert!(load_paths(cfg.path()).is_err());
+        // ...and a failed add leaves the original bytes intact (no overwrite/wipe).
+        assert!(add(cfg.path(), "/some/repo").is_err());
+        assert_eq!(fs::read_to_string(&store).unwrap(), "{ not valid json");
     }
 }

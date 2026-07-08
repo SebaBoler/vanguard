@@ -15,8 +15,8 @@ function FindingsList({ findings }: { findings: Finding[] }) {
   if (findings.length === 0) return <div className="text-sm text-muted-foreground">No findings.</div>;
   return (
     <div className="space-y-3">
-      {findings.map((f) => (
-        <div key={`${f.severity}:${f.kind}:${f.title}`}>
+      {findings.map((f, i) => (
+        <div key={`${i}:${f.severity}:${f.kind}:${f.title}`}>
           <div className="flex items-center gap-2">
             <Chip color={SEVERITY_COLOR[f.severity]}>{f.severity}</Chip>
             <span className="text-xs text-muted-foreground">{f.kind}</span>

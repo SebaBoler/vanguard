@@ -28,11 +28,18 @@ pub fn start(app: AppHandle, state: &WatchState, repo_path: String) -> notify::R
         }
     })?;
 
-    // `.vanguard/` may not exist yet (fresh repo) — fall back to the repo root so we still
-    // notice when it appears.
+    // When `.vanguard/` exists, watch it recursively. When it doesn't yet (fresh repo),
+    // watch the repo root NON-recursively — enough to notice `.vanguard` appearing without
+    // drowning in node_modules/.git writes and re-fetching on every unrelated file save.
+    // ponytail: a repo opened before `.vanguard` exists won't deep-watch until re-opened;
+    // real projects are added with `.vanguard/` already present, so this is rare.
     let vanguard_dir = Path::new(&repo_path).join(".vanguard");
-    let target = if vanguard_dir.exists() { vanguard_dir } else { Path::new(&repo_path).to_path_buf() };
-    watcher.watch(&target, RecursiveMode::Recursive)?;
+    let (target, mode) = if vanguard_dir.exists() {
+        (vanguard_dir, RecursiveMode::Recursive)
+    } else {
+        (Path::new(&repo_path).to_path_buf(), RecursiveMode::NonRecursive)
+    };
+    watcher.watch(&target, mode)?;
 
     // Debounce: coalesce bursts (a run writes several files at once) into one emit per ~300ms.
     let repo_for_thread = repo_path.clone();

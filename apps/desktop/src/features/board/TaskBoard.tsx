@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Card, Chip } from 'chunks-ui';
 import { listTasks } from '../../ipc';
-import type { Task } from '../../vanguard-output';
+import { useAsync } from '../../hooks';
 
 const COLUMNS = ['queued', 'claimed', 'running', 'verify-failed', 'review', 'done'];
 
@@ -14,28 +13,7 @@ function chipColor(col: string): 'primary' | 'destructive' | 'success' | 'warnin
 }
 
 export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask: (taskId: string) => void }) {
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    listTasks(project)
-      .then((t) => {
-        if (alive) setTasks(t);
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [project]);
+  const { data: tasks, error, loading } = useAsync(() => listTasks(project), [project]);
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading tasks…</div>;
   if (error) {

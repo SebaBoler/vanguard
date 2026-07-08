@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button, Input } from 'chunks-ui';
-import { readAppConfig, writeAppConfig } from '../../ipc';
+import { writeAppConfig } from '../../ipc';
+import { useAppConfig } from '../../hooks';
+import { SOURCES } from '../../sources';
 import type { AppConfig } from '../../vanguard-output';
 
-const SOURCES = ['github', 'gitlab', 'linear'];
 const PROVIDERS = ['claude', 'codex', 'cursor', 'zai', 'openrouter', 'meridian'];
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -44,18 +45,11 @@ function Select({
 }
 
 export function Settings({ project }: { project: string }) {
-  const [cfg, setCfg] = useState<AppConfig>({});
+  // Inspector is keyed by project, so this component remounts on project switch —
+  // config loads once and `dirty`/`saved` start clean without a reset effect.
+  const [cfg, setCfg] = useAppConfig(project);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    readAppConfig(project)
-      .then((c) => {
-        setCfg(c);
-        setDirty(false);
-      })
-      .catch(() => {});
-  }, [project]);
 
   const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => {
     setCfg((c) => ({ ...c, [k]: v }));

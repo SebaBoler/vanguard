@@ -1,26 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Button, Chip } from 'chunks-ui';
 import { Minus, Plus } from 'lucide-react';
-import { spawnRun, killRun, readAppConfig } from '../../ipc';
+import { spawnRun, killRun } from '../../ipc';
+import { useAppConfig } from '../../hooks';
+import { SOURCES } from '../../sources';
 import type { ActiveRun } from '../../vanguard-output';
 
-const SOURCES = ['github', 'gitlab', 'linear'];
-
 export function Fleet({ project, active }: { project: string; active: ActiveRun[] }) {
+  const [cfg] = useAppConfig(project);
   const [concurrency, setConcurrency] = useState(3);
   const [loopV1, setLoopV1] = useState(false);
   const [source, setSource] = useState('github');
   const [watchPid, setWatchPid] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Seed the editable controls from saved config once it loads.
   useEffect(() => {
-    readAppConfig(project)
-      .then((c) => {
-        if (c.concurrency) setConcurrency(c.concurrency);
-        if (c.source) setSource(c.source);
-      })
-      .catch(() => {});
-  }, [project]);
+    if (cfg.concurrency) setConcurrency(cfg.concurrency);
+    if (cfg.source) setSource(cfg.source);
+  }, [cfg]);
 
   const running = watchPid !== null;
 

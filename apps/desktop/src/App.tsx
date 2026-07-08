@@ -129,7 +129,6 @@ export default function App() {
     board: 'Task board',
     fleet: 'Fleet',
     remote: 'Remote',
-    workflow: 'Workflow',
     settings: 'Settings',
   };
   const crumbs: Crumb[] = [{ label: 'Home', onClick: () => setScreen('dashboard') }];
@@ -180,7 +179,6 @@ export default function App() {
             <Inspector
               key={active.path}
               project={active.path}
-              name={active.name}
               screen={screen}
               focusRunning={focusRunning}
               clearNonce={clearNonce}

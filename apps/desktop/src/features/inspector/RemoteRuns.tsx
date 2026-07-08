@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Table, Chip } from 'chunks-ui';
 import { listRemoteRuns } from '../../ipc';
+import { useAsync } from '../../hooks';
 import type { RemoteRun } from '../../vanguard-output';
 
 function when(ts: string): string {
@@ -20,28 +20,7 @@ function StatusChip({ r }: { r: RemoteRun }) {
 }
 
 export function RemoteRuns({ project }: { project: string }) {
-  const [runs, setRuns] = useState<RemoteRun[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    listRemoteRuns(project)
-      .then((r) => {
-        if (alive) setRuns(r);
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [project]);
+  const { data: runs, error, loading } = useAsync(() => listRemoteRuns(project), [project]);
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading remote runs…</div>;
   if (error) {

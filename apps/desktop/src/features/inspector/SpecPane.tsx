@@ -1,30 +1,9 @@
-import { useEffect, useState } from 'react';
 import { AgentText } from '../../components/AgentText';
 import { fetchSpec } from '../../ipc';
+import { useAsync } from '../../hooks';
 
 export function SpecPane({ project, taskId }: { project: string; taskId: string }) {
-  const [spec, setSpec] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    fetchSpec(project, taskId)
-      .then((s) => {
-        if (alive) setSpec(s);
-      })
-      .catch((e) => {
-        if (alive) setError(String(e));
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [project, taskId]);
+  const { data: spec, error, loading } = useAsync(() => fetchSpec(project, taskId), [project, taskId]);
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading spec…</div>;
   if (error) {

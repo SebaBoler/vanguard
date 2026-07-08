@@ -113,9 +113,21 @@ pub fn list_active(repo_path: &Path) -> io::Result<Vec<ActiveRun>> {
     Ok(out)
 }
 
-/// Path is caller-supplied — only read Vanguard session logs.
+/// Path is caller-supplied — only read Vanguard session logs
+/// (`…/.vanguard/sessions/<task>/<file>.jsonl`). A substring check on "sessions"
+/// would read any `.jsonl` anywhere; require the real `.vanguard/sessions` segments.
 pub fn is_session_path(p: &str) -> bool {
-    p.ends_with(".jsonl") && p.contains("sessions") && !p.contains("..")
+    if p.contains("..") {
+        return false;
+    }
+    let path = Path::new(p);
+    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return false;
+    }
+    let comps: Vec<&std::ffi::OsStr> = path.components().map(|c| c.as_os_str()).collect();
+    comps
+        .windows(2)
+        .any(|w| w[0].to_str() == Some(".vanguard") && w[1].to_str() == Some("sessions"))
 }
 
 /// Parse a Claude session `.jsonl` into a readable stream: assistant prose + tool-invocation names.
@@ -203,5 +215,8 @@ mod tests {
         assert!(is_session_path("/repo/.vanguard/sessions/t/a.jsonl"));
         assert!(!is_session_path("/etc/passwd"));
         assert!(!is_session_path("/repo/.vanguard/sessions/../../secret.jsonl"));
+        // "sessions" in the path but NOT under a real `.vanguard/sessions` dir.
+        assert!(!is_session_path("/tmp/sessions/evil.jsonl"));
+        assert!(!is_session_path("/repo/.vanguard/runs/t/a.jsonl"));
     }
 }

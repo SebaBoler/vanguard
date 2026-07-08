@@ -52,3 +52,14 @@ test('multiple tags in sequence each become their own segment', () => {
     { type: 'chip', tag: 'b', text: 'y' },
   ]);
 });
+
+test('an unterminated tag (still streaming) falls back to a single markdown segment', () => {
+  // A half-arrived `<findings>` has no closing tag yet — render the raw text rather
+  // than mis-parsing it. Once the closer arrives it becomes a proper findings segment.
+  const partial = '<findings>[{"severity":"high"';
+  expect(parseAgentText(partial)).toEqual([{ type: 'markdown', text: partial }]);
+});
+
+test('leading text before an unterminated tag still renders as markdown', () => {
+  expect(parseAgentText('done.\n<promise>COMPL')).toEqual([{ type: 'markdown', text: 'done.\n<promise>COMPL' }]);
+});

@@ -20,7 +20,6 @@ import { Fleet } from '../fleet/Fleet';
 import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
-import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -29,15 +28,13 @@ const DEFAULT_CMD = 'vanguard run --github <issue> --provider zai --llm-proxy';
 
 export function Inspector({
   project,
-  name,
   screen,
   focusRunning,
   clearNonce,
   onCrumb,
 }: {
   project: string;
-  name: string;
-  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
+  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'settings';
   focusRunning: ActiveRun | null;
   clearNonce: number;
   onCrumb: (c: string | null) => void;
@@ -254,7 +251,6 @@ export function Inspector({
           {screen === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
           {screen === 'fleet' && <Fleet project={project} active={active} />}
           {screen === 'remote' && <RemoteRuns project={project} />}
-          {screen === 'workflow' && <WorkflowEditor project={project} name={name} />}
           {screen === 'settings' && <Settings project={project} />}
         </>
       )}

@@ -5,13 +5,12 @@ import {
   Columns3,
   Boxes,
   Cloud,
-  Workflow as WorkflowIcon,
   Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
 import type { Project, ActiveRun } from './vanguard-output';
 
-export type Screen = 'dashboard' | 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
+export type Screen = 'dashboard' | 'runs' | 'board' | 'fleet' | 'remote' | 'settings';
 
 const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -19,7 +18,6 @@ const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'board', label: 'Task board', icon: Columns3 },
   { key: 'fleet', label: 'Fleet', icon: Boxes },
   { key: 'remote', label: 'Remote', icon: Cloud },
-  { key: 'workflow', label: 'Workflow', icon: WorkflowIcon },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
