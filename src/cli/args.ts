@@ -43,6 +43,8 @@ export type Command =
       provider?: ProviderName;
       /** Model for the tech-spec stage (e.g. a planner-tier model). */
       specModel?: string;
+      /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
+      out?: string;
       /** White-label the spec comment (drop the "Vanguard" heading). Presence toggles it; the author value is unused (no commit). */
       commitAuthor?: { name: string; email: string };
     }
@@ -337,6 +339,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
         'spec-label': { type: 'string' },
+        'spec-file': { type: 'string' },
         'agent-label': { type: 'string' },
         'needs-info-label': { type: 'string' },
         'spec-claimed-label': { type: 'string' },
@@ -516,6 +519,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
@@ -636,6 +640,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values.parent === true && picked[0] !== 'linear') {
       return fail('--parent is only supported with --linear.');
     }
+    // One spec file cannot describe N different tasks — fan-out modes would inject it into every run.
+    if (typeof values['spec-file'] === 'string' && (picked[0] === 'project' || values.parent === true)) {
+      return fail('--spec-file is only supported for a single-issue run (not --parent / --project fan-out).');
+    }
     if (picked[0] === 'project') {
       const projectNum = Number(picked[1]);
       if (!Number.isInteger(projectNum) || projectNum < 1) {
@@ -674,6 +682,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
+      ...(typeof values['spec-file'] === 'string' ? { specFile: values['spec-file'] } : {}),
     };
   }
 
@@ -952,6 +961,7 @@ Commands:
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
+    --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
@@ -976,6 +986,7 @@ Commands:
     --github <ref>          Issue ref (alternative to positional)
     --github-repo <o/r>     Required for bare issue numbers
     --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
     --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch

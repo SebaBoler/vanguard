@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -63,6 +64,12 @@ export interface RunOptions extends ProviderChoice {
    * manifest-driven loop-back more passes on large tasks. Set via --max-repair-iterations.
    */
   maxRepairIterations?: number;
+  /**
+   * Local spec file injected as a virtual issue comment: the implementer prompt ({{COMMENTS}}),
+   * triage, and the conformance manifest read it exactly like a posted spec, but nothing is written
+   * to the tracker. Pairs with `vanguard spec --out` for a no-trace client-repo flow. Set via --spec-file.
+   */
+  specFile?: string;
 }
 
 /**
@@ -88,6 +95,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
+    ...(cmd.specFile !== undefined ? { specFile: cmd.specFile } : {}),
   };
 }
 
@@ -164,6 +172,15 @@ export interface RunIssueResult {
 /** Cap on implement-session resumes triggered by a failing conformance/verify gate, before falling back to a declared-partial PR. */
 const MAX_REPAIR_ITERATIONS = 2;
 
+/** Read the local --spec-file eagerly with a clear error — an ENOENT deep inside a run is not actionable. */
+async function readSpecFile(path: string): Promise<string> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (cause) {
+    throw new Error(`--spec-file: cannot read ${path}: ${String(cause)}`);
+  }
+}
+
 /**
  * White-label branch id: the trailing issue number (e.g. `gh-…-904` → `904`), else a
  * Conventional-Branch-safe slug of the taskId. Used for `feat/<id>-<hash>` branches in white-label mode.
@@ -195,7 +212,17 @@ export async function runSourcedIssue(
   deps: RunIssueDeps,
   adapter: SourceAdapter,
 ): Promise<RunIssueResult> {
-  const { task, skills } = await adapter.prepare(issueRef);
+  const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
+  // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer
+  // prompt ({{COMMENTS}}), triage, and the conformance manifest read it exactly like a posted spec,
+  // with nothing written to the tracker. Copy, don't mutate: the fetched object may be shared.
+  const task =
+    deps.specFile === undefined
+      ? fetchedTask
+      : {
+          ...fetchedTask,
+          comments: [...fetchedTask.comments, { author: 'spec-file', body: await readSpecFile(deps.specFile) }],
+        };
 
   // White-label mode (triggered by --commit-author): the PR is delivered as a plain, human-looking PR.
   // Branch becomes `feat/<issue-number>-<hash>`, the "by Vanguard" attribution and the Vanguard review

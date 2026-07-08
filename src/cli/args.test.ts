@@ -655,6 +655,20 @@ describe('parseCli', () => {
     expect(parseCli(['spec'], '/work').kind).toBe('help');
   });
 
+  it('parses spec --out and run --spec-file (local-file spec flow)', () => {
+    const spec = parseCli(['spec', 'o/r#1', '--out', '.vanguard/specs/1.md'], '/work');
+    expect(spec.kind === 'spec' && spec.out).toBe('.vanguard/specs/1.md');
+
+    const run = parseCli(['run', '--github', 'o/r#1', '--spec-file', '.vanguard/specs/1.md'], '/work');
+    expect(run.kind === 'run' && run.specFile).toBe('.vanguard/specs/1.md');
+    const without = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(without.kind === 'run' && 'specFile' in without).toBe(false);
+
+    // One spec file cannot describe N fan-out tasks.
+    expect(parseCli(['run', '--project', '7', '--spec-file', 's.md'], '/work').kind).toBe('error');
+    expect(parseCli(['run', '--linear', 'ABC-1', '--parent', '--spec-file', 's.md'], '/work').kind).toBe('error');
+  });
+
   // --- Loop v1 flag tests ---
 
   it('parses a github loop-v1 watch with spec/agent/needs-info labels and spec-model', () => {

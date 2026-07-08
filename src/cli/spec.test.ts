@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { specCommand } from './spec.js';
 import type { Command } from './args.js';
 
@@ -35,6 +38,26 @@ describe('specCommand', () => {
     expect(posted[0]).not.toContain('Vanguard');
     expect(posted[0]).toContain('Tech spec:');
     expect(posted[0]).toContain('<tech_spec>');
+  });
+
+  it('writes the spec to --out instead of posting a comment', async () => {
+    const outPath = join(tmpdir(), `vanguard-spec-out-${process.pid}-${Math.random().toString(36).slice(2)}.md`);
+    const posted: string[] = [];
+    try {
+      await specCommand(cmd({ out: outPath, commitAuthor: { name: 'S', email: 's@p.co' } }), {
+        generateSpec: async () => 'Goal: build it',
+        postComment: async (body) => {
+          posted.push(body);
+        },
+        log: () => {},
+      });
+      expect(posted).toHaveLength(0);
+      const written = await readFile(outPath, 'utf8');
+      expect(written).toContain('<tech_spec>\nGoal: build it\n</tech_spec>');
+      expect(written).not.toContain('Vanguard');
+    } finally {
+      await rm(outPath, { force: true });
+    }
   });
 
   it('passes the issue ref and spec model through to the generator', async () => {

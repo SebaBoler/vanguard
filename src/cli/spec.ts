@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { runSpecGenerator } from '../runners/spec.js';
@@ -33,6 +35,20 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
       await commentGithubIssue(repoSlug, cmd.issueRef, body);
     });
 
+  // --out routes the rendered spec to a local file instead of the tracker (a fully no-trace flow;
+  // feed it back with `vanguard run --spec-file <file>`).
+  const deliver = async (spec: string): Promise<void> => {
+    const body = specComment(spec, { whiteLabel });
+    if (cmd.out !== undefined) {
+      await mkdir(dirname(cmd.out), { recursive: true });
+      await writeFile(cmd.out, body, 'utf8');
+      log(`spec ${cmd.issueRef}: written to ${cmd.out} (no issue comment)`);
+      return;
+    }
+    await post(body);
+    log(`spec ${cmd.issueRef}: posted${whiteLabel ? ' (white-label)' : ''}`);
+  };
+
   const generatorDeps: RunSpecGeneratorDeps = {
     repoPath: cmd.repoPath,
     fetcher: new GitHubTaskFetcher(repoSlug),
@@ -41,9 +57,7 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
   };
 
   if (deps.generateSpec !== undefined) {
-    const spec = await deps.generateSpec(cmd.issueRef, generatorDeps);
-    await post(specComment(spec, { whiteLabel }));
-    log(`spec ${cmd.issueRef}: posted${whiteLabel ? ' (white-label)' : ''}`);
+    await deliver(await deps.generateSpec(cmd.issueRef, generatorDeps));
     return;
   }
 
@@ -62,8 +76,7 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
       ...(sandboxContext.llmProxy !== undefined ? { llmProxy: sandboxContext.llmProxy } : {}),
     });
-    await post(specComment(spec, { whiteLabel }));
-    log(`spec ${cmd.issueRef}: posted${whiteLabel ? ' (white-label)' : ''}`);
+    await deliver(spec);
   } finally {
     await sandboxContext.destroy();
   }
