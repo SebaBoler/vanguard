@@ -258,7 +258,7 @@ The labels above go on **issues**. Two more go on a **pull request** and fire th
 
 | Label | On | Set by | Bot state | Bot action |
 |---|---|---|---|---|
-| `ready for vanguard review` | PR (any) | Human | `vanguard:reviewing` → `vanguard:reviewed` | Adversarial **read-only** review — posts a comment, never edits code. Re-apply for a fresh pass. |
+| `ready for vanguard review` | PR (trusted author's, non-draft) | Human | `vanguard:reviewing` → `vanguard:reviewed` | Adversarial **read-only** review — posts a comment, never edits code. Re-apply for a fresh pass. |
 | `needs revision` | PR (trusted author's) | Human | `vanguard:revising` | Reads your review → pushes fix commits to the PR branch → un-drafts → back to `vanguard:needs-human-review`. Iterative: re-apply to loop. Needs `VANGUARD_PUSH_TOKEN` (section above) or the revised PR gets no CI. |
 
 `ready for vanguard review` reviews *your* PR (read-only); `needs revision` has Vanguard *edit* a trusted author's draft per your review. Both gate on a trusted PR author **and** label-setter, same allowlist as the issue workflows.
