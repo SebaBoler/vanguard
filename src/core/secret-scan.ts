@@ -117,7 +117,7 @@ const ADDED_FILE_HEADER = /^\+\+\+ b\/(.+)$/;
 // (e.g. tests/helpers.py) and carry the same fixture secrets, and is the one that matched the live
 // incident path (apps/.../tests/...).
 const TEST_PATH_RULES: readonly RegExp[] = [
-  /\.(?:test|fixture)\.[cm]?[jt]sx?$/i, // JS/TS: *.test.ts, *.fixture.tsx (+ cjs/mjs variants)
+  /[.-](?:test|spec|fixture)\.[cm]?[jt]sx?$/i, // JS/TS: *.test.ts, *.spec.ts, *.fixture.tsx, *.e2e-spec.ts (+ cjs/mjs)
   /(?:^|\/)(?:test_[^/]*|[^/]*_test|conftest)\.py$/i, // Python: test_*.py, *_test.py, conftest.py
   /(?:^|\/)(?:tests|__tests__)\//i, // any path under a tests/ or __tests__/ directory
 ];

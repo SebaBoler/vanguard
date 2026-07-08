@@ -23,6 +23,7 @@ import {
   withStageModelExcept,
   withStageFallback,
   withStageMaxTurns,
+  withStageResumeUntilComplete,
   DELIVER_FULL_SCOPE_CLAUSE,
   techSpecStage,
   retrospectiveMemoryBlock,
@@ -450,6 +451,16 @@ describe('planImplementAdversaryStages', () => {
     expect(adversary?.systemPrompt).toContain('Adversarial');
     expect(adversary?.systemPrompt).not.toContain('senior software engineer');
     expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
+    expect(adversary?.effort).toBe('high');
+  });
+
+  it('adversary prompt gives a literal <findings> example instead of a bare placeholder', () => {
+    const stages = planImplementAdversaryStages();
+    const adversary = stages[2];
+    expect(adversary?.promptTemplate).toContain('"findings":[');
+    expect(adversary?.promptTemplate).not.toContain('<findings>{...}</findings>');
+    expect(adversary?.promptTemplate).toContain('{{PREVIOUS_DIFF}}');
+    expect(adversary?.promptTemplate).toContain('<promise>COMPLETE</promise>');
   });
 });
 
@@ -501,6 +512,32 @@ describe('withStageMaxTurns', () => {
     const result = withStageMaxTurns(stages, 40, STAGE.REVIEWER);
     expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(40);
     expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+});
+
+describe('withStageResumeUntilComplete', () => {
+  it('sets resumeUntilComplete on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageResumeUntilComplete(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBeUndefined();
+    expect(result.find((s) => s.name === 'simplifier')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageResumeUntilComplete(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    const result = withStageResumeUntilComplete(stages, 3, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBe(3);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
   });
 });
 

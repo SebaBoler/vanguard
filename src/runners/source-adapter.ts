@@ -3,7 +3,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -157,6 +157,8 @@ export interface RunIssueResult {
   task: Task;
   /** Absent when the agent produced no changes (no PR opened). */
   prUrl?: string;
+  /** True when a PR was withheld because the secret scan flagged the outgoing diff — NOT "no changes". */
+  secretBlocked?: boolean;
 }
 
 /** Cap on implement-session resumes triggered by a failing conformance/verify gate, before falling back to a declared-partial PR. */
@@ -241,7 +243,13 @@ export async function runSourcedIssue(
       // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
       // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
       const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
-      const scopedStages = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
+      const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
+      // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
+      // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
+      const scopedStages =
+        deps.maxRepairIterations !== undefined
+          ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
+          : turnScoped;
       const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
@@ -332,7 +340,7 @@ export async function runSourcedIssue(
       if (block !== undefined) {
         await persistStageOutcomes(deps.repoPath, outcomes);
         await adapter.signalSecretBlock(issueRef, task, block);
-        return { task };
+        return { task, secretBlocked: true };
       }
 
       const commit = await commitStage(ctx, {
