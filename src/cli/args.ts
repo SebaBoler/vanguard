@@ -640,6 +640,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values.parent === true && picked[0] !== 'linear') {
       return fail('--parent is only supported with --linear.');
     }
+    // One spec file cannot describe N different tasks — fan-out modes would inject it into every run.
+    if (typeof values['spec-file'] === 'string' && (picked[0] === 'project' || values.parent === true)) {
+      return fail('--spec-file is only supported for a single-issue run (not --parent / --project fan-out).');
+    }
     if (picked[0] === 'project') {
       const projectNum = Number(picked[1]);
       if (!Number.isInteger(projectNum) || projectNum < 1) {
