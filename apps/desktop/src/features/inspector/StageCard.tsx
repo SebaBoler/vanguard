@@ -1,36 +1,36 @@
-import { Card, Chip } from 'chunks-ui'
+import { Chip, Collapsible } from 'chunks-ui'
+import { AlertCircle, CheckCircle, ChevronDown } from 'lucide-react'
 import { AgentText } from '../../components/AgentText'
 import type { StageDetail } from '../../vanguard-output'
+import { buildStageMeta } from './stage-meta'
 
 export function StageCard({ stage }: { stage: StageDetail }) {
   const r = stage.record
-
-  const seconds = r.durationMs ? Math.round(r.durationMs / 1000) : 0
-
-  const meta = [
-    `${r.turns} turns`,
-    `${seconds}s`,
-    r.usage ? `${r.usage.inputTokens}/${r.usage.outputTokens} tok` : null,
-    r.costUsd != null ? `$${r.costUsd.toFixed(2)}` : null,
-    r.model ?? 'unknown model',
-  ].filter((x): x is string => x !== null)
+  const meta = buildStageMeta(r)
 
   return (
-    <Card.Root>
-      <Card.Header className="flex flex-row items-center justify-between gap-2 pb-2">
-        <Card.Title className="text-sm">{r.stage ?? 'run'}</Card.Title>
-        <Chip variant="outlined" color={r.completed ? 'success' : 'warning'}>
+    <Collapsible.Root>
+      <Collapsible.Trigger className="group flex flex-row items-center justify-between gap-2 w-full pb-4">
+        <ChevronDown className="size-4 text-muted-foreground shrink-0 transition-transform duration-200 group-data-panel-open:rotate-180" />
+        <div className="text-sm font-medium font-mono text-left">{r.stage ?? 'run'}</div>
+        <Chip
+          className="ml-auto flex items-center gap-1 capitalize font-medium!"
+          color={r.completed ? 'success' : 'destructive'}
+          variant="outlined">
+          {r.completed ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
           {r.exitReason}
         </Chip>
-      </Card.Header>
-      <Card.Content className="pt-0">
-        <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
-          {meta.map((m, i) => (
-            <span key={i}>{m}</span>
-          ))}
+      </Collapsible.Trigger>
+      <Collapsible.Panel>
+        <div className="pt-0 border-l border-border pl-4">
+          <div className="mb-1 flex flex-wrap gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+            {meta.map((m, i) => (
+              <span key={i}>{m}</span>
+            ))}
+          </div>
+          {r.finalText && <AgentText>{r.finalText}</AgentText>}
         </div>
-        {r.finalText && <AgentText>{r.finalText}</AgentText>}
-      </Card.Content>
-    </Card.Root>
+      </Collapsible.Panel>
+    </Collapsible.Root>
   )
 }

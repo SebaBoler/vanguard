@@ -160,7 +160,7 @@ automatically.
 |---|---|---|
 | Running / live / passed | `success` / success | live dot, running chip, passed chip, accent stat |
 | Failed / error | `destructive` / destructive | failed chip, proof-fail output, diff `-` lines, error banners |
-| Warn / verify-issue / incomplete stage | `warning` / amber-500 | stage `exitReason` chip, verify-failed column, findings callout |
+| Warn / verify-issue / incomplete stage | `warning` / warning | stage `exitReason` chip, verify-failed column, findings callout |
 | Informational (tool calls, diff hunks, plan) | sky-500 | `→` tool lines, `@@` diff hunks, plan callout |
 | Review | violet-500 | review callout / review stage accent |
 
