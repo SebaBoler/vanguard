@@ -136,6 +136,14 @@ describe('scanForSecrets', () => {
     expect(scanForSecrets(diff)).toEqual([]);
   });
 
+  it('skips .spec.ts and .e2e-spec.ts files (NestJS/Jest/Vitest convention)', () => {
+    const diff = diffOf([
+      { path: 'apps/api/src/file/cloud-run-job.service.spec.ts', lines: [`+const CONFIGURED_CALLBACK_TOKEN = "${FAKE_SK_KEY}";`] },
+      { path: 'apps/api/src/app.e2e-spec.ts', lines: [`+const jwt = "${FAKE_JWT}";`] },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
   it('still flags the same secret in a non-test source file', () => {
     const diff = diffOf([{ path: 'src/config.ts', lines: [`+const jwt = "${FAKE_JWT}";`] }]);
     expect(scanForSecrets(diff)).toContainEqual(
