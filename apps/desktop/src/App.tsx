@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { TopBar, type Crumb } from './TopBar';
 import { Rail, type Screen } from './Rail';
 import { CommandPalette } from './CommandPalette';
+import { TailwindDebugScreens } from './components/TailwindDebugScreens';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
 import { listProjects, addProject, removeProject, listActive } from './ipc';
@@ -198,6 +199,7 @@ export default function App() {
           onClose={() => setPalette(false)}
         />
       )}
+      <TailwindDebugScreens />
     </div>
   );
 }

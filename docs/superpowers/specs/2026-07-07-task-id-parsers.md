@@ -1,6 +1,6 @@
 # Task ID Parsers — resolving `<taskId>` → (Task Source, ref)
 
-> **Status:** Draft for discussion. Author: Paweł (via Claude). Scope: Vanguard Desktop.
+> **Status:** Draft for discussion. Author: Paweł (via Claude). Scope: Vanguard Inspector.
 > **Fixes:** Spec/Board/Launch fail on real GitHub task ids — `gh-211` shows *"Couldn't infer a Task
 > Source from task id `gh-211`"*. The current inference only understands `linear-*` and bare numbers.
 
@@ -27,7 +27,7 @@ as the documented extension path, on-demand only.
 
 ## 1. Problem
 
-Vanguard Desktop stores each Run under `.vanguard/runs/<taskId>/`. Several features must turn that
+Vanguard Inspector stores each Run under `.vanguard/runs/<taskId>/`. Several features must turn that
 `taskId` back into a **Task Source** + a **ref** the provider runner understands:
 
 - **Spec pane** — `gh issue view <ref>` / `linear issue view <ref>` / `glab issue view <ref>`.

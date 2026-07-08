@@ -1,4 +1,4 @@
-# Vanguard Desktop — Design Proposal (v2, detailed)
+# Vanguard Inspector — Design Proposal (v2, detailed)
 
 > **Status:** Draft for discussion. Author: Paweł. Owner sign-off required: Sebastian.
 > **Supersedes:** `2026-07-06-vanguard-desktop-design.md` (kept as history).

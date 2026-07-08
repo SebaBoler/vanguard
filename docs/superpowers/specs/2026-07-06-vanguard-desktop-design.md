@@ -1,4 +1,4 @@
-# Vanguard Desktop — Design Proposal
+# Vanguard Inspector — Design Proposal
 
 > **Status:** Draft for discussion. Author: Paweł. Owner sign-off required: Sebastian.
 > **Purpose:** A local desktop app to *watch, inspect, and drive* Vanguard runs — a Conductor-style

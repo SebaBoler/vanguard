@@ -1,4 +1,4 @@
-# Vanguard Desktop
+# Vanguard Inspector
 
 A local **Tauri 2** cockpit over [Vanguard](../../README.md) — watch, inspect, drive, and remotely
 observe agent Runs. Rust backend · React 19 · Tailwind v4 · [chunks-ui](https://github.com/) · TypeScript.

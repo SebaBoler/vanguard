@@ -1,6 +1,6 @@
-# Vanguard Desktop — Design Brief (Final, Full-Product)
+# Vanguard Inspector — Design Brief (Final, Full-Product)
 
-> **For:** a Designer AI producing high-fidelity mockups for **every screen** of Vanguard Desktop.
+> **For:** a Designer AI producing high-fidelity mockups for **every screen** of Vanguard Inspector.
 > **Status:** Final full-product brief. Covers all phases (P0–P4), not an MVP slice.
 > **Deliver:** every screen below, in **light and dark**, at desktop size, with all key states, composed
 > from the **chunks-ui** component library and its Tailwind v4 tokens.
@@ -12,7 +12,7 @@
 
 ## 1. Product overview
 
-**Vanguard Desktop** is a local **Tauri 2** desktop app (Rust backend · React 19 · Tailwind v4 · the
+**Vanguard Inspector** is a local **Tauri 2** desktop app (Rust backend · React 19 · Tailwind v4 · the
 `chunks-ui` component library) — a **cockpit over Vanguard**, an autonomous software-factory CLI. Vanguard
 claims **Tasks** off a **Task Source** (GitHub / GitLab / Linear), runs an AI-agent pipeline inside isolated
 git worktrees, gates every **Run** behind a **Proof of Work** command, and opens draft **PRs / MRs** for

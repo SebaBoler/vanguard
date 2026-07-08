@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Vanguard Desktop", "width": 1100, "height": 800 }],
+    "windows": [{ "title": "Vanguard Inspector", "width": 1100, "height": 800, "minWidth": 1000, "minHeight": 600 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
     }

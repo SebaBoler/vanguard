@@ -37,6 +37,7 @@
     "@vitejs/plugin-react": "^5",
     "jsdom": "^25",
     "tailwindcss": "^4",
+    "tailwindcss-debug-screens": "^3.0.1",
     "typescript": "~5.9.0",
     "vite": "^7",
     "vitest": "^3"

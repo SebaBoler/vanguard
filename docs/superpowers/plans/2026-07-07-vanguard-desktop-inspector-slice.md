@@ -1,4 +1,4 @@
-# Vanguard Desktop — Inspector Vertical Slice Implementation Plan
+# Vanguard Inspector — Inspector Vertical Slice Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -54,7 +54,7 @@ This is a scaffolding task — its gate is "it builds and boots", not a unit tes
 [package]
 name = "desktop"
 version = "0.1.0"
-description = "Vanguard Desktop"
+description = "Vanguard Inspector"
 edition = "2021"
 
 [lib]
@@ -103,7 +103,7 @@ fn main() {
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Vanguard Desktop", "width": 1100, "height": 800 }],
+    "windows": [{ "title": "Vanguard Inspector", "width": 1100, "height": 800 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
     }
@@ -212,7 +212,7 @@ pub fn run() {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vanguard Desktop</title>
+    <title>Vanguard Inspector</title>
   </head>
   <body>
     <div id="root"></div>
@@ -295,7 +295,7 @@ import '@testing-library/jest-dom';
 
 ```tsx
 export default function App() {
-  return <main className="p-4">Vanguard Desktop</main>;
+  return <main className="p-4">Vanguard Inspector</main>;
 }
 ```
 
@@ -1227,7 +1227,7 @@ export default function App() {
 
   return (
     <main className="mx-auto max-w-3xl p-4">
-      <h1 className="mb-3 text-xl font-bold">Vanguard Desktop — Inspector</h1>
+      <h1 className="mb-3 text-xl font-bold">Vanguard Inspector — Inspector</h1>
       <div className="mb-4 flex gap-2">
         <input
           value={repoPath}

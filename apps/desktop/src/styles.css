@@ -8,6 +8,12 @@
 
 @plugin "@tailwindcss/typography";
 
+@plugin "tailwindcss-debug-screens" {
+  className: 'debug-screens';
+  position: 'top, right';
+  prefix: 'screen: ';
+}
+
 @custom-variant dark (&:is(.dark *));
 
 body {

@@ -1,7 +1,7 @@
 [package]
 name = "desktop"
 version = "0.1.0"
-description = "Vanguard Desktop"
+description = "Vanguard Inspector"
 edition = "2021"
 
 [lib]
