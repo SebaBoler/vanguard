@@ -83,7 +83,19 @@ export async function* runClaudeCli(
   // for graceful stops too (max_turns, max_budget), so do not treat exit code alone as failure.
   const detail = (): string => (res.stderr.trim() !== '' ? res.stderr.trim() : res.stdout.trim().slice(-600));
   if (!parsedAny) throw new AgentError(`Agent produced no parseable output (exit ${res.exitCode}): ${detail()}`);
-  if (!sawResult) throw new AgentError(`Agent exited without a result (exit ${res.exitCode}): ${detail()}`);
+  if (!sawResult) {
+    // A missing terminal `result` event after real work already streamed (assistant turns + a session id)
+    // and a clean exit is a truncated/cut stream — a long SSE severed by a corp MITM proxy, or the CLI
+    // stopping without its summary — NOT a crash. Salvage the turns so the stage lands as `incomplete` and
+    // the resume loop can continue the SAME session, instead of throwing away an expensive run. A non-zero
+    // exit, zero turns, or no session id (nothing to resume) stays a genuine crash.
+    if (res.exitCode !== 0 || turns === 0 || sessionId === undefined) {
+      throw new AgentError(`Agent exited without a result (exit ${res.exitCode}): ${detail()}`);
+    }
+    console.warn(
+      `vanguard: claude stream ended without a result event (exit 0, ${turns} turns) — treating the stage as incomplete and resumable`,
+    );
+  }
 
   const output: AgentRunOutput = { finalText, turns, transcript: res.stdout };
   if (sessionId !== undefined) output.sessionId = sessionId;

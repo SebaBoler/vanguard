@@ -99,6 +99,28 @@ describe('runClaudeCli', () => {
     await expectRunRejects(fakeSandbox(partial, 1), /exit 1/);
   });
 
+  it('salvages a cut stream (exit 0 + assistant turns + session, no result) as an incomplete resumable run', async () => {
+    const cut = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'writing tests' }] } }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(cut, 0));
+    expect(out.finalText).toBe('writing tests'); // last streamed turn kept
+    expect(out.sessionId).toBe('sess-1'); // session preserved → resume loop can continue
+    expect(out.usage).toBeUndefined(); // no result event → no usage/cost
+    expect(out.costUsd).toBeUndefined();
+  });
+
+  it('still throws on a cut stream with turns but no session id (nothing to resume)', async () => {
+    const cut = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } });
+    await expectRunRejects(fakeSandbox(cut, 0), /without a result/);
+  });
+
+  it('still throws on a clean exit with a session but zero assistant turns (no work to salvage)', async () => {
+    const initOnly = JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' });
+    await expectRunRejects(fakeSandbox(initOnly, 0), /without a result/);
+  });
+
   it('throws "no parseable output" when every line is non-JSON', async () => {
     await expectRunRejects(fakeSandbox('fatal crash output', 1), /no parseable output/);
     await expectRunRejects(fakeSandbox('fatal crash output', 1), /exit 1/);
