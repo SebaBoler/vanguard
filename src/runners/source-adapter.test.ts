@@ -335,6 +335,27 @@ describe('runSourcedIssue', () => {
     consoleError.mockRestore();
   });
 
+  it('white-label mode suppresses the issue signal (no label/comment leak) but still blocks the PR', async () => {
+    const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
+    wmDiff.mockResolvedValueOnce(['diff --git a/src/x.ts b/src/x.ts', '+++ b/src/x.ts', `+const t = "${fakeJwt}";`].join('\n'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', commitAuthor: { name: 'Sebastian Pietrzak', email: 's@p.co' } },
+      adapter,
+    );
+
+    expect(result.prUrl).toBeUndefined();
+    expect(result.secretBlocked).toBe(true);
+    expect(adapter.signalSecretBlock).not.toHaveBeenCalled();
+    expect(commitStage).not.toHaveBeenCalled();
+    expect(publishForReview).not.toHaveBeenCalled();
+    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
+
   it('does not throw when signalSecretBlock itself rejects (best-effort)', async () => {
     const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
     wmDiff.mockResolvedValueOnce(`+const t = "${fakeJwt}";`);

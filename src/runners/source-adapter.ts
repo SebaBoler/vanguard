@@ -339,7 +339,9 @@ export async function runSourcedIssue(
       }
       if (block !== undefined) {
         await persistStageOutcomes(deps.repoPath, outcomes);
-        await adapter.signalSecretBlock(issueRef, task, block);
+        // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
+        // no branded comment. The operator still gets the masked findings on stderr (above) + run record.
+        if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, block);
         return { task, secretBlocked: true };
       }
 

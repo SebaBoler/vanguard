@@ -168,7 +168,7 @@ function report(result: RunIssueResult): void {
   }
   console.log(
     result.secretBlocked === true
-      ? `Secret scan blocked publish — no PR for ${id} (findings commented on the issue).`
+      ? `Secret scan blocked publish — no PR for ${id} (masked findings printed above).`
       : `No changes — no PR for ${id}.`,
   );
 }
