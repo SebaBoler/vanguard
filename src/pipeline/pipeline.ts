@@ -853,7 +853,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
       resumePrevious: false,
       systemPrompt: adversarySystemPrompt(),
       promptTemplate:
-        'Review the diff below. Emit ONLY <findings>{...}</findings> matching the schema (severity low|medium|high|critical, kind security|perf|correctness|style, title, evidence), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'Review the diff below. Emit ONLY a single <findings> block of this exact shape:\n<findings>{"findings":[{"severity":"low|medium|high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>\nThe top-level value is an object with a "findings" array (not a bare array), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
       name: STAGE.REPAIRER,
