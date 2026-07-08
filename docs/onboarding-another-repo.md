@@ -254,6 +254,15 @@ So: do whatever you like for issue authoring (template, your own, freehand) — 
 | `needs info` | **Vanguard triage** (`assessTaskReadiness`) | — | Ticket is too vague to proceed — **rejected/parked** | Post clarification comment, stop | No — human must add content |
 | `needs research` | **Human** (manually) | `vanguard:researching` | Ticket is a valid idea needing **external context** before speccing | Run external research, post findings comment, **REST** | No — human sets `ready for spec` or `ready for agent` next |
 
+The labels above go on **issues**. Two more go on a **pull request** and fire the `pull_request_target: labeled` workflows — these need `vanguard-pr-review.yml` and `vanguard-revise.yml` added alongside the implement/doctor pair.
+
+| Label | On | Set by | Bot state | Bot action |
+|---|---|---|---|---|
+| `ready for vanguard review` | PR (any) | Human | `vanguard:reviewing` → `vanguard:reviewed` | Adversarial **read-only** review — posts a comment, never edits code. Re-apply for a fresh pass. |
+| `needs revision` | PR (trusted author's) | Human | `vanguard:revising` | Reads your review → pushes fix commits to the PR branch → un-drafts → back to `vanguard:needs-human-review`. Iterative: re-apply to loop. Needs `VANGUARD_PUSH_TOKEN` (section above) or the revised PR gets no CI. |
+
+`ready for vanguard review` reviews *your* PR (read-only); `needs revision` has Vanguard *edit* a trusted author's draft per your review. Both gate on a trusted PR author **and** label-setter, same allowlist as the issue workflows.
+
 ### `needs research` vs `needs info`
 
 These are orthogonal signals and must not be conflated:
