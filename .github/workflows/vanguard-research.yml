@@ -16,8 +16,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'needs research' &&
-       github.event.issue.user.login == 'SebaBoler' &&
-       github.event.sender.login == 'SebaBoler')
+       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
+       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
