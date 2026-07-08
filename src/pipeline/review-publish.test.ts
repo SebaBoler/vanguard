@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasBlockingFinding, publishReviewVerdict } from './review-publish.js';
+import { hasBlockingFinding, publishReviewVerdict, renderConformanceSection } from './review-publish.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -33,6 +33,29 @@ describe('hasBlockingFinding', () => {
 
   it('does not treat an empty structured findings block as blocking', () => {
     expect(hasBlockingFinding('No blocking issues.\n<findings>{"findings":[]}</findings>')).toBe(false);
+  });
+
+  it('uses a bare-array findings block as blocking', () => {
+    expect(
+      hasBlockingFinding('<findings>[{"severity":"high","kind":"correctness","title":"bad","evidence":"x"}]</findings>'),
+    ).toBe(true);
+  });
+});
+
+describe('renderConformanceSection', () => {
+  it('renders bullets from a bare-array findings block', () => {
+    const section = renderConformanceSection({
+      taskId: 't',
+      completed: true,
+      exitReason: 'completed',
+      turns: 1,
+      worktreePath: '/tmp/wt',
+      worktreePreserved: true,
+      finalText:
+        '<findings>[{"severity":"medium","kind":"correctness","title":"missed AC","evidence":"AC-1"}]</findings>\n<promise>COMPLETE</promise>',
+    });
+    expect(section).toContain('- **medium** (correctness) — missed AC');
+    expect(section).not.toContain('<findings>');
   });
 });
 

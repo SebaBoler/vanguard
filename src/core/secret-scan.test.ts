@@ -136,11 +136,71 @@ describe('scanForSecrets', () => {
     expect(scanForSecrets(diff)).toEqual([]);
   });
 
+  it('skips .spec.ts and .e2e-spec.ts files (NestJS/Jest/Vitest convention)', () => {
+    const diff = diffOf([
+      { path: 'apps/api/src/file/cloud-run-job.service.spec.ts', lines: [`+const CONFIGURED_CALLBACK_TOKEN = "${FAKE_SK_KEY}";`] },
+      { path: 'apps/api/src/app.e2e-spec.ts', lines: [`+const jwt = "${FAKE_JWT}";`] },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
   it('still flags the same secret in a non-test source file', () => {
     const diff = diffOf([{ path: 'src/config.ts', lines: [`+const jwt = "${FAKE_JWT}";`] }]);
     expect(scanForSecrets(diff)).toContainEqual(
       expect.objectContaining({ file: 'src/config.ts', patternName: 'jwt' }),
     );
+  });
+});
+
+describe('python test-path exclusion', () => {
+  it('skips a test_*.py file (pytest prefix convention)', () => {
+    const diff = diffOf([
+      {
+        path: 'apps/prefect_flows/tests/test_export_exceptions.py',
+        lines: [`+    assert posted["headers"]["Authorization"] == "Bearer ${FAKE_JWT}"`],
+      },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips a *_test.py file (pytest suffix convention)', () => {
+    const diff = diffOf([{ path: 'apps/svc/foo_test.py', lines: [`+key = "${FAKE_SK_KEY}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips conftest.py', () => {
+    const diff = diffOf([{ path: 'apps/x/conftest.py', lines: [`+jwt = "${FAKE_JWT}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('skips non-test helper modules under a tests/ directory (language-agnostic dir rule)', () => {
+    const diff = diffOf([{ path: 'apps/x/tests/helpers.py', lines: [`+key = "${FAKE_SK_KEY}"`] }]);
+    expect(scanForSecrets(diff)).toEqual([]);
+  });
+
+  it('still flags the same secret in a non-test .py source file', () => {
+    const diff = diffOf([{ path: 'src/service.py', lines: [`+jwt = "${FAKE_JWT}"`] }]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/service.py', patternName: 'jwt' }),
+    );
+  });
+
+  it('does NOT over-match files whose names merely contain "test"/"latest"', () => {
+    const diff = diffOf([
+      { path: 'contest.py', lines: [`+jwt = "${FAKE_JWT}"`] },
+      { path: 'latest_data.py', lines: [`+key = "${FAKE_SK_KEY}"`] },
+    ]);
+    const findings = scanForSecrets(diff);
+    expect(findings.some((f) => f.file === 'contest.py')).toBe(true);
+    expect(findings.some((f) => f.file === 'latest_data.py')).toBe(true);
+  });
+
+  it('is case-insensitive for the new Python branches', () => {
+    const diff = diffOf([
+      { path: 'apps/x/TEST_FOO.PY', lines: [`+jwt = "${FAKE_JWT}"`] },
+      { path: 'apps/x/Conftest.py', lines: [`+key = "${FAKE_SK_KEY}"`] },
+    ]);
+    expect(scanForSecrets(diff)).toEqual([]);
   });
 });
 
@@ -168,5 +228,54 @@ describe('assignment refine: identifier chains', () => {
     expect(scanForSecrets(diff)).toContainEqual(
       expect.objectContaining({ file: 'src/x.ts', patternName: 'assignment' }),
     );
+  });
+});
+
+describe('allowlist marker (global suppression)', () => {
+  it.each([
+    ['bearer', '+const h = "Authorization: Bearer sk-abc.DEF_123-xyz"', '// gitleaks:allow'],
+    ['jwt', `+const token = "${FAKE_JWT}"`, '// pragma: allowlist secret'],
+    ['openai-key', `+const key = "${FAKE_SK_KEY}"`, '// vanguard-allow-secret'],
+    ['json-token-field', '+const payload = {"access_token":"rt_secret_value"}', '// gitleaks:allow'],
+    ['assignment', '+const auth = "q7Rw2xZk9mP4vN8s"', '// gitleaks:allow'],
+  ])('suppresses a %s finding when the marker is on the same line (control: flags without it)', (patternName, code, marker) => {
+    const withMarker = diffOf([{ path: 'src/config.ts', lines: [`${code}; ${marker}`] }]);
+    expect(scanForSecrets(withMarker).some((f) => f.patternName === patternName)).toBe(false);
+
+    const withoutMarker = diffOf([{ path: 'src/config.ts', lines: [`${code};`] }]);
+    expect(scanForSecrets(withoutMarker).some((f) => f.patternName === patternName)).toBe(true);
+  });
+
+  it('does not suppress a secret on the next added line (marker scope is per-line)', () => {
+    const diff = diffOf([
+      {
+        path: 'src/config.ts',
+        lines: ['+const note = "see docs"; // gitleaks:allow', `+const key = "${FAKE_SK_KEY}";`],
+      },
+    ]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/config.ts', patternName: 'openai-key' }),
+    );
+  });
+
+  it('does not suppress a secret on a different added line even when the marker is standalone', () => {
+    const diff = diffOf([
+      { path: 'src/config.ts', lines: [`+const key = "${FAKE_SK_KEY}";`, '+// gitleaks:allow'] },
+    ]);
+    expect(scanForSecrets(diff)).toContainEqual(
+      expect.objectContaining({ file: 'src/config.ts', patternName: 'openai-key' }),
+    );
+  });
+
+  it('is case-insensitive for the marker', () => {
+    const diff = diffOf([
+      { path: 'src/config.ts', lines: [`+const key = "${FAKE_SK_KEY}"; // GITLEAKS:ALLOW`] },
+    ]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'openai-key')).toBe(false);
+
+    const diff2 = diffOf([
+      { path: 'src/config.ts', lines: [`+const token = "${FAKE_JWT}"; // Pragma: Allowlist Secret`] },
+    ]);
+    expect(scanForSecrets(diff2).some((f) => f.patternName === 'jwt')).toBe(false);
   });
 });

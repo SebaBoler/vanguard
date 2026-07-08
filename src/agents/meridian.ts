@@ -3,9 +3,11 @@ import { runClaudeCli } from './claude-stream.js';
 import { buildClaudeArgs } from './claude-code.js';
 
 /**
- * Placeholder token injected as ANTHROPIC_AUTH_TOKEN. Meridian authenticates through the Claude Code SDK
- * on its own host (a `claude login` there), so it ignores this value — but the Claude CLI requires the
- * env var to be set. Any non-empty string works (see Meridian's README).
+ * Placeholder token injected as ANTHROPIC_AUTH_TOKEN when MERIDIAN_API_KEY is unset. A vanilla Meridian
+ * authenticates through the Claude Code SDK on its own host (a `claude login` there) and ignores this
+ * value — but the Claude CLI requires the env var to be set, and any non-empty string works. If the
+ * endpoint is instead a keyed Anthropic-compatible proxy that validates a Bearer token (401 otherwise),
+ * set MERIDIAN_API_KEY and it replaces this placeholder (registry passthroughEnv).
  */
 export const MERIDIAN_PLACEHOLDER_TOKEN = 'meridian';
 

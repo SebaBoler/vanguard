@@ -66,6 +66,19 @@ describe('GitLabTaskFetcher', () => {
     const listArgs = args[0]!;
     expect(listArgs.filter((a) => a === '--label')).toHaveLength(2);
   });
+
+  it('list maps state to glab flags (no --state; opened is default)', async () => {
+    const args: string[][] = [];
+    const glab = async (a: string[]) => { args.push(a); return '[]'; };
+    const fetcher = new GitLabTaskFetcher('g/p', glab);
+    await fetcher.list();                         // default opened
+    await fetcher.list({ state: 'closed' });
+    await fetcher.list({ state: 'all' });
+    expect(args[0]).not.toContain('--state');     // glab has no --state flag
+    expect(args[0]).not.toContain('--closed');    // opened is the default
+    expect(args[1]).toContain('--closed');
+    expect(args[2]).toContain('--all');
+  });
 });
 
 describe('commentGitlabIssue', () => {

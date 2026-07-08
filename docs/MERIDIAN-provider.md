@@ -13,8 +13,21 @@ files are, but the subscription auth and the outbound Anthropic traffic should o
 - **`--provider meridian` / `--review-provider meridian`** on `run` and `watch`. Set
   `MERIDIAN_BASE_URL` to your Meridian address (e.g. `http://192.168.1.10:3456`). The base URL flows
   through the transport as `ANTHROPIC_BASE_URL`; the CLI's required `ANTHROPIC_AUTH_TOKEN` is a
-  placeholder — Meridian authenticates on its own host and ignores it. No local Anthropic token needed.
-  A missing `MERIDIAN_BASE_URL` fails fast at dispatch, not mid-run.
+  placeholder — a vanilla Meridian authenticates on its own host and ignores it. No local Anthropic
+  token needed. A missing `MERIDIAN_BASE_URL` fails fast at dispatch, not mid-run.
+- **`MERIDIAN_API_KEY`** (optional). If your endpoint is a **keyed** Anthropic-compatible proxy that
+  validates a Bearer token (it returns `401 Invalid or missing API key` to the placeholder), set
+  `MERIDIAN_API_KEY` to the real key and it replaces the placeholder `ANTHROPIC_AUTH_TOKEN`. Verify with:
+
+  ```bash
+  curl -sS -i "$MERIDIAN_BASE_URL/v1/messages" \
+    -H "content-type: application/json" -H "authorization: Bearer $MERIDIAN_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -d '{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
+  ```
+
+  A `200` with a JSON completion means the run will authenticate; a `401`/`404` means the key or the
+  endpoint's protocol is wrong (a `/v1/messages` 404 means it speaks OpenAI, not Anthropic).
 - Because Meridian relays real Claude via the SDK, **no model is forced**: the CLI default (or
   `--provider-model`) passes straight through. The default plan→implement→review pipeline keeps its
   per-stage models (planner `opus`, implementer/reviewer `sonnet`).

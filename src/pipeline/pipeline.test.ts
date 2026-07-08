@@ -22,6 +22,9 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  withStageMaxTurns,
+  withStageResumeUntilComplete,
+  DELIVER_FULL_SCOPE_CLAUSE,
   techSpecStage,
   retrospectiveMemoryBlock,
   assembleReviewPipeline,
@@ -223,7 +226,7 @@ describe('commitStage', () => {
     await writeFile(join(ctx.worktreePath, 'x.txt'), 'data');
     const out = await commitStage(ctx, { message: 'feat: agent work' });
     expect(out.committed).toBe(true);
-    expect(out.branch).toBe('vanguard/p2-r1');
+    expect(out.branch).toBe('chore/vanguard-p2-r1');
     expect(out.sha).toBeTruthy();
     expect(await wm.isDirty(ctx.worktreePath)).toBe(false);
     await disposeContext(ctx);
@@ -235,6 +238,24 @@ describe('commitStage', () => {
     const out = await commitStage(ctx, { message: 'noop' });
     expect(out.committed).toBe(false);
     await disposeContext(ctx);
+  });
+
+  it('commits despite a failing pre-commit hook (--no-verify skips the target repo hooks)', async () => {
+    // A worktree shares the main repo's hooks; a target project's husky hook (eslint/nx) fails in the
+    // isolated worktree because node_modules is absent. Simulate with a hook that always exits non-zero.
+    const hook = join(repo, '.git', 'hooks', 'pre-commit');
+    await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    try {
+      const wm = new WorktreeManager(repo, undefined, () => 'r4');
+      const ctx = await prepareContext({ taskId: 'p4', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+      await writeFile(join(ctx.worktreePath, 'y.txt'), 'data');
+      const out = await commitStage(ctx, { message: 'feat: work' });
+      expect(out.committed).toBe(true);
+      expect(out.sha).toBeTruthy();
+      await disposeContext(ctx);
+    } finally {
+      await rm(hook, { force: true });
+    }
   });
 });
 
@@ -305,12 +326,12 @@ describe('publishForReview', () => {
     };
     const out = await publishForReview(ctx, { title: 'PR', body: 'b', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/42');
-    expect(out.branch).toBe('vanguard/pub-r1');
+    expect(out.branch).toBe('chore/vanguard-pub-r1');
     expect(calls[0]?.file).toBe('git');
     expect(calls[0]?.args).toContain('push');
     expect(calls[1]?.file).toBe('gh');
     expect(calls[1]?.args).toEqual(
-      expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub-r1', '--base', 'main', '--title', 'PR']),
+      expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
     );
     await disposeContext(ctx);
   });
@@ -375,6 +396,7 @@ describe('pushToExistingBranch', () => {
       '-c',
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
       'push',
+      '--no-verify',
       'origin',
       'HEAD:feature-branch',
     ]);
@@ -390,7 +412,7 @@ describe('pushToExistingBranch', () => {
       return '';
     };
     await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', runner });
-    expect(calls[0]?.args).toEqual(['push', 'origin', 'HEAD:feature-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
     await disposeContext(ctx);
   });
 
@@ -429,6 +451,16 @@ describe('planImplementAdversaryStages', () => {
     expect(adversary?.systemPrompt).toContain('Adversarial');
     expect(adversary?.systemPrompt).not.toContain('senior software engineer');
     expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
+    expect(adversary?.effort).toBe('high');
+  });
+
+  it('adversary prompt gives a literal <findings> example instead of a bare placeholder', () => {
+    const stages = planImplementAdversaryStages();
+    const adversary = stages[2];
+    expect(adversary?.promptTemplate).toContain('"findings":[');
+    expect(adversary?.promptTemplate).not.toContain('<findings>{...}</findings>');
+    expect(adversary?.promptTemplate).toContain('{{PREVIOUS_DIFF}}');
+    expect(adversary?.promptTemplate).toContain('<promise>COMPLETE</promise>');
   });
 });
 
@@ -454,6 +486,58 @@ describe('withStageModel', () => {
   it('does not mutate the original stages array', () => {
     withStageModel(stages, 'sonnet');
     expect(stages[0]?.model).toBeUndefined();
+  });
+});
+
+describe('withStageMaxTurns', () => {
+  it('overrides maxTurns on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageMaxTurns(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(20);
+    expect(result.find((s) => s.name === 'simplifier')?.maxTurns).toBe(20);
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageMaxTurns(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: 'review', maxTurns: 20 },
+    ];
+    const result = withStageMaxTurns(stages, 40, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(40);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+});
+
+describe('withStageResumeUntilComplete', () => {
+  it('sets resumeUntilComplete on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageResumeUntilComplete(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBeUndefined();
+    expect(result.find((s) => s.name === 'simplifier')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageResumeUntilComplete(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    const result = withStageResumeUntilComplete(stages, 3, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBe(3);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
   });
 });
 
@@ -1107,5 +1191,27 @@ describe('implementReviewSimplifyStages defaults', () => {
     expect(byName.simplifier?.stageCostFloorUsd).toBeCloseTo(0.25);
     expect(byName.simplifier?.timeoutMs).toBe(15 * 60 * 1000);
     expect(byName.simplifier?.onStageBudgetExceeded).toBe('skip');
+  });
+
+  it('defaults the implementer maxTurns to 30 (unaffected without --max-turns)', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
+  });
+});
+
+describe('planImplementReviewStages defaults', () => {
+  it('defaults the implementer maxTurns to 30', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
   });
 });

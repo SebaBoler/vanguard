@@ -142,10 +142,13 @@ const PROVIDERS = {
     ownsAnthropicTransport: true,
     key: {
       // Meridian's base URL is operator-specific (its NAS/host address), so the "key" IS the base URL:
-      // it flows through the same api-key slot but expands to ANTHROPIC_BASE_URL + a placeholder token
-      // (Meridian authenticates on its own host and ignores the token — see meridian.ts).
+      // it flows through the same api-key slot but expands to ANTHROPIC_BASE_URL + a placeholder token.
+      // A vanilla Meridian ignores the token; a keyed Anthropic-compatible proxy (auth required) does not —
+      // set MERIDIAN_API_KEY and passthroughEnv overrides the placeholder with the real Bearer token.
       hostEnv: ['MERIDIAN_BASE_URL'],
       toSandboxSecrets: (url) => ({ ANTHROPIC_BASE_URL: url, ANTHROPIC_AUTH_TOKEN: MERIDIAN_PLACEHOLDER_TOKEN }),
+      // Applied after toSandboxSecrets, so a set MERIDIAN_API_KEY replaces the placeholder ANTHROPIC_AUTH_TOKEN.
+      passthroughEnv: { MERIDIAN_API_KEY: 'ANTHROPIC_AUTH_TOKEN' },
       // No proxyKey: meridian is direct-mode only (no upstream credential to hand a sidecar) — see meridian.ts.
     },
     directOnly: true,

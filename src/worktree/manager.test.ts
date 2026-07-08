@@ -27,8 +27,14 @@ afterEach(async () => {
 describe('WorktreeManager', () => {
   it('creates a worktree on a unique per-run branch', async () => {
     const wt = await wm.create('task-1', 'main');
-    expect(wt.branch).toBe('vanguard/task-1-r1');
+    expect(wt.branch).toBe('chore/vanguard-task-1-r1');
     expect(await wm.isDirty(wt.path)).toBe(false);
+  });
+
+  it('honours branchPrefix/branchId overrides (white-label mode)', async () => {
+    const wt = await wm.create('gh-owner-repo-904', 'main', { branchPrefix: 'feat/', branchId: '904' });
+    expect(wt.branch).toBe('feat/904-r1');
+    expect(wt.path.endsWith('904-r1')).toBe(true);
   });
 
   it('gives the same task a fresh branch and path on each run (no collision)', async () => {
@@ -36,14 +42,14 @@ describe('WorktreeManager', () => {
     const second = await wm.create('dup', 'main');
     expect(first.branch).not.toBe(second.branch);
     expect(first.path).not.toBe(second.path);
-    expect(second.branch).toBe('vanguard/dup-r2');
+    expect(second.branch).toBe('chore/vanguard-dup-r2');
   });
 
   it('reuse: true returns the same branch on a second call (live worktree)', async () => {
     const first = await wm.create('iter', 'main', { reuse: true });
-    expect(first.branch).toBe('vanguard/iter-r1');
+    expect(first.branch).toBe('chore/vanguard-iter-r1');
     const second = await wm.create('iter', 'main', { reuse: true });
-    expect(second.branch).toBe('vanguard/iter-r1');
+    expect(second.branch).toBe('chore/vanguard-iter-r1');
     expect(second.path).toBe(first.path);
   });
 
@@ -58,7 +64,7 @@ describe('WorktreeManager', () => {
   it('default mode still creates unique branches even when reuse branch exists', async () => {
     await wm.create('dup2', 'main', { reuse: true });
     const second = await wm.create('dup2', 'main');
-    expect(second.branch).toBe('vanguard/dup2-r2');
+    expect(second.branch).toBe('chore/vanguard-dup2-r2');
   });
 
   it('detects uncommitted changes', async () => {
