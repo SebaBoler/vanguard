@@ -450,6 +450,16 @@ describe('planImplementAdversaryStages', () => {
     expect(adversary?.systemPrompt).toContain('Adversarial');
     expect(adversary?.systemPrompt).not.toContain('senior software engineer');
     expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
+    expect(adversary?.effort).toBe('high');
+  });
+
+  it('adversary prompt gives a literal <findings> example instead of a bare placeholder', () => {
+    const stages = planImplementAdversaryStages();
+    const adversary = stages[2];
+    expect(adversary?.promptTemplate).toContain('"findings":[');
+    expect(adversary?.promptTemplate).not.toContain('<findings>{...}</findings>');
+    expect(adversary?.promptTemplate).toContain('{{PREVIOUS_DIFF}}');
+    expect(adversary?.promptTemplate).toContain('<promise>COMPLETE</promise>');
   });
 });
 
