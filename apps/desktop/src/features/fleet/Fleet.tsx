@@ -72,7 +72,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
           <button
             onClick={running ? stop : start}
             aria-label="Toggle watch loop"
-            className={`relative ml-auto h-6 w-11 rounded-full transition-colors ${running ? 'bg-green-500' : 'bg-muted'}`}
+            className={`relative ml-auto h-6 w-11 rounded-full transition-colors ${running ? 'bg-success' : 'bg-muted'}`}
           >
             <span
               className={`absolute top-0.5 size-5 rounded-full bg-white transition-all ${running ? 'left-[22px]' : 'left-0.5'}`}
@@ -114,7 +114,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
             </div>
             <div className="mt-1 h-1.5 w-40 rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-green-500 transition-all"
+                className="h-full rounded-full bg-success transition-all"
                 style={{ width: `${Math.min(100, (active.length / concurrency) * 100)}%` }}
               />
             </div>
@@ -129,7 +129,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
             <span className="text-xs text-muted-foreground">slot {i + 1}</span>
             {a ? (
               <>
-                <span className="size-2 rounded-full bg-green-500" />
+                <span className="size-2 rounded-full bg-success" />
                 <span className="font-mono font-medium">{a.taskId}</span>
                 <Chip color="success" variant="outlined">running</Chip>
               </>

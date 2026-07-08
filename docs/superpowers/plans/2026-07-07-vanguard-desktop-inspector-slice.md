@@ -1069,7 +1069,7 @@ export function ProofGate({ proof }: { proof?: Proof }) {
   }
   const ok = proof.passed;
   return (
-    <div className={`pl-3 border-l-4 ${ok ? 'border-green-500' : 'border-red-500'}`}>
+    <div className={`pl-3 border-l-4 ${ok ? 'border-success' : 'border-destructive'}`}>
       <div className="font-semibold">Proof of work: {ok ? 'PASS' : 'FAIL'}</div>
       <div className="text-sm">
         command: <code>{proof.command}</code> · exit {proof.exitCode}

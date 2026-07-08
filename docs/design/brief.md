@@ -166,8 +166,8 @@ automatically.
 
 | Meaning | Token / color | Where |
 |---|---|---|
-| Running / live / passed | `success` / green-500 | live dot, running chip, passed chip, accent stat |
-| Failed / error | `destructive` / red-500 | failed chip, proof-fail output, diff `-` lines, error banners |
+| Running / live / passed | `success` / success | live dot, running chip, passed chip, accent stat |
+| Failed / error | `destructive` / destructive | failed chip, proof-fail output, diff `-` lines, error banners |
 | Warn / verify-issue / incomplete stage | `warning` / amber-500 | stage `exitReason` chip, verify-failed column, findings callout |
 | Informational (tool calls, diff hunks, plan) | sky-500 | `→` tool lines, `@@` diff hunks, plan callout |
 | Review | violet-500 | review callout / review stage accent |
@@ -336,7 +336,7 @@ instant and stateful.
   side-by-side at wide widths via `ToggleGroup` (Conductor pattern), unified when narrow.
 - **Key components:** colored `pre` diff, `ToggleGroup` (unified ↔ side-by-side), `Empty`/muted "No diff
   captured."
-- **Data / colors:** `+` added → green (`bg-green-500/10`); `-` removed → red (`bg-red-500/10`); `@@` hunks
+- **Data / colors:** `+` added → green (`bg-success/10`); `-` removed → red (`bg-destructive/10`); `@@` hunks
   → sky; file headers (`diff `, `+++`, `---`) → muted bold; context → `foreground/80`.
 - **States:** with diff · *no diff* ("No diff captured.") · very large diff (scrolls within container) ·
   loading.
@@ -509,7 +509,7 @@ instant and stateful.
 - **Status chips (`Chip`):** `running` (success, outlined) · `passed` (success, solid) · `failed`
   (destructive, solid) · `warn`/exitReason (warning, outlined) · Claim/label states ("queued", "claimed",
   "review", …). One chip = one meaning; don't stack.
-- **Live indicator:** `size-2 rounded-full bg-green-500 animate-pulse` + optional "live"/"N running" text.
+- **Live indicator:** `size-2 rounded-full bg-success animate-pulse` + optional "live"/"N running" text.
   Used on project cards, running rows, the top bar, board `running` column, fleet slots.
 - **Tables (`Table`):** header row + clickable body rows (`cursor-pointer`, hover elevation), tabular-nums
   for time/cost, right-aligned numeric columns, status chip in the last column. Long lists → `Pagination`.
@@ -522,7 +522,7 @@ instant and stateful.
   review = violet, other = border); short inline tags → a small `Chip` (`tag: value`). Uppercase muted
   label above the callout body.
 - **Cards (`Card`):** clickable cards get `cursor-pointer hover:border-primary/40 transition-colors`;
-  fail/attention state gets a `border-destructive/40` (proof fail) or `border-green-500/40` (running).
+  fail/attention state gets a `border-destructive/40` (proof fail) or `border-success/40` (running).
 - **Buttons:** primary action solid; secondary/reload as `variant="text" color="secondary"` with a lucide
   start icon; destructive (kill) clearly styled + confirm dialog.
 

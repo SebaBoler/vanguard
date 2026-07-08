@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 const COLORS: Record<string, string> = {
   plan: 'border-sky-500/50',
   findings: 'border-amber-500/50',
-  promise: 'border-green-500/50',
+  promise: 'border-success/50',
   review: 'border-violet-500/50',
 };
 

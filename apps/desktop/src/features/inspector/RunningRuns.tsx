@@ -18,9 +18,9 @@ export function RunningRuns({
     <div className="space-y-2">
       {active.map((a) => (
         <button key={a.taskId} onClick={() => onOpen(a)} className="block w-full text-left">
-          <Card.Root className="border-green-500/40">
+          <Card.Root className="border-success/40">
             <Card.Content className="flex items-center gap-2 p-3">
-              <span className="size-2 animate-pulse rounded-full bg-green-500" />
+              <span className="size-2 animate-pulse rounded-full bg-success" />
               <span className="font-medium">{a.taskId}</span>
               <Chip color="success" variant="outlined">running</Chip>
               <span className="ml-auto text-xs tabular-nums text-muted-foreground">{ago(a.lastActivityMs)}</span>

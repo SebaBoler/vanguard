@@ -1,6 +1,6 @@
 function lineClass(line: string): string {
-  if (line.startsWith('+') && !line.startsWith('+++')) return 'text-green-600 dark:text-green-400 bg-green-500/10';
-  if (line.startsWith('-') && !line.startsWith('---')) return 'text-red-600 dark:text-red-400 bg-red-500/10';
+  if (line.startsWith('+') && !line.startsWith('+++')) return 'text-green-600 dark:text-green-400 bg-success/10';
+  if (line.startsWith('-') && !line.startsWith('---')) return 'text-red-600 dark:text-red-400 bg-destructive/10';
   if (line.startsWith('@@')) return 'text-sky-600 dark:text-sky-400';
   if (line.startsWith('diff ') || line.startsWith('+++') || line.startsWith('---')) return 'text-muted-foreground font-medium';
   return 'text-foreground/80';

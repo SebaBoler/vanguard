@@ -177,7 +177,7 @@ export function Inspector({
       <div className="flex items-center gap-3">
         {watching && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground" title="Watching .vanguard for changes">
-            <span className="size-2 animate-pulse rounded-full bg-green-500" />
+            <span className="size-2 animate-pulse rounded-full bg-success" />
             live
           </span>
         )}

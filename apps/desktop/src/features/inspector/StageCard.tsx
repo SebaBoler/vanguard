@@ -1,17 +1,19 @@
-import { Card, Chip } from 'chunks-ui';
-import { AgentText } from '../../components/AgentText';
-import type { StageDetail } from '../../vanguard-output';
+import { Card, Chip } from 'chunks-ui'
+import { AgentText } from '../../components/AgentText'
+import type { StageDetail } from '../../vanguard-output'
 
 export function StageCard({ stage }: { stage: StageDetail }) {
-  const r = stage.record;
-  const seconds = r.durationMs ? Math.round(r.durationMs / 1000) : 0;
+  const r = stage.record
+
+  const seconds = r.durationMs ? Math.round(r.durationMs / 1000) : 0
+
   const meta = [
     `${r.turns} turns`,
     `${seconds}s`,
     r.usage ? `${r.usage.inputTokens}/${r.usage.outputTokens} tok` : null,
     r.costUsd != null ? `$${r.costUsd.toFixed(2)}` : null,
     r.model ?? 'unknown model',
-  ].filter((x): x is string => x !== null);
+  ].filter((x): x is string => x !== null)
 
   return (
     <Card.Root>
@@ -30,5 +32,5 @@ export function StageCard({ stage }: { stage: StageDetail }) {
         {r.finalText && <AgentText>{r.finalText}</AgentText>}
       </Card.Content>
     </Card.Root>
-  );
+  )
 }

@@ -26,7 +26,7 @@ function Stat({
     <div className="rounded-lg border border-border p-4">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className={`mt-1 flex items-center gap-1.5 text-2xl font-semibold tabular-nums ${accent ? 'text-green-600 dark:text-green-400' : ''}`}>
-        {dot && <span className="size-2 rounded-full bg-green-500" />}
+        {dot && <span className="size-2 rounded-full bg-success" />}
         {value}
       </div>
     </div>
@@ -101,7 +101,7 @@ export function Dashboard({
                         {p.name}
                         {p.runningCount > 0 && (
                           <span className="flex items-center gap-1 text-xs font-normal text-green-600 dark:text-green-400">
-                            <span className="size-2 animate-pulse rounded-full bg-green-500" />
+                            <span className="size-2 animate-pulse rounded-full bg-success" />
                             {p.runningCount}
                           </span>
                         )}

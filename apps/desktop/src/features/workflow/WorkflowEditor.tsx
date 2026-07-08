@@ -11,7 +11,7 @@ const BLOCKS: { key: BlockKey; label: string; dot: string }[] = [
   { key: 'source', label: 'Task Source', dot: 'bg-violet-500' },
   { key: 'models', label: 'Models', dot: 'bg-fuchsia-500' },
   { key: 'concurrency', label: 'Concurrency', dot: 'bg-amber-500' },
-  { key: 'proof', label: 'Proof of Work', dot: 'bg-green-500' },
+  { key: 'proof', label: 'Proof of Work', dot: 'bg-success' },
   { key: 'budget', label: 'Budget', dot: 'bg-orange-500' },
 ];
 

@@ -93,7 +93,7 @@ export function Rail({
                 className="block w-full rounded px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
               >
                 <div className="flex items-center gap-2">
-                  <span className="size-2 shrink-0 animate-pulse rounded-full bg-green-500" />
+                  <span className="size-2 shrink-0 animate-pulse rounded-full bg-success" />
                   <span className="truncate font-mono text-xs font-medium">{r.taskId}</span>
                 </div>
               </button>
