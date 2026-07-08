@@ -26,9 +26,14 @@ function clarifyMessage(mode: 'spec' | 'agent'): string {
     : 'Vanguard could not start: this ticket lacks acceptance criteria or a spec. Add testable acceptance criteria (or a spec comment) and re-trigger.';
 }
 
-/** Wrap a generated spec so the agent pass and triage recognise it as a spec comment. */
-function specComment(spec: string): string {
-  return `Vanguard tech spec:\n\n<${SPEC_TAG}>\n${spec}\n</${SPEC_TAG}>`;
+/**
+ * Wrap a generated spec so the agent pass and triage recognise it as a spec comment. White-label
+ * drops the "Vanguard" heading (a client repo must not carry automation branding); recognition is
+ * keyed on the <tech_spec> tag, so triage/idempotency/conformance behave identically in both modes.
+ */
+export function specComment(spec: string, opts?: { whiteLabel?: boolean }): string {
+  const heading = opts?.whiteLabel === true ? 'Tech spec:' : 'Vanguard tech spec:';
+  return `${heading}\n\n<${SPEC_TAG}>\n${spec}\n</${SPEC_TAG}>`;
 }
 
 /** Comment posted when a genuine no-change outcome un-sticks the claimed marker. */

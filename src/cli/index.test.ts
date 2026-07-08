@@ -7,6 +7,7 @@ vi.mock('./doctor.js', () => ({ doctorCommand: vi.fn(async () => undefined) }));
 vi.mock('./doctor-prs.js', () => ({ doctorPrsCommand: vi.fn(async () => undefined) }));
 vi.mock('./review-pr.js', () => ({ reviewPrCommand: vi.fn(async () => undefined) }));
 vi.mock('./research.js', () => ({ researchCommand: vi.fn(async () => undefined) }));
+vi.mock('./spec.js', () => ({ specCommand: vi.fn(async () => undefined) }));
 vi.mock('./revise-pr.js', () => ({ revisePrCommand: vi.fn(async () => undefined) }));
 vi.mock('./watch-prs.js', () => ({ watchPrsCommand: vi.fn(async () => undefined) }));
 vi.mock('./review-mr.js', () => ({ reviewMrCommand: vi.fn(async () => undefined) }));
@@ -29,6 +30,7 @@ import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
 import { reviewPrCommand } from './review-pr.js';
 import { researchCommand } from './research.js';
+import { specCommand } from './spec.js';
 import { revisePrCommand } from './revise-pr.js';
 import { watchPrsCommand } from './watch-prs.js';
 import { reviewMrCommand } from './review-mr.js';
@@ -47,6 +49,7 @@ const allHandlers = {
   'doctor-prs': doctorPrsCommand,
   'review-pr': reviewPrCommand,
   research: researchCommand,
+  spec: specCommand,
   'revise-pr': revisePrCommand,
   'watch-prs': watchPrsCommand,
   'review-mr': reviewMrCommand,
@@ -65,6 +68,7 @@ const commands: Record<keyof typeof allHandlers, Command> = {
   'doctor-prs': { kind: 'doctor-prs', repoSlug: 'o/r', repoPath: '/repo', label: 'l', reviewingLabel: 'ri', reviewedLabel: 'rd' },
   'review-pr': { kind: 'review-pr', prRef: '1', repoPath: '/repo', egress: false },
   research: { kind: 'research', issueRef: '1', repoPath: '/repo', egress: false },
+  spec: { kind: 'spec', issueRef: '1', repoPath: '/repo', egress: false },
   'revise-pr': { kind: 'revise-pr', prRef: '1', repoPath: '/repo', egress: false },
   'watch-prs': { kind: 'watch-prs', repoSlug: 'o/r', repoPath: '/repo', label: 'l', reviewingLabel: 'ri', reviewedLabel: 'rd', concurrency: 2, intervalMs: 60000, once: false, egress: false },
   'review-mr': { kind: 'review-mr', iid: 1, project: 'g/p', repoPath: '/repo', egress: false },
