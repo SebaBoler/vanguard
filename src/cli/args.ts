@@ -33,6 +33,20 @@ export type Command =
       commitAuthor?: { name: string; email: string };
     }
   | {
+      kind: 'spec';
+      /** GitHub issue ref: owner/repo#n, or a bare number with --github-repo. */
+      issueRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      /** Model for the tech-spec stage (e.g. a planner-tier model). */
+      specModel?: string;
+      /** White-label the spec comment (drop the "Vanguard" heading). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
+    }
+  | {
       kind: 'revise-pr';
       prRef: string;
       repoSlug?: string;
@@ -490,6 +504,22 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  if (positionals[0] === 'spec') {
+    const issueRef = typeof values.github === 'string' ? values.github : positionals[1];
+    if (issueRef === undefined) return { kind: 'help' };
+    return {
+      kind: 'spec',
+      issueRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+    };
+  }
+
   if (positionals[0] === 'revise-pr') {
     const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
@@ -939,6 +969,15 @@ Commands:
     --research-model <m>    Model for the research pass
     --commit-author <a>     White-label the comment (drop "Vanguard" heading/marker); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+  spec options:
+    <owner/repo#number>     GitHub issue to spec: researches the codebase read-only and posts a tech-spec comment on the issue. One-shot — no labels are read or written (unlike the watch spec pass)
+    --github <ref>          Issue ref (alternative to positional)
+    --github-repo <o/r>     Required for bare issue numbers
+    --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   revise-pr options:
