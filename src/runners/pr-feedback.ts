@@ -399,6 +399,45 @@ export function buildRevisionSummary(input: RevisionSummaryInput): string {
   return lines.join('\n');
 }
 
+export interface RevisionDryRunInput {
+  repoSlug: string;
+  number: number;
+  headRefName: string;
+  diff: string;
+  items: Array<{ item: FeedbackItem; point: string }>;
+  verification: { typecheck: 'pass' | 'fail' | 'unknown'; test: 'pass' | 'fail' | 'unknown' };
+}
+
+/**
+ * Render the `revise-pr --out` dry-run preview: the diff the revision would push, plus the reply it
+ * would post to each addressed thread/comment — nothing is pushed or commented. Deliberately brand-free
+ * and marker-free (this is a local operator artifact, not a PR post), so it's safe on a client machine.
+ */
+export function buildRevisionDryRun(input: RevisionDryRunInput): string {
+  const lines: string[] = [
+    `# revise-pr dry-run — ${input.repoSlug}#${input.number}`,
+    '',
+    'Nothing was pushed or commented. Review the code changes and the proposed replies below, then re-run',
+    'without --out (add --commit-author on a client repo) to apply them.',
+    '',
+    `## Code changes (would be committed and pushed to ${input.headRefName})`,
+    '',
+    input.diff.trim() === '' ? '(no changes)' : ['```diff', input.diff.trimEnd(), '```'].join('\n'),
+    '',
+    '## Proposed replies (one per addressed thread/comment)',
+    '',
+  ];
+  if (input.items.length === 0) {
+    lines.push('(none)');
+  } else {
+    for (const { item, point } of input.items) {
+      lines.push(`### ${referenceSnippet(item)}`, '', point.trim() === '' ? 'Addressed.' : `Addressed: ${point.trim()}`, '');
+    }
+  }
+  lines.push('## Verification', '', `- Typecheck: ${input.verification.typecheck}`, `- Tests: ${input.verification.test}`);
+  return lines.join('\n');
+}
+
 // TS/JS keywords and common short tokens — never claim these as "symbols added/removed".
 const DIFF_STOP_WORDS = new Set([
   'function', 'const', 'return', 'import', 'export', 'from', 'class',

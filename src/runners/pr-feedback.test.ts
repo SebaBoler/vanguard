@@ -9,6 +9,7 @@ import {
   referenceSnippet,
   buildItemReply,
   buildRevisionSummary,
+  buildRevisionDryRun,
   summaryContradictsDiff,
   parseRevisionDiff,
   describeDiff,
@@ -438,6 +439,44 @@ describe('white-label revision marker', () => {
     });
     expect(summary).not.toContain('vanguard');
     expect(summary).toContain('<!-- revision: sha -->');
+  });
+});
+
+describe('buildRevisionDryRun', () => {
+  const item = { source: 'thread', author: 'alice', body: 'rename this' } as unknown as FeedbackItem;
+
+  it('renders the diff + a proposed reply per item, and is brand/marker-free', () => {
+    const out = buildRevisionDryRun({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefName: 'feature-x',
+      diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
+      items: [{ item, point: 'renamed x to y' }],
+      verification: { typecheck: 'pass', test: 'pass' },
+    });
+    expect(out).toContain('dry-run — o/r#7');
+    expect(out).toContain('would be committed and pushed to feature-x');
+    expect(out).toContain('```diff');
+    expect(out).toContain('const y = 1;');
+    expect(out).toContain(referenceSnippet(item));
+    expect(out).toContain('Addressed: renamed x to y');
+    expect(out).toContain('- Typecheck: pass');
+    // Local operator artifact — no automation branding, no hidden marker.
+    expect(out).not.toContain('vanguard');
+    expect(out).not.toContain('<!--');
+  });
+
+  it('handles an empty diff and no items', () => {
+    const out = buildRevisionDryRun({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefName: 'f',
+      diff: '   ',
+      items: [],
+      verification: { typecheck: 'unknown', test: 'unknown' },
+    });
+    expect(out).toContain('(no changes)');
+    expect(out).toContain('(none)');
   });
 });
 

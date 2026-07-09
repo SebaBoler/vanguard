@@ -659,6 +659,13 @@ describe('parseCli', () => {
     expect(without.kind === 'revise-pr' && 'commitAuthor' in without).toBe(false);
   });
 
+  it('parses revise-pr --out (dry-run to a file)', () => {
+    const cmd = parseCli(['revise-pr', 'o/r#12', '--out', '.vanguard/revisions/12.md'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.out).toBe('.vanguard/revisions/12.md');
+    const without = parseCli(['revise-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'revise-pr' && 'out' in without).toBe(false);
+  });
+
   it('parses --commit-author on research (white-label toggle)', () => {
     const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
     expect(cmd.kind).toBe('research');

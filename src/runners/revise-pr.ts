@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { execa } from 'execa';
 import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview, commentPullRequest } from './pr-review.js';
 import {
@@ -9,6 +11,7 @@ import {
   revisionMarker,
   buildItemReply,
   buildRevisionSummary,
+  buildRevisionDryRun,
   parseRevisionDiff,
   formatFileChanges,
   describeItemChange,
@@ -74,6 +77,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   reviewModel?: string;
   /** Git author for the revision commits + white-label toggle: drops the "vanguard" token from the revision marker so a client repo carries no automation branding. Set via --commit-author. */
   commitAuthor?: { name: string; email: string };
+  /** Dry-run: write the diff + proposed thread replies to this local file and push/comment NOTHING. Set via --out. */
+  out?: string;
   /** Skip the simplifier stage. */
   noSimplify?: boolean;
   /** Maximum revision rounds before capping (default 2). */
@@ -106,6 +111,8 @@ export interface ReviseGithubPrResult {
   committed: boolean;
   pushed: boolean;
   undrafted: boolean;
+  /** Absolute path of the dry-run preview file, when --out was given (push/comment were skipped). */
+  dryRunOut?: string;
 }
 
 function editPrLabels(
@@ -277,6 +284,32 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
 
+      // Diff-true "what changed" point per feedback item — uses the diff, not a commit sha, so the
+      // dry-run below can build proposed replies without committing.
+      const diffFiles = parseRevisionDiff(revisionDiff);
+      const globalPoint = formatFileChanges(diffFiles, 3, 3);
+      const pointFor = (item: FeedbackItem): string =>
+        guardedPoint(describeItemChange(item, diffFiles) || globalPoint, revisionDiff);
+
+      // --out: dry-run. Write the diff + the reply we would post to each addressed item to a local file
+      // and touch NEITHER the branch NOR the PR. The operator reviews it, then re-runs without --out to
+      // apply. No commit / push / comment happens on this path.
+      if (deps.out !== undefined) {
+        const status = verification === undefined ? 'unknown' : verification.passed ? 'pass' : 'fail';
+        const preview = buildRevisionDryRun({
+          repoSlug: target.repoSlug,
+          number: target.number,
+          headRefName: pr.headRefName,
+          diff: revisionDiff,
+          items: actionable.map((item) => ({ item, point: pointFor(item) })),
+          verification: { typecheck: status, test: status },
+        });
+        await mkdir(dirname(deps.out), { recursive: true });
+        await writeFile(deps.out, preview, 'utf8');
+        log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
+      }
+
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
       const whiteLabel = deps.commitAuthor !== undefined;
       const commit = await commitStage(ctx, {
@@ -317,14 +350,6 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--body', newBody]);
         }
       }
-
-      // Derive a diff-true "what changed" point for each feedback item.
-      const diffFiles = parseRevisionDiff(revisionDiff);
-      const globalPoint = formatFileChanges(diffFiles, 3, 3);
-      const pointFor = (item: FeedbackItem): string => {
-        const candidate = describeItemChange(item, diffFiles) || globalPoint;
-        return guardedPoint(candidate, revisionDiff);
-      };
 
       // Reply to and resolve each addressed thread (one reply per unique thread).
       // Map each threadId to its first actionable item to derive a per-thread point.

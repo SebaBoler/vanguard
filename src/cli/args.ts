@@ -62,6 +62,8 @@ export type Command =
       maxRounds?: number;
       /** Git author for the revision commits + white-label the revision marker (client repos carry no automation branding). */
       commitAuthor?: { name: string; email: string };
+      /** Dry-run: write the diff + proposed thread replies to this local file and push/comment nothing. */
+      out?: string;
     }
   | {
       kind: 'watch-prs';
@@ -558,6 +560,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -1018,6 +1021,7 @@ Commands:
     --github <ref>         PR ref (alternative to positional; same as spec/run/review-pr)
     --github-pr <n>        PR number (alternative to positional)
     --commit-author <a>    White-label: author the revision commits as this identity and drop the "vanguard" token from the revision marker (for client repos)
+    --out <file>           Dry-run: write the diff + proposed thread replies to this file; push and comment NOTHING (review, then re-run without --out to apply)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage
