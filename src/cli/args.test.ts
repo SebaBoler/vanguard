@@ -631,10 +631,77 @@ describe('parseCli', () => {
     expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
   });
 
+  it('parses review-pr --out (write-to-file, no PR comment)', () => {
+    const cmd = parseCli(['review-pr', 'o/r#12', '--review-model', 'claude-fable-5', '--out', '.vanguard/reviews/12.md'], '/work');
+    expect(cmd.kind).toBe('review-pr');
+    expect(cmd.kind === 'review-pr' && cmd.out).toBe('.vanguard/reviews/12.md');
+    expect(cmd.kind === 'review-pr' && cmd.reviewModel).toBe('claude-fable-5');
+    const without = parseCli(['review-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'review-pr' && 'out' in without).toBe(false);
+  });
+
+  it('accepts the PR ref via positional, --github-pr, or --github (parity with spec/run)', () => {
+    expect(parseCli(['review-pr', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr', '--github-pr', '12', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'review-pr', prRef: '12' });
+    expect(parseCli(['review-pr', '--github', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr'], '/work').kind).toBe('error');
+  });
+
+  it('parses revise-pr with --commit-author (white-label) and the --github alias', () => {
+    const cmd = parseCli(
+      ['revise-pr', '--github', 'o/r#12', '--review-model', 'claude-fable-5', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('revise-pr');
+    expect(cmd.kind === 'revise-pr' && cmd.prRef).toBe('o/r#12');
+    expect(cmd.kind === 'revise-pr' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+    const without = parseCli(['revise-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'revise-pr' && 'commitAuthor' in without).toBe(false);
+  });
+
+  it('parses revise-pr --out (dry-run to a file)', () => {
+    const cmd = parseCli(['revise-pr', 'o/r#12', '--out', '.vanguard/revisions/12.md'], '/work');
+    expect(cmd.kind === 'revise-pr' && cmd.out).toBe('.vanguard/revisions/12.md');
+    const without = parseCli(['revise-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'revise-pr' && 'out' in without).toBe(false);
+  });
+
   it('parses --commit-author on research (white-label toggle)', () => {
     const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
     expect(cmd.kind).toBe('research');
     expect(cmd.kind === 'research' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+  });
+
+  it('parses spec with --spec-model and --commit-author (white-label toggle)', () => {
+    const cmd = parseCli(
+      ['spec', 'o/r#1', '--spec-model', 'claude-fable-5', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
+      '/work',
+    );
+    expect(cmd.kind).toBe('spec');
+    expect(cmd.kind === 'spec' && cmd.issueRef).toBe('o/r#1');
+    expect(cmd.kind === 'spec' && cmd.specModel).toBe('claude-fable-5');
+    expect(cmd.kind === 'spec' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+  });
+
+  it('parses spec with a bare number and --github-repo, and returns help without a ref', () => {
+    const cmd = parseCli(['spec', '7', '--github-repo', 'o/r'], '/work');
+    expect(cmd.kind === 'spec' && cmd.repoSlug).toBe('o/r');
+    expect(cmd.kind === 'spec' && cmd.issueRef).toBe('7');
+    expect(parseCli(['spec'], '/work').kind).toBe('help');
+  });
+
+  it('parses spec --out and run --spec-file (local-file spec flow)', () => {
+    const spec = parseCli(['spec', 'o/r#1', '--out', '.vanguard/specs/1.md'], '/work');
+    expect(spec.kind === 'spec' && spec.out).toBe('.vanguard/specs/1.md');
+
+    const run = parseCli(['run', '--github', 'o/r#1', '--spec-file', '.vanguard/specs/1.md'], '/work');
+    expect(run.kind === 'run' && run.specFile).toBe('.vanguard/specs/1.md');
+    const without = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(without.kind === 'run' && 'specFile' in without).toBe(false);
+
+    // One spec file cannot describe N fan-out tasks.
+    expect(parseCli(['run', '--project', '7', '--spec-file', 's.md'], '/work').kind).toBe('error');
+    expect(parseCli(['run', '--linear', 'ABC-1', '--parent', '--spec-file', 's.md'], '/work').kind).toBe('error');
   });
 
   // --- Loop v1 flag tests ---

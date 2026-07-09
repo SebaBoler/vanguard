@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -26,13 +28,29 @@ export interface ReviewPrCommandDeps {
 export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrCommandDeps = {}): Promise<void> {
   const log = deps.log ?? console.log;
   const runReview = deps.reviewPullRequest ?? reviewPullRequest;
-  if (deps.reviewer !== undefined) {
-    const result = await runReview(cmd.prRef, {
-      reviewer: deps.reviewer,
-      log,
-      ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
-    });
+  const toFile = cmd.out !== undefined;
+
+  // --out routes the review to a local file and suppresses the PR comment — a no-trace review for
+  // client repos (nothing is posted to the tracker). Default posts the comment, as before.
+  const deliver = async (result: ReviewPullRequestResult): Promise<void> => {
+    if (cmd.out !== undefined) {
+      await mkdir(dirname(cmd.out), { recursive: true });
+      await writeFile(cmd.out, result.commentBody, 'utf8');
+      log(`review-pr ${result.pr.repoSlug}#${result.pr.number}: written to ${resolve(cmd.out)} (no PR comment)`);
+      return;
+    }
     log(`review-pr ${result.pr.repoSlug}#${result.pr.number}: done`);
+  };
+
+  if (deps.reviewer !== undefined) {
+    await deliver(
+      await runReview(cmd.prRef, {
+        reviewer: deps.reviewer,
+        log,
+        publish: !toFile,
+        ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
+      }),
+    );
     return;
   }
 
@@ -45,12 +63,14 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
   });
   try {
     const reviewer: PullRequestReviewer = (pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts);
-    const result = await runReview(cmd.prRef, {
-      reviewer,
-      log,
-      ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
-    });
-    log(`review-pr ${result.pr.repoSlug}#${result.pr.number}: done`);
+    await deliver(
+      await runReview(cmd.prRef, {
+        reviewer,
+        log,
+        publish: !toFile,
+        ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
+      }),
+    );
   } finally {
     await sandboxContext.destroy();
   }

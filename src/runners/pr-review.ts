@@ -36,6 +36,8 @@ export interface ReviewPullRequestDeps {
   gh?: GhRunner;
   reviewer: PullRequestReviewer;
   log?: (line: string) => void;
+  /** When false, skip posting the review to the PR — the caller delivers the returned commentBody itself (e.g. writes it to a local file). Default: publish. */
+  publish?: boolean;
 }
 
 export interface ReviewPullRequestResult {
@@ -238,9 +240,11 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
     ? buildPullRequestReviewComment(outcome.text, pr.headRefOid)
     : buildPullRequestReviewIncompleteComment(pr.headRefOid);
 
-  await postPullRequestReview(target, commentBody, 'comment', gh);
-  deps.log?.(
-    `review-pr ${target.repoSlug}#${target.number}: posted -> ${outcome.completed ? 'pr review' : 'incomplete notice'}`,
-  );
+  if (deps.publish !== false) {
+    await postPullRequestReview(target, commentBody, 'comment', gh);
+    deps.log?.(
+      `review-pr ${target.repoSlug}#${target.number}: posted -> ${outcome.completed ? 'pr review' : 'incomplete notice'}`,
+    );
+  }
   return { pr, commentBody };
 }

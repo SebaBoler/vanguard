@@ -9,6 +9,7 @@ import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
 import { reviewPrCommand } from './review-pr.js';
 import { researchCommand } from './research.js';
+import { specCommand } from './spec.js';
 import { revisePrCommand } from './revise-pr.js';
 import { watchPrsCommand } from './watch-prs.js';
 import { reviewMrCommand } from './review-mr.js';
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'research') {
     await researchCommand(command);
+    return;
+  }
+  if (command.kind === 'spec') {
+    await specCommand(command);
     return;
   }
   if (command.kind === 'revise-pr') {

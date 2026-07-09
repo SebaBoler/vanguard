@@ -4,9 +4,12 @@ import {
   selectActionableFeedback,
   buildRevisionPrompt,
   countRevisionRounds,
+  countRevisionRoundsFromFeedback,
+  revisionMarker,
   referenceSnippet,
   buildItemReply,
   buildRevisionSummary,
+  buildRevisionDryRun,
   summaryContradictsDiff,
   parseRevisionDiff,
   describeDiff,
@@ -401,6 +404,81 @@ describe('countRevisionRounds', () => {
 // ---------------------------------------------------------------------------
 // buildRevisionPrompt
 // ---------------------------------------------------------------------------
+
+describe('white-label revision marker', () => {
+  const item = { source: 'review', author: 'alice', body: 'please fix' } as unknown as FeedbackItem;
+
+  it('default marker carries "vanguard-revision"; white-label drops the token', () => {
+    expect(revisionMarker('abc123')).toBe('<!-- vanguard-revision: abc123 -->');
+    expect(revisionMarker('abc123', true)).toBe('<!-- revision: abc123 -->');
+    expect(revisionMarker('abc123', true)).not.toContain('vanguard');
+  });
+
+  it('round-counting recognises BOTH marker forms (dedup unaffected by white-label)', () => {
+    const fb = {
+      items: [
+        { body: `default\n\n${revisionMarker('sha-1')}` },
+        { body: `white-label\n\n${revisionMarker('sha-2', true)}` },
+      ],
+    } as unknown as PullRequestFeedback;
+    expect(countRevisionRoundsFromFeedback(fb)).toBe(2);
+  });
+
+  it('buildItemReply + buildRevisionSummary omit "vanguard" under white-label', () => {
+    expect(buildItemReply(item, 'did it', 'abc1234', 'sha', true)).not.toContain('vanguard');
+    expect(buildItemReply(item, 'did it', 'abc1234', 'sha', false)).toContain('vanguard-revision');
+    const summary = buildRevisionSummary({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefOid: 'sha',
+      commitSha: 'abc1234',
+      addressed: [{ item, point: 'p' }],
+      deferred: [],
+      verification: { typecheck: 'pass', test: 'pass' },
+      whiteLabel: true,
+    });
+    expect(summary).not.toContain('vanguard');
+    expect(summary).toContain('<!-- revision: sha -->');
+  });
+});
+
+describe('buildRevisionDryRun', () => {
+  const item = { source: 'thread', author: 'alice', body: 'rename this' } as unknown as FeedbackItem;
+
+  it('renders the diff + a proposed reply per item, and is brand/marker-free', () => {
+    const out = buildRevisionDryRun({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefName: 'feature-x',
+      diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
+      items: [{ item, point: 'renamed x to y' }],
+      verification: { typecheck: 'pass', test: 'pass' },
+    });
+    expect(out).toContain('dry-run — o/r#7');
+    expect(out).toContain('would be committed and pushed to feature-x');
+    expect(out).toContain('```diff');
+    expect(out).toContain('const y = 1;');
+    expect(out).toContain(referenceSnippet(item));
+    expect(out).toContain('Addressed: renamed x to y');
+    expect(out).toContain('- Typecheck: pass');
+    // Local operator artifact — no automation branding, no hidden marker.
+    expect(out).not.toContain('vanguard');
+    expect(out).not.toContain('<!--');
+  });
+
+  it('handles an empty diff and no items', () => {
+    const out = buildRevisionDryRun({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefName: 'f',
+      diff: '   ',
+      items: [],
+      verification: { typecheck: 'unknown', test: 'unknown' },
+    });
+    expect(out).toContain('(no changes)');
+    expect(out).toContain('(none)');
+  });
+});
 
 describe('buildRevisionPrompt', () => {
   const pr = {

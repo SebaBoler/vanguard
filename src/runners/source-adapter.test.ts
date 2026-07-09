@@ -1,4 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
 import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
@@ -280,6 +283,27 @@ describe('runSourcedIssue', () => {
     expect(resolveAndRunVisualProof).toHaveBeenCalled();
   });
 
+  it('injects --spec-file content as a virtual comment without mutating the fetched task', async () => {
+    const specPath = join(tmpdir(), `vanguard-specfile-${process.pid}-${Math.random().toString(36).slice(2)}.md`);
+    await writeFile(specPath, '<tech_spec>\nLOCAL SPEC BODY\n</tech_spec>', 'utf8');
+    try {
+      const adapter = fakeAdapter([], STAGES);
+      await runSourcedIssue('group/project#1', { repoPath: '/repo', specFile: specPath }, adapter);
+      const opts = runStages.mock.calls[0]?.[2] as { variables: Record<string, string> };
+      expect(opts.variables.COMMENTS).toContain('LOCAL SPEC BODY');
+      expect(task.comments).toHaveLength(0);
+    } finally {
+      await rm(specPath, { force: true });
+    }
+  });
+
+  it('fails with a clear error when --spec-file cannot be read', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', specFile: '/nonexistent/missing-spec.md' }, adapter),
+    ).rejects.toThrow('--spec-file');
+  });
+
   it('blocks commit/push/PR, never leaks the raw secret, and signals the block on the issue', async () => {
     const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
     wmDiff.mockResolvedValueOnce(['diff --git a/src/x.ts b/src/x.ts', '+++ b/src/x.ts', `+const t = "${fakeJwt}";`].join('\n'));
@@ -332,6 +356,27 @@ describe('runSourcedIssue', () => {
       task,
       { reason: 'scan-error', message: 'scan blew up' },
     );
+    consoleError.mockRestore();
+  });
+
+  it('white-label mode suppresses the issue signal (no label/comment leak) but still blocks the PR', async () => {
+    const fakeJwt = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
+    wmDiff.mockResolvedValueOnce(['diff --git a/src/x.ts b/src/x.ts', '+++ b/src/x.ts', `+const t = "${fakeJwt}";`].join('\n'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', commitAuthor: { name: 'Sebastian Pietrzak', email: 's@p.co' } },
+      adapter,
+    );
+
+    expect(result.prUrl).toBeUndefined();
+    expect(result.secretBlocked).toBe(true);
+    expect(adapter.signalSecretBlock).not.toHaveBeenCalled();
+    expect(commitStage).not.toHaveBeenCalled();
+    expect(publishForReview).not.toHaveBeenCalled();
+    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });
 

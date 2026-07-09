@@ -16,6 +16,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
+      out?: string;
     }
   | {
       kind: 'research';
@@ -33,6 +35,22 @@ export type Command =
       commitAuthor?: { name: string; email: string };
     }
   | {
+      kind: 'spec';
+      /** GitHub issue ref: owner/repo#n, or a bare number with --github-repo. */
+      issueRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      /** Model for the tech-spec stage (e.g. a planner-tier model). */
+      specModel?: string;
+      /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
+      out?: string;
+      /** White-label the spec comment (drop the "Vanguard" heading). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
+    }
+  | {
       kind: 'revise-pr';
       prRef: string;
       repoSlug?: string;
@@ -42,6 +60,10 @@ export type Command =
       provider?: ProviderName;
       reviewModel?: string;
       maxRounds?: number;
+      /** Git author for the revision commits + white-label the revision marker (client repos carry no automation branding). */
+      commitAuthor?: { name: string; email: string };
+      /** Dry-run: write the diff + proposed thread replies to this local file and push/comment nothing. */
+      out?: string;
     }
   | {
       kind: 'watch-prs';
@@ -323,6 +345,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
         'spec-label': { type: 'string' },
+        'spec-file': { type: 'string' },
         'agent-label': { type: 'string' },
         'needs-info-label': { type: 'string' },
         'spec-claimed-label': { type: 'string' },
@@ -459,8 +482,17 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'review-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
-    if (prRef === undefined) return fail('review-pr requires a PR reference: a URL, owner/repo#number, or --github-pr <number>.');
+    // Accept the PR ref as a positional, --github-pr <n>, or --github <ref> — the last for parity with
+    // spec/run/research, which all take --github (a natural thing to reach for).
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
+    if (prRef === undefined) {
+      return fail('review-pr requires a PR reference: a URL, owner/repo#number, --github <ref>, or --github-pr <number>.');
+    }
     return {
       kind: 'review-pr',
       prRef,
@@ -470,6 +502,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -490,8 +523,30 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  if (positionals[0] === 'spec') {
+    const issueRef = typeof values.github === 'string' ? values.github : positionals[1];
+    if (issueRef === undefined) return { kind: 'help' };
+    return {
+      kind: 'spec',
+      issueRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+    };
+  }
+
   if (positionals[0] === 'revise-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
     const maxRoundsRaw = Number(values['max-rounds']);
     return {
@@ -504,6 +559,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -606,6 +663,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values.parent === true && picked[0] !== 'linear') {
       return fail('--parent is only supported with --linear.');
     }
+    // One spec file cannot describe N different tasks — fan-out modes would inject it into every run.
+    if (typeof values['spec-file'] === 'string' && (picked[0] === 'project' || values.parent === true)) {
+      return fail('--spec-file is only supported for a single-issue run (not --parent / --project fan-out).');
+    }
     if (picked[0] === 'project') {
       const projectNum = Number(picked[1]);
       if (!Number.isInteger(projectNum) || projectNum < 1) {
@@ -644,6 +705,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
+      ...(typeof values['spec-file'] === 'string' ? { specFile: values['spec-file'] } : {}),
     };
   }
 
@@ -922,13 +984,16 @@ Commands:
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
+    --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/research)
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   research options:
@@ -941,9 +1006,22 @@ Commands:
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
+  spec options:
+    <owner/repo#number>     GitHub issue to spec: researches the codebase read-only and posts a tech-spec comment on the issue. One-shot — no labels are read or written (unlike the watch spec pass)
+    --github <ref>          Issue ref (alternative to positional)
+    --github-repo <o/r>     Required for bare issue numbers
+    --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
+    --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)
+    --egress --llm-proxy --repo <path>         As for run/watch
+
   revise-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/review-pr)
     --github-pr <n>        PR number (alternative to positional)
+    --commit-author <a>    White-label: author the revision commits as this identity and drop the "vanguard" token from the revision marker (for client repos)
+    --out <file>           Dry-run: write the diff + proposed thread replies to this file; push and comment NOTHING (review, then re-run without --out to apply)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage

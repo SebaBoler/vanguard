@@ -79,6 +79,24 @@ describe('scanForSecrets', () => {
     expect(scanForSecrets(diff).some((f) => f.patternName === 'assignment')).toBe(false);
   });
 
+  it('does NOT flag an unquoted bare camelCase identifier RHS (config read, not a literal) — live #744 false positive', () => {
+    const diff = diffOf([
+      { path: 'apps/api/src/env.ts', lines: ['+    WORKFLOW_CALLBACK_TOKEN: optionalNonEmptyEnvVar,'] },
+      { path: 'apps/api/src/file/cloud-run-job.service.ts', lines: ['+    WORKFLOW_CALLBACK_TOKEN: callbackToken,'] },
+    ]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'assignment')).toBe(false);
+  });
+
+  it('still flags a QUOTED camelCase-shaped value (a string literal, not an identifier)', () => {
+    const diff = diffOf([{ path: 'src/config.ts', lines: ['+const token = "mySecretValueAbc";'] }]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'assignment')).toBe(true);
+  });
+
+  it('still flags an unquoted digit-bearing value (.env-style hex credential)', () => {
+    const diff = diffOf([{ path: 'deploy/.env.production', lines: ['+WORKFLOW_CALLBACK_TOKEN=a3f9c2e847b1d605'] }]);
+    expect(scanForSecrets(diff).some((f) => f.patternName === 'assignment')).toBe(true);
+  });
+
   it('never leaks the raw secret value in the serialised findings', () => {
     const diff = diffOf([
       { path: 'src/foo.ts', lines: [`+const jwt = "${FAKE_JWT}";`, `+const key = "${FAKE_SK_KEY}";`] },
