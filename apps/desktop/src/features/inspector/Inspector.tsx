@@ -20,6 +20,7 @@ import { Fleet } from '../fleet/Fleet';
 import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
+import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -34,7 +35,7 @@ export function Inspector({
   onCrumb,
 }: {
   project: string;
-  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'settings';
+  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
   focusRunning: ActiveRun | null;
   clearNonce: number;
   onCrumb: (c: string | null) => void;
@@ -251,6 +252,9 @@ export function Inspector({
           {screen === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
           {screen === 'fleet' && <Fleet project={project} active={active} />}
           {screen === 'remote' && <RemoteRuns project={project} />}
+          {screen === 'workflow' && (
+            <WorkflowEditor project={project} name={project.split('/').filter(Boolean).pop() ?? project} />
+          )}
           {screen === 'settings' && <Settings project={project} />}
         </>
       )}

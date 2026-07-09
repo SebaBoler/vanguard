@@ -8,6 +8,8 @@ import { TailwindDebugScreens } from './components/TailwindDebugScreens';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
 import { listProjects, addProject, removeProject, listActive } from './ipc';
+import { projectColor, contrastColor } from './color';
+import { ProjectCombobox } from './ProjectCombobox';
 import type { Project, ActiveRun } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
@@ -122,6 +124,7 @@ export default function App() {
 
   const active = projects.find((p) => p.path === activeProject) ?? null;
   const showDashboard = screen === 'dashboard' || !active;
+  const titleBar = !showDashboard && active ? projectColor(active) : null;
 
   const SCREEN_LABEL: Record<Screen, string> = {
     dashboard: 'Home',
@@ -129,17 +132,12 @@ export default function App() {
     board: 'Task board',
     fleet: 'Fleet',
     remote: 'Remote',
+    workflow: 'Workflow',
     settings: 'Settings',
   };
-  const crumbs: Crumb[] = [{ label: 'Home', onClick: () => setScreen('dashboard') }];
+  // Home lives on the logo now; the project lives in the switcher — so the breadcrumb is just the screen.
+  const crumbs: Crumb[] = [];
   if (active && screen !== 'dashboard') {
-    crumbs.push({
-      label: active.name,
-      onClick: () => {
-        setScreen('runs');
-        setClearNonce((n) => n + 1);
-      },
-    });
     if (crumb) {
       crumbs.push({ label: SCREEN_LABEL[screen], onClick: () => setClearNonce((n) => n + 1) });
       crumbs.push({ label: crumb });
@@ -147,26 +145,45 @@ export default function App() {
       crumbs.push({ label: SCREEN_LABEL[screen] });
     }
   }
+  const projectSwitcher =
+    active && screen !== 'dashboard' ? (
+      <ProjectCombobox projects={projects} active={active} onSelect={(path) => setActiveProject(path)} />
+    ) : null;
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      <TopBar crumbs={crumbs} onCommandK={() => setPalette(true)} theme={theme} onToggleTheme={toggleTheme} />
+      {/* Custom titlebar (native decorations overlaid, macOS): the app/project identity. In a project
+          it takes that project's color so the working context is unmistakable; generic on the dashboard. */}
+      <div
+        data-tauri-drag-region
+        className="flex h-8 shrink-0 select-none items-center pl-20 pr-4 text-[13px] font-semibold text-foreground"
+        style={titleBar ? { backgroundColor: titleBar, color: contrastColor(titleBar) } : undefined}
+      >
+        Vanguard Inspector
+      </div>
+      <TopBar
+        crumbs={crumbs}
+        projectSwitcher={projectSwitcher}
+        onHome={() => setScreen('dashboard')}
+        onCommandK={() => setPalette(true)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
       <div className="flex min-h-0 flex-1">
-        <Rail
-          projects={projects}
-          activePath={activeProject}
-          screen={screen}
-          running={railRunning}
-          onProject={(path) => {
-            setActiveProject(path);
-            setScreen((s) => (s === 'dashboard' ? 'runs' : s));
-          }}
-          onScreen={setScreen}
-          onOpenRunning={(r) => {
-            setScreen('runs');
-            setFocusRunning(r);
-          }}
-        />
+        {/* The rail is project-context navigation; the dashboard is generic and stays sidebar-less. */}
+        {!showDashboard && (
+          <Rail
+            projects={projects}
+            activePath={activeProject}
+            screen={screen}
+            running={railRunning}
+            onScreen={setScreen}
+            onOpenRunning={(r) => {
+              setScreen('runs');
+              setFocusRunning(r);
+            }}
+          />
+        )}
         <main className="min-w-0 flex-1 overflow-auto p-6">
           {showDashboard ? (
             <Dashboard

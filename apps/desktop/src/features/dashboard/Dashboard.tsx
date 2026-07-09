@@ -1,5 +1,6 @@
 import { Button, Card, Chip, Empty } from 'chunks-ui';
 import { FolderPlus, LayoutGrid, X } from 'lucide-react';
+import { projectColor } from '../../color';
 import type { Project } from '../../vanguard-output';
 
 function relTime(iso?: string): string | null {
@@ -93,8 +94,14 @@ export function Dashboard({
                 <Card.Root
                   key={p.path}
                   onClick={() => onOpen({ path: p.path, name: p.name })}
-                  className="cursor-pointer transition-colors hover:border-primary/40"
+                  className="relative cursor-pointer overflow-hidden pl-1.5 transition-colors hover:border-primary/40"
                 >
+                  {/* Project identity color — matches the in-project top bar so cards are recognizable. */}
+                  <span
+                    className="absolute inset-y-0 left-0 w-1.5"
+                    style={{ backgroundColor: projectColor(p) }}
+                    aria-hidden
+                  />
                   <Card.Header className="flex flex-row items-start justify-between gap-2 pb-2">
                     <div className="min-w-0">
                       <Card.Title className="flex items-center gap-2 truncate">

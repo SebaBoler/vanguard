@@ -3,6 +3,7 @@ import { Button, Input } from 'chunks-ui';
 import { writeAppConfig } from '../../ipc';
 import { useAppConfig } from '../../hooks';
 import { SOURCES } from '../../sources';
+import { projectColor } from '../../color';
 import type { AppConfig } from '../../vanguard-output';
 
 const PROVIDERS = ['claude', 'codex', 'cursor', 'zai', 'openrouter', 'meridian'];
@@ -77,6 +78,30 @@ export function Settings({ project }: { project: string }) {
         <Field label="Repo path">
           <Input value={project} readOnly className="w-full" />
         </Field>
+        {/* Not a <Field> (which is a <label>) — a label would forward clicks on the readout/reset to
+            the color input, opening the OS picker unexpectedly. Plain div; the input carries its own label. */}
+        <div className="space-y-1">
+          <span className="text-sm">
+            Project color
+            <span className="ml-1 text-xs text-muted-foreground">— context accent (top bar + dashboard card)</span>
+          </span>
+          <div className="flex items-center gap-3">
+            <input
+              type="color"
+              value={projectColor({ path: project, color: cfg.color })}
+              onChange={(e) => set('color', e.target.value)}
+              aria-label="Project color"
+              className="size-9 shrink-0 cursor-pointer rounded border border-border bg-background"
+            />
+            <code className="text-sm tabular-nums">{projectColor({ path: project, color: cfg.color })}</code>
+            <span className="text-xs text-muted-foreground">{cfg.color ? 'custom' : 'auto from path'}</span>
+            {cfg.color && (
+              <Button variant="text" color="secondary" className="ml-auto" onClick={() => set('color', undefined)}>
+                Reset to auto
+              </Button>
+            )}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Task Source">
             <Select value={cfg.source ?? ''} onChange={(v) => set('source', v || undefined)} options={SOURCES} />
