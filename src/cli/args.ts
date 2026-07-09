@@ -16,6 +16,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
+      out?: string;
     }
   | {
       kind: 'research';
@@ -476,8 +478,17 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'review-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
-    if (prRef === undefined) return fail('review-pr requires a PR reference: a URL, owner/repo#number, or --github-pr <number>.');
+    // Accept the PR ref as a positional, --github-pr <n>, or --github <ref> — the last for parity with
+    // spec/run/research, which all take --github (a natural thing to reach for).
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
+    if (prRef === undefined) {
+      return fail('review-pr requires a PR reference: a URL, owner/repo#number, --github <ref>, or --github-pr <number>.');
+    }
     return {
       kind: 'review-pr',
       prRef,
@@ -487,6 +498,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -965,10 +977,12 @@ Commands:
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/research)
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   research options:

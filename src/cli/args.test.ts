@@ -631,6 +631,22 @@ describe('parseCli', () => {
     expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
   });
 
+  it('parses review-pr --out (write-to-file, no PR comment)', () => {
+    const cmd = parseCli(['review-pr', 'o/r#12', '--review-model', 'claude-fable-5', '--out', '.vanguard/reviews/12.md'], '/work');
+    expect(cmd.kind).toBe('review-pr');
+    expect(cmd.kind === 'review-pr' && cmd.out).toBe('.vanguard/reviews/12.md');
+    expect(cmd.kind === 'review-pr' && cmd.reviewModel).toBe('claude-fable-5');
+    const without = parseCli(['review-pr', 'o/r#12'], '/work');
+    expect(without.kind === 'review-pr' && 'out' in without).toBe(false);
+  });
+
+  it('accepts the PR ref via positional, --github-pr, or --github (parity with spec/run)', () => {
+    expect(parseCli(['review-pr', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr', '--github-pr', '12', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'review-pr', prRef: '12' });
+    expect(parseCli(['review-pr', '--github', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr'], '/work').kind).toBe('error');
+  });
+
   it('parses --commit-author on research (white-label toggle)', () => {
     const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
     expect(cmd.kind).toBe('research');
