@@ -72,6 +72,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage. */
   reviewModel?: string;
+  /** Git author for the revision commits + white-label toggle: drops the "vanguard" token from the revision marker so a client repo carries no automation branding. Set via --commit-author. */
+  commitAuthor?: { name: string; email: string };
   /** Skip the simplifier stage. */
   noSimplify?: boolean;
   /** Maximum revision rounds before capping (default 2). */
@@ -276,8 +278,12 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
+      const whiteLabel = deps.commitAuthor !== undefined;
       const commit = await commitStage(ctx, {
         message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
+        ...(deps.commitAuthor !== undefined
+          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
+          : {}),
       });
 
       if (!commit.committed) {
@@ -332,14 +338,14 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         [...threadIdToItem.entries()].map(([threadId, item]) => {
           const p = pointFor(item);
           const detail = p ? `: ${p}` : '.';
-          return replyAndResolveThread(threadId, `Addressed in commit ${sha}${detail}\n\n${revisionMarker(pr.headRefOid)}`, gh);
+          return replyAndResolveThread(threadId, `Addressed in commit ${sha}${detail}\n\n${revisionMarker(pr.headRefOid, whiteLabel)}`, gh);
         }),
       );
 
       // Post a per-item referencing reply for each non-threadable feedback item.
       const nonThreadItems = actionable.filter((item) => item.source !== 'thread');
       await Promise.all(
-        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, pointFor(item), sha, pr.headRefOid), gh)),
+        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, pointFor(item), sha, pr.headRefOid, whiteLabel), gh)),
       );
 
       // Post the single final round summary.
@@ -352,6 +358,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         addressed: actionable.map((item) => ({ item, point: pointFor(item) })),
         deferred: [],
         verification: { typecheck: verificationStatus, test: verificationStatus },
+        whiteLabel,
       });
       await commentPullRequest(target, summaryText, gh);
 

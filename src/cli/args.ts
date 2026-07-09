@@ -60,6 +60,8 @@ export type Command =
       provider?: ProviderName;
       reviewModel?: string;
       maxRounds?: number;
+      /** Git author for the revision commits + white-label the revision marker (client repos carry no automation branding). */
+      commitAuthor?: { name: string; email: string };
     }
   | {
       kind: 'watch-prs';
@@ -537,7 +539,12 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'revise-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
     const maxRoundsRaw = Number(values['max-rounds']);
     return {
@@ -550,6 +557,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
 
@@ -1007,7 +1015,9 @@ Commands:
 
   revise-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/review-pr)
     --github-pr <n>        PR number (alternative to positional)
+    --commit-author <a>    White-label: author the revision commits as this identity and drop the "vanguard" token from the revision marker (for client repos)
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage

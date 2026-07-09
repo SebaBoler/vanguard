@@ -23,6 +23,7 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.maxRounds !== undefined ? { maxRounds: cmd.maxRounds } : {}),
+    ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     log,
   };
 

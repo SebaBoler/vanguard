@@ -4,6 +4,8 @@ import {
   selectActionableFeedback,
   buildRevisionPrompt,
   countRevisionRounds,
+  countRevisionRoundsFromFeedback,
+  revisionMarker,
   referenceSnippet,
   buildItemReply,
   buildRevisionSummary,
@@ -401,6 +403,43 @@ describe('countRevisionRounds', () => {
 // ---------------------------------------------------------------------------
 // buildRevisionPrompt
 // ---------------------------------------------------------------------------
+
+describe('white-label revision marker', () => {
+  const item = { source: 'review', author: 'alice', body: 'please fix' } as unknown as FeedbackItem;
+
+  it('default marker carries "vanguard-revision"; white-label drops the token', () => {
+    expect(revisionMarker('abc123')).toBe('<!-- vanguard-revision: abc123 -->');
+    expect(revisionMarker('abc123', true)).toBe('<!-- revision: abc123 -->');
+    expect(revisionMarker('abc123', true)).not.toContain('vanguard');
+  });
+
+  it('round-counting recognises BOTH marker forms (dedup unaffected by white-label)', () => {
+    const fb = {
+      items: [
+        { body: `default\n\n${revisionMarker('sha-1')}` },
+        { body: `white-label\n\n${revisionMarker('sha-2', true)}` },
+      ],
+    } as unknown as PullRequestFeedback;
+    expect(countRevisionRoundsFromFeedback(fb)).toBe(2);
+  });
+
+  it('buildItemReply + buildRevisionSummary omit "vanguard" under white-label', () => {
+    expect(buildItemReply(item, 'did it', 'abc1234', 'sha', true)).not.toContain('vanguard');
+    expect(buildItemReply(item, 'did it', 'abc1234', 'sha', false)).toContain('vanguard-revision');
+    const summary = buildRevisionSummary({
+      repoSlug: 'o/r',
+      number: 7,
+      headRefOid: 'sha',
+      commitSha: 'abc1234',
+      addressed: [{ item, point: 'p' }],
+      deferred: [],
+      verification: { typecheck: 'pass', test: 'pass' },
+      whiteLabel: true,
+    });
+    expect(summary).not.toContain('vanguard');
+    expect(summary).toContain('<!-- revision: sha -->');
+  });
+});
 
 describe('buildRevisionPrompt', () => {
   const pr = {
