@@ -23,6 +23,8 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.maxRounds !== undefined ? { maxRounds: cmd.maxRounds } : {}),
+    ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
+    ...(cmd.out !== undefined ? { out: cmd.out } : {}),
     log,
   };
 
@@ -54,6 +56,10 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
 
 function logResult(result: ReviseGithubPrResult, log: (line: string) => void): void {
   const id = `${result.pr.repoSlug}#${result.pr.number}`;
+  if (result.dryRunOut !== undefined) {
+    log(`revise-pr ${id}: dry-run written to ${result.dryRunOut} (nothing pushed or commented)`);
+    return;
+  }
   if (!result.committed) {
     log(`revise-pr ${id}: done (no changes committed)`);
   } else {

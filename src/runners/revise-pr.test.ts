@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -262,6 +262,56 @@ describe('runRevisePullRequest happy path', () => {
     expect(editCall).toBeDefined();
     expect(editCall).toContain('--remove-label');
     expect(editCall).toContain('needs revision');
+  });
+
+  it('--out writes a dry-run preview and pushes/comments NOTHING', async () => {
+    const outPath = join(tmpdir(), `vanguard-revise-out-${process.pid}-${Math.random().toString(36).slice(2)}.md`);
+    const ghCalls: string[][] = [];
+    const pushCalls: unknown[] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.some((a) => a.includes('headRefName'))) {
+        return makePrViewJson();
+      }
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+      }
+      // Any push/comment/mutation call in dry-run is a bug — fail loudly.
+      throw new Error(`unexpected gh call in dry-run: ${args.join(' ')}`);
+    };
+    try {
+      const result = await runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox(),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async (...a: unknown[]) => {
+          pushCalls.push(a);
+          return '';
+        },
+        _baseBranch: 'feature-branch',
+        provider: 'claude',
+        out: outPath,
+      });
+
+      expect(result.dryRunOut).toBe(outPath);
+      expect(result.committed).toBe(false);
+      expect(result.pushed).toBe(false);
+      expect(pushCalls).toHaveLength(0);
+      expect(ghCalls.some((a) => a[0] === 'pr' && (a[1] === 'comment' || a[1] === 'ready' || a[1] === 'edit'))).toBe(false);
+
+      const content = await readFile(outPath, 'utf8');
+      expect(content).toContain('dry-run');
+      expect(content).toContain('## Code changes');
+      expect(content).toContain('## Proposed replies');
+      expect(content).not.toContain('vanguard-revision');
+    } finally {
+      await rm(outPath, { force: true });
+    }
   });
 });
 
