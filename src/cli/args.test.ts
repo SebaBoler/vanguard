@@ -640,6 +640,13 @@ describe('parseCli', () => {
     expect(without.kind === 'review-pr' && 'out' in without).toBe(false);
   });
 
+  it('accepts the PR ref via positional, --github-pr, or --github (parity with spec/run)', () => {
+    expect(parseCli(['review-pr', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr', '--github-pr', '12', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'review-pr', prRef: '12' });
+    expect(parseCli(['review-pr', '--github', 'o/r#12'], '/work')).toMatchObject({ kind: 'review-pr', prRef: 'o/r#12' });
+    expect(parseCli(['review-pr'], '/work').kind).toBe('error');
+  });
+
   it('parses --commit-author on research (white-label toggle)', () => {
     const cmd = parseCli(['research', 'o/r#1', '--commit-author', 'Sebastian Pietrzak <s@p.co>'], '/work');
     expect(cmd.kind).toBe('research');
