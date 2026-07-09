@@ -25,16 +25,16 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
   }
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-4">
+    <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-4">
       {COLUMNS.map((col) => {
         const items = (tasks ?? []).filter((t) => t.column === col);
         return (
-          <div key={col} className="w-64 shrink-0">
-            <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <div key={col} className="flex h-full min-h-0 w-64 shrink-0 flex-col">
+            <div className="mb-2 flex shrink-0 items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {col}
               <span className="rounded bg-muted px-1.5 tabular-nums">{items.length}</span>
             </div>
-            <div className="space-y-2">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
               {items.map((t) => (
                 <button key={t.id} onClick={() => onOpenTask(t.id)} className="block w-full text-left">
                   <Card.Root className="transition-colors hover:border-primary/40">

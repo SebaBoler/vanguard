@@ -13,8 +13,12 @@ export function RunDetail({ detail, project }: { detail: RunDetailT; project: st
   const transcriptStages = detail.stages.filter((s) => s.transcript);
 
   return (
-    <Tabs.Root value={tab} onValueChange={(v) => setTab(String(v))}>
-      <Tabs.List>
+    <Tabs.Root
+      value={tab}
+      onValueChange={(v) => setTab(String(v))}
+      className="flex h-full min-h-0 flex-col"
+    >
+      <Tabs.List className="shrink-0">
         <Tabs.Tab value="overview">Overview</Tabs.Tab>
         <Tabs.Tab value="spec">Spec</Tabs.Tab>
         <Tabs.Tab value="diff">Diff</Tabs.Tab>
@@ -22,7 +26,7 @@ export function RunDetail({ detail, project }: { detail: RunDetailT; project: st
         <Tabs.Indicator />
       </Tabs.List>
 
-      <Tabs.Panel value="overview" className="space-y-3 pt-4">
+      <Tabs.Panel value="overview" className="min-h-0 flex-1 space-y-3 overflow-y-auto pt-4">
         <ProofGate proof={detail.proof} />
         <div className="space-y-2">
           {detail.stages.map((s, i) => (
@@ -31,11 +35,11 @@ export function RunDetail({ detail, project }: { detail: RunDetailT; project: st
         </div>
       </Tabs.Panel>
 
-      <Tabs.Panel value="spec" className="pt-4">
+      <Tabs.Panel value="spec" className="min-h-0 flex-1 overflow-y-auto pt-4">
         {tab === 'spec' && <SpecPane project={project} taskId={detail.taskId} />}
       </Tabs.Panel>
 
-      <Tabs.Panel value="diff" className="space-y-4 pt-4">
+      <Tabs.Panel value="diff" className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-4">
         {diffStages.length === 0 && <DiffView />}
         {diffStages.map((s, i) => (
           <div key={i} className="space-y-1">
@@ -47,7 +51,7 @@ export function RunDetail({ detail, project }: { detail: RunDetailT; project: st
         ))}
       </Tabs.Panel>
 
-      <Tabs.Panel value="transcript" className="space-y-4 pt-4">
+      <Tabs.Panel value="transcript" className="min-h-0 flex-1 space-y-4 overflow-y-auto pt-4">
         {transcriptStages.length === 0 && <TranscriptView />}
         {transcriptStages.map((s, i) => (
           <div key={i} className="space-y-1">

@@ -29,8 +29,8 @@ export function LiveRun({ active, refreshKey }: { active: ActiveRun; refreshKey:
   }, [entries.length]);
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-3 text-xs tabular-nums text-muted-foreground">
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground">
         <span>{turns} turns</span>
         <span>{tools} tools</span>
         {tok > 0 && (
@@ -39,7 +39,7 @@ export function LiveRun({ active, refreshKey }: { active: ActiveRun; refreshKey:
           </span>
         )}
       </div>
-      <div className="max-h-[72vh] overflow-auto rounded border border-border bg-muted/30 p-4">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-border bg-muted/30 p-4">
         <StreamView entries={entries} empty="Waiting for output…" />
         <div ref={bottomRef} />
       </div>

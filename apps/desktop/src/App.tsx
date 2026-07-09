@@ -184,7 +184,7 @@ export default function App() {
             }}
           />
         )}
-        <main className="min-w-0 flex-1 overflow-auto p-6">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {showDashboard ? (
             <Dashboard
               projects={projects}

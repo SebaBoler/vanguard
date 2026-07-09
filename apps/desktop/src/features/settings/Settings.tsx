@@ -65,7 +65,7 @@ export function Settings({ project }: { project: string }) {
   };
 
   return (
-    <div className="max-w-2xl space-y-5">
+    <div className="mx-auto max-w-2xl space-y-5">
       <div className="flex items-center gap-3">
         <h2 className="font-semibold">Settings</h2>
         <code className="text-xs text-muted-foreground">.vanguard/app.json</code>
