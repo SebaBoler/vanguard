@@ -294,6 +294,16 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       // stay at debug level. Never log prompts or secrets, and never raise this to info.
       ctx.log.debug({ taskId: ctx.taskId, text: next.value.text }, 'agent turn');
     }
+    // A gateway that predates the requested model can silently serve its own default instead of
+    // erroring (live case: Meridian 1.43.0's bundled SDK answered claude-fable-5 requests with
+    // claude-sonnet-4-6). Surface the swap loudly. Aliases ('opus', 'sonnet') legitimately resolve
+    // to versioned ids, so only exact full-id requests (claude-*) are checked.
+    if (input.model !== undefined && input.model.startsWith('claude-') && modelUsed !== undefined && modelUsed !== input.model) {
+      ctx.log.warn(
+        { taskId: ctx.taskId, requested: input.model, served: modelUsed },
+        'model mismatch — the provider/gateway served a different model than requested',
+      );
+    }
     const completed = hasTerminationSignal(finalText);
 
     const diff = input.copyBack !== false ? await syncSandboxToWorktree(ctx) : '';

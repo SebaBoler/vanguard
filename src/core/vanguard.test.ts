@@ -127,6 +127,33 @@ describe('vanguard.run', () => {
     expect(wasDestroyed()).toBe(true);
   });
 
+  it('warns when a gateway serves a different model than the requested full id', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const { logger, entries } = captureLogger();
+    const agent = fakeAgent([{ text: 'ok' }], { finalText: 'ok', turns: 1, model: 'claude-sonnet-4-6' });
+    await run(
+      { taskId: 't-mismatch', localRepoPath: repo, promptTemplate: 'do', sandbox, agent, model: 'claude-fable-5', logger },
+      { worktrees: wm },
+    );
+    const warn = entries.find((e) => e.msg.includes('model mismatch'));
+    expect(warn).toBeDefined();
+    expect(warn?.obj.requested).toBe('claude-fable-5');
+    expect(warn?.obj.served).toBe('claude-sonnet-4-6');
+  });
+
+  it('does not warn when an alias request resolves to a versioned id', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const { logger, entries } = captureLogger();
+    const agent = fakeAgent([{ text: 'ok' }], { finalText: 'ok', turns: 1, model: 'claude-opus-4-8' });
+    await run(
+      { taskId: 't-alias', localRepoPath: repo, promptTemplate: 'do', sandbox, agent, model: 'opus', logger },
+      { worktrees: wm },
+    );
+    expect(entries.some((e) => e.msg.includes('model mismatch'))).toBe(false);
+  });
+
   it('removes a clean worktree and reports not-completed', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();

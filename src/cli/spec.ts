@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { runSpecGenerator } from '../runners/spec.js';
@@ -42,7 +42,7 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
     if (cmd.out !== undefined) {
       await mkdir(dirname(cmd.out), { recursive: true });
       await writeFile(cmd.out, body, 'utf8');
-      log(`spec ${cmd.issueRef}: written to ${cmd.out} (no issue comment)`);
+      log(`spec ${cmd.issueRef}: written to ${resolve(cmd.out)} (no issue comment)`);
       return;
     }
     await post(body);
