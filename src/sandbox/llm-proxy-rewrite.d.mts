@@ -1,5 +1,5 @@
 // Type declarations for the plain-ESM `llm-proxy-rewrite.mjs` so the strict-TS app keeps types.
-export type Upstream = 'anthropic' | 'openai' | 'zai';
+export type Upstream = 'anthropic' | 'openai' | 'zai' | 'openrouter';
 export type UpstreamAuth = { mode: 'subscription'; secret: string } | { mode: 'api'; secret: string };
 
 /** One upstream's wiring: forward host, allowed POST paths, auth scheme, and optional base path prefix. */
@@ -30,11 +30,11 @@ export declare function upstreamAuthHeaders(
 /**
  * Whether the request is an allowed POST to the chosen upstream's endpoint(s) (query string ignored).
  * anthropic => /v1/messages, /v1/messages/count_tokens. openai => /v1/responses only.
- * zai => same paths as anthropic (z.ai's coding endpoint is Anthropic-compatible). Defaults to anthropic.
+ * zai/openrouter => same paths as anthropic (Anthropic-compatible upstreams). Defaults to anthropic.
  */
 export declare function isAllowedLlmPath(method: string, path: string, upstream?: Upstream): boolean;
 
-/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai): just Bearer SECRET (no anthropic-beta, no x-api-key). */
+/** Headers to apply upstream for plain-Bearer providers (OpenAI, z.ai, OpenRouter): just Bearer SECRET (no anthropic-beta, no x-api-key). */
 export declare function openaiAuthHeaders(secret: string): Record<string, string>;
 
 /** Outbound upstream path: the upstream's base path prefix + the inbound request path (query kept). */

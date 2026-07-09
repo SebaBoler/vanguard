@@ -13,6 +13,8 @@ import {
   fastStages,
   defaultSystemPrompt,
   publishForReview,
+  pushToExistingBranch,
+  pushAuthConfigArgs,
   planImplementReviewStages,
   planImplementAdversaryStages,
   adversarySystemPrompt,
@@ -20,11 +22,16 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  withStageMaxTurns,
+  withStageResumeUntilComplete,
+  DELIVER_FULL_SCOPE_CLAUSE,
   techSpecStage,
   retrospectiveMemoryBlock,
   assembleReviewPipeline,
+  resolveRouting,
+  STAGE,
 } from './pipeline.js';
-import type { PipelineStage } from './pipeline.js';
+import type { PipelineStage, StageName, StageRouting } from './pipeline.js';
 import type { Complete } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { WorktreeManager } from '../worktree/manager.js';
@@ -219,7 +226,7 @@ describe('commitStage', () => {
     await writeFile(join(ctx.worktreePath, 'x.txt'), 'data');
     const out = await commitStage(ctx, { message: 'feat: agent work' });
     expect(out.committed).toBe(true);
-    expect(out.branch).toBe('vanguard/p2-r1');
+    expect(out.branch).toBe('chore/vanguard-p2-r1');
     expect(out.sha).toBeTruthy();
     expect(await wm.isDirty(ctx.worktreePath)).toBe(false);
     await disposeContext(ctx);
@@ -231,6 +238,24 @@ describe('commitStage', () => {
     const out = await commitStage(ctx, { message: 'noop' });
     expect(out.committed).toBe(false);
     await disposeContext(ctx);
+  });
+
+  it('commits despite a failing pre-commit hook (--no-verify skips the target repo hooks)', async () => {
+    // A worktree shares the main repo's hooks; a target project's husky hook (eslint/nx) fails in the
+    // isolated worktree because node_modules is absent. Simulate with a hook that always exits non-zero.
+    const hook = join(repo, '.git', 'hooks', 'pre-commit');
+    await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    try {
+      const wm = new WorktreeManager(repo, undefined, () => 'r4');
+      const ctx = await prepareContext({ taskId: 'p4', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+      await writeFile(join(ctx.worktreePath, 'y.txt'), 'data');
+      const out = await commitStage(ctx, { message: 'feat: work' });
+      expect(out.committed).toBe(true);
+      expect(out.sha).toBeTruthy();
+      await disposeContext(ctx);
+    } finally {
+      await rm(hook, { force: true });
+    }
   });
 });
 
@@ -273,6 +298,11 @@ describe('implementReviewSimplifyStages', () => {
     expect(byName.reviewer?.resumePrevious).toBe(false);
     expect(byName.simplifier?.resumePrevious).toBe(false);
   });
+
+  it('keeps conformance out of the default stage list', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.map((s) => s.name)).toEqual(['implementer', 'reviewer', 'simplifier']);
+  });
 });
 
 describe('fastStages', () => {
@@ -296,12 +326,12 @@ describe('publishForReview', () => {
     };
     const out = await publishForReview(ctx, { title: 'PR', body: 'b', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/42');
-    expect(out.branch).toBe('vanguard/pub-r1');
+    expect(out.branch).toBe('chore/vanguard-pub-r1');
     expect(calls[0]?.file).toBe('git');
     expect(calls[0]?.args).toContain('push');
     expect(calls[1]?.file).toBe('gh');
     expect(calls[1]?.args).toEqual(
-      expect.arrayContaining(['pr', 'create', '--head', 'vanguard/pub-r1', '--base', 'main', '--title', 'PR']),
+      expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
     );
     await disposeContext(ctx);
   });
@@ -335,6 +365,71 @@ describe('publishForReview', () => {
   });
 });
 
+describe('pushAuthConfigArgs', () => {
+  it('builds the extraheader override with the base64-encoded token, defaulting to github.com', () => {
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(pushAuthConfigArgs('TOK')).toEqual(['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`]);
+  });
+
+  it('honors a custom host', () => {
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(pushAuthConfigArgs('TOK', 'github.example.com')).toEqual([
+      '-c',
+      `http.https://github.example.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+    ]);
+  });
+});
+
+describe('pushToExistingBranch', () => {
+  it('with pushToken set, prepends the extraheader override before push', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-token', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push({ file, args });
+      return '';
+    };
+    await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', pushToken: 'TOK', runner });
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    expect(calls[0]?.file).toBe('git');
+    expect(calls[0]?.args).toEqual([
+      '-c',
+      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+      'push',
+      '--no-verify',
+      'origin',
+      'HEAD:feature-branch',
+    ]);
+    await disposeContext(ctx);
+  });
+
+  it('with pushToken absent, argv is exactly the baseline (no -c prefix)', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-notoken', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push({ file, args });
+      return '';
+    };
+    await pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', runner });
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
+    await disposeContext(ctx);
+  });
+
+  it('redacts the base64 credential from a push failure when a token is in use', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'push-fail', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const b64 = Buffer.from('x-access-token:TOK').toString('base64');
+    const runner = async (): Promise<string> => {
+      throw new Error(`git push failed: -c http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`);
+    };
+    await expect(pushToExistingBranch(ctx, { prHeadRef: 'feature-branch', pushToken: 'TOK', runner })).rejects.toThrow(
+      expect.not.stringContaining(b64),
+    );
+    await disposeContext(ctx);
+  });
+});
+
 describe('planImplementReviewStages', () => {
   it('plans on opus and implements/reviews on sonnet', () => {
     const stages = planImplementReviewStages();
@@ -356,6 +451,16 @@ describe('planImplementAdversaryStages', () => {
     expect(adversary?.systemPrompt).toContain('Adversarial');
     expect(adversary?.systemPrompt).not.toContain('senior software engineer');
     expect(adversary?.systemPrompt).toBe(adversarySystemPrompt());
+    expect(adversary?.effort).toBe('high');
+  });
+
+  it('adversary prompt gives a literal <findings> example instead of a bare placeholder', () => {
+    const stages = planImplementAdversaryStages();
+    const adversary = stages[2];
+    expect(adversary?.promptTemplate).toContain('"findings":[');
+    expect(adversary?.promptTemplate).not.toContain('<findings>{...}</findings>');
+    expect(adversary?.promptTemplate).toContain('{{PREVIOUS_DIFF}}');
+    expect(adversary?.promptTemplate).toContain('<promise>COMPLETE</promise>');
   });
 });
 
@@ -381,6 +486,58 @@ describe('withStageModel', () => {
   it('does not mutate the original stages array', () => {
     withStageModel(stages, 'sonnet');
     expect(stages[0]?.model).toBeUndefined();
+  });
+});
+
+describe('withStageMaxTurns', () => {
+  it('overrides maxTurns on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageMaxTurns(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(20);
+    expect(result.find((s) => s.name === 'simplifier')?.maxTurns).toBe(20);
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageMaxTurns(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: 'review', maxTurns: 20 },
+    ];
+    const result = withStageMaxTurns(stages, 40, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.maxTurns).toBe(40);
+    expect(result.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+});
+
+describe('withStageResumeUntilComplete', () => {
+  it('sets resumeUntilComplete on the implementer stage by default, leaving other stages untouched', () => {
+    const stages = implementReviewSimplifyStages();
+    const result = withStageResumeUntilComplete(stages, 80);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBe(80);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBeUndefined();
+    expect(result.find((s) => s.name === 'simplifier')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('does not mutate the input array', () => {
+    const stages = implementReviewSimplifyStages();
+    withStageResumeUntilComplete(stages, 80);
+    expect(stages.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
+  });
+
+  it('accepts an explicit stageName', () => {
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    const result = withStageResumeUntilComplete(stages, 3, STAGE.REVIEWER);
+    expect(result.find((s) => s.name === 'reviewer')?.resumeUntilComplete).toBe(3);
+    expect(result.find((s) => s.name === 'implementer')?.resumeUntilComplete).toBeUndefined();
   });
 });
 
@@ -710,5 +867,351 @@ describe('assembleReviewPipeline', () => {
     expect(base).toHaveLength(3);
     expect(base.every((s) => s.model === undefined)).toBe(true);
     expect(base.every((s) => s.provider === undefined)).toBe(true);
+  });
+
+  it('appends conformance after simplifier only when enabled', () => {
+    expect(assembleReviewPipeline(base, { agent }, {}).map((s) => s.name)).toEqual([
+      'implementer',
+      'reviewer',
+      'simplifier',
+    ]);
+    const result = assembleReviewPipeline(base, { agent }, { conformance: true });
+    expect(result.map((s) => s.name)).toEqual([
+      'implementer',
+      'reviewer',
+      'simplifier',
+      'conformance',
+    ]);
+    expect(result.find((s) => s.name === 'conformance')?.copyBack).toBe(false);
+  });
+
+  it('keeps conformance after reviewer when simplifier is disabled and applies its model override', () => {
+    const result = assembleReviewPipeline(base, { agent }, {
+      conformance: true,
+      noSimplify: true,
+      providerModel: 'sonnet',
+      conformanceModel: 'opus',
+    });
+    expect(result.map((s) => s.name)).toEqual(['implementer', 'reviewer', 'conformance']);
+    expect(result.find((s) => s.name === 'conformance')?.model).toBe('opus');
+  });
+});
+
+describe('resolveRouting', () => {
+  const stages: PipelineStage[] = [
+    { name: STAGE.IMPLEMENTER, promptTemplate: 'impl' },
+    { name: STAGE.REVIEWER, promptTemplate: 'review' },
+    { name: STAGE.CONFORMANCE, promptTemplate: 'conf' },
+  ];
+
+  it('is order-independent: same config, different key insertion order yields identical stages', () => {
+    const a: Partial<Record<StageName, StageRouting>> = {};
+    a[STAGE.IMPLEMENTER] = { model: 'sonnet' };
+    a[STAGE.REVIEWER] = { model: 'opus' };
+    const b: Partial<Record<StageName, StageRouting>> = {};
+    b[STAGE.REVIEWER] = { model: 'opus' };
+    b[STAGE.IMPLEMENTER] = { model: 'sonnet' };
+    expect(resolveRouting(stages, a)).toEqual(resolveRouting(stages, b));
+  });
+
+  it('applies fallback only to the intended stage', () => {
+    const result = resolveRouting(stages, { [STAGE.REVIEWER]: { fallback: { provider: stubAgent('claude') } } });
+    expect(result.find((s) => s.name === STAGE.REVIEWER)?.fallback?.provider.name).toBe('claude');
+    expect(result.find((s) => s.name === STAGE.IMPLEMENTER)?.fallback).toBeUndefined();
+    expect(result.find((s) => s.name === STAGE.CONFORMANCE)?.fallback).toBeUndefined();
+  });
+
+  it('leaves stages without a config entry untouched and does not mutate inputs', () => {
+    const result = resolveRouting(stages, { [STAGE.REVIEWER]: { model: 'opus' } });
+    expect(result.find((s) => s.name === STAGE.IMPLEMENTER)).toBe(stages[0]);
+    expect(stages.every((s) => s.model === undefined)).toBe(true);
+  });
+
+  function stubAgent(name: string): AgentProvider {
+    return {
+      name,
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: '', turns: 0 };
+      },
+    };
+  }
+});
+
+describe('per-stage budget cap', () => {
+  /** Agent that records every AgentRunInput it receives and returns a fixed cost. */
+  function recordingCostAgent(received: AgentRunInput[], costUsd: number): AgentProvider {
+    return {
+      name: 'rec-cost',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'x', turns: 1, costUsd };
+      },
+    };
+  }
+
+  /** Agent that returns a fixed cost; includes a sessionId so resumeUntilComplete can run. */
+  function resumableAgent(costUsd: number): AgentProvider {
+    return {
+      name: 'resumable',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd, sessionId: 'sess' };
+      },
+    };
+  }
+
+  it('effectiveCap uses fraction when set (no floor): fraction * maxCostUsd', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-frac', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.4 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 1.0 },
+    );
+    await disposeContext(ctx);
+    // effectiveCap = min(max(1.0 * 0.4, 0), 1.0) = 0.4
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.4);
+  });
+
+  it('effectiveCap applies floor when floor exceeds fraction result', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-floor', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.1, stageCostFloorUsd: 0.5 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 1.0 },
+    );
+    await disposeContext(ctx);
+    // effectiveCap = min(max(0.1, 0.5), 1.0) = 0.5
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.5);
+  });
+
+  it('global always wins: floor is capped by remainingGlobal when global is tiny', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-tiny-global', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, stageCostFloorUsd: 10.0 }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 0.5 },
+    );
+    await disposeContext(ctx);
+    // remainingGlobal = 0.5; floor (10) exceeds it; effectiveCap = min(10, 0.5) = 0.5
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(0.5);
+  });
+
+  it('stages without new fields get effectiveCap = remaining global (back-compat)', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-compat', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    await runBudgetedStages(
+      ctx,
+      [{ name: 'a', promptTemplate: 'a' }],
+      { agent: recordingCostAgent(received, 0), maxCostUsd: 2.0 },
+    );
+    await disposeContext(ctx);
+    // No stageCostFraction → effectiveCap = remainingGlobal = 2.0
+    expect(received[0]?.maxBudgetUsd).toBeCloseTo(2.0);
+  });
+
+  it('continue policy: implementer at cap, reviewer still runs, result completed', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-continue', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'impl', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    // maxCostUsd = $2; implementer effectiveCap = $1; costs $1.5 (overshoot). Policy: continue.
+    // spentUsd = $1.5 < $2 (global). Reviewer runs.
+    const result = await runBudgetedStages(ctx, stages, { agent: recordingCostAgent(received, 1.5), maxCostUsd: 2.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes).toHaveLength(2);
+      expect(result.outcomes[0]?.name).toBe('implementer');
+      expect(result.outcomes[1]?.name).toBe('reviewer');
+    }
+  });
+
+  it('freeze policy: stage at cap returns frozen with outcomes so far', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-freeze', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.3, onStageBudgetExceeded: 'freeze' },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    // effectiveCap = $2 * 0.3 = $0.6; costs $1.0 → fires freeze
+    const agent: AgentProvider = {
+      name: 'cost',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 1.0 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 2.0 });
+    await disposeContext(ctx, { keep: true });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(1);
+      expect(result.outcomes[0]?.name).toBe('a');
+      expect(result.spentUsd).toBeCloseTo(1.0);
+    }
+  });
+
+  it('global backstop freezes regardless of per-stage continue policy', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-global-wins', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'b', promptTemplate: 'b', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
+      { name: 'c', promptTemplate: 'c' },
+    ];
+    // maxCostUsd = $0.5. Each stage costs $0.4.
+    // Stage a: effectiveCap = $0.25, costs $0.4 → 'continue'. spentUsd = $0.4.
+    // Stage b: remainingGlobal = $0.1. effectiveCap = $0.1. Costs $0.4 → 'continue'. spentUsd = $0.8.
+    // Before stage c: spentUsd ($0.8) >= maxCostUsd ($0.5) → global freeze.
+    const agent: AgentProvider = {
+      name: 'cost',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 0.4 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 0.5 });
+    await disposeContext(ctx, { keep: true });
+    expect(result.status).toBe('frozen');
+    if (result.status === 'frozen') {
+      expect(result.reason).toBe('budget_exceeded');
+      expect(result.outcomes).toHaveLength(2);
+    }
+  });
+
+  it('skip policy: stage at cap proceeds like continue (next stage runs)', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'simplifier', promptTemplate: 'simplify', stageCostFraction: 0.1, onStageBudgetExceeded: 'skip' },
+      { name: 'reviewer', promptTemplate: 'review' },
+    ];
+    // effectiveCap = $1 * 0.1 = $0.1; costs $0.5 → skip. Next stage runs.
+    const result = await runBudgetedStages(ctx, stages, { agent: recordingCostAgent(received, 0.5), maxCostUsd: 2.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') expect(result.outcomes).toHaveLength(2);
+  });
+
+  it('provider-ignored cap: orchestrator post-stage check still applies continue policy', async () => {
+    // Simulates Codex/Cursor ignoring maxBudgetUsd: the agent returns costUsd above the cap.
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-advisory', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.2, onStageBudgetExceeded: 'continue' },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    // effectiveCap = $1; agent returns $2 (ignoring cap). Policy: continue → both stages complete.
+    const agent: AgentProvider = {
+      name: 'codex',
+      async *run(_input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        return { finalText: 'x', turns: 1, costUsd: 2.0 };
+      },
+    };
+    const result = await runBudgetedStages(ctx, stages, { agent, maxCostUsd: 5.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') expect(result.outcomes).toHaveLength(2);
+  });
+
+  it('resumeUntilComplete: per-stage cap stops resumes when aggregate cost exceeds cap', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'cap-resume', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    // effectiveCap = $1.0 * 0.3 = $0.3. Each call costs $0.15.
+    // Primary: stageCost = $0.15. Resume 1: stageCost = $0.30.
+    // Resume 2 condition: stageCost ($0.30) < effectiveCap ($0.30)? No → loop stops.
+    // Next stage 'b' runs.
+    const stages: PipelineStage[] = [
+      { name: 'a', promptTemplate: 'a', stageCostFraction: 0.3, resumeUntilComplete: 5 },
+      { name: 'b', promptTemplate: 'b' },
+    ];
+    const result = await runBudgetedStages(ctx, stages, { agent: resumableAgent(0.15), maxCostUsd: 1.0 });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes).toHaveLength(2);
+      // stageCost for 'a' = 2 calls × $0.15 = $0.30; total spentUsd ≈ $0.60 (2 stages × $0.30)
+      expect(result.outcomes[0]?.name).toBe('a');
+      expect(result.outcomes[1]?.name).toBe('b');
+    }
+  });
+
+  it('PREVIOUS_STAGE_TRUNCATED is true when prior stage exited non-completed', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const ctx = await prepareContext({ taskId: 'cap-trunc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    // Stage 'a': maxTurns:1, agent returns turns=1 → exitReason='maxTurns' (not 'completed').
+    // Stage 'b': should see PREVIOUS_STAGE_TRUNCATED='true'.
+    const agent: AgentProvider = {
+      name: 'rec',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        return { finalText: 'x', turns: 1 };
+      },
+    };
+    await runBudgetedStages(
+      ctx,
+      [
+        { name: 'a', promptTemplate: 'a', maxTurns: 1 },
+        { name: 'b', promptTemplate: '{{PREVIOUS_STAGE_TRUNCATED}}' },
+      ],
+      { agent },
+    );
+    await disposeContext(ctx);
+    // b's prompt is '{{PREVIOUS_STAGE_TRUNCATED}}' which should render to 'true'
+    expect(received[1]?.prompt).toBe('true');
+  });
+});
+
+describe('implementReviewSimplifyStages defaults', () => {
+  it('sets per-stage fraction, floor, timeout, and policy defaults', () => {
+    const stages = implementReviewSimplifyStages();
+    const byName = Object.fromEntries(stages.map((s) => [s.name, s]));
+
+    expect(byName.implementer?.stageCostFraction).toBeCloseTo(0.6);
+    expect(byName.implementer?.stageCostFloorUsd).toBeCloseTo(0.25);
+    expect(byName.implementer?.timeoutMs).toBe(25 * 60 * 1000);
+    expect(byName.implementer?.onStageBudgetExceeded).toBe('continue');
+
+    expect(byName.reviewer?.stageCostFraction).toBeCloseTo(0.25);
+    expect(byName.reviewer?.stageCostFloorUsd).toBeCloseTo(0.5);
+    expect(byName.reviewer?.timeoutMs).toBe(15 * 60 * 1000);
+    expect(byName.reviewer?.onStageBudgetExceeded).toBe('continue');
+
+    expect(byName.simplifier?.stageCostFraction).toBeCloseTo(0.15);
+    expect(byName.simplifier?.stageCostFloorUsd).toBeCloseTo(0.25);
+    expect(byName.simplifier?.timeoutMs).toBe(15 * 60 * 1000);
+    expect(byName.simplifier?.onStageBudgetExceeded).toBe('skip');
+  });
+
+  it('defaults the implementer maxTurns to 30 (unaffected without --max-turns)', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = implementReviewSimplifyStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
+  });
+});
+
+describe('planImplementReviewStages defaults', () => {
+  it('defaults the implementer maxTurns to 30', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.maxTurns).toBe(30);
+  });
+
+  it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
+    const stages = planImplementReviewStages();
+    expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
   });
 });

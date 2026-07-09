@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+@import 'chunks-ui/theme.css';
+
+/* Tailwind v4 excludes node_modules by default — scan chunks-ui's compiled
+   components so their utility classes are actually generated. */
+@source './';
+@source '../node_modules/chunks-ui/dist';
+
+@plugin "@tailwindcss/typography";
+
+@plugin "tailwindcss-debug-screens" {
+  className: 'debug-screens';
+  position: 'top, right';
+  prefix: 'screen: ';
+}
+
+@custom-variant dark (&:is(.dark *));
+
+body {
+  @apply bg-background text-foreground antialiased;
+}
+
+/* Let the CodeBlock's own dark <pre> provide the background; keep hljs token colors. */
+.hljs {
+  background: transparent;
+}
+
+/* Subtle scrollbars (match the app chrome instead of the OS default). */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, currentColor 20%, transparent);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, currentColor 35%, transparent);
+}

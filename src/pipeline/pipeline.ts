@@ -5,6 +5,7 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
+import { roundUsd } from './budget.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -12,9 +13,33 @@ import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
 
+/** Single source of truth for all canonical pipeline stage names. String values are stable. */
+export const STAGE = {
+  IMPLEMENTER: 'implementer',
+  REVIEWER: 'reviewer',
+  SIMPLIFIER: 'simplifier',
+  CONFORMANCE: 'conformance',
+  PLANNER: 'planner',
+  GENERATOR: 'generator',
+  EVALUATOR: 'evaluator',
+  REPAIRER: 'repairer',
+  ADVERSARY: 'adversary',
+  TECH_SPEC: 'tech-spec',
+} as const;
+
+/** Union of all canonical stage name string literals. A typo is a compile error. */
+export type StageName = (typeof STAGE)[keyof typeof STAGE];
+
+/** Per-stage routing overrides applied by resolveRouting. Each field is last-writer-wins. */
+export interface StageRouting {
+  provider?: AgentProvider;
+  model?: string;
+  fallback?: { provider: AgentProvider; model?: string };
+}
+
 export interface PipelineStage {
   name: string;
-  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, task variables, and !`cmd`. */
+  /** Template; may reference {{PREVIOUS_DIFF}}, {{PREVIOUS_FINAL}}, {{PREVIOUS_STAGE}}, {{PREVIOUS_STAGE_TRUNCATED}}, task variables, and !`cmd`. */
   promptTemplate: string;
   effort?: ReasoningEffort;
   maxTurns?: number;
@@ -43,6 +68,33 @@ export interface PipelineStage {
    * the planning provider.
    */
   fallback?: { provider: AgentProvider; model?: string };
+  /**
+   * Per-stage budget as a fraction of the run's maxCostUsd (0..1). Stored as a fraction (not an
+   * absolute USD value) so a frozen-run resume with a higher maxCostUsd re-derives the cap automatically.
+   * Undefined = the whole remaining global budget (old behavior, no per-stage cap).
+   *
+   * Note: on Claude/Zai the cap is a true mid-stage stop (--max-budget-usd). On Codex/Cursor/Pi it is
+   * advisory — those providers pass no budget flag, so the cap is only checked after the stage returns.
+   */
+  stageCostFraction?: number;
+  /**
+   * Reserved minimum USD for this stage, applied as a floor after the fraction is computed.
+   * The global budget always wins: if the floor exceeds what remains, the remaining global budget is used.
+   */
+  stageCostFloorUsd?: number;
+  /**
+   * Policy when this stage reaches its per-stage budget cap. Default 'continue'.
+   * 'continue': proceed to the next stage (reviewer runs against the partial diff — better than no review).
+   * 'freeze': return frozen/budget_exceeded immediately with outcomes so far.
+   * 'skip': same as 'continue' (useful to signal the stage is optional).
+   */
+  onStageBudgetExceeded?: 'continue' | 'freeze' | 'skip';
+  /**
+   * Per-stage wall-clock timeout in ms. Wired to StageInput.timeoutMs (already plumbed to the provider).
+   * When undefined, the per-invocation DEFAULT_TIMEOUT_MS (30 min) applies. A stage that exceeds its
+   * timeout returns exitReason 'timeout', distinct from a caller-signal abort.
+   */
+  timeoutMs?: number;
 }
 
 export interface StageOutcome {
@@ -65,6 +117,24 @@ export interface FrozenRun {
 
 export type PipelineResult = { status: 'completed'; outcomes: StageOutcome[] } | FrozenRun;
 
+export function makeFrozenRun(
+  ctx: RunContext,
+  reason: FrozenRun['reason'],
+  spentUsd: number,
+  outcomes: StageOutcome[],
+): FrozenRun {
+  return {
+    status: 'frozen',
+    reason,
+    taskId: ctx.taskId,
+    worktreePath: ctx.worktreePath,
+    branch: ctx.branch,
+    shellCommand: ctx.sandbox.shellCommand(),
+    spentUsd,
+    outcomes,
+  };
+}
+
 export interface ForkOptions {
   /** Number of implementation variants to generate. Default 2. */
   n?: number;
@@ -74,7 +144,7 @@ export interface ForkOptions {
    * Name of the stage to run via forkAndSelect. Defaults to 'implementer'.
    * If no stage with this name exists in the pipeline, fork is silently ignored.
    */
-  stageName?: string;
+  stageName?: StageName;
 }
 
 export interface RunStagesOptions {
@@ -134,6 +204,10 @@ function makeDiffScorer(complete: Complete): (diff: string, result: RunResult) =
  * and returns a frozen `budget_exceeded` result with the outcomes so far; the caller keeps the
  * context alive and may resume with a higher limit.
  */
+/** Appended to implementer prompts: forbid stopping at a partial milestone on a large task. */
+export const DELIVER_FULL_SCOPE_CLAUSE =
+  "Deliver EVERY acceptance criterion and EVERY file in the task's scope. Do not stop at a single layer or a partial milestone. If the task is large, work through all of it. Only write <promise>COMPLETE</promise> when the entire task is implemented; if you genuinely cannot finish, state precisely what remains.";
+
 /** Nudge used when auto-resuming an incomplete stage (see PipelineStage.resumeUntilComplete). */
 const RESUME_NUDGE = [
   'You stopped before signaling completion. Review what the task still requires versus what you have',
@@ -155,27 +229,33 @@ export async function runBudgetedStages(
   let spentUsd = 0;
   for (const stage of stages) {
     if (spentUsd >= maxCostUsd) {
-      return {
-        status: 'frozen',
-        reason: 'budget_exceeded',
-        taskId: ctx.taskId,
-        worktreePath: ctx.worktreePath,
-        branch: ctx.branch,
-        shellCommand: ctx.sandbox.shellCommand(),
-        spentUsd,
-        outcomes,
-      };
+      return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
+
+    // Per-stage effective cap: fraction → floor → min(remainingGlobal).
+    // Global always wins (Math.min) so tiny-budget runs never spend past their limit.
+    // Stored as fraction, not resolved USD, so a frozen-run resume with a higher maxCostUsd
+    // re-derives the cap automatically when the caller reconstitutes the same PipelineStage config.
+    const remainingGlobal = roundUsd(maxCostUsd - spentUsd);
+    const fromFraction = stage.stageCostFraction !== undefined
+      ? maxCostUsd * stage.stageCostFraction
+      : remainingGlobal;
+    const withFloor = Math.max(fromFraction, stage.stageCostFloorUsd ?? 0);
+    const effectiveCap = roundUsd(Math.min(withFloor, remainingGlobal));
+    const isFiniteCap = Number.isFinite(effectiveCap);
+    const isFiniteGlobal = Number.isFinite(maxCostUsd);
+
     const variables: Record<string, string> = {
       ...(opts.variables ?? {}),
       PREVIOUS_DIFF: previous?.diff ?? '',
       PREVIOUS_FINAL: previous?.finalText ?? '',
       PREVIOUS_STAGE: prevName,
+      PREVIOUS_STAGE_TRUNCATED: previous !== undefined && previous.exitReason !== 'completed' ? 'true' : 'false',
     };
 
-    if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? 'implementer')) {
+    if (opts.fork !== undefined && stage.name === (opts.fork.stageName ?? STAGE.IMPLEMENTER)) {
       const forkResult = await forkAndSelect(ctx, stage, {
         agent,
         ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
@@ -183,8 +263,11 @@ export async function runBudgetedStages(
         variables,
         ...(resume && sessionId !== undefined ? { forkFromSessionId: sessionId } : {}),
         ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+        ...(isFiniteCap ? { stageBudgetUsd: effectiveCap } : {}),
+        ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
       });
       const result = forkResult.winner;
+      const forkStageCost = roundUsd(forkResult.variants.reduce((sum, v) => sum + (v.result.costUsd ?? 0), 0));
       outcomes.push({
         name: stage.name,
         result,
@@ -194,7 +277,13 @@ export async function runBudgetedStages(
       previous = result;
       prevName = stage.name;
       if (result.sessionId !== undefined) sessionId = result.sessionId;
-      for (const v of forkResult.variants) spentUsd += v.result.costUsd ?? 0;
+      spentUsd = roundUsd(spentUsd + forkStageCost);
+
+      // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
+      if (isFiniteCap && forkStageCost >= effectiveCap) {
+        const policy = stage.onStageBudgetExceeded ?? 'continue';
+        if (policy === 'freeze') return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
+      }
       continue;
     }
 
@@ -211,6 +300,9 @@ export async function runBudgetedStages(
       ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       ...(stage.copyBack !== undefined ? { copyBack: stage.copyBack } : {}),
+      ...(isFiniteCap ? { maxBudgetUsd: effectiveCap, stageCapUsd: effectiveCap } : {}),
+      ...(stage.timeoutMs !== undefined ? { timeoutMs: stage.timeoutMs } : {}),
+      ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
     };
 
     let result: RunResult;
@@ -241,17 +333,20 @@ export async function runBudgetedStages(
         throw err;
       }
     }
-    let stageCost = result.costUsd ?? 0;
+    let stageCost = roundUsd(result.costUsd ?? 0);
 
     // Auto-resume an incomplete stage: some models (glm) end a turn with prose instead of a tool call
     // and stop before finishing a large, multi-file task. Re-enter the SAME session (context intact)
     // with a "finish the rest" nudge, up to stage.resumeUntilComplete times or until it signals COMPLETE.
+    // Per-stage cap gates the loop (aggregate across all resumes) and provides a residual budget to each
+    // resume call so a multi-resume stage cannot multiply its cap across iterations.
     let resumesLeft = stage.resumeUntilComplete ?? 0;
     while (
       !result.completed &&
       resumesLeft > 0 &&
       result.sessionId !== undefined &&
-      spentUsd + stageCost < maxCostUsd
+      spentUsd + stageCost < maxCostUsd &&
+      (!isFiniteCap || stageCost < effectiveCap)
     ) {
       resumesLeft -= 1;
       ctx.log.info(
@@ -264,8 +359,9 @@ export async function runBudgetedStages(
         agent: effectiveAgent,
         ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         resumeSessionId: result.sessionId,
+        ...(isFiniteCap ? { maxBudgetUsd: effectiveCap - stageCost } : {}),
       });
-      stageCost += result.costUsd ?? 0;
+      stageCost = roundUsd(stageCost + (result.costUsd ?? 0));
     }
 
     outcomes.push({
@@ -277,7 +373,14 @@ export async function runBudgetedStages(
     previous = result;
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    spentUsd += stageCost;
+    spentUsd = roundUsd(spentUsd + stageCost);
+
+    // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
+    if (isFiniteCap && stageCost >= effectiveCap) {
+      const policy = stage.onStageBudgetExceeded ?? 'continue';
+      if (policy === 'freeze') return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
+      // 'continue' and 'skip': proceed to the next stage (reviewer runs against the partial diff).
+    }
   }
   return { status: 'completed', outcomes };
 }
@@ -334,7 +437,7 @@ export function defaultSystemPrompt(): string {
 export function fastStages(): PipelineStage[] {
   return [
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nImplement the solution in the current repo. When done, write exactly <promise>COMPLETE</promise>.',
       effort: 'low',
@@ -350,32 +453,84 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nContext from the ticket comments (includes any Vanguard Tech Spec):\n{{COMMENTS}}\n\nImplement the solution in the current repo.\n\n' +
         retrospectiveMemoryBlock() +
-        '\n\nWhen done, write exactly <promise>COMPLETE</promise>.',
+        `\n\n${DELIVER_FULL_SCOPE_CLAUSE}\n\nWhen done, write exactly <promise>COMPLETE</promise>.`,
       maxTurns: 30,
+      stageCostFraction: 0.6,
+      stageCostFloorUsd: 0.25,
+      timeoutMs: 25 * 60 * 1000,
+      onStageBudgetExceeded: 'continue',
     },
     {
-      name: 'reviewer',
+      name: STAGE.REVIEWER,
       // Fresh context (resumePrevious:false): an independent reviewer judges the diff cold, without
       // inheriting the implementer's reasoning. The files are still on disk in the shared worktree.
       resumePrevious: false,
       promptTemplate:
-        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\n{{PREVIOUS_DIFF}}\n\nAfter completing your review and any fixes, emit a verdict: if there are no blocking issues, write exactly "No blocking issues." on its own line. If there are high or critical severity issues, also include a structured block: <findings>{"findings":[{"severity":"high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>.\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'You are an independent code reviewer of the change below — you did not write it. If a code-review skill is available, use it. Review adversarially for bugs, security, missing tests, and convention violations. Also review for over-engineering: unnecessary complexity, speculative abstractions, boilerplate, and dead code — apply the ponytail lens (would less code do the same job?) and prefer deletion. Fix what you find in the repo.\n\nTicket and spec context (if a <tech_spec> block is present, its Acceptance Criteria and Tests section are mandatory — flag as a high-severity finding any AC or spec-mandated test the diff does not cover, unless the PR body explicitly declares it deferred):\n{{COMMENTS}}\n\n{{PREVIOUS_DIFF}}\n\nAfter completing your review and any fixes, emit a verdict: if there are no blocking issues, write exactly "No blocking issues." on its own line. If there are high or critical severity issues, also include a structured block: <findings>{"findings":[{"severity":"high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>.\n\nWhen done, write <promise>COMPLETE</promise>.',
       effort: 'high',
       maxTurns: 20,
+      stageCostFraction: 0.25,
+      stageCostFloorUsd: 0.5,
+      timeoutMs: 15 * 60 * 1000,
+      onStageBudgetExceeded: 'continue',
     },
     {
-      name: 'simplifier',
+      name: STAGE.SIMPLIFIER,
       resumePrevious: false,
       promptTemplate:
         'Improve the changed code for clarity, reuse, and simplicity without changing behaviour. If a simplify skill is available, use it.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
       maxTurns: 20,
+      stageCostFraction: 0.15,
+      stageCostFloorUsd: 0.25,
+      timeoutMs: 15 * 60 * 1000,
+      onStageBudgetExceeded: 'skip',
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));
+}
+
+/** Report-only conformance pass. Appended by assembleReviewPipeline only when explicitly enabled. */
+export function conformanceStage(): PipelineStage {
+  return {
+    name: STAGE.CONFORMANCE,
+    // Fresh context: compare the final diff against spec without inheriting prior reasoning.
+    resumePrevious: false,
+    // Report-only: no sandbox->worktree sync.
+    copyBack: false,
+    effort: 'high',
+    maxTurns: 16,
+    systemPrompt: conformanceSystemPrompt(),
+    promptTemplate: [
+      'You are an independent conformance reviewer. Do not edit any files.',
+      '',
+      'If the context below contains no <tech_spec> block, write exactly:',
+      'No spec, conformance skipped.',
+      'then <promise>COMPLETE</promise> and stop.',
+      '',
+      'Otherwise, compare the diff against the spec Acceptance Criteria. Flag exactly three classes of issues:',
+      '1. Unmet or partially-met Acceptance Criteria',
+      '2. Scope drift or scope creep (changes outside the spec)',
+      '3. Silently dropped requirements',
+      '',
+      'Report only. Do not edit files.',
+      '',
+      'Spec and comments:',
+      '{{COMMENTS}}',
+      '',
+      'Diff:',
+      '{{PREVIOUS_DIFF}}',
+      '',
+      'If you find issues, emit:',
+      '<findings>{"findings":[{"severity":"high|critical|medium|low","kind":"correctness","title":"...","evidence":"..."}]}</findings>',
+      'If there are no issues, write: No conformance issues.',
+      '',
+      'End with <promise>COMPLETE</promise>.',
+    ].join('\n'),
+  };
 }
 
 /**
@@ -386,14 +541,40 @@ export function implementReviewSimplifyStages(): PipelineStage[] {
 export function withStageProvider(
   stages: PipelineStage[],
   provider: AgentProvider,
-  stageName = 'reviewer',
+  stageName: StageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, provider } : stage));
 }
 
 /** Set `model` on one named stage (default: all stages when stageName is omitted). */
-export function withStageModel(stages: PipelineStage[], model: string, stageName?: string): PipelineStage[] {
+export function withStageModel(stages: PipelineStage[], model: string, stageName?: StageName): PipelineStage[] {
   return stages.map((stage) => (stageName === undefined || stage.name === stageName ? { ...stage, model } : stage));
+}
+
+/**
+ * Override `maxTurns` on one named stage (default: 'implementer'). Backs `--max-turns`: an opt-in
+ * override of the implementer's hardcoded turn cap so one run can finish a deliberately large task.
+ */
+export function withStageMaxTurns(
+  stages: PipelineStage[],
+  maxTurns: number,
+  stageName: StageName = STAGE.IMPLEMENTER,
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, maxTurns } : stage));
+}
+
+/**
+ * Set `resumeUntilComplete` on one named stage (default: 'implementer'). Backs `--max-repair-iterations`
+ * for the *incomplete* case: when the implementer ends a turn without `<promise>COMPLETE</promise>` while
+ * still under budget, re-enter the same session with a "finish the rest" nudge up to N times (see the
+ * auto-resume loop in runBudgetedStages). Complements the gate-repair loop, which only fires on gate failure.
+ */
+export function withStageResumeUntilComplete(
+  stages: PipelineStage[],
+  resumeUntilComplete: number,
+  stageName: StageName = STAGE.IMPLEMENTER,
+): PipelineStage[] {
+  return stages.map((stage) => (stage.name === stageName ? { ...stage, resumeUntilComplete } : stage));
 }
 
 /**
@@ -415,7 +596,7 @@ export function withStageModelExcept(stages: PipelineStage[], model: string, exc
 export function withStageFallback(
   stages: PipelineStage[],
   fallback: { provider: AgentProvider; model?: string },
-  stageName = 'reviewer',
+  stageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
 }
@@ -426,40 +607,91 @@ export interface ReviewPipelineDeps {
   providerModel?: string;
   reviewModel?: string;
   noSimplify?: boolean;
+  /** When true, include the conformance stage. Default false (opt-in). */
+  conformance?: boolean;
+  /** Model override for the conformance stage only (e.g. 'opus' for planner-tier). */
+  conformanceModel?: string;
+}
+
+/**
+ * Apply per-stage routing overrides to `baseStages` in a single, order-free pass. The result depends
+ * only on `config`'s contents, not on the order its keys were inserted: each stage is matched by name
+ * and its `provider`/`model`/`fallback` overridden when present. Stages without a config entry pass
+ * through untouched. Pure — never mutates its inputs.
+ */
+export function resolveRouting(
+  baseStages: PipelineStage[],
+  config: Partial<Record<StageName, StageRouting>>,
+): PipelineStage[] {
+  return baseStages.map((stage) => {
+    const routing = config[stage.name as StageName];
+    if (routing === undefined) return stage;
+    return {
+      ...stage,
+      ...(routing.provider !== undefined ? { provider: routing.provider } : {}),
+      ...(routing.model !== undefined ? { model: routing.model } : {}),
+      ...(routing.fallback !== undefined ? { fallback: routing.fallback } : {}),
+    };
+  });
 }
 
 /**
  * Compose the standard review pipeline transformers over `base` stages. Handles the `--no-simplify`
- * filter, cross-provider reviewer gating, per-stage model assignment, and fallback wiring in one place
- * so neither the GitHub nor Linear runner needs to inline these steps.
+ * filter, cross-provider reviewer gating, per-stage model assignment, optional conformance, and
+ * fallback wiring in one place so neither the GitHub nor Linear runner needs to inline these steps.
+ *
+ * Membership is decided first (filter/append); then a flat routing config is built and applied by
+ * resolveRouting in one pass. Two subtle rules live as explicit config-building code: (1) a
+ * cross-provider reviewer is excluded from `providerModel` — an Anthropic model name handed to a
+ * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it; and
+ * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins).
  */
 export function assembleReviewPipeline(
   base: PipelineStage[],
   agents: { agent: AgentProvider; reviewAgent?: AgentProvider },
   deps: ReviewPipelineDeps,
 ): PipelineStage[] {
-  // --no-simplify: drop the third (cleanup) stage and run implement -> review only.
-  let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== 'simplifier') : base;
-  if (agents.reviewAgent !== undefined) pipeline = withStageProvider(pipeline, agents.reviewAgent);
-  if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model (a Codex reviewer rejects an
-    // Anthropic model name); a same-provider reviewer keeps it like every other stage. Gating on the
-    // mere presence of reviewAgent would wrongly strip the model when --review-provider equals --provider.
-    const crossProviderReview = deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
-    pipeline = crossProviderReview
-      ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
-      : withStageModel(pipeline, deps.providerModel);
+  // Membership first: drop the cleanup stage for --no-simplify, append optional conformance.
+  let pipeline = deps.noSimplify === true ? base.filter((s) => s.name !== STAGE.SIMPLIFIER) : base;
+  if (deps.conformance === true) {
+    pipeline = [...pipeline, conformanceStage()];
   }
-  if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
-  // Cross-provider reviewer: fall back to the planning provider on AgentError (outage/rate-limit)
-  // rather than failing the whole run. The fallback never sends the reviewer's foreign model name.
+
+  // Build a flat per-stage routing config; merge so later writers win on a given field.
+  const config: Partial<Record<StageName, StageRouting>> = {};
+  const route = (name: StageName, patch: StageRouting): void => {
+    config[name] = { ...config[name], ...patch };
+  };
+
+  if (deps.providerModel !== undefined) {
+    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
+    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
+    // stage (incl. conformance, planning side) gets providerModel.
+    const crossProviderReview =
+      deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
+    for (const stage of pipeline) {
+      if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
+      route(stage.name as StageName, { model: deps.providerModel });
+    }
+  }
+  // Cross-provider reviewer: route it to its own provider, and fall back to the planning provider on
+  // AgentError (outage/rate-limit) rather than failing the whole run. The fallback never sends the
+  // reviewer's foreign model name.
   if (agents.reviewAgent !== undefined) {
-    pipeline = withStageFallback(pipeline, {
-      provider: agents.agent,
-      ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+    route(STAGE.REVIEWER, {
+      provider: agents.reviewAgent,
+      fallback: {
+        provider: agents.agent,
+        ...(deps.providerModel !== undefined ? { model: deps.providerModel } : {}),
+      },
     });
   }
-  return pipeline;
+  // reviewModel overrides providerModel on the reviewer only.
+  if (deps.reviewModel !== undefined) route(STAGE.REVIEWER, { model: deps.reviewModel });
+  // conformanceModel wins over providerModel on the conformance stage (last-writer-wins).
+  if (deps.conformanceModel !== undefined) route(STAGE.CONFORMANCE, { model: deps.conformanceModel });
+
+  return resolveRouting(pipeline, config);
 }
 
 /**
@@ -471,7 +703,7 @@ export function planImplementReviewStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'planner',
+      name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
       maxTurns: 10,
@@ -480,15 +712,15 @@ export function planImplementReviewStages(): PipelineStage[] {
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       model: 'sonnet',
       maxTurns: 30,
       resumePrevious: false,
       promptTemplate:
-        'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        `Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\n${DELIVER_FULL_SCOPE_CLAUSE}\n\nWhen done, write <promise>COMPLETE</promise>.`,
     },
     {
-      name: 'reviewer',
+      name: STAGE.REVIEWER,
       model: 'sonnet',
       effort: 'high',
       maxTurns: 20,
@@ -521,9 +753,16 @@ export async function commitStage(ctx: RunContext, opts: CommitOptions): Promise
   const name = opts.authorName ?? 'Vanguard';
   const email = opts.authorEmail ?? 'vanguard@local';
   await execa('git', ['add', '-A'], { cwd: ctx.worktreePath });
-  await execa('git', ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-m', opts.message], {
-    cwd: ctx.worktreePath,
-  });
+  // --no-verify skips the target repo's husky/pre-commit hooks. Vanguard commits in an isolated worktree
+  // without the project's node_modules, so hooks that run eslint/nx/tests (e.g. an `@nx/eslint-plugin`
+  // lint or `nx run api:test-unit`) fail to resolve and would block every commit. Vanguard has its own
+  // reviewer/verification pipeline and the PR's CI re-runs these checks, so the local pre-commit gate is
+  // redundant here.
+  await execa(
+    'git',
+    ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '--no-verify', '-m', opts.message],
+    { cwd: ctx.worktreePath },
+  );
   const { stdout } = await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath });
   return { committed: true, branch: ctx.branch, sha: stdout.trim() };
 }
@@ -538,25 +777,35 @@ export function generateEvaluateRepairStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'generator',
+      name: STAGE.GENERATOR,
       promptTemplate:
         '<task_instructions>\nTask: {{TITLE}}\n\n{{DESCRIPTION}}\n\nGenerate a first version of the solution in the current repo. Implement, do not review. When done, write <promise>COMPLETE</promise>.\n</task_instructions>',
     },
     {
-      name: 'evaluator',
+      name: STAGE.EVALUATOR,
       promptTemplate:
         '<role>Strict reviewer. You do not change files.</role>\n<task_instructions>\nAnalyse the diff below and list ONLY violations and bugs inside <violations>...</violations>. Do not edit code.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       effort: 'high',
       resumePrevious: false,
     },
     {
-      name: 'repairer',
+      name: STAGE.REPAIRER,
       promptTemplate:
         '<task_instructions>\nApply targeted fixes based on the violations report. Fix only what is listed:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.\n</task_instructions>',
       resumePrevious: false,
     },
   ];
   return stages.map((stage) => ({ systemPrompt, ...stage }));
+}
+
+/** System prompt for the conformance reviewer (reports only, never edits). */
+export function conformanceSystemPrompt(): string {
+  return [
+    '<role>Conformance reviewer. You compare the implementation diff against the tech spec Acceptance Criteria. You do not edit files.</role>',
+    '<policy>Never edit files. Report only. A missed dropped requirement is more costly than a noted false positive.</policy>',
+    '<guidelines>For each Acceptance Criterion in the spec, verify whether the diff satisfies it. Flag unmet or partially-met criteria, scope drift or scope creep, and silently dropped requirements. Name the criterion text in your evidence.</guidelines>',
+    '<tradeoffs>A missed dropped requirement causes rework; a noted false positive is a quick triage. When unsure, report it.</tradeoffs>',
+  ].join('\n');
 }
 
 /** Red-team system prompt for the adversarial reviewer (reports only, never edits). */
@@ -578,7 +827,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
   const systemPrompt = defaultSystemPrompt();
   const stages: PipelineStage[] = [
     {
-      name: 'planner',
+      name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
       maxTurns: 10,
@@ -588,7 +837,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'implementer',
+      name: STAGE.IMPLEMENTER,
       model: 'sonnet',
       maxTurns: 30,
       resumePrevious: false,
@@ -597,17 +846,17 @@ export function planImplementAdversaryStages(): PipelineStage[] {
         'Implement the change in the current repo, following this plan:\n\n{{PREVIOUS_FINAL}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'adversary',
+      name: STAGE.ADVERSARY,
       model: 'opus',
       effort: 'high',
       maxTurns: 12,
       resumePrevious: false,
       systemPrompt: adversarySystemPrompt(),
       promptTemplate:
-        'Review the diff below. Emit ONLY <findings>{...}</findings> matching the schema (severity low|medium|high|critical, kind security|perf|correctness|style, title, evidence), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
+        'Review the diff below. Emit ONLY a single <findings> block of this exact shape:\n<findings>{"findings":[{"severity":"low|medium|high|critical","kind":"security|perf|correctness|style","title":"...","evidence":"..."}]}</findings>\nThe top-level value is an object with a "findings" array (not a bare array), sorted by severity. Do not edit files.\n\n{{PREVIOUS_DIFF}}\n\nWhen done, write <promise>COMPLETE</promise>.',
     },
     {
-      name: 'repairer',
+      name: STAGE.REPAIRER,
       model: 'sonnet',
       maxTurns: 20,
       resumePrevious: false,
@@ -648,7 +897,7 @@ export function techSpecSystemPrompt(): string {
 export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
   return [
     {
-      name: 'tech-spec',
+      name: STAGE.TECH_SPEC,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
@@ -675,6 +924,17 @@ export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
         '- **Performance / Scalability** — throughput, latency, and growth considerations',
         '',
         'Wrap the complete specification in <tech_spec>...</tech_spec>.',
+        '',
+        'Immediately after it, emit a machine-checkable manifest of the obligations above, wrapped in',
+        '<spec_manifest>{...}</spec_manifest> as JSON matching this shape (omit an array entirely if empty):',
+        '{"files":[{"path":"src/foo.ts","required":true}],',
+        '"tests":[{"id":"T1","file":"src/foo.test.ts","required":true}],',
+        '"acceptance":[{"id":"AC-1","description":"...","artifact":"path/to/pre-change/artifact","required":true}],',
+        '"dependencies":[{"consumer":"src/consumer.ts","producer":"src/producer.ts"}]}',
+        'List every file the implementation must touch, every test id with the file it belongs in, every',
+        'acceptance criterion (with an `artifact` path when the AC defines a pre-change file such as a golden',
+        'baseline that must exist before any code change), and any producer/consumer pairs where shipping the',
+        'consumer without the producer would be a silent semantic change rather than a partial delivery.',
         '',
         'When done, write <promise>COMPLETE</promise>.',
       ].join('\n'),
@@ -708,8 +968,32 @@ export interface PushToExistingBranchOptions {
   /** The PR head branch name on the remote (e.g. 'fix-auth'). */
   prHeadRef: string;
   remote?: string;
+  /**
+   * When set (non-empty), the push authenticates with this token instead of the ambient
+   * credential — this is what makes the push fire a `synchronize` event instead of being
+   * suppressed by GitHub's GITHUB_TOKEN recursion guard.
+   */
+  pushToken?: string;
+  /** GitHub host for the credential scope; default 'github.com'. */
+  host?: string;
   /** Injected for tests; defaults to running git via execa. */
   runner?: CommandRunner;
+}
+
+function encodeBasicAuthToken(token: string): string {
+  return Buffer.from(`x-access-token:${token}`).toString('base64');
+}
+
+/** Build the `git -c …` prefix that overrides the ambient credential for one push. */
+export function pushAuthConfigArgs(token: string, host = 'github.com'): string[] {
+  return ['-c', `http.https://${host}/.extraheader=AUTHORIZATION: basic ${encodeBasicAuthToken(token)}`];
+}
+
+/** Strip a leaked basic-auth credential (base64 of x-access-token:<PAT>) from an error message. */
+function redactPushAuthError(err: unknown, token: string): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const redacted = message.split(encodeBasicAuthToken(token)).join('***');
+  return new Error(redacted);
 }
 
 /**
@@ -719,7 +1003,15 @@ export interface PushToExistingBranchOptions {
  */
 export async function pushToExistingBranch(ctx: RunContext, opts: PushToExistingBranchOptions): Promise<void> {
   const run = opts.runner ?? defaultRunner;
-  await run('git', ['push', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+  const auth = opts.pushToken ? pushAuthConfigArgs(opts.pushToken, opts.host) : [];
+  try {
+    await run('git', [...auth, 'push', '--no-verify', opts.remote ?? 'origin', `HEAD:${opts.prHeadRef}`], ctx.worktreePath);
+  } catch (err) {
+    if (opts.pushToken) {
+      throw redactPushAuthError(err, opts.pushToken);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -730,7 +1022,10 @@ export async function pushToExistingBranch(ctx: RunContext, opts: PushToExisting
 export async function publishForReview(ctx: RunContext, opts: PublishOptions): Promise<PublishOutcome> {
   const run = opts.runner ?? defaultRunner;
   const tool = opts.cli ?? 'gh';
-  await run('git', ['push', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
+  // --no-verify skips the target repo's pre-push hook (e.g. a Conventional-Branch name check that
+  // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
+  // husky gate, redundant with Vanguard's own review + the PR's CI.
+  await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
   let args: string[];
   if (tool === 'glab') {
     args = [

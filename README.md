@@ -30,7 +30,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 - [End to end](#end-to-end)
 - [Skills](#skills) · [Custom skills (bring your own)](#custom-skills-bring-your-own)
 - [Models](#models)
-- [Providers](#providers) — Claude / Codex / Cursor / z.ai, cross-provider, Codex subscription, custom endpoint
+- [Providers](#providers) — Claude / Codex / Cursor / z.ai / OpenRouter, cross-provider, Codex subscription, custom endpoint
 - [Fork-and-select](#fork-and-select)
 - [Security](#security) · [Host LLM proxy](#host-llm-proxy)
 - [Development](#development)
@@ -49,7 +49,7 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 - **Harness over code.** Every agent failure is a *harness* failure. Instead of hand-fixing the agent's output, you fix the instruction, skill, tool, or sandbox limit so the system is immune to that failure class next time. Real cases this codebase hardened against: a macOS worktree-path mismatch, a dangling-symlink copy-back crash, and a Synology kernel with no CPU CFS scheduler — each became a permanent fix, not a one-off patch.
 - **Trade-off reasoning.** System prompts state the *business cost* of decisions — a wrong or sloppy change costs reviewer trust and rework far more than the seconds a typecheck or test run takes — so the model spends "effort" (adaptive thinking) where it matters and escalates when it should, via the `<tradeoffs>` section of the default system prompt.
 - **Token-efficiency by construction.** Sessions are captured to the host and resumed/forked to reuse cached context instead of paying twice for it; `cacheReadInputTokens` and a derived `cacheEfficiency` are first-class on every `RunResult` and tracked per stage. Real runs sit at 97–99% cache, which is what makes always-on AFK economical.
-- **Evals-first.** A judge-scored eval suite over control (ambiguous), edge, and refusal/hand-off cases guards against regressions when a model or prompt changes — pass rate and verdict score, not subjective vibes.
+- **Evals-first.** A judge-scored eval suite over control (ambiguous), edge, and refusal/hand-off cases guards against regressions when a model or prompt changes (corpus seeded; run `vanguard eval` for pass-rate and verdict scores; CI gating is phase 2).
 - **Verifiable run artifacts.** Every run leaves an auditable trail under `.vanguard/runs/`: a per-stage transcript, a **git bundle of the exact changes**, the diff, one `run_complete` metric line (cost, tokens, cache efficiency, duration, exit reason), and optional host-driven Proof of Work with a SHA-256 over verification output. `vanguard stats` rolls it up across the fleet. This is what makes an AFK-generated PR trustworthy. The run also carries an optional host-driven Visual Proof for UI artifacts (see Visual proof below). *(Retrospective memory is also implemented: a deterministic host-side digest of prior failures and reviewer notes, fed back into later runs as advisory context.)*
 
 ## How it works
@@ -240,9 +240,11 @@ Runs reuse the session and keep a stable prompt prefix to maximize Anthropic pro
 
 The canonical pipeline is implement → review → simplify. The reviewer reviews for correctness **and** over-engineering (the ponytail minimalism lens — would less code do the job?), so the third simplify pass is often redundant. Pass `--no-simplify` (on `run`/`watch`) for a lean implement → review run that skips it.
 
+An optional **conformance pass** can be appended after the reviewer with `--conformance` (on `run`/`watch`; opt-in, default off, GitHub/Linear only). It runs a fresh, report-only stage that checks the final diff against the spec's Acceptance Criteria for unmet criteria, scope drift, and silently dropped requirements; its findings post to the PR and gate the merge alongside the reviewer's. It is report-only — it never edits files (`copyBack:false`). `--conformance-model <m>` sets the model for that stage; it defaults to the implementer/`--provider-model` model, so **pass `--conformance-model opus` to run the check on a planner-tier model** (the headline use case).
+
 ## Providers
 
-The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), or `zai` (z.ai GLM Coding Plan). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
+The agent behind each stage is a swappable `AgentProvider`: `claude` (Claude Code CLI, default), `codex` (OpenAI Codex CLI), `cursor` (Cursor CLI), `zai` (z.ai GLM Coding Plan), `openrouter` (OpenRouter's Anthropic skin), or `meridian` (self-hosted [Meridian](https://github.com/rynfar/meridian) proxy — share a Claude Max subscription from another host; see [docs/MERIDIAN-provider.md](docs/MERIDIAN-provider.md)). Selection is **by provider, not by model** — each provider runs on its own default model. Two modes:
 
 **One provider does everything** (default)
 
@@ -259,10 +261,41 @@ vanguard run    --linear TES-1 --provider claude --review-provider codex
 vanguard watch  --label vanguard --provider codex --review-provider claude
 ```
 
-**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. Mix freely with provider selection:
+**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
+
+By default `run` uses the implement → review → simplify pipeline (the implementer plans inline). Pass `--plan` to prepend a dedicated planning stage (opus, high effort) that emits a `<plan>` for the implementer to follow — the plan → implement → review pipeline. Combine with `--review-model opus` to also review on the planner-tier model:
+
+```bash
+vanguard run --github o/r#1 --plan --review-model opus   # plan on opus, implement on sonnet, review on opus
+```
+
+The commit is authored `Vanguard <vanguard@local>` by default; override with `--commit-author "Name <email>"` (git's standard form) to attribute the work to yourself. The PR itself is opened by whichever account owns the push token (`VANGUARD_PUSH_TOKEN`/`GH_TOKEN`), independent of the commit author.
+
+**White-label mode.** Passing `--commit-author` also switches Vanguard to deliver a plain, human-looking PR — the "Vanguard" branding is dropped everywhere it would reach the remote:
+
+- Branch becomes `feat/<issue-number>-<hash>` (e.g. `feat/904-9d414a3d`) instead of `chore/vanguard-…`.
+- The PR body is just the `Closes #N` / `Part of #N` line — no "Automated implementation … by Vanguard" attribution and no `## Proof of work` block.
+- No Vanguard review comment is posted on the PR, and no "opened a PR" comment is posted back on the issue.
+- The commit message is Conventional-Commits-safe — `feat: <lower-case subject> (#N)`, header ≤100 chars — so a target repo's `commitlint` passes.
+
+`vanguard research` honours the same switch: with `--commit-author` its comment heading drops "Vanguard" (`## Research` instead of `## Vanguard Research`) and uses a neutral hidden marker — the author value is unused there since research never commits.
+
+**One-shot spec pass.** `vanguard spec <owner/repo#n> --repo <path> [--spec-model <m>] [--commit-author <a>]` runs the same tech-spec generator the watch loop uses (`techSpecStage`: read-only codebase research, `<tech_spec>` output) as a single CLI step — **no labels are read or written**. The spec is posted as an issue comment; `--commit-author` white-labels the heading (`Tech spec:` instead of `Vanguard tech spec:`). Recognition is keyed on the `<tech_spec>` tag, so triage and the conformance manifest treat both headings identically. Pair it with `vanguard run` on the same issue once the spec looks right — e.g. spec on a planner-tier model, then implement on a cheaper one (`--provider-model`) with the review pinned back on the planner tier (`--review-model`).
+
+**Fully local spec (no tracker trace).** Add `--out <file>` to `vanguard spec` to write the spec to a local file instead of posting any comment, then feed it back with `vanguard run … --spec-file <file>`: the file is injected into the fetched task as a virtual comment, so the implementer prompt, triage, and the conformance manifest read it exactly like a posted spec — but the only public artifact of the whole pipeline is the PR itself. `--spec-file` is single-issue only (rejected with `--parent`/`--project` fan-out); make sure `.vanguard/` is gitignored in the target repo so the spec never rides along in a commit.
+
+**Standalone PR review — to the tracker or to a file.** `vanguard review-pr <owner/repo#n> --repo <path> [--review-model <m>]` reviews an existing PR (an adversarial pass, larger budget on retry) and posts the verdict as a PR comment. Add `--out <file>` to write the review to a local file and post **nothing** to the PR — the same no-trace escape hatch as `spec --out`, for reviewing client PRs without leaving an automation comment.
+
+**Address human review feedback.** `vanguard revise-pr <owner/repo#n> --repo <path> [--review-model <m>] [--max-rounds <n>]` reads the human review threads + comments on a bot PR, applies fixes, pushes to the PR branch, and replies to + resolves each addressed thread. Unlike `review-pr` (which *produces* a review), `revise-pr` *consumes* one. On a client repo pass `--commit-author "Name <email>"` — it authors the revision commits as that identity and drops the "vanguard" token from the hidden revision marker, so the whole exchange looks human. Prefer to inspect before anything touches the PR? `--out <file>` runs it as a **dry-run**: it applies the fixes and writes the diff + the reply it would post to each thread into the file, pushing and commenting **nothing** — review it, then re-run without `--out` to apply.
+
+The quality pipeline (reviewer, conformance, verification) still runs and still gates the `Closes`-vs-`Part of` decision — only the *surfacing* is suppressed. Default (no `--commit-author`) keeps the full Vanguard branding and review comment. Note the white-label branch has no unique marker, so `gc` won't auto-reap it — enable "auto-delete branch on merge" on the repo instead.
+
+**Base branch.** By default Vanguard branches off `main` and targets the PR at `main`. Pass `--base <branch>` (e.g. `--base dev`) to branch off and open the PR against a different base — the diff is then computed against, and the PR merges into, that branch.
 
 ```bash
 vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/implement big, review cheap
+vanguard run --linear TES-1 --provider-model sonnet --conformance --conformance-model opus   # implement on sonnet, check conformance on opus
+vanguard run --github o/r#1 --commit-author "Sebastian Pietrzak <spietrza@gmail.com>"   # commit authored as you
 ```
 
 `--provider` / `--review-provider` / `--provider-model` / `--review-model` work the same on `run` and `watch`. The simplifier stays on the main provider. Each non-Claude provider brings its own key, forwarded into the sandbox **only when that provider is selected**: `CODEX_API_KEY` for codex, `CURSOR_API_KEY` for cursor, `ZAI_API_KEY` for zai (a missing key fails fast at dispatch, not mid-run). Under `--llm-proxy` the Codex/OpenAI key **and** the z.ai key are held by a trusted sidecar instead of the sandbox (see [Host LLM proxy](#host-llm-proxy) below); Cursor's key is still injected directly (not yet proxied). Claude auth is the baseline (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`). The sandbox image ships the `claude` and `codex` CLIs; selecting `cursor` also needs its CLI added to the image (`curl https://cursor.com/install -fsS | bash`).
@@ -282,6 +315,8 @@ vanguard run --linear TES-1 --provider codex --provider-model <model-the-endpoin
 Constraints: (1) the endpoint must implement the OpenAI **Responses** API (`/v1/responses`) — Codex no longer speaks `/chat/completions`; (2) this is **direct mode only** — it is ignored under `--llm-proxy`, whose sidecar always targets `api.openai.com` (point the sidecar elsewhere by changing the proxy upstream, not this var); (3) with `--egress` the endpoint's host must be in the allowlist, otherwise run without `--egress` so the sandbox can reach it directly. `CODEX_AUTH_JSON` (subscription) takes precedence — set `OPENAI_BASE_URL` only in the API-key path.
 
 **z.ai (GLM Coding Plan).** `--provider zai` reuses the in-sandbox Claude Code CLI, pointed at z.ai's Anthropic-Messages-compatible coding endpoint (`https://api.z.ai/api/coding/paas/v4`) with the GLM model family (default `glm-5.2`). It needs **no Anthropic token** — set `ZAI_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the z.ai key is held by the primary trusted sidecar (forwarding to `api.z.ai` as a bearer key) and the sandbox gets only the per-run nonce. (z.ai's endpoint is OpenAI-compatible too, but the Codex CLI dropped `wire_api = "chat"` support, so the Claude-CLI route is the supported one.)
+
+**OpenRouter.** `--provider openrouter` follows the same pattern as z.ai, pointed at OpenRouter's Anthropic-Messages-compatible "skin" (`https://openrouter.ai/api`) with a dotted OpenRouter slug as the model (default `anthropic/claude-sonnet-4.6`; override with `--provider-model`). It needs **no Anthropic token** — set `OPENROUTER_API_KEY` and the runner injects `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (a bearer key) into the sandbox. Under `--llm-proxy` the OpenRouter key is held by the primary trusted sidecar (forwarding to `openrouter.ai` as a bearer key) and the sandbox gets only the per-run nonce. **Recommended:** in your OpenRouter account, pin **Anthropic 1P** as the top-priority provider for Claude models — the Claude Code CLI expects Anthropic-1P behaviour, and this is an account-level provider-selection preference, not something the run can set per-request.
 
 ## Fork-and-select
 

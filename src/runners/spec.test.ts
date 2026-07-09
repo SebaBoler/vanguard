@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -12,6 +12,7 @@ import {
   githubIssueWatchPrimitives,
 } from './watch.js';
 import { runSpecGenerator } from './spec.js';
+import { parseSpecManifest } from '../pipeline/conformance-gate.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives, GenerateSpec } from './watch.js';
 import type { Task, TaskFetcher } from '../tasks/fetcher.js';
@@ -101,6 +102,7 @@ describe('runLoopV1', () => {
         return {};
       },
       review: async () => {},
+      onNoChange: async () => {},
       onFailure: async () => {},
     };
 
@@ -619,6 +621,34 @@ describe('runSpecGenerator', () => {
     const runsDir = join(repo, '.vanguard', 'runs', 'spec-eng-7');
     const files = await readdir(runsDir);
     expect(files.some((f) => f.endsWith('-spec.json'))).toBe(true);
+  });
+
+  it('appends a <spec_manifest> block when the agent emits one after </tech_spec>', async () => {
+    const { sandbox } = makeSandbox();
+    const task = readyTask('ENG-9');
+    const finalText =
+      'Here is the plan <tech_spec>\n## Problem\nRetry 5xx.\n</tech_spec>\n' +
+      '<spec_manifest>{"files":[{"path":"src/foo.ts","required":true}]}</spec_manifest>' +
+      ' <promise>COMPLETE</promise>';
+    const deps: RunSpecGeneratorDeps = {
+      auth: { type: 'api', apiKey: 'x' } as never,
+      repoPath: repo,
+      fetcher: fakeFetcher({ [task.id]: task }, [task]),
+      sandboxFactory: () => sandbox,
+      agent: fakeAgent(finalText),
+    };
+
+    const spec = await runSpecGenerator(task.id, deps);
+
+    expect(spec).toContain('## Problem');
+    expect(spec).toContain('<spec_manifest>');
+    expect(spec).toContain('"path":"src/foo.ts"');
+
+    // End-to-end: parseSpecManifest must read the manifest back out of the comment the caller posts
+    // (watch.ts's specComment wraps `spec` in <tech_spec>...</tech_spec>, so nest it the same way here).
+    const comment = `Vanguard tech spec:\n\n<tech_spec>\n${spec}\n</tech_spec>`;
+    const manifest = parseSpecManifest(comment);
+    expect(manifest?.files?.[0]?.path).toBe('src/foo.ts');
   });
 
   it('throws (so onFailure runs) when the agent emits no <tech_spec> block', async () => {

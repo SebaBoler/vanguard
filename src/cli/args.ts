@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
+import type { RunOptions } from '../runners/source-adapter.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
@@ -15,6 +16,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
+      out?: string;
     }
   | {
       kind: 'research';
@@ -28,6 +31,24 @@ export type Command =
       webAccess?: boolean;
       provider?: ProviderName;
       researchModel?: string;
+      /** White-label the research comment (drop "Vanguard" heading/marker). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
+    }
+  | {
+      kind: 'spec';
+      /** GitHub issue ref: owner/repo#n, or a bare number with --github-repo. */
+      issueRef: string;
+      repoSlug?: string;
+      repoPath: string;
+      egress: boolean;
+      llmProxy?: boolean;
+      provider?: ProviderName;
+      /** Model for the tech-spec stage (e.g. a planner-tier model). */
+      specModel?: string;
+      /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
+      out?: string;
+      /** White-label the spec comment (drop the "Vanguard" heading). Presence toggles it; the author value is unused (no commit). */
+      commitAuthor?: { name: string; email: string };
     }
   | {
       kind: 'revise-pr';
@@ -39,6 +60,10 @@ export type Command =
       provider?: ProviderName;
       reviewModel?: string;
       maxRounds?: number;
+      /** Git author for the revision commits + white-label the revision marker (client repos carry no automation branding). */
+      commitAuthor?: { name: string; email: string };
+      /** Dry-run: write the diff + proposed thread replies to this local file and push/comment nothing. */
+      out?: string;
     }
   | {
       kind: 'watch-prs';
@@ -76,6 +101,7 @@ export type Command =
       project?: string;
       team?: string;
       triggerState?: string;
+      triggerStateName?: string;
       claimedState?: string;
       reviewState?: string;
       repoSlug?: string;
@@ -98,7 +124,7 @@ export type Command =
       specClaimedState?: string;
       llmProxy?: boolean;
     }
-  | {
+  | ({
       kind: 'run';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       id: string;
@@ -115,21 +141,10 @@ export type Command =
       label?: string;
       /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
       project?: string;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
       /** Run the implementer stage as N variants via forkAndSelect, keeping the best-scored diff. */
       forkN?: number;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
-    }
-  | {
+    } & RunOptions)
+  | ({
       kind: 'watch';
       source: 'linear' | 'github' | 'project' | 'gitlab';
       /** Required for linear/github; optional for project (label-filter on the board). */
@@ -140,6 +155,7 @@ export type Command =
       project?: string;
       team?: string;
       triggerState?: string;
+      triggerStateName?: string;
       claimedState?: string;
       reviewState?: string;
       repoSlug?: string;
@@ -151,17 +167,6 @@ export type Command =
       egress: boolean;
       /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
-      /** Model for the implementer/simplifier stages (default: provider's default). */
-      providerModel?: string;
-      /** Model for the review stage (default: provider's default). */
-      reviewModel?: string;
-      noSimplify?: boolean;
-      /** Verification command to run inside the sandbox after the agent finishes (Proof of Work). */
-      verifyCmd?: string;
-      /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). */
-      visualProofCmd?: string;
       // --- Loop v1 flags ---
       /** (loop-v1) Cheap model for the spec-generation stage. */
       specModel?: string;
@@ -194,7 +199,7 @@ export type Command =
        * (default: 'Speccing'). Omitted when absent — the default is used.
        */
       specClaimedState?: string;
-    }
+    } & RunOptions)
   | {
       kind: 'review-mr';
       iid: number;
@@ -234,6 +239,18 @@ export type Command =
     }
   | { kind: 'stats'; repoPath: string; json: boolean }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
+  | {
+      kind: 'eval';
+      json: boolean;
+      judgeModel?: string;
+      produceModel?: string;
+      /** Draft eval-corpus candidates from retrospective memory instead of running the corpus (suggest-only). */
+      suggest: boolean;
+      repoPath: string;
+      limit?: number;
+      /** Also write the drafted candidates to this scratch path (refused if under src/evals/corpus/). */
+      out?: string;
+    }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -254,6 +271,27 @@ const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
 
 function fail(message: string): Command {
   return { kind: 'error', message };
+}
+
+/** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
+function parseLimit(raw: string | boolean | undefined): number | undefined {
+  const limit = Number(raw);
+  return Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : undefined;
+}
+
+/**
+ * Parse a `--commit-author` value in git's `Name <email>` form into { name, email }. Returns undefined
+ * when absent. Throws (as a caught string) on a malformed value so the caller can `return fail(...)`.
+ */
+function parseCommitAuthor(raw: string | boolean | undefined): { name: string; email: string } | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const match = /^\s*(.+?)\s*<([^<>]+)>\s*$/.exec(raw);
+  const name = match?.[1];
+  const email = match?.[2];
+  if (name === undefined || email === undefined) {
+    throw `Invalid --commit-author "${raw}". Use the form: "Name <email@example.com>".`;
+  }
+  return { name, email };
 }
 
 /**
@@ -299,6 +337,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         // watch
         team: { type: 'string' },
         'trigger-state': { type: 'string' },
+        'trigger-state-name': { type: 'string' },
         'claimed-state': { type: 'string' },
         'review-state': { type: 'string' },
         interval: { type: 'string' },
@@ -306,6 +345,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
         'spec-label': { type: 'string' },
+        'spec-file': { type: 'string' },
         'agent-label': { type: 'string' },
         'needs-info-label': { type: 'string' },
         'spec-claimed-label': { type: 'string' },
@@ -323,6 +363,18 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-model': { type: 'string' },
         // skip the simplifier stage (lean run: implement -> review only)
         'no-simplify': { type: 'boolean' },
+        // conformance review pass (opt-in; planner-tier model checks diff against spec)
+        conformance: { type: 'boolean' },
+        'conformance-model': { type: 'string' },
+        // git author for the commit (run + watch); default `Vanguard <vanguard@local>`
+        'commit-author': { type: 'string' },
+        // run a dedicated opus planning stage before implement/review (run + watch)
+        plan: { type: 'boolean' },
+        // base branch to branch off and target the PR at (run + watch); default main
+        base: { type: 'string' },
+        // opt-in overrides to let a single run finish a large task (run + watch)
+        'max-turns': { type: 'string' },
+        'max-repair-iterations': { type: 'string' },
         // fork-and-select (run)
         fork: { type: 'string' },
         // proof-of-work verification (run + watch)
@@ -336,6 +388,12 @@ export function parseCli(argv: string[], cwd: string): Command {
         // stats / memory
         json: { type: 'boolean' },
         limit: { type: 'string' },
+        // eval
+        'judge-model': { type: 'string' },
+        'produce-model': { type: 'string' },
+        // eval --suggest
+        suggest: { type: 'boolean' },
+        out: { type: 'string' },
         help: { type: 'boolean' },
       },
     });
@@ -360,17 +418,43 @@ export function parseCli(argv: string[], cwd: string): Command {
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
 
+  let commitAuthor: { name: string; email: string } | undefined;
+  try {
+    commitAuthor = parseCommitAuthor(values['commit-author']);
+  } catch (message) {
+    return fail(String(message));
+  }
+
+  // Opt-in overrides to let a single run finish a large task (run + watch). Positive integers only;
+  // 0/negative/non-numeric are rejected at parse (no override set), same semantics as parseLimit.
+  const maxTurns = parseLimit(values['max-turns']);
+  const maxRepairIterations = parseLimit(values['max-repair-iterations']);
+
   if (positionals[0] === 'stats') {
     return { kind: 'stats', repoPath, json: values.json === true };
   }
 
   if (positionals[0] === 'memory') {
-    const limit = Number(values.limit);
+    const limit = parseLimit(values.limit);
     return {
       kind: 'memory',
       repoPath,
-      ...(Number.isFinite(limit) && limit >= 1 ? { limit: Math.floor(limit) } : {}),
+      ...(limit !== undefined ? { limit } : {}),
       json: values.json === true,
+    };
+  }
+
+  if (positionals[0] === 'eval') {
+    const limit = parseLimit(values.limit);
+    return {
+      kind: 'eval',
+      json: values.json === true,
+      ...(typeof values['judge-model'] === 'string' ? { judgeModel: values['judge-model'] } : {}),
+      ...(typeof values['produce-model'] === 'string' ? { produceModel: values['produce-model'] } : {}),
+      suggest: values.suggest === true,
+      repoPath,
+      ...(limit !== undefined ? { limit } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -398,8 +482,17 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (positionals[0] === 'review-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
-    if (prRef === undefined) return fail('review-pr requires a PR reference: a URL, owner/repo#number, or --github-pr <number>.');
+    // Accept the PR ref as a positional, --github-pr <n>, or --github <ref> — the last for parity with
+    // spec/run/research, which all take --github (a natural thing to reach for).
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
+    if (prRef === undefined) {
+      return fail('review-pr requires a PR reference: a URL, owner/repo#number, --github <ref>, or --github-pr <number>.');
+    }
     return {
       kind: 'review-pr',
       prRef,
@@ -409,6 +502,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -425,11 +519,34 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+    };
+  }
+
+  if (positionals[0] === 'spec') {
+    const issueRef = typeof values.github === 'string' ? values.github : positionals[1];
+    if (issueRef === undefined) return { kind: 'help' };
+    return {
+      kind: 'spec',
+      issueRef,
+      repoPath,
+      egress: values.egress === true,
+      ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
+      ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+      ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
   }
 
   if (positionals[0] === 'revise-pr') {
-    const prRef = typeof values['github-pr'] === 'string' ? values['github-pr'] : positionals[1];
+    const prRef =
+      typeof values['github-pr'] === 'string'
+        ? values['github-pr']
+        : typeof values.github === 'string'
+        ? values.github
+        : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
     const maxRoundsRaw = Number(values['max-rounds']);
     return {
@@ -442,6 +559,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -544,6 +663,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values.parent === true && picked[0] !== 'linear') {
       return fail('--parent is only supported with --linear.');
     }
+    // One spec file cannot describe N different tasks — fan-out modes would inject it into every run.
+    if (typeof values['spec-file'] === 'string' && (picked[0] === 'project' || values.parent === true)) {
+      return fail('--spec-file is only supported for a single-issue run (not --parent / --project fan-out).');
+    }
     if (picked[0] === 'project') {
       const projectNum = Number(picked[1]);
       if (!Number.isInteger(projectNum) || projectNum < 1) {
@@ -575,6 +698,14 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
+      ...(values.conformance === true ? { conformance: true } : {}),
+      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(values.plan === true ? { plan: true } : {}),
+      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
+      ...(typeof values['spec-file'] === 'string' ? { specFile: values['spec-file'] } : {}),
     };
   }
 
@@ -624,7 +755,6 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (isLoopV1 && source === 'linear' && hasGithubLoopFlags) {
       return fail('GitHub loop-v1 flags (--spec-label etc.) are not compatible with --source linear.');
     }
-
     if (isLoopV1 && (source === 'github' || source === 'gitlab')) {
       specLabel ??= DEFAULT_GITHUB_SPEC_LABEL;
       agentLabel ??= DEFAULT_GITHUB_AGENT_LABEL;
@@ -678,6 +808,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['gitlab-project'] === 'string' ? { project: values['gitlab-project'] } : {}),
       ...(typeof values.team === 'string' ? { team: values.team } : {}),
       ...(typeof values['trigger-state'] === 'string' ? { triggerState: values['trigger-state'] } : {}),
+      ...(typeof values['trigger-state-name'] === 'string' ? { triggerStateName: values['trigger-state-name'] } : {}),
       ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
       ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -688,6 +819,11 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
+      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
+      ...(values.plan === true ? { plan: true } : {}),
+      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
+      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -710,6 +846,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'watch',
       ...common,
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
+      ...(values.conformance === true ? { conformance: true } : {}),
+      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
@@ -735,8 +873,9 @@ Commands:
   doctor-mrs Check whether watch-mrs can run AFK before any MR is claimed.
   stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
+  eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
-         remote vanguard/* branches.
+         remote chore/vanguard-* branches.
 
   watch options (trigger = state/label + label):
     --source <linear|github|project|gitlab>  Task source (default: linear)
@@ -746,6 +885,9 @@ Commands:
     --project <number>     (project) GitHub Projects v2 project number (required with --source project)
     --trigger-state <x>    Status option name for ready items (project default: "Todo";
                            linear: state type, default "unstarted")
+    --trigger-state-name <x>
+                           Linear display state name matching --trigger-state; used to restore
+                           no-change issues (default for Linear single-pass: "Todo")
     --claimed-state <x>    Status/label set on claim (project default: "In Progress";
                            linear: state default "In Progress"; github: label "vanguard:running")
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";
@@ -756,13 +898,20 @@ Commands:
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
                            watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
-    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
+    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
+    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+    --base <branch>          Base branch to branch off and target the PR at (default: main)
+    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -815,26 +964,36 @@ Commands:
     --gc-before            Reap stale sandboxes + prune worktrees before starting (clean slate)
     --egress               Restrict sandbox egress to an allowlist (anthropic/github/linear/registries)
     --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude + Codex; Cursor stays direct)
-    --reuse                Reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id
+    --reuse                Reuse an existing chore/vanguard-<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider that runs every stage (default: claude)
-    --review-provider <claude|codex|cursor|zai>   Run only the review stage on this provider (cross-provider review)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
+    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
+    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+    --base <branch>          Base branch to branch off and target the PR at (default: main)
+    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
+    --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/research)
     --github-pr <n>        PR number (alternative to positional)
     --github-repo <o/r>    Required for bare PR numbers
-    --provider <claude|codex|cursor|zai>          Provider used for the PR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   research options:
@@ -843,14 +1002,28 @@ Commands:
     --github-repo <o/r>     Required for bare issue numbers
     --web                   Declare that web egress/search is available; otherwise comments say model-knowledge only
     --research-model <m>    Model for the research pass
-    --provider <claude|codex|cursor|zai>          Provider used for research (default: claude)
+    --commit-author <a>     White-label the comment (drop "Vanguard" heading/marker); the author value is unused
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for research (default: claude)
+    --egress --llm-proxy --repo <path>         As for run/watch
+
+  spec options:
+    <owner/repo#number>     GitHub issue to spec: researches the codebase read-only and posts a tech-spec comment on the issue. One-shot — no labels are read or written (unlike the watch spec pass)
+    --github <ref>          Issue ref (alternative to positional)
+    --github-repo <o/r>     Required for bare issue numbers
+    --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
+    --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   revise-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
+    --github <ref>         PR ref (alternative to positional; same as spec/run/review-pr)
     --github-pr <n>        PR number (alternative to positional)
+    --commit-author <a>    White-label: author the revision commits as this identity and drop the "vanguard" token from the revision marker (for client repos)
+    --out <file>           Dry-run: write the diff + proposed thread replies to this file; push and comment NOTHING (review, then re-run without --out to apply)
     --github-repo <o/r>    Required for bare PR numbers
-    --provider <claude|codex|cursor|zai>          Provider for the implementer/review stages (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage
     --max-rounds <n>       Maximum revision rounds (default: 2)
     --egress --llm-proxy --repo <path>         As for run/watch
@@ -868,7 +1041,7 @@ Commands:
     --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --concurrency <n>      Max PRs reviewed at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider used for PR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -896,7 +1069,7 @@ Commands:
     --author <username>      Only review MRs opened by this GitLab username
     --interval <seconds>     Poll interval (default: 60); --once does a single pass
     --concurrency <n>        Max MRs reviewed at once (default: 2)
-    --provider <claude|codex|cursor|zai>          Provider used for MR review (default: claude)
+    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for MR review (default: claude)
     --review-model <m>       Model for the MR review
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -920,7 +1093,7 @@ Commands:
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
     --max-age-hours <n>    Only reap resources older than n hours (default: 6)
-    --remote <owner/repo>  Also delete merged remote vanguard/* branches (needs gh)
+    --remote <owner/repo>  Also delete merged remote chore/vanguard-* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
 
@@ -932,6 +1105,18 @@ Commands:
     --repo <path>          Repo to read run artifacts from (default: cwd)
     --limit <n>            Max entries to keep in the report (default: 10)
     --json                 Emit the raw report object as JSON instead of markdown
+
+  eval options:
+    --json                   Emit the raw EvalReport as JSON instead of a table
+    --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for experiments)
+    --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-4-6)
+    --suggest                Draft eval-corpus candidates from retrospective memory (suggest-only; never writes the corpus)
+    --repo <path>            Repo to read run artifacts from (with --suggest; default: cwd)
+    --limit <n>              Max retrospective entries to consider (with --suggest; default: 10)
+    --out <path>             Also write drafts to this scratch file (refuses paths under src/evals/corpus/)
+
+    Temperature note: the claude CLI exposes no --temperature flag; run the suite 3× on a known-good
+    state to measure pass-rate variance before relying on absolute regression thresholds (phase 2).
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.

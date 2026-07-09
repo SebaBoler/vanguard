@@ -1,4 +1,5 @@
-export type EvalKind = 'control' | 'edge' | 'refusal';
+export const KINDS = ['control', 'edge', 'refusal'] as const;
+export type EvalKind = (typeof KINDS)[number];
 
 export interface EvalCase {
   id: string;

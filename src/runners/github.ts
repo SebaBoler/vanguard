@@ -1,47 +1,22 @@
 import { execa } from 'execa';
-import { GitHubTaskFetcher, linkPullRequest } from '../tasks/github.js';
+import { GitHubTaskFetcher, linkPullRequest, addPrFailureLabel, editGithubLabels, commentGithubIssue } from '../tasks/github.js';
 import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
+import { publishReviewVerdict } from '../pipeline/review-publish.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { runSourcedIssue } from './source-adapter.js';
+import { renderSecretBlockComment } from '../core/secret-scan.js';
+import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice, ProviderName } from '../agents/registry.js';
-import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
+import type { ProviderName } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
-import type { SourceAdapter } from './source-adapter.js';
+import type { SecretBlock } from '../core/secret-scan.js';
+import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
-export interface RunGithubIssueDeps extends ProviderChoice {
-  auth?: AgentAuth;
-  repoPath: string;
+export interface RunGithubIssueDeps extends RunIssueDeps {
   repoSlug: string;
-  /** When set, route the sandbox's egress through this proxy URL (HTTPS_PROXY). */
-  proxyUrl?: string;
-  /** When set, join the sandbox to this docker network (the hard egress enclave). */
-  network?: string;
-  /**
-   * When set, route Claude through a trusted LLM-proxy sidecar: the real Anthropic credential stays
-   * out of the sandbox, which authenticates with the per-run nonce against the proxy host instead.
-   */
-  llmProxy?: LlmProxyDep;
-  /** When true, reuse an existing vanguard/<taskId>-* branch/worktree instead of minting a new run id. */
-  reuse?: boolean;
-  /** When set (>=2), run the implementer as N variants and keep the best-scored diff (forkAndSelect). */
-  forkN?: number;
-  /** Model for the implementer/simplifier stages (default: provider's default). */
-  providerModel?: string;
-  /** Model for the review stage (default: provider's default). */
-  reviewModel?: string;
-  /** Skip the simplifier stage (lean run: implement -> review only). */
-  noSimplify?: boolean;
-  /** Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect). */
-  verifyCmd?: string;
-  /** Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD). Failure never blocks the PR. */
-  visualProofCmd?: string;
-  /** When true, blocking (high/critical) reviewer findings post as --request-changes to block merge. */
-  reviewGate?: boolean;
 }
 
 export interface RunGithubIssueResult {
@@ -58,8 +33,20 @@ function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
     },
     taskId: (task) => `gh-${task.id.replace(/[^a-zA-Z0-9]/g, '-')}`,
     stages: implementReviewSimplifyStages,
+    closeIssueOnMerge: true,
+    publishVerdict: publishReviewVerdict,
+    async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
+      const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
+      await addPrFailureLabel(deps.repoPath, prUrl, label);
+    },
     async linkPr(issueRef: string, _task: Task, prUrl: string) {
       await linkPullRequest(deps.repoSlug, issueRef, prUrl);
+    },
+    async signalSecretBlock(issueRef: string, _task: Task, block: SecretBlock) {
+      await Promise.all([
+        editGithubLabels(deps.repoSlug, issueRef, { add: [GITHUB_SECRET_BLOCKED_LABEL] }).catch(() => undefined),
+        commentGithubIssue(deps.repoSlug, issueRef, renderSecretBlockComment(block)).catch(() => undefined),
+      ]);
     },
   };
 }

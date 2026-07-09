@@ -1,3 +1,4 @@
+import { KINDS } from './types.js';
 import type { EvalCase, EvalCaseResult, EvalKind, EvalReport, Judge, KindTally } from './types.js';
 
 export interface RunEvalsOptions {
@@ -6,8 +7,6 @@ export interface RunEvalsOptions {
   /** Produce the agent's output for a case (wrap vanguard.run / runAgent here). */
   produce: (testCase: EvalCase) => Promise<string>;
 }
-
-const KINDS: readonly EvalKind[] = ['control', 'edge', 'refusal'];
 
 /** Run every case through produce -> judge and aggregate a pass/fail report grouped by kind. */
 export async function runEvals(opts: RunEvalsOptions): Promise<EvalReport> {

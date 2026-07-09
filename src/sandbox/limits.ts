@@ -1,4 +1,4 @@
-import type { SandboxConfig } from './provider.js';
+import type { SandboxConfig, SandboxSecurityOpts } from './provider.js';
 
 export type SandboxResourceLimits = Pick<SandboxConfig, 'memoryMb' | 'cpus' | 'pidsLimit'>;
 
@@ -35,4 +35,26 @@ export function sidecarMemoryArgs(env: NodeJS.ProcessEnv = process.env): string[
   const raw = env.VANGUARD_SIDECAR_MEMORY_MB;
   const mb = raw === undefined ? 256 : Number(raw);
   return Number.isFinite(mb) && mb > 0 ? ['--memory', `${Math.floor(mb)}m`] : [];
+}
+
+/**
+ * Env-overridable sandbox hardening. Unlike the resource limits above, these default ON for every
+ * sandbox (least-privilege by default) and are overridable per the same "0"/empty ⇒ disable idiom.
+ */
+export function sandboxSecurityOpts(env: NodeJS.ProcessEnv = process.env): SandboxSecurityOpts {
+  const list = (raw: string | undefined, fallback: string[]): string[] =>
+    raw === undefined
+      ? fallback
+      : raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+  const flag = (raw: string | undefined, fallback: boolean): boolean =>
+    raw === undefined ? fallback : !(raw === '0' || raw === '');
+  return {
+    capDrop: list(env.VANGUARD_SANDBOX_CAP_DROP, ['ALL']),
+    capAdd: list(env.VANGUARD_SANDBOX_CAP_ADD, ['CHOWN', 'FOWNER', 'DAC_OVERRIDE']),
+    noNewPrivileges: flag(env.VANGUARD_SANDBOX_NO_NEW_PRIVILEGES, true),
+    readOnlyRootfs: flag(env.VANGUARD_SANDBOX_READONLY, false),
+  };
 }

@@ -68,8 +68,11 @@ export class GitLabTaskFetcher implements TaskFetcher {
       'issue', 'list',
       '--repo', this.project,
       '--output', 'json',
-      '--state', filter?.state ?? 'opened',
     ];
+    // glab has no `--state <value>` flag: opened is the default, closed/all are booleans.
+    const state = filter?.state ?? 'opened';
+    if (state === 'closed') args.push('--closed');
+    else if (state === 'all') args.push('--all');
     for (const label of filter?.labels ?? []) args.push('--label', label);
     const out = await this.glab(args);
     // comments are not fetched on bulk list() — avoids N+1; only fetch() returns them
@@ -95,6 +98,26 @@ export async function linkMergeRequest(
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<void> {
   await commentGitlabIssue(project, issueRef, `Vanguard opened an MR for review: ${mrUrl}`, glab);
+}
+
+/**
+ * Best-effort: ensure the scoped label exists on the project, then add it to a GitLab MR
+ * (used to flag failed proofs for triage). Without the pre-create, `glab mr update --label`
+ * is a silent no-op on a project lacking the label (matching GitHub's `gh label create --force`
+ * pre-step). Both steps swallow errors — labeling a draft MR must never block the run.
+ */
+export async function addMrFailureLabel(
+  project: string,
+  iid: number,
+  label: string,
+  glab: GlabRunner = defaultGlabRunner,
+): Promise<void> {
+  try {
+    await glab(['label', 'create', '--repo', project, '--name', label]);
+  } catch { /* best-effort */ }
+  try {
+    await glab(['mr', 'update', String(iid), '--repo', project, '--label', label]);
+  } catch { /* best-effort */ }
 }
 
 /** Add/remove labels on a GitLab issue (used to claim/advance it in the watch loop). */

@@ -1,3 +1,5 @@
+import { escapePromptTags } from '../context/escape.js';
+
 /** A child (sub-issue) of a task; identifier and title only (sub-issues carry no body in list shape). */
 export interface SubTask {
   id: string;
@@ -35,10 +37,10 @@ export interface TaskFetcher {
 /** Map a fetched task to prompt-engine {{KEY}} variables. */
 export function taskToVariables(task: Task): Record<string, string> {
   return {
-    TITLE: task.title,
-    DESCRIPTION: task.description,
-    LABELS: task.labels.join(', '),
-    SUBTASKS: task.children.map((child) => `${child.id} ${child.title}`).join('\n'),
-    COMMENTS: task.comments.map((comment) => `${comment.author}: ${comment.body}`).join('\n'),
+    TITLE: escapePromptTags(task.title),
+    DESCRIPTION: escapePromptTags(task.description),
+    LABELS: task.labels.map((label) => escapePromptTags(label)).join(', '),
+    SUBTASKS: task.children.map((child) => escapePromptTags(`${child.id} ${child.title}`)).join('\n'),
+    COMMENTS: escapePromptTags(task.comments.map((comment) => `${comment.author}: ${comment.body}`).join('\n')),
   };
 }

@@ -9,3 +9,4 @@ export class WorktreeError extends VanguardError {}
 export class AgentError extends VanguardError {}
 export class NotImplementedError extends VanguardError {}
 export class StructuredOutputError extends VanguardError {}
+export class WorkflowGuardError extends VanguardError {}

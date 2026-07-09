@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { execa } from 'execa';
 import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview, commentPullRequest } from './pr-review.js';
 import {
@@ -5,17 +7,22 @@ import {
   selectActionableFeedback,
   buildRevisionPrompt,
   replyAndResolveThread,
-  countRevisionRounds,
+  countRevisionRoundsFromFeedback,
   revisionMarker,
   buildItemReply,
   buildRevisionSummary,
+  buildRevisionDryRun,
   parseRevisionDiff,
   formatFileChanges,
   describeItemChange,
   guardedPoint,
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
-import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
+import { reviewRequestBody } from './review-body.js';
+import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
+import type { VerificationResult } from '../pipeline/verify.js';
 import {
   implementReviewSimplifyStages,
   runStages,
@@ -25,6 +32,7 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  STAGE,
 } from '../pipeline/pipeline.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
@@ -49,6 +57,9 @@ const VANGUARD_REVISING_LABEL = 'vanguard:revising';
 const DEFAULT_MAX_ROUNDS = 2;
 const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL], add: [GITHUB_REVIEW_LABEL] };
 
+/** Cap on implement-session resumes triggered by a red verification in the revise pass — one bounded repair. */
+const MAX_VERIFY_REPAIRS = 1;
+
 export interface ReviseGithubPrDeps extends ProviderChoice {
   auth?: AgentAuth;
   repoPath: string;
@@ -64,10 +75,16 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   providerModel?: string;
   /** Model for the review stage. */
   reviewModel?: string;
+  /** Git author for the revision commits + white-label toggle: drops the "vanguard" token from the revision marker so a client repo carries no automation branding. Set via --commit-author. */
+  commitAuthor?: { name: string; email: string };
+  /** Dry-run: write the diff + proposed thread replies to this local file and push/comment NOTHING. Set via --out. */
+  out?: string;
   /** Skip the simplifier stage. */
   noSimplify?: boolean;
   /** Maximum revision rounds before capping (default 2). */
   maxRounds?: number;
+  /** Explicit verification command (else auto-detected from the worktree). */
+  verifyCmd?: string;
   /** Extra logins to treat as bots (beyond the built-in heuristic). */
   botLogins?: string[];
   log?: (line: string) => void;
@@ -94,6 +111,8 @@ export interface ReviseGithubPrResult {
   committed: boolean;
   pushed: boolean;
   undrafted: boolean;
+  /** Absolute path of the dry-run preview file, when --out was given (push/comment were skipped). */
+  dryRunOut?: string;
 }
 
 function editPrLabels(
@@ -106,6 +125,26 @@ function editPrLabels(
   for (const label of labels.remove ?? []) args.push('--remove-label', label);
   for (const label of labels.add ?? []) args.push('--add-label', label);
   return gh(args);
+}
+
+async function handBackPrLabels(
+  gh: GhRunner,
+  repoSlug: string,
+  number: number,
+  log: (line: string) => void,
+): Promise<void> {
+  try {
+    await gh(['label', 'create', GITHUB_REVIEW_LABEL, '--repo', repoSlug, '--force']);
+  } catch (err) {
+    log(`revise-pr ${repoSlug}#${number}: label ensure -> manual label check (${err instanceof Error ? err.message : String(err)})`);
+  }
+
+  try {
+    log(`revise-pr ${repoSlug}#${number}: labels -> needs-human-review`);
+    await editPrLabels(gh, repoSlug, number, HAND_BACK_LABELS);
+  } catch (err) {
+    log(`revise-pr ${repoSlug}#${number}: labels -> manual label check (${err instanceof Error ? err.message : String(err)})`);
+  }
 }
 
 /**
@@ -134,12 +173,12 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
-  const rounds = await countRevisionRounds(target, gh);
+  const rounds = countRevisionRoundsFromFeedback(fb);
   if (rounds >= maxRounds) {
     const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
     log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);
     await postPullRequestReview(target, capMsg, 'comment', gh);
-    await editPrLabels(gh, target.repoSlug, target.number, HAND_BACK_LABELS);
+    await handBackPrLabels(gh, target.repoSlug, target.number, log);
     return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
@@ -190,16 +229,16 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     );
     try {
       const allStages = implementReviewSimplifyStages();
-      const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== 'simplifier') : allStages;
+      const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== STAGE.SIMPLIFIER) : allStages;
       let pipeline = agents.reviewAgent !== undefined ? withStageProvider(base, agents.reviewAgent) : base;
       if (deps.providerModel !== undefined) {
         const crossProviderReview =
           deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
         pipeline = crossProviderReview
-          ? withStageModelExcept(pipeline, deps.providerModel, 'reviewer')
+          ? withStageModelExcept(pipeline, deps.providerModel, STAGE.REVIEWER)
           : withStageModel(pipeline, deps.providerModel);
       }
-      if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, 'reviewer');
+      if (deps.reviewModel !== undefined) pipeline = withStageModel(pipeline, deps.reviewModel, STAGE.REVIEWER);
       if (agents.reviewAgent !== undefined) {
         pipeline = withStageFallback(pipeline, {
           provider: agents.agent,
@@ -209,17 +248,75 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       const prompt = buildRevisionPrompt(pr, actionable);
       // Override the implementer's promptTemplate with the revision prompt.
-      pipeline = pipeline.map((stage) => (stage.name === 'implementer' ? { ...stage, promptTemplate: prompt } : stage));
+      pipeline = pipeline.map((stage) =>
+        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate: prompt } : stage,
+      );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
-      await runStages(ctx, pipeline, { agent: agents.agent });
+      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent });
+
+      // Run the resolved verification command after applying changes and before pushing, with one
+      // bounded repair iteration on red — reusing renderVerificationFeedback and the same resume
+      // pattern as runSourcedIssue so a red revision never silently ships (alpha-window#901: 5
+      // NameError tests pushed through revise). Auto-detect only touches the worktree, no manifest.
+      const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
+      let resumeSessionId = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.sessionId;
+      let verification: VerificationResult | undefined;
+      if (verifyCmd !== undefined) {
+        let verifyRepairs = 0;
+        for (;;) {
+          verification = await runVerification(ctx.sandbox, verifyCmd);
+          if (verification.passed || verifyRepairs >= MAX_VERIFY_REPAIRS || resumeSessionId === undefined) {
+            break;
+          }
+          verifyRepairs += 1;
+          log(`revise-pr ${target.repoSlug}#${target.number}: verify FAILED (attempt ${verifyRepairs}/${MAX_VERIFY_REPAIRS}) — resuming implement session`);
+          const repaired = await runAgent(ctx, {
+            promptTemplate: `${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`,
+            agent: agents.agent,
+            resumeSessionId,
+          });
+          resumeSessionId = repaired.sessionId ?? resumeSessionId;
+        }
+      }
+      const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
 
+      // Diff-true "what changed" point per feedback item — uses the diff, not a commit sha, so the
+      // dry-run below can build proposed replies without committing.
+      const diffFiles = parseRevisionDiff(revisionDiff);
+      const globalPoint = formatFileChanges(diffFiles, 3, 3);
+      const pointFor = (item: FeedbackItem): string =>
+        guardedPoint(describeItemChange(item, diffFiles) || globalPoint, revisionDiff);
+
+      // --out: dry-run. Write the diff + the reply we would post to each addressed item to a local file
+      // and touch NEITHER the branch NOR the PR. The operator reviews it, then re-runs without --out to
+      // apply. No commit / push / comment happens on this path.
+      if (deps.out !== undefined) {
+        const status = verification === undefined ? 'unknown' : verification.passed ? 'pass' : 'fail';
+        const preview = buildRevisionDryRun({
+          repoSlug: target.repoSlug,
+          number: target.number,
+          headRefName: pr.headRefName,
+          diff: revisionDiff,
+          items: actionable.map((item) => ({ item, point: pointFor(item) })),
+          verification: { typecheck: status, test: status },
+        });
+        await mkdir(dirname(deps.out), { recursive: true });
+        await writeFile(deps.out, preview, 'utf8');
+        log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
+      }
+
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
+      const whiteLabel = deps.commitAuthor !== undefined;
       const commit = await commitStage(ctx, {
         message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
+        ...(deps.commitAuthor !== undefined
+          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
+          : {}),
       });
 
       if (!commit.committed) {
@@ -227,21 +324,32 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
 
-      log(`revise-pr ${target.repoSlug}#${target.number}: push -> ${pr.headRefName}`);
+      const pushToken = process.env.VANGUARD_PUSH_TOKEN;
+      log(`revise-pr ${target.repoSlug}#${target.number}: push -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
       await pushToExistingBranch(ctx, {
         prHeadRef: pr.headRefName,
+        ...(pushToken ? { pushToken, host: 'github.com' } : {}),
         ...(deps._pushRunner !== undefined ? { runner: deps._pushRunner } : {}),
       });
 
       const sha = commit.sha ?? 'unknown';
 
-      // Derive a diff-true "what changed" point for each feedback item.
-      const diffFiles = parseRevisionDiff(revisionDiff);
-      const globalPoint = formatFileChanges(diffFiles, 3, 3);
-      const pointFor = (item: FeedbackItem): string => {
-        const candidate = describeItemChange(item, diffFiles) || globalPoint;
-        return guardedPoint(candidate, revisionDiff);
-      };
+      // Re-derive the PR body from the CURRENT diff on every cycle so a stale `Closes #N` can never
+      // survive a revision that regressed (alpha-window#901 kept a stale Closes through two review
+      // requests). The referenced issue is recovered from the existing body; a red verification
+      // forces the `Part of #N` path, and a commit-level closing keyword is downgraded to `Part of`.
+      const issueTaskId = extractTaskIdFromPrBody(pr.body);
+      if (issueTaskId !== undefined) {
+        const closeIssueOnMerge = scanCommitClosingKeywords([pr.body], issueTaskId).length > 0;
+        const newBody = reviewRequestBody(issueTaskId, {
+          closeIssueOnMerge,
+          ...(verificationFailed ? { verificationFailed: true } : {}),
+        });
+        if (newBody !== pr.body) {
+          log(`revise-pr ${target.repoSlug}#${target.number}: body -> re-derived (${verificationFailed ? 'Part of' : closeIssueOnMerge ? 'Closes' : 'no-close'})`);
+          await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--body', newBody]);
+        }
+      }
 
       // Reply to and resolve each addressed thread (one reply per unique thread).
       // Map each threadId to its first actionable item to derive a per-thread point.
@@ -255,17 +363,18 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         [...threadIdToItem.entries()].map(([threadId, item]) => {
           const p = pointFor(item);
           const detail = p ? `: ${p}` : '.';
-          return replyAndResolveThread(threadId, `Addressed in commit ${sha}${detail}\n\n${revisionMarker(pr.headRefOid)}`, gh);
+          return replyAndResolveThread(threadId, `Addressed in commit ${sha}${detail}\n\n${revisionMarker(pr.headRefOid, whiteLabel)}`, gh);
         }),
       );
 
       // Post a per-item referencing reply for each non-threadable feedback item.
       const nonThreadItems = actionable.filter((item) => item.source !== 'thread');
       await Promise.all(
-        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, pointFor(item), sha, pr.headRefOid), gh)),
+        nonThreadItems.map((item) => commentPullRequest(target, buildItemReply(item, pointFor(item), sha, pr.headRefOid, whiteLabel), gh)),
       );
 
       // Post the single final round summary.
+      const verificationStatus = verification === undefined ? 'unknown' : verification.passed ? 'pass' : 'fail';
       const summaryText = buildRevisionSummary({
         repoSlug: target.repoSlug,
         number: target.number,
@@ -273,15 +382,15 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         commitSha: sha,
         addressed: actionable.map((item) => ({ item, point: pointFor(item) })),
         deferred: [],
-        verification: { typecheck: 'unknown', test: 'unknown' },
+        verification: { typecheck: verificationStatus, test: verificationStatus },
+        whiteLabel,
       });
       await commentPullRequest(target, summaryText, gh);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);
       await gh(['pr', 'ready', String(target.number), '--repo', target.repoSlug]);
 
-      log(`revise-pr ${target.repoSlug}#${target.number}: labels -> needs-human-review`);
-      await editPrLabels(gh, target.repoSlug, target.number, HAND_BACK_LABELS);
+      await handBackPrLabels(gh, target.repoSlug, target.number, log);
 
       return {
         pr,

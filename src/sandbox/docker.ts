@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { SandboxError } from '../core/errors.js';
+import { sandboxSecurityOpts } from './limits.js';
 import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, SandboxConfig } from './provider.js';
 
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 const DEFAULT_WORKDIR = '/workspace';
+const DEFAULT_HOME = '/home/agent';
 const SECRETS_DIR = '/run/vanguard';
 const SECRETS_FILE = `${SECRETS_DIR}/secrets.env`;
 
@@ -75,8 +77,9 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     return `set -a; [ -f ${SECRETS_FILE} ] && . ${SECRETS_FILE}; set +a; ${command}`;
   }
 
-  async start(): Promise<void> {
-    if (this.started) return;
+  /** Pure `docker run` argv assembly (no docker invocation), so hardening flags are unit-testable
+   * without Docker installed. */
+  buildRunArgs(): string[] {
     const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`];
     // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
     // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
@@ -86,18 +89,40 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     if (this.config.cpus !== undefined) args.push('--cpus', String(this.config.cpus));
     if (this.config.pidsLimit !== undefined) args.push('--pids-limit', String(this.config.pidsLimit));
 
+    const security = { ...sandboxSecurityOpts(), ...this.config.security };
+    for (const cap of security.capDrop) args.push('--cap-drop', cap);
+    // Added back on top of capDrop ALL: copyIn's `docker exec -u 0 chown -R` needs CAP_CHOWN (and,
+    // to retarget files the exec'd root doesn't own, CAP_FOWNER/CAP_DAC_OVERRIDE) — cap-drop fixes
+    // the exec bounding set too, so `-u 0` alone does not restore it.
+    for (const cap of security.capAdd) args.push('--cap-add', cap);
+    if (security.noNewPrivileges) args.push('--security-opt', 'no-new-privileges');
+    if (security.readOnlyRootfs) {
+      args.push('--read-only');
+      // Paths a real run writes: /workspace (copyIn + pnpm install + git), $HOME (skills, tool
+      // caches), /tmp (build scratch). exec is required (tool shims, build scripts) unlike the
+      // deliberately noexec secrets tmpfs above.
+      args.push('--tmpfs', `${this.workdir}:rw,exec,nosuid,size=4g`);
+      args.push('--tmpfs', `${DEFAULT_HOME}:rw,exec,nosuid,size=2g`);
+      args.push('--tmpfs', '/tmp:rw,exec,nosuid,size=1g');
+    }
+
     if (this.hasSecrets && this.secretsMode === 'tmpfs') {
       // In-RAM tmpfs: secrets never land in the image, on disk, or in docker inspect Config.Env.
       args.push('--tmpfs', `${SECRETS_DIR}:rw,noexec,nosuid,mode=1777,size=1m`);
     }
-    if (this.hasSecrets && this.secretsMode === 'env-file') {
-      this.envDir = await mkdtemp(join(tmpdir(), 'vg-env-'));
-      const file = join(this.envDir, 'env');
-      await writeFile(file, this.secretsBody(), { mode: 0o600 });
-      args.push('--env-file', file);
-    }
+    if (this.envDir !== undefined) args.push('--env-file', join(this.envDir, 'env'));
     for (const [k, v] of Object.entries(this.config.env ?? {})) args.push('-e', `${k}=${v}`);
     args.push(this.image, 'sleep', 'infinity');
+    return args;
+  }
+
+  async start(): Promise<void> {
+    if (this.started) return;
+    if (this.hasSecrets && this.secretsMode === 'env-file') {
+      this.envDir = await mkdtemp(join(tmpdir(), 'vg-env-'));
+      await writeFile(join(this.envDir, 'env'), this.secretsBody(), { mode: 0o600 });
+    }
+    const args = this.buildRunArgs();
 
     try {
       await execa('docker', args);

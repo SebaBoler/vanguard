@@ -1,13 +1,44 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { WorktreeManager } from '../worktree/manager.js';
 import { runRevisePullRequest } from './revise-pr.js';
+import { selectAgents } from '../agents/registry.js';
 import type { GhRunner } from '../tasks/github.js';
-import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
+import type { IsolatedSandboxProvider, ExecResult, SandboxConfig } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
+
+const dockerSandboxConfigs = vi.hoisted(() => [] as SandboxConfig[]);
+
+vi.mock('../sandbox/docker.js', () => ({
+  DockerSandboxProvider: class {
+    readonly id = 'fake-docker';
+
+    constructor(config: SandboxConfig = {}) {
+      dockerSandboxConfigs.push(config);
+    }
+
+    start = async (): Promise<void> => {};
+    exec = async (command: string): Promise<ExecResult> =>
+      command.includes('$HOME') ? { stdout: '/root', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 };
+    execStream = (): ReturnType<IsolatedSandboxProvider['execStream']> => ({
+      stdout: (async function* (): AsyncIterable<string> {})(),
+      result: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+    });
+    copyIn = async (): Promise<void> => {};
+    copyFileOut = async (sandboxPath: string, hostPath: string): Promise<void> => {
+      if (sandboxPath === '/workspace') {
+        await mkdir(hostPath, { recursive: true });
+        await writeFile(join(hostPath, 'fix.txt'), 'fix applied');
+      }
+    };
+    exists = async (): Promise<boolean> => true;
+    destroy = async (): Promise<void> => {};
+    shellCommand = (): string => 'docker exec -it vg-fake bash';
+  },
+}));
 
 let repo: string;
 
@@ -109,8 +140,17 @@ function makeFeedbackJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-function makeRoundCountJson(): string {
-  return JSON.stringify({ comments: [], reviews: [] });
+function makeFeedbackJsonWithRevisions(): string {
+  // Two distinct revision markers simulate 2 prior rounds for countRevisionRounds.
+  // selectActionableFeedback drops them via hasRevisionMarker; countRevisionRounds counts them.
+  return makeFeedbackJson({
+    comments: {
+      nodes: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-09T00:00:00Z' },
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-09T00:00:01Z' },
+      ],
+    },
+  });
 }
 
 function makeFeedbackJsonWithNonThreadItems(): string {
@@ -165,10 +205,6 @@ describe('runRevisePullRequest happy path', () => {
       }
       // pr diff
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      // round count view (different json fields)
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.includes('comments,reviews')) {
-        return makeRoundCountJson();
-      }
       // graphql (feedback query or mutations)
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
@@ -182,6 +218,8 @@ describe('runRevisePullRequest happy path', () => {
       if (args[0] === 'pr' && args[1] === 'comment') return '';
       // pr ready (undraft)
       if (args[0] === 'pr' && args[1] === 'ready') return '';
+      // label ensure
+      if (args[0] === 'label' && args[1] === 'create') return '';
       // pr edit (label flip)
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected gh call: ${args.join(' ')}`);
@@ -225,6 +263,192 @@ describe('runRevisePullRequest happy path', () => {
     expect(editCall).toContain('--remove-label');
     expect(editCall).toContain('needs revision');
   });
+
+  it('--out writes a dry-run preview and pushes/comments NOTHING', async () => {
+    const outPath = join(tmpdir(), `vanguard-revise-out-${process.pid}-${Math.random().toString(36).slice(2)}.md`);
+    const ghCalls: string[][] = [];
+    const pushCalls: unknown[] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.some((a) => a.includes('headRefName'))) {
+        return makePrViewJson();
+      }
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+      }
+      // Any push/comment/mutation call in dry-run is a bug — fail loudly.
+      throw new Error(`unexpected gh call in dry-run: ${args.join(' ')}`);
+    };
+    try {
+      const result = await runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox(),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async (...a: unknown[]) => {
+          pushCalls.push(a);
+          return '';
+        },
+        _baseBranch: 'feature-branch',
+        provider: 'claude',
+        out: outPath,
+      });
+
+      expect(result.dryRunOut).toBe(outPath);
+      expect(result.committed).toBe(false);
+      expect(result.pushed).toBe(false);
+      expect(pushCalls).toHaveLength(0);
+      expect(ghCalls.some((a) => a[0] === 'pr' && (a[1] === 'comment' || a[1] === 'ready' || a[1] === 'edit'))).toBe(false);
+
+      const content = await readFile(outPath, 'utf8');
+      expect(content).toContain('dry-run');
+      expect(content).toContain('## Code changes');
+      expect(content).toContain('## Proposed replies');
+      expect(content).not.toContain('vanguard-revision');
+    } finally {
+      await rm(outPath, { force: true });
+    }
+  });
+});
+
+describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
+  const ORIGINAL_TOKEN = process.env.VANGUARD_PUSH_TOKEN;
+
+  afterEach(() => {
+    if (ORIGINAL_TOKEN === undefined) delete process.env.VANGUARD_PUSH_TOKEN;
+    else process.env.VANGUARD_PUSH_TOKEN = ORIGINAL_TOKEN;
+  });
+
+  it('when set, the push argv carries the extraheader override and still targets HEAD:feature-branch', async () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (file, args, cwd) => {
+        pushCalls.push({ file, args, cwd });
+        return '';
+      },
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    const b64 = Buffer.from('x-access-token:test-pat').toString('base64');
+    const pushCall = pushCalls.find((c) => c.file === 'git' && c.args.includes('push'));
+    expect(pushCall?.args).toEqual([
+      '-c',
+      `http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`,
+      'push',
+      '--no-verify',
+      'origin',
+      'HEAD:feature-branch',
+    ]);
+  });
+
+  it('when unset, the push argv is unchanged (no -c prefix)', async () => {
+    delete process.env.VANGUARD_PUSH_TOKEN;
+    const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (file, args, cwd) => {
+        pushCalls.push({ file, args, cwd });
+        return '';
+      },
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    const pushCall = pushCalls.find((c) => c.file === 'git' && c.args[0] === 'push');
+    expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
+  });
+
+  it('is never forwarded into the sandbox secrets map (host-only credential)', () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    const selected = selectAgents({ provider: 'claude' }, process.env);
+    expect(Object.keys(selected.secrets)).not.toContain('VANGUARD_PUSH_TOKEN');
+    expect(Object.values(selected.secrets)).not.toContain('test-pat');
+    expect(Object.keys(selected.proxySecrets)).not.toContain('VANGUARD_PUSH_TOKEN');
+  });
+
+  it('does not pass VANGUARD_PUSH_TOKEN to the constructed sandbox provider', async () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    dockerSandboxConfigs.length = 0;
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(dockerSandboxConfigs).toHaveLength(1);
+    expect(dockerSandboxConfigs[0]?.secrets ?? {}).not.toHaveProperty('VANGUARD_PUSH_TOKEN');
+    expect(Object.values(dockerSandboxConfigs[0]?.secrets ?? {})).not.toContain('test-pat');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -240,7 +464,6 @@ describe('runRevisePullRequest — no actionable feedback', () => {
       ghCalls.push(args);
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) return makeRoundCountJson();
       if (args[0] === 'api' && args[1] === 'graphql') {
         // Empty feedback
         return JSON.stringify({
@@ -296,19 +519,10 @@ describe('runRevisePullRequest — round cap', () => {
       ghCalls.push(args);
       if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) {
-        // Simulate 2 prior revision rounds
-        return JSON.stringify({
-          comments: [
-            { body: '<!-- vanguard-revision: deadbeef -->' },
-            { body: '<!-- vanguard-revision: abc1234 -->' },
-          ],
-          reviews: [],
-        });
-      }
-      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJsonWithRevisions();
       // cap comment post
       if (args[0] === 'pr' && args[1] === 'review') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected: ${args.join(' ')}`);
     };
@@ -338,6 +552,39 @@ describe('runRevisePullRequest — round cap', () => {
     // Labels were still flipped
     const editCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('vanguard:needs-human-review'));
     expect(editCall).toBeDefined();
+    expect(ghCalls.filter((a) => a[0] === 'api' && a[1] === 'graphql')).toHaveLength(1);
+  });
+
+  it('does not fail the cap path when label hand-back fails', async () => {
+    const ghCalls: string[][] = [];
+
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJsonWithRevisions();
+      if (args[0] === 'pr' && args[1] === 'review') return '';
+      if (args[0] === 'label' && args[1] === 'create') throw new Error('label create failed');
+      if (args[0] === 'pr' && args[1] === 'edit') throw new Error('label edit failed');
+      throw new Error(`unexpected: ${args.join(' ')}`);
+    };
+
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      maxRounds: 2,
+      provider: 'claude',
+    });
+
+    expect(result.committed).toBe(false);
+    expect(result.pushed).toBe(false);
+    expect(result.undrafted).toBe(false);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit')).toBe(true);
   });
 });
 
@@ -358,9 +605,6 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
         return makePrViewJson();
       }
       if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
-      if (args[0] === 'pr' && args[1] === 'view' && args.includes('comments,reviews')) {
-        return makeRoundCountJson();
-      }
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
         if (query.includes('reviewThreads')) return makeFeedbackJsonWithNonThreadItems();
@@ -373,6 +617,7 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
         return '';
       }
       if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
       if (args[0] === 'pr' && args[1] === 'edit') return '';
       throw new Error(`unexpected gh call: ${args.join(' ')}`);
     };
@@ -431,6 +676,167 @@ describe('runRevisePullRequest — per-item replies for non-thread feedback', ()
 });
 
 // ---------------------------------------------------------------------------
+// Best-effort label hand-back
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — best-effort label hand-back', () => {
+  function makeGhWithLabelFailure(ghCalls: string[][]): GhRunner {
+    return async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      // label ensure — succeed
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      // label flip — fail (simulates missing label in target repo)
+      if (args[0] === 'pr' && args[1] === 'edit') throw new Error('label not found');
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+  }
+
+  async function runWithLabelFailure(): Promise<{ ghCalls: string[][]; result: Awaited<ReturnType<typeof runRevisePullRequest>> }> {
+    const ghCalls: string[][] = [];
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGhWithLabelFailure(ghCalls),
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+    return { ghCalls, result };
+  }
+
+  it('resolves with pushed:true and undrafted:true even when the label flip throws', async () => {
+    const { result } = await runWithLabelFailure();
+    expect(result.pushed).toBe(true);
+    expect(result.undrafted).toBe(true);
+    expect(result.addressed).toBeGreaterThan(0);
+  });
+
+  it('calls label create --force before the label flip', async () => {
+    const { ghCalls } = await runWithLabelFailure();
+    const createCallIndex = ghCalls.findIndex(
+      (a) => a[0] === 'label' && a[1] === 'create' && a.includes('vanguard:needs-human-review'),
+    );
+    const editCallIndex = ghCalls.findIndex((a) => a[0] === 'pr' && a[1] === 'edit');
+    expect(createCallIndex).toBeGreaterThanOrEqual(0);
+    expect(editCallIndex).toBeGreaterThan(createCallIndex);
+    expect(ghCalls[createCallIndex]).toContain('--force');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revise-pass verification + body re-derivation
+// ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest — revise-pass verification', () => {
+  const VERIFY_CMD = 'run-verify';
+
+  // Clone the happy-path sandbox but drive the resolved verify command's exit code.
+  function makeSandboxVerify(exit: number): IsolatedSandboxProvider {
+    const base = makeSandbox() as unknown as Record<string, unknown>;
+    return {
+      ...base,
+      exec: async (command: string): Promise<ExecResult> => {
+        if (command.includes('$HOME')) return { stdout: '/root', stderr: '', exitCode: 0 };
+        if (command === VERIFY_CMD) return { stdout: 'verify output', stderr: '', exitCode: exit };
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    } as unknown as IsolatedSandboxProvider;
+  }
+
+  // gh runner referencing an issue via a closing keyword in the PR body, capturing pr-edit bodies.
+  function makeGh(ghCalls: string[][], editBodies: string[]): GhRunner {
+    return async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) {
+        return makePrViewJson({ body: 'Adds guard.\n\nCloses o/r#42' });
+      }
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') return '';
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') {
+        const bodyIdx = args.indexOf('--body');
+        if (bodyIdx !== -1) editBodies.push(args[bodyIdx + 1] ?? '');
+        return '';
+      }
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+  }
+
+  it('runs the verify command and re-derives the body to Closes on a green pass', async () => {
+    const ghCalls: string[][] = [];
+    const editBodies: string[] = [];
+    const agentInputs: AgentRunInput[] = [];
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh(ghCalls, editBodies),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(0),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    // Green verification → no repair resume (implement/review/simplify only).
+    expect(agentInputs).toHaveLength(3);
+    // Body re-derived to a closing reference for the issue recovered from the PR body.
+    const body = editBodies.find((b) => b.includes('o/r#42'));
+    expect(body).toBeDefined();
+    expect(body).toContain('Closes o/r#42');
+  });
+
+  it('resumes the implement session once on red verification and re-derives the body to Part of', async () => {
+    const ghCalls: string[][] = [];
+    const editBodies: string[] = [];
+    const agentInputs: AgentRunInput[] = [];
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh(ghCalls, editBodies),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(1),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    // One bounded repair iteration on red: implement/review/simplify + a single resumed repair.
+    expect(agentInputs).toHaveLength(4);
+    // A red verification forces the Part-of path — never a silent stale Closes.
+    const body = editBodies.find((b) => b.includes('o/r#42'));
+    expect(body).toBeDefined();
+    expect(body).toContain('Part of o/r#42');
+    expect(body).not.toContain('Closes o/r#42');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // pushToExistingBranch (pipeline function)
 // ---------------------------------------------------------------------------
 
@@ -457,7 +863,7 @@ describe('pushToExistingBranch', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toEqual(['push', 'origin', 'HEAD:fix-auth']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:fix-auth']);
     expect(calls[0]?.cwd).toBe('/fake/worktree');
   });
 
@@ -480,6 +886,6 @@ describe('pushToExistingBranch', () => {
     } as unknown as import('../core/vanguard.js').RunContext;
 
     await pushToExistingBranch(fakeCtx, { prHeadRef: 'my-branch', remote: 'upstream', runner });
-    expect(calls[0]?.args).toEqual(['push', 'upstream', 'HEAD:my-branch']);
+    expect(calls[0]?.args).toEqual(['push', '--no-verify', 'upstream', 'HEAD:my-branch']);
   });
 });

@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { VANGUARD_BRANCH_PREFIX } from '../worktree/manager.js';
 
 export interface ContainerInfo {
   id: string;
@@ -161,12 +162,14 @@ export function gitRemoteBranchLister(
   opts: { remote?: string; prefix?: string; now?: () => number } = {},
 ): RemoteBranchLister {
   const remote = opts.remote ?? 'origin';
-  const prefix = opts.prefix ?? 'vanguard/';
+  const prefix = opts.prefix ?? VANGUARD_BRANCH_PREFIX;
   const now = opts.now ?? Date.now;
   return async (): Promise<RemoteBranchInfo[]> => {
+    // Trailing `*` makes this an fnmatch glob: the `vanguard-` marker sits mid-component (chore/vanguard-…),
+    // so a plain prefix would not match on a slash boundary the way the old `vanguard/` prefix did.
     const { stdout } = await execa(
       'git',
-      ['for-each-ref', '--format', '%(refname:short)\t%(committerdate:unix)', `refs/remotes/${remote}/${prefix}`],
+      ['for-each-ref', '--format', '%(refname:short)\t%(committerdate:unix)', `refs/remotes/${remote}/${prefix}*`],
       { cwd: repoPath },
     );
     return stdout

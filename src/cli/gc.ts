@@ -32,7 +32,7 @@ const noop = async (): Promise<void> => undefined;
 
 /**
  * Reap stale sandbox containers, prune worktree admin entries, and (when remoteRepo is set) delete
- * merged remote vanguard/* branches. dryRun swaps in no-op removers, so the reapers still report what
+ * merged remote chore/vanguard-* branches. dryRun swaps in no-op removers, so the reapers still report what
  * they WOULD remove without touching anything. The entry point behind `vanguard gc`.
  */
 export async function runGc(opts: GcCliOptions): Promise<GcReport> {

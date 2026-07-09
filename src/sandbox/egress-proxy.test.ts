@@ -100,6 +100,10 @@ describe('DEFAULT_EGRESS_ALLOWLIST', () => {
   it('includes api.z.ai so direct Zai (--provider zai --egress) can reach z.ai', () => {
     expect(DEFAULT_EGRESS_ALLOWLIST).toContain('api.z.ai');
   });
+
+  it('includes openrouter.ai so direct OpenRouter (--provider openrouter --egress) can reach OpenRouter', () => {
+    expect(DEFAULT_EGRESS_ALLOWLIST).toContain('openrouter.ai');
+  });
 });
 
 describe('allowlistWithout', () => {
@@ -118,6 +122,7 @@ describe('llmProxyEgressAllowlist', () => {
     expect(result).not.toContain('api.anthropic.com');
     expect(result).not.toContain('api.openai.com');
     expect(result).not.toContain('api.z.ai');
+    expect(result).not.toContain('openrouter.ai');
     expect(result).toContain('github.com');
     expect(result).toContain('registry.npmjs.org');
     expect(result).toContain('api.linear.app');
@@ -129,6 +134,7 @@ describe('llmProxyEgressAllowlist', () => {
     expect(isAllowed('api.anthropic.com', result)).toBe(false);
     expect(isAllowed('api.openai.com', result)).toBe(false);
     expect(isAllowed('api.z.ai', result)).toBe(false);
+    expect(isAllowed('openrouter.ai', result)).toBe(false);
     expect(isAllowed('github.com', result)).toBe(true);
   });
 });

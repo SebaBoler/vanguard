@@ -10,7 +10,7 @@ import { stageMetric } from './run-metric.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
-import { SandboxError } from './errors.js';
+import { SandboxError, WorkflowGuardError } from './errors.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
@@ -29,12 +29,22 @@ const DEFAULT_MAX_TURNS = 6;
 // and .vanguard/skills (skill bodies copied in as pointer targets for codex/cursor providers).
 const COPY_BACK_SKIP =
   /(^|[\\/])(\.git|node_modules)([\\/]|$)|(^|[\\/])\.claude[\\/]skills([\\/]|$)|(^|[\\/])\.cursor[\\/]rules([\\/]|$)|(^|[\\/])\.vanguard[\\/]skills([\\/]|$)/;
+// Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
+// that gets committed and pushed — that is the exact escalation path in the disclosed
+// claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
+// next GitHub event). Kept as its own regex (not folded into COPY_BACK_SKIP) so drops can be
+// logged loudly instead of silently, like the other noisy-but-expected skips above.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
   localRepoPath: string;
   baseBranch?: string;
   reuse?: boolean;
+  /** Override the run branch prefix (white-label mode: e.g. `feat/`). Default VANGUARD_BRANCH_PREFIX. */
+  branchPrefix?: string;
+  /** Override the run branch/path id (white-label mode: bare issue number). Default taskId. */
+  branchId?: string;
   skills?: string[];
   /** Provider name (AgentProvider.name) used to select the skill injection target format. */
   agentName?: string;
@@ -78,6 +88,10 @@ export interface StageInput {
    * back. The asymmetry is deliberate — do NOT add copyBack to RunOptions.
    */
   copyBack?: boolean;
+  /** Effective per-stage budget cap in USD (for metric logging only). */
+  stageCapUsd?: number;
+  /** Remaining global budget before this stage (for metric logging only). */
+  remainingBudgetUsd?: number;
 }
 
 export interface RunDeps {
@@ -97,7 +111,11 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
-  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', opts.reuse !== undefined ? { reuse: opts.reuse } : {});
+  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', {
+    ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
+    ...(opts.branchPrefix !== undefined ? { branchPrefix: opts.branchPrefix } : {}),
+    ...(opts.branchId !== undefined ? { branchId: opts.branchId } : {}),
+  });
   // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
   // sandboxes than the host can hold (blocks until a slot frees).
   await acquireSandboxSlot(opts.sandbox);
@@ -158,6 +176,26 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
+/** Paths under `.github/workflows/` touched by a unified diff. Empty ⇒ clean. */
+export function workflowPathsInDiff(diff: string): string[] {
+  const found = new Set<string>();
+  const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
+  for (const line of diff.split('\n')) {
+    if (!HEADER_LINE.test(line)) continue;
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*)/.exec(line);
+    if (match?.[2] !== undefined) found.add(match[2]);
+  }
+  return [...found].sort();
+}
+
+/** Throws WorkflowGuardError (logged) if the diff touches .github/workflows/. */
+export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskId: string): void {
+  const offending = workflowPathsInDiff(diff);
+  if (offending.length === 0) return;
+  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches .github/workflows/ (hard constraint)');
+  throw new WorkflowGuardError(`Diff touches forbidden .github/workflows path(s): ${offending.join(', ')}`);
+}
+
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
   const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
@@ -168,12 +206,23 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
-      filter: (src) => !COPY_BACK_SKIP.test(src),
+      filter: (src) => {
+        if (WORKFLOW_PATH.test(src)) {
+          ctx.log.warn(
+            { taskId: ctx.taskId, path: src },
+            'copy-back: dropped .github/workflows path (workflow files are never synced back)',
+          );
+          return false;
+        }
+        return !COPY_BACK_SKIP.test(src);
+      },
     });
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
-  return ctx.wm.diff(ctx.worktreePath);
+  const diff = await ctx.wm.diff(ctx.worktreePath);
+  assertNoWorkflowChanges(diff, ctx.log, ctx.taskId);
+  return diff;
 }
 
 /** Run one agent stage against an existing context. Multiple stages can share a context (pipeline). */
@@ -226,6 +275,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     let usage: AgentUsage | undefined;
     let costUsd: number | undefined;
     let transcript: string | undefined;
+    let modelUsed = input.model;
 
     for (;;) {
       const next = await gen.next();
@@ -236,12 +286,23 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
         usage = next.value.usage;
         costUsd = next.value.costUsd;
         transcript = next.value.transcript;
+        if (next.value.model !== undefined) modelUsed = next.value.model;
         break;
       }
       if (next.value.sessionId !== undefined) sessionId = next.value.sessionId;
       // DEBUG-ONLY: this line logs raw model output (`text`) and may contain task content; it must
       // stay at debug level. Never log prompts or secrets, and never raise this to info.
       ctx.log.debug({ taskId: ctx.taskId, text: next.value.text }, 'agent turn');
+    }
+    // A gateway that predates the requested model can silently serve its own default instead of
+    // erroring (live case: Meridian 1.43.0's bundled SDK answered claude-fable-5 requests with
+    // claude-sonnet-4-6). Surface the swap loudly. Aliases ('opus', 'sonnet') legitimately resolve
+    // to versioned ids, so only exact full-id requests (claude-*) are checked.
+    if (input.model !== undefined && input.model.startsWith('claude-') && modelUsed !== undefined && modelUsed !== input.model) {
+      ctx.log.warn(
+        { taskId: ctx.taskId, requested: input.model, served: modelUsed },
+        'model mismatch — the provider/gateway served a different model than requested',
+      );
     }
     const completed = hasTerminationSignal(finalText);
 
@@ -262,7 +323,13 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     }
 
     const preserved = await ctx.wm.isDirty(ctx.worktreePath);
-    const exitReason: ExitReason = completed ? 'completed' : turns >= maxTurns ? 'maxTurns' : 'incomplete';
+    const exitReason: ExitReason = completed
+      ? 'completed'
+      : timeout.signal.aborted
+      ? 'timeout'
+      : turns >= maxTurns
+      ? 'maxTurns'
+      : 'incomplete';
 
     const durationMs = Date.now() - startedAt;
 
@@ -280,9 +347,10 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
       ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(transcript !== undefined ? { transcript } : {}),
+      ...(modelUsed !== undefined ? { model: modelUsed } : {}),
     };
     // Stage-complete logs ONLY the flat stageMetric (no finalText/diff/transcript/prompt/secrets).
-    ctx.log.info(stageMetric(result, input.stageName), 'stage complete');
+    ctx.log.info(stageMetric(result, input.stageName, input), 'stage complete');
     return result;
   } finally {
     clearTimeout(timer);

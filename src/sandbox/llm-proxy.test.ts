@@ -67,6 +67,20 @@ describe('startLlmProxy', () => {
     expect(d.calls.some((c) => c.args[0] === 'rm' && c.args.includes('-f'))).toBe(true);
   });
 
+  it('stands up an OpenRouter sidecar tagged UPSTREAM=openrouter with the real key only via stdin', async () => {
+    const d = fakeDocker();
+    await startLlmProxy({
+      network: 'vg-egr-x',
+      auth: { mode: 'api', secret: 'sk-real-openrouter' },
+      upstream: 'openrouter',
+      docker: d.run,
+    });
+    expect(d.calls.some((c) => c.input?.includes('UPSTREAM=openrouter'))).toBe(true);
+    expect(d.calls.some((c) => c.input?.includes('sk-real-openrouter'))).toBe(true);
+    const flat = d.calls.flatMap((c) => c.args).join(' ');
+    expect(flat).not.toContain('sk-real-openrouter');
+  });
+
   it('defaults the upstream to anthropic and tags UPSTREAM=anthropic', async () => {
     const d = fakeDocker();
     await startLlmProxy({

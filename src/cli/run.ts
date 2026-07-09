@@ -1,9 +1,11 @@
 import { runLinearIssue, runLinearParent } from '../runners/linear.js';
 import { runGithubIssue, runGithubProject, githubDepsFromEnv } from '../runners/github.js';
 import { runGitlabIssue, gitlabDepsFromEnv } from '../runners/gitlab.js';
+import type { RunIssueResult } from '../runners/source-adapter.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
+import { pickRunOptions } from '../runners/source-adapter.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -50,7 +52,7 @@ function requireAuth(cmd: RunCommand): AgentAuth | undefined {
   });
 }
 
-function linearDeps(
+export function linearDeps(
   cmd: RunCommand,
   auth: AgentAuth | undefined,
   proxyUrl: string | undefined,
@@ -74,14 +76,8 @@ function linearDeps(
     ...(network !== undefined ? { network } : {}),
     ...(llmProxy !== undefined ? { llmProxy } : {}),
     ...(cmd.reuse === true ? { reuse: true } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-    ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
-    ...(cmd.noSimplify === true ? { noSimplify: true } : {}),
-    ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.forkN !== undefined ? { forkN: cmd.forkN } : {}),
-    ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
-    ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
+    ...pickRunOptions(cmd),
   };
 }
 
@@ -95,7 +91,7 @@ async function runLinear(
   const deps = linearDeps(cmd, auth, proxyUrl, network, llmProxy);
   if (!cmd.parent) {
     const result = await runLinearIssue(cmd.id, deps);
-    report(result.task.id, result.prUrl);
+    report(result);
     return;
   }
   const { parent, outcomes } = await runLinearParent(cmd.id, deps, { concurrency: cmd.concurrency });
@@ -103,7 +99,7 @@ async function runLinear(
   reportFanOut(outcomes, parent.children.length);
 }
 
-async function runGithub(
+export async function runGithub(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,
@@ -114,19 +110,13 @@ async function runGithub(
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.reuse === true) deps.reuse = true;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  Object.assign(deps, pickRunOptions(cmd));
   const result = await runGithubIssue(cmd.id, deps);
-  report(result.task.id, result.prUrl);
+  report(result);
 }
 
-async function runGitlab(
+export async function runGitlab(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,
@@ -142,18 +132,13 @@ async function runGitlab(
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
   if (cmd.reuse === true) deps.reuse = true;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
+  Object.assign(deps, pickRunOptions(cmd));
   const result = await runGitlabIssue(cmd.id, deps);
-  report(result.task.id, result.prUrl);
+  report(result);
 }
 
-async function runProject(
+export async function runProject(
   cmd: RunCommand,
   proxyUrl: string | undefined,
   network: string | undefined,
@@ -164,14 +149,8 @@ async function runProject(
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
-  if (cmd.provider !== undefined) deps.provider = cmd.provider;
-  if (cmd.reviewProvider !== undefined) deps.reviewProvider = cmd.reviewProvider;
-  if (cmd.providerModel !== undefined) deps.providerModel = cmd.providerModel;
-  if (cmd.noSimplify === true) deps.noSimplify = true;
-  if (cmd.reviewModel !== undefined) deps.reviewModel = cmd.reviewModel;
   if (cmd.forkN !== undefined) deps.forkN = cmd.forkN;
-  if (cmd.verifyCmd !== undefined) deps.verifyCmd = cmd.verifyCmd;
-  if (cmd.visualProofCmd !== undefined) deps.visualProofCmd = cmd.visualProofCmd;
+  Object.assign(deps, pickRunOptions(cmd));
   const { tasks, outcomes } = await runGithubProject(deps, {
     projectNumber,
     concurrency: cmd.concurrency,
@@ -181,12 +160,21 @@ async function runProject(
   reportFanOut(outcomes, tasks.length);
 }
 
-function report(id: string, prUrl: string | undefined): void {
-  console.log(prUrl !== undefined ? `PR for review: ${prUrl} (linked back onto ${id})` : `No changes — no PR for ${id}.`);
+function report(result: RunIssueResult): void {
+  const { id } = result.task;
+  if (result.prUrl !== undefined) {
+    console.log(`PR for review: ${result.prUrl} (linked back onto ${id})`);
+    return;
+  }
+  console.log(
+    result.secretBlocked === true
+      ? `Secret scan blocked publish — no PR for ${id} (masked findings printed above).`
+      : `No changes — no PR for ${id}.`,
+  );
 }
 
 /** Print a fan-out summary (one line per task + totals). Shared by --parent and --project. */
-function reportFanOut<I extends { id: string }, T extends { prUrl?: string }>(
+function reportFanOut<I extends { id: string }, T extends { prUrl?: string; secretBlocked?: boolean }>(
   outcomes: ReadonlyArray<FanOutOutcome<I, T>>,
   total: number,
 ): void {
@@ -195,7 +183,10 @@ function reportFanOut<I extends { id: string }, T extends { prUrl?: string }>(
   for (const outcome of outcomes) {
     if (outcome.status === 'fulfilled') {
       if (outcome.value.prUrl !== undefined) opened += 1;
-      console.log(`  ${outcome.item.id}: ${outcome.value.prUrl ?? 'no changes (no PR)'}`);
+      const status =
+        outcome.value.prUrl ??
+        (outcome.value.secretBlocked === true ? 'secret scan blocked (no PR)' : 'no changes (no PR)');
+      console.log(`  ${outcome.item.id}: ${status}`);
     } else {
       failed += 1;
       console.log(`  ${outcome.item.id}: FAILED — ${String(outcome.reason)}`);

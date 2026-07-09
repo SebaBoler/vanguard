@@ -15,6 +15,7 @@ describe('makeProvider', () => {
     expect(makeProvider('codex').name).toBe('codex');
     expect(makeProvider('cursor').name).toBe('cursor');
     expect(makeProvider('zai').name).toBe('zai');
+    expect(makeProvider('openrouter').name).toBe('openrouter');
   });
 });
 
@@ -146,6 +147,56 @@ describe('providerSecrets (zai)', () => {
   });
 });
 
+describe('providerSecrets (openrouter)', () => {
+  it('injects ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN in normal mode', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['openrouter'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'or-key' },
+      proxySecrets: {},
+    });
+  });
+
+  it('withholds the OpenRouter key from the sandbox in proxy mode', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets, proxySecrets } = providerSecrets(['openrouter'], env, { proxyMode: true });
+    expect(sandboxSecrets).toEqual({});
+    expect(proxySecrets).toEqual({});
+  });
+
+  it('throws when OPENROUTER_API_KEY is missing', () => {
+    expect(() => providerSecrets(['openrouter'], {})).toThrow(/OPENROUTER_API_KEY/);
+  });
+});
+
+describe('providerSecrets (meridian)', () => {
+  it('injects the operator base URL + a placeholder token in normal mode', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['meridian'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'http://192.168.1.10:3456', ANTHROPIC_AUTH_TOKEN: 'meridian' },
+      proxySecrets: {},
+    });
+  });
+
+  it('withholds the base URL from the sandbox in proxy mode (owns the primary transport)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    const { sandboxSecrets, proxySecrets } = providerSecrets(['meridian'], env, { proxyMode: true });
+    expect(sandboxSecrets).toEqual({});
+    expect(proxySecrets).toEqual({});
+  });
+
+  it('throws when MERIDIAN_BASE_URL is missing', () => {
+    expect(() => providerSecrets(['meridian'], {})).toThrow(/MERIDIAN_BASE_URL/);
+  });
+
+  it('overrides the placeholder token with MERIDIAN_API_KEY when set (keyed proxy)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3000', MERIDIAN_API_KEY: 'real-key' } as NodeJS.ProcessEnv;
+    expect(providerSecrets(['meridian'], env)).toEqual({
+      sandboxSecrets: { ANTHROPIC_BASE_URL: 'http://192.168.1.10:3000', ANTHROPIC_AUTH_TOKEN: 'real-key' },
+      proxySecrets: {},
+    });
+  });
+});
+
 describe('selectAgents', () => {
   it('routes codex secrets to the sandbox in normal mode', () => {
     const env = { CODEX_API_KEY: 'c-key' } as NodeJS.ProcessEnv;
@@ -181,6 +232,30 @@ describe('selectAgents', () => {
     expect(selected.injectAnthropicAuth).toBe(false);
   });
 
+  it('keeps the OpenRouter key out of the sandbox in proxy mode (delivered to the primary sidecar via auth)', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'openrouter' }, env, { proxyMode: true });
+    expect(selected.secrets).toEqual({});
+    expect(selected.proxySecrets).toEqual({});
+    expect(selected.injectAnthropicAuth).toBe(false);
+  });
+
+  it('injects Meridian transport secrets and suppresses Anthropic auth', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'meridian' }, env);
+    expect(selected.secrets).toEqual({
+      ANTHROPIC_BASE_URL: 'http://192.168.1.10:3456',
+      ANTHROPIC_AUTH_TOKEN: 'meridian',
+    });
+    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.proxySecrets).toEqual({});
+  });
+
+  it('rejects meridian under --llm-proxy (direct-mode only)', () => {
+    const env = { MERIDIAN_BASE_URL: 'http://192.168.1.10:3456' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'meridian' }, env, { proxyMode: true })).toThrow(/direct-mode only/);
+  });
+
   it('suppresses Anthropic auth when zai is only the REVIEWER (codex implements)', () => {
     const env = { CODEX_API_KEY: 'c-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
@@ -210,6 +285,16 @@ describe('selectAgents', () => {
     );
     // default provider is claude, so an unspecified implementer + zai reviewer also collides
     expect(() => selectAgents({ reviewProvider: 'zai' }, env)).toThrow(/cannot mix "claude" and "zai"/);
+  });
+
+  it('rejects mixing openrouter with other anthropic-transport providers', () => {
+    const env = { OPENROUTER_API_KEY: 'or-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
+    expect(() => selectAgents({ provider: 'claude', reviewProvider: 'openrouter' }, env)).toThrow(
+      /cannot mix "claude" and "openrouter"/,
+    );
+    expect(() => selectAgents({ provider: 'zai', reviewProvider: 'openrouter' }, env)).toThrow(
+      /cannot mix "openrouter" and "zai"/,
+    );
   });
 
   it('rejects zai as reviewer-only under --llm-proxy (no primary sidecar; would misroute to Anthropic)', () => {

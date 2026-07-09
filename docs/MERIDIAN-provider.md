@@ -1,0 +1,92 @@
+# Provider note — `meridian`
+
+Adds **`--provider meridian`**. Additive — `claude`/`codex`/`cursor`/`zai`/`openrouter` are unchanged.
+
+Meridian (<https://github.com/rynfar/meridian>) is a self-hosted, Anthropic-Messages-compatible proxy
+that bridges to the Claude Code SDK. Run it on one host (e.g. a NAS) that holds the `claude login`
+session; every other machine points Vanguard at it and shares the Claude Max subscription **without the
+token ever living locally**. Useful when the factory (CLI + Docker sandboxes) must run where the target
+files are, but the subscription auth and the outbound Anthropic traffic should originate elsewhere.
+
+## What's new
+
+- **`--provider meridian` / `--review-provider meridian`** on `run` and `watch`. Set
+  `MERIDIAN_BASE_URL` to your Meridian address (e.g. `http://192.168.1.10:3456`). The base URL flows
+  through the transport as `ANTHROPIC_BASE_URL`; the CLI's required `ANTHROPIC_AUTH_TOKEN` is a
+  placeholder — a vanilla Meridian authenticates on its own host and ignores it. No local Anthropic
+  token needed. A missing `MERIDIAN_BASE_URL` fails fast at dispatch, not mid-run.
+- **`MERIDIAN_API_KEY`** (optional). If your endpoint is a **keyed** Anthropic-compatible proxy that
+  validates a Bearer token (it returns `401 Invalid or missing API key` to the placeholder), set
+  `MERIDIAN_API_KEY` to the real key and it replaces the placeholder `ANTHROPIC_AUTH_TOKEN`. Verify with:
+
+  ```bash
+  curl -sS -i "$MERIDIAN_BASE_URL/v1/messages" \
+    -H "content-type: application/json" -H "authorization: Bearer $MERIDIAN_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -d '{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
+  ```
+
+  A `200` with a JSON completion means the run will authenticate; a `401`/`404` means the key or the
+  endpoint's protocol is wrong (a `/v1/messages` 404 means it speaks OpenAI, not Anthropic).
+- Because Meridian relays real Claude via the SDK, **no model is forced**: the CLI default (or
+  `--provider-model`) passes straight through. The default plan→implement→review pipeline keeps its
+  per-stage models (planner `opus`, implementer/reviewer `sonnet`).
+- **Library exports:** `MeridianProvider`, `MERIDIAN_PLACEHOLDER_TOKEN`.
+
+## New constraint (rejected at dispatch with a clear message)
+
+- **`meridian` cannot run under `--llm-proxy`** (`directOnly`): it owns the Anthropic transport but
+  exposes no upstream a trusted sidecar could target (it carries only a base URL and authenticates on
+  its own host), so `--llm-proxy` would fall the sidecar back to `api.anthropic.com`. Run it in direct
+  mode. Under `--egress`, add the Meridian host to the egress allowlist (`src/sandbox/egress-allow.mjs`)
+  — it is not a default-allowed domain.
+
+## Setup
+
+On the Meridian host (once):
+
+```bash
+npm install -g @rynfar/meridian
+claude login
+meridian --host 0.0.0.0        # bind 0.0.0.0, not 127.0.0.1, so other machines can reach it
+```
+
+The listen port is arbitrary (default `3456`). Use any port, or put Meridian behind a reverse proxy on
+`80`/`443` — Vanguard only cares about the value of `MERIDIAN_BASE_URL`.
+
+On the Vanguard host:
+
+```bash
+export MERIDIAN_BASE_URL=http://<meridian-host>:3456
+vanguard run --provider meridian --repo <path> ...
+```
+
+### Split models across providers
+
+The default pipeline already plans with `opus` and implements with `sonnet`. To review with Codex:
+
+```bash
+export MERIDIAN_BASE_URL=http://<meridian-host>:3456
+export CODEX_AUTH_JSON='<contents of ~/.codex/auth.json>'   # Codex has its own auth (ChatGPT Plus)
+vanguard run --provider meridian --review-provider codex --repo <path> ...
+```
+
+Do **not** pass `--provider-model` here — it overrides the model on every stage and would flatten the
+planner off `opus`. Leave it unset to keep the opus-plan / sonnet-implement default.
+
+> **Cross-provider review keeps its own credential local.** Meridian only bridges the Claude/Anthropic
+> path — it does **not** proxy Codex. A `--review-provider codex` reviewer runs its CLI in the sandbox
+> on the Vanguard host and talks to OpenAI directly, so `CODEX_AUTH_JSON` (or `CODEX_API_KEY`) must be
+> set on that host and its egress leaves from there. If the goal is to keep the machine fully clean
+> (no local credentials at all), review with Claude instead — e.g. bump the reviewer with
+> `--review-model opus` and drop `--review-provider`, so every stage runs through Meridian:
+>
+> ```bash
+> export MERIDIAN_BASE_URL=http://<meridian-host>:3456
+> vanguard run --provider meridian --review-model opus --repo <path> ...
+> ```
+
+## Backwards compatibility
+
+No breaking changes. Every existing provider path is byte-identical — `meridian` is one more entry in
+the data-driven `PROVIDERS` table. No env var or flag was removed or renamed.

@@ -1,5 +1,7 @@
 import { runAgent } from '../core/vanguard.js';
+import { roundUsd } from './budget.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
+import { makeFrozenRun } from './pipeline.js';
 import type { PipelineStage, PipelineResult, StageOutcome } from './pipeline.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { Judge } from '../evals/types.js';
@@ -16,6 +18,13 @@ export interface JudgedRepairOptions {
   /** Consecutive rejects before escalating to a human. Default 3. */
   maxRejects?: number;
   signal?: AbortSignal;
+  /**
+   * Total budget for the generate + all repair attempts combined. When the accumulated spend
+   * reaches this limit before the judge passes, the loop freezes with budget_exceeded and the
+   * outcomes so far. Default: Number.POSITIVE_INFINITY (no cap, current behavior — the loop
+   * terminates only on verdict.passed or maxRejects).
+   */
+  maxCostUsd?: number;
 }
 
 function toStageInput(
@@ -24,6 +33,7 @@ function toStageInput(
   variables: Record<string, string>,
   signal: AbortSignal | undefined,
   resumeSessionId: string | undefined,
+  maxBudgetUsd?: number,
 ): StageInput {
   return {
     promptTemplate: stage.promptTemplate,
@@ -33,8 +43,10 @@ function toStageInput(
     ...(stage.maxTurns !== undefined ? { maxTurns: stage.maxTurns } : {}),
     ...(stage.model !== undefined ? { model: stage.model } : {}),
     ...(stage.systemPrompt !== undefined ? { systemPrompt: stage.systemPrompt } : {}),
+    ...(stage.timeoutMs !== undefined ? { timeoutMs: stage.timeoutMs } : {}),
     ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
     ...(signal !== undefined ? { signal } : {}),
+    ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
   };
 }
 
@@ -45,13 +57,18 @@ function toStageInput(
  */
 export async function runJudgedRepair(ctx: RunContext, opts: JudgedRepairOptions): Promise<PipelineResult> {
   const maxRejects = opts.maxRejects ?? 3;
+  const maxCostUsd = opts.maxCostUsd ?? Number.POSITIVE_INFINITY;
   const baseVariables = opts.variables ?? {};
   const outcomes: StageOutcome[] = [];
 
-  let result = await runAgent(ctx, toStageInput(opts.generate, opts.agent, baseVariables, opts.signal, undefined));
+  const generateBudget = maxCostUsd < Number.POSITIVE_INFINITY ? maxCostUsd : undefined;
+  let result = await runAgent(
+    ctx,
+    toStageInput(opts.generate, opts.agent, baseVariables, opts.signal, undefined, generateBudget),
+  );
   outcomes.push({ name: opts.generate.name, result });
   let sessionId = result.sessionId;
-  let spentUsd = result.costUsd ?? 0;
+  let spentUsd = roundUsd(result.costUsd ?? 0);
   let rejects = 0;
 
   for (;;) {
@@ -64,16 +81,10 @@ export async function runJudgedRepair(ctx: RunContext, opts: JudgedRepairOptions
     }
     rejects += 1;
     if (rejects >= maxRejects) {
-      return {
-        status: 'frozen',
-        reason: 'needs_human',
-        taskId: ctx.taskId,
-        worktreePath: ctx.worktreePath,
-        branch: ctx.branch,
-        shellCommand: ctx.sandbox.shellCommand(),
-        spentUsd,
-        outcomes,
-      };
+      return makeFrozenRun(ctx, 'needs_human', spentUsd, outcomes);
+    }
+    if (spentUsd >= maxCostUsd) {
+      return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     const variables: Record<string, string> = {
       ...baseVariables,
@@ -81,9 +92,13 @@ export async function runJudgedRepair(ctx: RunContext, opts: JudgedRepairOptions
       PREVIOUS_DIFF: result.diff ?? '',
       PREVIOUS_FINAL: result.finalText,
     };
-    result = await runAgent(ctx, toStageInput(opts.repair, opts.agent, variables, opts.signal, sessionId));
+    const repairBudget = maxCostUsd < Number.POSITIVE_INFINITY ? roundUsd(maxCostUsd - spentUsd) : undefined;
+    result = await runAgent(
+      ctx,
+      toStageInput(opts.repair, opts.agent, variables, opts.signal, sessionId, repairBudget),
+    );
     outcomes.push({ name: `${opts.repair.name}#${rejects}`, result });
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    spentUsd += result.costUsd ?? 0;
+    spentUsd = roundUsd(spentUsd + (result.costUsd ?? 0));
   }
 }

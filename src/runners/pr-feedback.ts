@@ -1,5 +1,6 @@
 import { hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
+import { escapePromptTags } from '../context/escape.js';
 import type { PullRequestReviewTarget } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -78,6 +79,7 @@ interface GqlThread {
 }
 
 interface GqlResponse {
+  errors?: Array<{ message?: string }>;
   data?: {
     repository?: {
       pullRequest?: {
@@ -115,6 +117,10 @@ export async function fetchPullRequestFeedback(
   ]);
 
   const response = JSON.parse(out) as GqlResponse;
+  if (response.errors != null) {
+    const msgs = response.errors.map((e) => e.message ?? 'unknown error').join('; ');
+    throw new Error(`GraphQL error for ${target.repoSlug}#${target.number}: ${msgs}`);
+  }
   const pr = response.data?.repository?.pullRequest;
 
   const headRefOid = pr?.headRefOid ?? '';
@@ -223,14 +229,17 @@ export function buildRevisionPrompt(
     actionable.length === 0
       ? '(no actionable feedback)'
       : actionable
-          .map((item, i) => `${i + 1}. [${SOURCE_LABEL[item.source]}] @${item.author}:\n${item.body.trim()}`)
+          .map(
+            (item, i) =>
+              `${i + 1}. [${SOURCE_LABEL[item.source]}] @${item.author}:\n${escapePromptTags(item.body.trim())}`,
+          )
           .join('\n\n');
 
   return [
     '<task_instructions>',
     `PR: ${pr.repoSlug}#${pr.number}`,
     `Head SHA: ${pr.headRefOid}`,
-    `Title: ${pr.title}`,
+    `Title: ${escapePromptTags(pr.title)}`,
     '',
     'Human review feedback to address:',
     feedbackSection,
@@ -271,29 +280,38 @@ export async function replyAndResolveThread(
   await gh(['api', 'graphql', '-f', `query=${RESOLVE_MUTATION}`, '-F', `threadId=${threadId}`]);
 }
 
-const REVISION_MARKER_PRESENT_RE = /<!--\s*vanguard-revision:/;
-const REVISION_MARKER_RE = /<!--\s*vanguard-revision:\s*([^>\s]+)\s*-->/g;
+// Match both the default (`vanguard-revision:`) and the white-label (`revision:`) marker so
+// round-counting / non-recursion work identically whether or not --commit-author was passed.
+const REVISION_MARKER_PRESENT_RE = /<!--\s*(?:vanguard-)?revision:/;
+const REVISION_MARKER_RE = /<!--\s*(?:vanguard-)?revision:\s*([^>\s]+)\s*-->/g;
 
 function hasRevisionMarker(body: string): boolean {
   return REVISION_MARKER_PRESENT_RE.test(body);
 }
 
 /** Count how many revision rounds Vanguard has already completed on this PR. */
-export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
-  const out = await gh(['pr', 'view', String(target.number), '--repo', target.repoSlug, '--json', 'comments,reviews']);
-  const view = JSON.parse(out) as { comments?: Array<{ body?: string }>; reviews?: Array<{ body?: string }> };
-  const bodies = [...(view.comments ?? []), ...(view.reviews ?? [])].map((e) => e.body ?? '');
+export function countRevisionRoundsFromFeedback(fb: PullRequestFeedback): number {
   const rounds = new Set<string>();
-  for (const body of bodies) {
-    for (const match of body.matchAll(REVISION_MARKER_RE)) {
+  for (const item of fb.items) {
+    for (const match of item.body.matchAll(REVISION_MARKER_RE)) {
       if (match[1] !== undefined) rounds.add(match[1]);
     }
   }
   return rounds.size;
 }
 
-/** Marker embedded in revision replies for round-counting and non-recursion. */
-export const revisionMarker = (headRefOid: string): string => `<!-- vanguard-revision: ${headRefOid} -->`;
+/** Count how many revision rounds Vanguard has already completed on this PR. */
+export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
+  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback(target, gh));
+}
+
+/**
+ * Marker embedded in revision replies for round-counting and non-recursion. White-label drops the
+ * "vanguard" token from the visible source of a client-repo comment; both forms are recognised by
+ * REVISION_MARKER_RE, so dedup/round-counting are unaffected.
+ */
+export const revisionMarker = (headRefOid: string, whiteLabel = false): string =>
+  whiteLabel ? `<!-- revision: ${headRefOid} -->` : `<!-- vanguard-revision: ${headRefOid} -->`;
 
 const REFERENCE_KIND: Record<FeedbackItem['source'], string> = {
   review: 'review',
@@ -321,9 +339,10 @@ export function buildItemReply(
   point: string,
   commitSha: string,
   headRefOid: string,
+  whiteLabel = false,
 ): string {
   const detail = point.trim() !== '' ? `: ${point.trim()}` : '.';
-  return [referenceSnippet(item), '', `Addressed in commit ${commitSha}${detail}`, '', revisionMarker(headRefOid)].join('\n');
+  return [referenceSnippet(item), '', `Addressed in commit ${commitSha}${detail}`, '', revisionMarker(headRefOid, whiteLabel)].join('\n');
 }
 
 export interface RevisionSummaryInput {
@@ -334,6 +353,8 @@ export interface RevisionSummaryInput {
   addressed: Array<{ item: FeedbackItem; point: string }>;
   deferred: Array<{ item: FeedbackItem; reason: string }>;
   verification: { typecheck: 'pass' | 'fail' | 'unknown'; test: 'pass' | 'fail' | 'unknown' };
+  /** When true, use the neutral (no-"vanguard") revision marker. */
+  whiteLabel?: boolean;
 }
 
 /** Build the single wrap-up summary comment posted at the end of a revision round. */
@@ -372,9 +393,48 @@ export function buildRevisionSummary(input: RevisionSummaryInput): string {
     `- Typecheck: ${input.verification.typecheck}`,
     `- Tests: ${input.verification.test}`,
     '',
-    revisionMarker(input.headRefOid),
+    revisionMarker(input.headRefOid, input.whiteLabel === true),
   );
 
+  return lines.join('\n');
+}
+
+export interface RevisionDryRunInput {
+  repoSlug: string;
+  number: number;
+  headRefName: string;
+  diff: string;
+  items: Array<{ item: FeedbackItem; point: string }>;
+  verification: { typecheck: 'pass' | 'fail' | 'unknown'; test: 'pass' | 'fail' | 'unknown' };
+}
+
+/**
+ * Render the `revise-pr --out` dry-run preview: the diff the revision would push, plus the reply it
+ * would post to each addressed thread/comment — nothing is pushed or commented. Deliberately brand-free
+ * and marker-free (this is a local operator artifact, not a PR post), so it's safe on a client machine.
+ */
+export function buildRevisionDryRun(input: RevisionDryRunInput): string {
+  const lines: string[] = [
+    `# revise-pr dry-run — ${input.repoSlug}#${input.number}`,
+    '',
+    'Nothing was pushed or commented. Review the code changes and the proposed replies below, then re-run',
+    'without --out (add --commit-author on a client repo) to apply them.',
+    '',
+    `## Code changes (would be committed and pushed to ${input.headRefName})`,
+    '',
+    input.diff.trim() === '' ? '(no changes)' : ['```diff', input.diff.trimEnd(), '```'].join('\n'),
+    '',
+    '## Proposed replies (one per addressed thread/comment)',
+    '',
+  ];
+  if (input.items.length === 0) {
+    lines.push('(none)');
+  } else {
+    for (const { item, point } of input.items) {
+      lines.push(`### ${referenceSnippet(item)}`, '', point.trim() === '' ? 'Addressed.' : `Addressed: ${point.trim()}`, '');
+    }
+  }
+  lines.push('## Verification', '', `- Typecheck: ${input.verification.typecheck}`, `- Tests: ${input.verification.test}`);
   return lines.join('\n');
 }
 

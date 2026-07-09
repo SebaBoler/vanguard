@@ -9,11 +9,13 @@ import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
 import { reviewPrCommand } from './review-pr.js';
 import { researchCommand } from './research.js';
+import { specCommand } from './spec.js';
 import { revisePrCommand } from './revise-pr.js';
 import { watchPrsCommand } from './watch-prs.js';
 import { reviewMrCommand } from './review-mr.js';
 import { watchMrsCommand } from './watch-mrs.js';
 import { doctorMrsCommand } from './doctor-mrs.js';
+import { evalCommand } from './eval.js';
 
 async function main(): Promise<void> {
   const command = parseCli(process.argv.slice(2), process.cwd());
@@ -50,6 +52,10 @@ async function main(): Promise<void> {
     await researchCommand(command);
     return;
   }
+  if (command.kind === 'spec') {
+    await specCommand(command);
+    return;
+  }
   if (command.kind === 'revise-pr') {
     await revisePrCommand(command);
     return;
@@ -68,6 +74,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'doctor-mrs') {
     await doctorMrsCommand(command);
+    return;
+  }
+  if (command.kind === 'eval') {
+    await evalCommand(command);
     return;
   }
   if (command.kind === 'stats') {

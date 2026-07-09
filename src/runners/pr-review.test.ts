@@ -115,6 +115,19 @@ describe('reviewPullRequest', () => {
     expect(logs).toContain('review-pr o/r#12: posted -> pr review');
   });
 
+  it('publish:false fetches + reviews but posts NOTHING to the PR, still returning commentBody', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'Looks good.', completed: true });
+    const logs: string[] = [];
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, publish: false, log: (l) => logs.push(l) });
+
+    expect(calls.some((a) => a[0] === 'pr' && a[1] === 'view')).toBe(true); // still fetched
+    expect(calls.some((a) => a[0] === 'pr' && a[1] === 'review')).toBe(false); // never posted
+    expect(result.commentBody).toContain('Looks good.');
+    expect(logs).not.toContain('review-pr o/r#12: posted -> pr review');
+  });
+
   it('accepts the legacy string reviewer result as completed', async () => {
     const { gh } = makeGh();
     const reviewer = vi.fn().mockResolvedValue('Legacy review text.\n<promise>COMPLETE</promise>');
