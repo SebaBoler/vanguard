@@ -90,6 +90,16 @@ export function Settings({ project }: { project: string }) {
             />
           </Field>
         </div>
+        {cfg.source === 'linear' && (
+          <Field label="Linear team key" hint="— selects the board's team (e.g. DEV)">
+            <Input
+              value={cfg.team ?? ''}
+              onChange={(e) => set('team', e.target.value.toUpperCase() || undefined)}
+              className="w-full"
+              placeholder="DEV"
+            />
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-4">
           <Field label="provider">
             <Select value={cfg.provider ?? ''} onChange={(v) => set('provider', v || undefined)} options={PROVIDERS} />

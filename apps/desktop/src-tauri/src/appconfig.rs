@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub source: Option<String>, // github | gitlab | linear
     pub label: Option<String>,
+    /// Linear team key (e.g. `DEV`) — selects which team's issues the board lists. Linear-only;
+    /// GitHub/GitLab scope by repo + `label`.
+    pub team: Option<String>,
     pub provider: Option<String>,
     pub review_provider: Option<String>,
     pub verify_cmd: Option<String>,

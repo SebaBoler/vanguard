@@ -1,7 +1,8 @@
 import { Button, Card, Chip } from 'chunks-ui';
 import { ArrowLeft, Play } from 'lucide-react';
-import { SpecPane } from '../inspector/SpecPane';
 import type { RunSummary } from '../../vanguard-output';
+import { SpecPane } from '../inspector/SpecPane';
+import { taskRefKey } from './taskref';
 
 export function TaskDetail({
   project,
@@ -16,7 +17,10 @@ export function TaskDetail({
   onBack: () => void;
   onNewRun: () => void;
 }) {
-  const history = runs.filter((r) => r.taskId === taskId);
+  // Board ids are minted bare (gh-904); run records may carry a repo slug (gh-owner-repo-904).
+  // Match on the normalized source-ref key so history isn't silently empty.
+  const key = taskRefKey(taskId);
+  const history = runs.filter((r) => taskRefKey(r.taskId) === key);
 
   return (
     <div className="space-y-4">

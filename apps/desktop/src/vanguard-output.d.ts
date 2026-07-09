@@ -58,6 +58,7 @@ export interface Task {
 export interface AppConfig {
   source?: string;
   label?: string;
+  team?: string;
   provider?: string;
   reviewProvider?: string;
   verifyCmd?: string;
