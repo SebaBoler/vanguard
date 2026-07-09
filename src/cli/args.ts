@@ -16,6 +16,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
+      out?: string;
     }
   | {
       kind: 'research';
@@ -487,6 +489,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
 
@@ -969,6 +972,7 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
   research options:
