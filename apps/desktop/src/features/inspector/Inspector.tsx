@@ -25,6 +25,7 @@ import { TaskDetail } from '../board/TaskDetail';
 import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
+import { useAppConfig } from '../../hooks';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
 const DEFAULT_CMD = 'vanguard run --github <issue> --provider zai --llm-proxy';
@@ -47,6 +48,7 @@ export function Inspector({
   const [detail, setDetail] = useState<RunDetailT | null>(null);
   const [liveRun, setLiveRun] = useState<ActiveRun | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cfg] = useAppConfig(project);
   const [loading, setLoading] = useState(false);
   const [watching, setWatching] = useState(false);
   const [tick, setTick] = useState(0);
@@ -238,7 +240,7 @@ export function Inspector({
         </div>
       ) : liveRun ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <LiveRun active={liveRun} refreshKey={tick} />
+          <LiveRun active={liveRun} refreshKey={tick} budgetUsd={cfg.budgetUsd} />
         </div>
       ) : taskDetailId ? (
         // taskDetailId only fires from the board (full-bleed frame) — re-cap width so this reading
