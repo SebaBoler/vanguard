@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Button } from 'chunks-ui';
+import { Button } from '@/ui';
 import { parseAgentStream } from './parseStream';
 import { StreamView } from './StreamView';
 

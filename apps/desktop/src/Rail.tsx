@@ -10,7 +10,7 @@ import {
   PanelLeft,
   type LucideIcon,
 } from 'lucide-react';
-import { Collapsible, Tooltip, cn } from 'chunks-ui';
+import { Collapsible, Tooltip, cn } from '@/ui';
 import type { Project, ActiveRun } from './vanguard-output';
 import { relTime } from './time';
 import { RailTip } from './RailTip';

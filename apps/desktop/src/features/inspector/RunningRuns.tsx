@@ -1,4 +1,4 @@
-import { Card, Chip } from 'chunks-ui';
+import { Card, Chip } from '@/ui';
 import type { ActiveRun } from '../../vanguard-output';
 
 function ago(ms: number): string {

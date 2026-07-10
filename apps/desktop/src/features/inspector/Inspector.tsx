@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Chip, cn } from 'chunks-ui';
+import { Button, Chip, cn } from '@/ui';
 import { listen } from '@tauri-apps/api/event';
 import { Play, RefreshCw } from 'lucide-react';
 import {

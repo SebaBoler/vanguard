@@ -1,4 +1,4 @@
-import { Button, Card, Chip, Empty } from 'chunks-ui';
+import { Button, Card, Chip, Empty } from '@/ui';
 import { FolderPlus, LayoutGrid, X } from 'lucide-react';
 import { projectColor } from '../../color';
 import { relTime } from '../../time';

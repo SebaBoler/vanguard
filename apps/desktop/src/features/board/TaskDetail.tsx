@@ -1,4 +1,4 @@
-import { Button, Card, Chip } from 'chunks-ui';
+import { Button, Card, Chip } from '@/ui';
 import { ArrowLeft, Play } from 'lucide-react';
 import type { RunSummary } from '../../vanguard-output';
 import { SpecPane } from '../inspector/SpecPane';

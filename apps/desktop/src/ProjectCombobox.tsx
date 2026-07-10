@@ -1,4 +1,4 @@
-import { Combobox } from 'chunks-ui';
+import { Combobox } from '@/ui';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { projectColor } from './color';
 import type { Project } from './vanguard-output';

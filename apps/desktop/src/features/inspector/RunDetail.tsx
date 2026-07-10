@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Tabs } from 'chunks-ui';
+import { Tabs } from '@/ui';
 import { ProofGate } from './ProofGate';
 import { StageCard } from './StageCard';
 import { DiffView } from './DiffView';

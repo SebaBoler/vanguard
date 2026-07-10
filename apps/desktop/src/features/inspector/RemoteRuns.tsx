@@ -1,7 +1,6 @@
-import { Table, Chip } from 'chunks-ui';
+import { Table, Chip, ScrollTable } from '@/ui';
 import { listRemoteRuns } from '../../ipc';
 import { useAsync } from '../../hooks';
-import { ScrollTable } from '../../components/ScrollTable';
 import type { RemoteRun } from '../../vanguard-output';
 
 function when(ts: string): string {

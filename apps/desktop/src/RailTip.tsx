@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react';
-import { Tooltip } from 'chunks-ui';
+import { Tooltip } from '@/ui';
 
 /** Collapsed the rail is icon-only, so a label survives as a right-side tooltip; expanded, the label is
  * visible and the trigger renders bare. One `render`-composed element serves both states. */
