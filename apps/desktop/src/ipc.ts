@@ -58,6 +58,19 @@ export function fetchSpec(repoPath: string, taskId: string): Promise<string> {
   return invoke<string>('fetch_spec', { repoPath, taskId });
 }
 
+export const SPAWN_OUTPUT_EVENT = 'spawn:output';
+export const SPAWN_EXIT_EVENT = 'spawn:exit';
+
+export interface SpawnInfo {
+  pid: number;
+  cwd: string;
+  command: string;
+}
+
+export function listSpawns(): Promise<SpawnInfo[]> {
+  return invoke<SpawnInfo[]>('list_spawns');
+}
+
 export function spawnRun(cwd: string, command: string): Promise<number> {
   return invoke<number>('spawn_run', { cwd, command });
 }
