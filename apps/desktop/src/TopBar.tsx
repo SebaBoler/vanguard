@@ -61,6 +61,14 @@ export function TopBar({
         </>
       )}
       <div className="ml-auto flex items-center gap-2">
+        {/* The cockpit re-polls projects + active runs every 5s — the indicator says that feed is live. */}
+        <span
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          title="Auto-refreshing every 5s"
+        >
+          <span className="size-2 animate-pulse rounded-full bg-success" />
+          live
+        </span>
         <button
           onClick={onCommandK}
           aria-label="Search / command palette"
