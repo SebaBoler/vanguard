@@ -3,6 +3,10 @@ import { listTasks } from '../../ipc';
 import { useAsync } from '../../hooks';
 
 const COLUMNS = ['queued', 'claimed', 'running', 'verify-failed', 'review', 'done'];
+// The backend fetches (gh/glab/linear) all page-cap at this many issues. When the board comes back
+// exactly full we can't tell "50 total" from "50+ truncated", so warn — cheaper than paginating.
+// ponytail: keep in sync with the -L/-P/first: 50 in tasks.rs; wire real pagination if boards grow.
+const FETCH_CAP = 50;
 
 function chipColor(col: string): 'primary' | 'destructive' | 'success' | 'warning' | 'secondary' {
   if (col === 'running' || col === 'done') return 'success';
@@ -24,8 +28,16 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
     );
   }
 
+  const capped = (tasks?.length ?? 0) >= FETCH_CAP;
+
   return (
-    <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-4">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {capped && (
+        <div className="mb-2 shrink-0 text-xs text-muted-foreground">
+          Showing the first {FETCH_CAP} tasks — narrow with a label filter in Settings to see the rest.
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-4">
       {COLUMNS.map((col) => {
         const items = (tasks ?? []).filter((t) => t.column === col);
         return (
@@ -50,6 +62,7 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

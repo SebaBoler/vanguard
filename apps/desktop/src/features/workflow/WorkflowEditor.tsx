@@ -32,20 +32,25 @@ function summary(key: BlockKey, c: AppConfig, project: string): string {
   }
 }
 
+/** Escape a value for an HCL double-quoted string so a `"` or `\` in config doesn't corrupt the view. */
+function hcl(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function toHcl(c: AppConfig, project: string): string {
   return [
     'workflow "vanguard" {',
-    `  repo   = "${project}"`,
-    `  source = "${c.source ?? ''}"`,
-    `  label  = "${c.label ?? ''}"`,
+    `  repo   = "${hcl(project)}"`,
+    `  source = "${hcl(c.source ?? '')}"`,
+    `  label  = "${hcl(c.label ?? '')}"`,
     '',
     '  run {',
-    `    provider        = "${c.provider ?? 'claude'}"`,
-    `    review_provider = "${c.reviewProvider ?? c.provider ?? 'claude'}"`,
+    `    provider        = "${hcl(c.provider ?? 'claude')}"`,
+    `    review_provider = "${hcl(c.reviewProvider ?? c.provider ?? 'claude')}"`,
     '  }',
     '',
     `  fleet  { concurrency = ${c.concurrency ?? 1} }`,
-    `  verify { command = "${c.verifyCmd ?? ''}" }`,
+    `  verify { command = "${hcl(c.verifyCmd ?? '')}" }`,
     `  budget { max_usd = ${c.budgetUsd ?? 0} }`,
     '}',
   ].join('\n');

@@ -20,17 +20,19 @@ pub struct Task {
 /// Best-effort mapping of a Task's state/labels to a board column, following Vanguard's real label
 /// vocabulary (`github-labels.ts` / `gitlab-labels.ts`): `vanguard:running`, `vanguard::verify-failed`,
 /// `vanguard:speccing`, `vanguard::secret-blocked`, plus Linear states (`Speccing`, `In Progress`, …).
-/// Order matters — the most specific terminal states are checked first.
+/// A terminal state wins first: a closed/merged/done issue whose active label was never cleared
+/// (`"vanguard:running closed"`) belongs in Done, not Running. `secret-blocked` is matched qualified so
+/// a generic dependency-`blocked` label doesn't get mistaken for a verify failure.
 fn column_for(text: &str) -> &'static str {
     let t = text.to_lowercase();
-    if t.contains("running") {
+    if t.contains("done") || t.contains("closed") || t.contains("merged") || t.contains("complete") {
+        "done"
+    } else if t.contains("running") {
         "running"
-    } else if t.contains("verify") || t.contains("failed") || t.contains("blocked") {
+    } else if t.contains("verify") || t.contains("failed") || t.contains("secret-blocked") {
         "verify-failed"
     } else if t.contains("review") || t.contains("needs-human") || t.contains("needs human") {
         "review"
-    } else if t.contains("done") || t.contains("closed") || t.contains("merged") || t.contains("complete") {
-        "done"
     } else if t.contains("spec")
         || t.contains("claim")
         || t.contains("in progress")
@@ -236,6 +238,10 @@ mod tests {
         assert_eq!(column_for("closed"), "done");
         assert_eq!(column_for("In Progress"), "claimed");
         assert_eq!(column_for("Todo"), "queued");
+        // A terminal state wins over a stale active label (closed issue, running label never cleared).
+        assert_eq!(column_for("vanguard:running closed"), "done");
+        // A generic dependency-`blocked` label is NOT a verify failure (only qualified secret-blocked is).
+        assert_eq!(column_for("blocked"), "queued");
     }
 
     #[test]
