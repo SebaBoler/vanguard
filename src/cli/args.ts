@@ -45,6 +45,8 @@ export type Command =
       provider?: ProviderName;
       /** Model for the tech-spec stage (e.g. a planner-tier model). */
       specModel?: string;
+      /** Branch the spec worktree is cut from — the "baseline" Fable researches against (default: main). */
+      baseBranch?: string;
       /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
       out?: string;
       /** White-label the spec comment (drop the "Vanguard" heading). Presence toggles it; the author value is unused (no commit). */
@@ -535,6 +537,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
@@ -1011,6 +1014,7 @@ Commands:
     --github <ref>          Issue ref (alternative to positional)
     --github-repo <o/r>     Required for bare issue numbers
     --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --base <branch>         Branch to research against — the "baseline" the spec is written from (default: main)
     --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
     --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)

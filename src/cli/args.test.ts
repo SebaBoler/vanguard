@@ -672,15 +672,21 @@ describe('parseCli', () => {
     expect(cmd.kind === 'research' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
   });
 
-  it('parses spec with --spec-model and --commit-author (white-label toggle)', () => {
+  it('parses spec with --spec-model, --base, and --commit-author (white-label toggle)', () => {
     const cmd = parseCli(
-      ['spec', 'o/r#1', '--spec-model', 'claude-fable-5', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
+      ['spec', 'o/r#1', '--spec-model', 'claude-fable-5', '--base', 'feat/allocation', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
       '/work',
     );
     expect(cmd.kind).toBe('spec');
     expect(cmd.kind === 'spec' && cmd.issueRef).toBe('o/r#1');
     expect(cmd.kind === 'spec' && cmd.specModel).toBe('claude-fable-5');
+    expect(cmd.kind === 'spec' && cmd.baseBranch).toBe('feat/allocation');
     expect(cmd.kind === 'spec' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+  });
+
+  it('omits spec baseBranch when --base is absent (defaults to main downstream)', () => {
+    const cmd = parseCli(['spec', 'o/r#1'], '/work');
+    expect(cmd.kind === 'spec' && cmd.baseBranch).toBeUndefined();
   });
 
   it('parses spec with a bare number and --github-repo, and returns help without a ref', () => {
