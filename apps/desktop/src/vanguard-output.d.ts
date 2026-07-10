@@ -46,6 +46,10 @@ export interface SessionRead {
   entries: TranscriptEntry[];
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  /** Live spend estimate in USD (priced per-message off each message's model; unknown models add
+   * nothing, so it's a lower bound — show as "~$"). */
+  estCostUsd: number;
 }
 
 export interface Task {
