@@ -17,27 +17,41 @@ pub struct Task {
     pub state: String,
 }
 
+/// True if `word` appears in `t` as a whole token (bounded by non-alphanumerics), not as a substring.
+/// Keeps `"incomplete"` out of `complete`, `"preview"` out of `review`, `"inspection"` out of `spec`.
+/// `t` is expected already lowercased; `word` must be lowercase. Hyphens/colons/spaces are boundaries,
+/// so `vanguard::verify-failed` yields the tokens `verify` and `failed`.
+fn has_word(t: &str, word: &str) -> bool {
+    t.split(|c: char| !c.is_ascii_alphanumeric()).any(|tok| tok == word)
+}
+
 /// Best-effort mapping of a Task's state/labels to a board column, following Vanguard's real label
 /// vocabulary (`github-labels.ts` / `gitlab-labels.ts`): `vanguard:running`, `vanguard::verify-failed`,
 /// `vanguard:speccing`, `vanguard::secret-blocked`, plus Linear states (`Speccing`, `In Progress`, …).
 /// A terminal state wins first: a closed/merged/done issue whose active label was never cleared
-/// (`"vanguard:running closed"`) belongs in Done, not Running. `secret-blocked` is matched qualified so
-/// a generic dependency-`blocked` label doesn't get mistaken for a verify failure.
+/// (`"vanguard:running closed"`) belongs in Done, not Running. Matching is on whole tokens (see
+/// `has_word`) so adjacent vocabulary (`incomplete`, `preview`, `inspection`) doesn't mis-bucket;
+/// `secret-blocked` stays a qualified `contains` so a generic dependency-`blocked` label is ignored.
 fn column_for(text: &str) -> &'static str {
     let t = text.to_lowercase();
-    if t.contains("done") || t.contains("closed") || t.contains("merged") || t.contains("complete") {
+    let w = |word: &str| has_word(&t, word);
+    if w("done") || w("closed") || w("merged") || w("complete") || w("completed") {
         "done"
-    } else if t.contains("running") {
+    } else if w("running") {
         "running"
-    } else if t.contains("verify") || t.contains("failed") || t.contains("secret-blocked") {
+    } else if w("verify") || w("failed") || t.contains("secret-blocked") {
         "verify-failed"
-    } else if t.contains("review") || t.contains("needs-human") || t.contains("needs human") {
+    } else if w("review") || w("reviewing") || w("reviewed") || t.contains("needs-human") || t.contains("needs human") {
+        // `reviewing`/`reviewed` are real GitLab MR labels (gitlab-labels.ts) — keep them in Review, as
+        // the old substring match did (whole-word `review` alone would miss them).
         "review"
-    } else if t.contains("spec")
-        || t.contains("claim")
+    } else if w("spec")
+        || w("speccing")
+        || w("claim")
+        || w("claimed")
+        || w("doing")
         || t.contains("in progress")
         || t.contains("in-progress")
-        || t.contains("doing")
     {
         "claimed"
     } else {
@@ -186,6 +200,8 @@ fn linear_graphql(token: &str, body: &serde_json::Value) -> Result<serde_json::V
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).build();
     let resp = agent
         .post("https://api.linear.app/graphql")
+        // No `Bearer` scheme: `linear auth login` mints a personal API key, which Linear authorizes as a
+        // bare token. If the CLI ever switches to OAuth this must become `Bearer <token>`.
         .set("Authorization", token)
         .set("Content-Type", "application/json")
         .send_string(&body_str)
@@ -198,26 +214,38 @@ fn linear_graphql(token: &str, body: &serde_json::Value) -> Result<serde_json::V
     Ok(v)
 }
 
-fn tasks_from_linear_graphql(v: &serde_json::Value) -> Vec<Task> {
-    v.pointer("/data/issues/nodes")
+/// Parse the Linear board response — but first confirm the configured team key actually resolved.
+/// Linear returns an empty `issues` set for a *wrong* key exactly as it would for a genuinely empty
+/// team, so without the `teams` probe a typo'd key looks like "0 issues" with no hint (and the
+/// FETCH_CAP banner can't fire either). Errors with an actionable message instead.
+fn parse_linear_board(v: &serde_json::Value, team: &str) -> Result<Vec<Task>, String> {
+    let team_resolved = v
+        .pointer("/data/teams/nodes")
+        .and_then(|n| n.as_array())
+        .is_some_and(|a| !a.is_empty());
+    if !team_resolved {
+        return Err(format!("No Linear team with key `{team}` — check the team key in Settings."));
+    }
+    Ok(v.pointer("/data/issues/nodes")
         .and_then(|n| n.as_array())
         .map(|arr| arr.iter().map(task_from_linear).collect())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// The schpet `linear` CLI (README §Linear) dropped a JSON issue *list* — `issue list` is human-only
 /// and truncates titles/labels. Go straight to Linear's GraphQL API for the board, reusing the CLI's
 /// stored token. Scoped to one team (a repo maps to a team, not a workspace); `issue view --json`
-/// still handles single-spec fetch in spec.rs.
+/// still handles single-spec fetch in spec.rs. The `teams` field validates the team key in the same
+/// round-trip (see `parse_linear_board`).
 fn list_linear(repo: &Path, team: Option<&str>) -> Result<Vec<Task>, String> {
     let team = team.ok_or("Set a Linear team key (e.g. DEV) in Settings to load the board.")?;
     let token = linear_token(repo)?;
     let body = serde_json::json!({
-        "query": "query($f: IssueFilter) { issues(first: 50, filter: $f) { nodes { identifier title state { name } labels { nodes { name } } } } }",
-        "variables": { "f": { "team": { "key": { "eq": team } } } }
+        "query": "query($tf: TeamFilter, $f: IssueFilter) { teams(filter: $tf) { nodes { id } } issues(first: 50, filter: $f) { nodes { identifier title state { name } labels { nodes { name } } } } }",
+        "variables": { "tf": { "key": { "eq": team } }, "f": { "team": { "key": { "eq": team } } } }
     });
     let v = linear_graphql(&token, &body)?;
-    Ok(tasks_from_linear_graphql(&v))
+    parse_linear_board(&v, team)
 }
 
 #[cfg(test)]
@@ -242,6 +270,23 @@ mod tests {
         assert_eq!(column_for("vanguard:running closed"), "done");
         // A generic dependency-`blocked` label is NOT a verify failure (only qualified secret-blocked is).
         assert_eq!(column_for("blocked"), "queued");
+        // Whole-token matching: adjacent vocabulary must NOT collide with a keyword substring.
+        assert_eq!(column_for("incomplete"), "queued"); // not `complete` → done
+        assert_eq!(column_for("preview"), "queued"); // not `review`
+        assert_eq!(column_for("inspection"), "queued"); // not `spec` → claimed
+        assert_eq!(column_for("In Review"), "review");
+        // Real GitLab MR review labels must stay in Review despite the whole-word switch.
+        assert_eq!(column_for("vanguard::reviewing"), "review");
+        assert_eq!(column_for("vanguard::reviewed"), "review");
+        assert_eq!(column_for("completed"), "done");
+    }
+
+    #[test]
+    fn linear_board_errors_on_unresolved_team() {
+        // Empty teams node → the configured key matched nothing → actionable error, not a silent empty board.
+        let resp = serde_json::json!({ "data": { "teams": { "nodes": [] }, "issues": { "nodes": [] } } });
+        let err = parse_linear_board(&resp, "NOPE").unwrap_err();
+        assert!(err.contains("No Linear team with key `NOPE`"), "{err}");
     }
 
     #[test]
@@ -299,14 +344,17 @@ mod tests {
 
     #[test]
     fn linear_graphql_parses_nodes() {
-        // Shape returned by the Linear GraphQL API (data.issues.nodes[]).
+        // Shape returned by the Linear GraphQL API (data.teams + data.issues.nodes[]).
         let resp = serde_json::json!({
-            "data": {"issues": {"nodes": [
-                {"identifier": "DEV-1", "title": "A", "state": {"name": "Done"}, "labels": {"nodes": []}},
-                {"identifier": "DEV-2", "title": "B", "state": {"name": "Todo"}, "labels": {"nodes": []}}
-            ]}}
+            "data": {
+                "teams": {"nodes": [{"id": "team-uuid"}]},
+                "issues": {"nodes": [
+                    {"identifier": "DEV-1", "title": "A", "state": {"name": "Done"}, "labels": {"nodes": []}},
+                    {"identifier": "DEV-2", "title": "B", "state": {"name": "Todo"}, "labels": {"nodes": []}}
+                ]}
+            }
         });
-        let tasks = tasks_from_linear_graphql(&resp);
+        let tasks = parse_linear_board(&resp, "DEV").unwrap();
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].id, "linear-dev-1");
         assert_eq!(tasks[0].column, "done");
