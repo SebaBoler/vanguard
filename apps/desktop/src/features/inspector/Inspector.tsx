@@ -25,9 +25,8 @@ import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import { useAppConfig } from '../../hooks';
+import { runCommand, runPresets } from '../../command';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
-
-const DEFAULT_CMD = 'vanguard run --github <issue> --provider zai --llm-proxy';
 
 export function Inspector({
   project,
@@ -213,7 +212,8 @@ export function Inspector({
       {showNewRun && (
         <div className="shrink-0">
           <NewRunForm
-            defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? DEFAULT_CMD}
+            defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? runCommand(cfg)}
+            presets={runPresets(cfg)}
             onRun={startRun}
             onCancel={() => setShowNewRun(false)}
           />
