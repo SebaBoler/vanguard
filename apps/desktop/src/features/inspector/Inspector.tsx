@@ -15,7 +15,6 @@ import {
 } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
-import { RunningRuns } from './RunningRuns';
 import { LiveRun } from './LiveRun';
 import { RemoteRuns } from './RemoteRuns';
 import { Fleet } from '../fleet/Fleet';
@@ -258,10 +257,9 @@ export function Inspector({
           />
         </div>
       ) : screen === 'runs' ? (
-        // RunningRuns sizes to content; RunList fills the rest and scrolls its own rows.
-        <div className="flex min-h-0 flex-1 flex-col gap-4">
-          <RunningRuns active={active} onOpen={setLiveRun} />
-          <RunList runs={runs} onSelect={open} />
+        // In-flight runs render as running rows at the top of the RunList table.
+        <div className="flex min-h-0 flex-1 flex-col">
+          <RunList runs={runs} active={active} onSelect={open} onOpenActive={setLiveRun} />
         </div>
       ) : screen === 'board' ? (
         <TaskBoard project={project} onOpenTask={setTaskDetailId} />
