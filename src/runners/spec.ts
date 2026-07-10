@@ -47,6 +47,8 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
   llmProxy?: LlmProxyDep;
   /** Model for the tech-spec stage (default: techSpecStage's own default). */
   specModel?: string;
+  /** Branch the research worktree is cut from — the baseline Fable specs against (default: main). */
+  baseBranch?: string;
   logger?: VanguardLogger;
   signal?: AbortSignal;
   /**
@@ -131,6 +133,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         localRepoPath: deps.repoPath,
         sandbox,
         agentName: agent.name,
+        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
       deps.contextDeps ?? {},
