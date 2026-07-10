@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub const OUTPUT_EVENT: &str = "spawn:output";
 pub const EXIT_EVENT: &str = "spawn:exit";
 
-struct SpawnEntry {
+pub(crate) struct SpawnEntry {
     child: Child,
     cwd: String,
     command: String,

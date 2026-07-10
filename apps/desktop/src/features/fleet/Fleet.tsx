@@ -170,7 +170,11 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
       {spawn && (
         <LaunchPanel
           spawn={spawn}
-          onKill={(pid) => void killRun(pid)}
+          onKill={(pid) => {
+            void killRun(pid);
+            // Mirror stop()'s optimistic mark so the panel Kill can't leave a stuck "running" if spawn:exit is missed.
+            setSpawn((prev) => (prev && prev.pid === pid && prev.exit === undefined ? { ...prev, exit: null } : prev));
+          }}
           onDismiss={(_pid) => setSpawn(null)}
         />
       )}
