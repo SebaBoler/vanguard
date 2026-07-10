@@ -45,7 +45,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
   const slots = Array.from({ length: concurrency }, (_, i) => active[i] ?? null);
 
   return (
-    <div className="max-w-3xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-4">
       <div className="flex items-center gap-3">
         <h2 className="font-semibold">Fleet</h2>
         {running && (

@@ -1,16 +1,16 @@
 import {
-  ChevronsUpDown,
   LayoutDashboard,
   List,
   Columns3,
   Boxes,
   Cloud,
+  Workflow,
   Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
 import type { Project, ActiveRun } from './vanguard-output';
 
-export type Screen = 'dashboard' | 'runs' | 'board' | 'fleet' | 'remote' | 'settings';
+export type Screen = 'dashboard' | 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
 
 const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -18,6 +18,7 @@ const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'board', label: 'Task board', icon: Columns3 },
   { key: 'fleet', label: 'Fleet', icon: Boxes },
   { key: 'remote', label: 'Remote', icon: Cloud },
+  { key: 'workflow', label: 'Workflow', icon: Workflow },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -26,7 +27,6 @@ export function Rail({
   activePath,
   screen,
   running,
-  onProject,
   onScreen,
   onOpenRunning,
 }: {
@@ -34,32 +34,13 @@ export function Rail({
   activePath: string | null;
   screen: Screen;
   running: ActiveRun[];
-  onProject: (path: string) => void;
   onScreen: (s: Screen) => void;
   onOpenRunning: (r: ActiveRun) => void;
 }) {
   const active = projects.find((p) => p.path === activePath);
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-muted/20">
-      <div className="p-2">
-        <div className="relative">
-          <select
-            value={activePath ?? ''}
-            onChange={(e) => onProject(e.target.value)}
-            className="w-full appearance-none rounded-md border border-border bg-background px-2.5 py-2 text-sm font-medium"
-          >
-            {projects.length === 0 && <option value="">No projects</option>}
-            {projects.map((p) => (
-              <option key={p.path} value={p.path}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <ChevronsUpDown className="pointer-events-none absolute right-2 top-2.5 size-4 text-muted-foreground" />
-        </div>
-      </div>
-
+    <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-muted/20 pt-2">
       <nav className="space-y-0.5 px-2">
         {NAV.map((n) => {
           const count = n.key === 'runs' ? active?.runCount : undefined;

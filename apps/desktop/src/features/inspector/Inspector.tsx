@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Chip } from 'chunks-ui';
+import { Button, Chip, cn } from 'chunks-ui';
 import { listen } from '@tauri-apps/api/event';
 import { Play, RefreshCw } from 'lucide-react';
 import {
@@ -20,6 +20,7 @@ import { Fleet } from '../fleet/Fleet';
 import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
+import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
@@ -34,7 +35,7 @@ export function Inspector({
   onCrumb,
 }: {
   project: string;
-  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'settings';
+  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
   focusRunning: ActiveRun | null;
   clearNonce: number;
   onCrumb: (c: string | null) => void;
@@ -169,9 +170,11 @@ export function Inspector({
     detail && (detail.proof ? detail.proof.passed : !detail.stages.some((s) => !s.record.completed));
 
   return (
-    <div className="space-y-4">
+    // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
+    // Centered + width-capped, except the board which needs full width for horizontal column scroll.
+    <div className={cn('mx-auto flex h-full w-full min-h-0 flex-col gap-4 p-6', screen !== 'board' && 'max-w-5xl')}>
       {screen === 'runs' && (
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-3">
         {watching && (
           <span className="flex items-center gap-1 text-xs text-muted-foreground" title="Watching .vanguard for changes">
             <span className="size-2 animate-pulse rounded-full bg-success" />
@@ -199,21 +202,23 @@ export function Inspector({
       )}
 
       {error && (
-        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       )}
 
       {showNewRun && (
-        <NewRunForm
-          defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? DEFAULT_CMD}
-          onRun={startRun}
-          onCancel={() => setShowNewRun(false)}
-        />
+        <div className="shrink-0">
+          <NewRunForm
+            defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? DEFAULT_CMD}
+            onRun={startRun}
+            onCancel={() => setShowNewRun(false)}
+          />
+        </div>
       )}
 
       {spawns.length > 0 && (
-        <div className="space-y-2">
+        <div className="shrink-0 space-y-2">
           {spawns.map((s) => (
             <LaunchPanel
               key={s.pid}
@@ -226,34 +231,53 @@ export function Inspector({
       )}
 
       {detail ? (
-        <RunDetail detail={detail} project={project} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <RunDetail detail={detail} project={project} />
+        </div>
       ) : liveRun ? (
-        <LiveRun active={liveRun} refreshKey={tick} />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <LiveRun active={liveRun} refreshKey={tick} />
+        </div>
       ) : taskDetailId ? (
-        <TaskDetail
-          project={project}
-          taskId={taskDetailId}
-          runs={runs}
-          onBack={() => setTaskDetailId(null)}
-          onNewRun={() => {
-            setTaskDetailId(null);
-            setShowNewRun(true);
-          }}
-        />
-      ) : (
-        <>
-          {screen === 'runs' && (
-            <>
-              <RunningRuns active={active} onOpen={setLiveRun} />
-              <RunList runs={runs} onSelect={open} />
-            </>
-          )}
-          {screen === 'board' && <TaskBoard project={project} onOpenTask={setTaskDetailId} />}
-          {screen === 'fleet' && <Fleet project={project} active={active} />}
-          {screen === 'remote' && <RemoteRuns project={project} />}
-          {screen === 'settings' && <Settings project={project} />}
-        </>
-      )}
+        // taskDetailId only fires from the board (full-bleed frame) — re-cap width so this reading
+        // view matches every other detail view instead of spanning edge-to-edge.
+        <div className="mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto">
+          <TaskDetail
+            project={project}
+            taskId={taskDetailId}
+            runs={runs}
+            onBack={() => setTaskDetailId(null)}
+            onNewRun={() => {
+              setTaskDetailId(null);
+              setShowNewRun(true);
+            }}
+          />
+        </div>
+      ) : screen === 'runs' ? (
+        // RunningRuns sizes to content; RunList fills the rest and scrolls its own rows.
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+          <RunningRuns active={active} onOpen={setLiveRun} />
+          <RunList runs={runs} onSelect={open} />
+        </div>
+      ) : screen === 'board' ? (
+        <TaskBoard project={project} onOpenTask={setTaskDetailId} />
+      ) : screen === 'remote' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <RemoteRuns project={project} />
+        </div>
+      ) : screen === 'fleet' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <Fleet project={project} active={active} />
+        </div>
+      ) : screen === 'workflow' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <WorkflowEditor project={project} name={project.split('/').filter(Boolean).pop() ?? project} />
+        </div>
+      ) : screen === 'settings' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <Settings project={project} />
+        </div>
+      ) : null}
     </div>
   );
 }

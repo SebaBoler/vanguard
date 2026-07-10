@@ -58,6 +58,8 @@ export interface Task {
 export interface AppConfig {
   source?: string;
   label?: string;
+  team?: string;
+  color?: string;
   provider?: string;
   reviewProvider?: string;
   verifyCmd?: string;
@@ -88,6 +90,7 @@ export interface Project {
   lastRun?: string;
   runningCount: number;
   runsLast24h: number;
+  color?: string;
 }
 
 export interface RunSummary {

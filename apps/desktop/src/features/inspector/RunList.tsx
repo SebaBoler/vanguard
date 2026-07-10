@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Table, Chip, Empty, Input } from 'chunks-ui';
 import { Inbox, Search } from 'lucide-react';
+import { ScrollTable } from '../../components/ScrollTable';
 import type { RunSummary } from '../../vanguard-output';
 
 /** `2026-07-06T19:12:02.123Z` -> `2026-07-06 19:12`. */
@@ -45,8 +46,8 @@ export function RunList({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -75,8 +76,9 @@ export function RunList({
       {shown.length === 0 ? (
         <div className="py-8 text-center text-sm text-muted-foreground">No runs match.</div>
       ) : (
+        <ScrollTable>
         <Table.Root>
-          <Table.Header>
+          <Table.Header className="sticky top-0 z-10 bg-muted">
             <Table.Row>
               <Table.Head>Task</Table.Head>
               <Table.Head>When</Table.Head>
@@ -105,6 +107,7 @@ export function RunList({
             ))}
           </Table.Body>
         </Table.Root>
+        </ScrollTable>
       )}
     </div>
   );
