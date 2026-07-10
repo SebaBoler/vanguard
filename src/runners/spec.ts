@@ -9,7 +9,7 @@ import { persistRunRecord } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
-import { extractTag } from '../structured/extract.js';
+import { extractTag, extractTagLenient } from '../structured/extract.js';
 import { VanguardError } from '../core/errors.js';
 import { SPEC_TAG } from '../tasks/triage.js';
 import { SPEC_MANIFEST_TAG } from '../pipeline/conformance-gate.js';
@@ -150,13 +150,25 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       if (specOutcome === undefined) {
         throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
       }
-      const spec = extractTag(specOutcome.result.finalText, SPEC_TAG);
-
-      // Fail fast on a missing spec BEFORE persisting, so a found spec is never discarded by a later
-      // persist failure (we still return the spec if extraction succeeded even if persistence throws).
-      if (spec === undefined || spec === '') {
-        throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
+      // Lenient extraction recovers a spec whose closing tag was lost to a truncated stream (common
+      // through a corp MITM proxy). A genuinely empty result yields undefined below.
+      const extracted = extractTagLenient(specOutcome.result.finalText, SPEC_TAG);
+      if (extracted === undefined) {
+        // Persist the failed run BEFORE throwing so its transcript/cost survive for diagnosis instead
+        // of being discarded (best-effort: a persist failure must not mask the real error).
+        await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' }).catch(() => {});
+        throw new VanguardError(
+          `Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id} ` +
+            `(exitReason: ${specOutcome.result.exitReason}, turns: ${specOutcome.result.turns}). Re-run the spec.`,
+        );
       }
+      if (extracted.salvaged) {
+        deps.logger?.warn(
+          { taskId: ctx.taskId, exitReason: specOutcome.result.exitReason, turns: specOutcome.result.turns },
+          `salvaged a truncated <${SPEC_TAG}> block (closing tag missing) — the spec tail may be clipped`,
+        );
+      }
+      const spec = extracted.text;
 
       // techSpecStage always returns exactly one stage; persist that single outcome.
       await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
