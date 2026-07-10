@@ -4,6 +4,7 @@ import { Minus, Plus } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import { spawnRun, killRun, listSpawns, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
 import { useAppConfig } from '../../hooks';
+import { watchCommand } from '../../command';
 import { SOURCES } from '../../sources';
 import { LaunchPanel, type Spawn } from '../inspector/LaunchPanel';
 import type { ActiveRun } from '../../vanguard-output';
@@ -71,7 +72,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
     }
     setError(null);
     const n = Math.max(1, Math.floor(concurrency) || 1);
-    const cmd = `vanguard watch --${source} --concurrency ${n}${loopV1 ? ' --loop-v1' : ''} --provider zai --llm-proxy`;
+    const cmd = watchCommand(cfg, { source, concurrency: n, loopV1 });
     try {
       const pid = await spawnRun(project, cmd);
       setSpawn({ pid, command: cmd, lines: [] });
