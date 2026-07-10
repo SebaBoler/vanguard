@@ -1,3 +1,4 @@
+import { execa } from 'execa';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -84,6 +85,29 @@ function defaultSandboxFactory(
 }
 
 /**
+ * Resolve the ref the spec's research worktree is cut from, fetching it from `origin` first so the
+ * spec is written against the branch as it exists on the remote — not a stale, or entirely absent,
+ * local copy (the very reason a spec diverges from a branch someone else is actively pushing to).
+ * Best-effort: with no `origin`, offline, or a branch the remote doesn't carry, it logs and returns
+ * the local `base` so the spec pass still runs.
+ */
+export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
+  try {
+    await execa('git', ['fetch', 'origin', base], { cwd: repoPath });
+  } catch (err) {
+    logger?.warn({ err, base }, `spec: git fetch origin ${base} failed — researching against local ${base}`);
+    return base;
+  }
+  try {
+    // Cut from the freshly-fetched remote-tracking ref so the worktree reflects origin, not local.
+    await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath });
+    return `origin/${base}`;
+  } catch {
+    return base;
+  }
+}
+
+/**
  * Run the read-only SPEC pass for one task: fetch it, research the codebase in an isolated sandbox via
  * the tech-spec stage, and return the generated technical specification markdown. This is the front
  * half of Loop v1 — it NEVER commits, pushes, or opens a PR (no publishForReview / commitStage call
@@ -126,6 +150,9 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
+    // Fetch the base up front so the spec is researched against origin's view of the branch, not a
+    // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.
+    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger);
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
       {
@@ -133,7 +160,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         localRepoPath: deps.repoPath,
         sandbox,
         agentName: agent.name,
-        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+        baseBranch,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
       deps.contextDeps ?? {},
