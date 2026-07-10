@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Input } from 'chunks-ui';
-import { CodeBlock } from '../../components/CodeBlock';
+import { Button, Input, CodeBlock } from '@/ui';
 import { readAppConfig, writeAppConfig } from '../../ipc';
 import type { AppConfig } from '../../vanguard-output';
 

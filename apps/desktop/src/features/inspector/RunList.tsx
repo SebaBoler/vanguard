@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Table, Chip, Empty, Input } from 'chunks-ui';
+import { Table, Chip, Empty, Input, ScrollTable } from '@/ui';
 import { Inbox, Search } from 'lucide-react';
-import { ScrollTable } from '../../components/ScrollTable';
 import type { RunSummary } from '../../vanguard-output';
 
 /** `2026-07-06T19:12:02.123Z` -> `2026-07-06 19:12`. */

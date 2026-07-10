@@ -1,10 +1,6 @@
-import { Card, Chip } from 'chunks-ui';
+import { Card, Chip } from '@/ui';
 import type { ActiveRun } from '../../vanguard-output';
-
-function ago(ms: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  return s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`;
-}
+import { relTime } from '../../time';
 
 export function RunningRuns({
   active,
@@ -23,7 +19,7 @@ export function RunningRuns({
               <span className="size-2 animate-pulse rounded-full bg-success" />
               <span className="font-medium">{a.taskId}</span>
               <Chip color="success" variant="outlined">running</Chip>
-              <span className="ml-auto text-xs tabular-nums text-muted-foreground">{ago(a.lastActivityMs)}</span>
+              <span className="ml-auto text-xs tabular-nums text-muted-foreground">{relTime(a.lastActivityMs)}</span>
             </Card.Content>
           </Card.Root>
         </button>

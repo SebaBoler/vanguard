@@ -1,4 +1,4 @@
-import { Card, Chip } from 'chunks-ui';
+import { Card, Chip } from '@/ui';
 import { listTasks } from '../../ipc';
 import { useAsync } from '../../hooks';
 

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Button, Input } from 'chunks-ui';
+import { Button, Input } from '@/ui';
 import { writeAppConfig } from '../../ipc';
 import { useAppConfig } from '../../hooks';
 import { SOURCES } from '../../sources';

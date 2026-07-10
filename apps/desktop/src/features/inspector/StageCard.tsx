@@ -1,4 +1,4 @@
-import { Chip, Collapsible } from 'chunks-ui'
+import { Chip, Collapsible } from '@/ui'
 import { AlertCircle, CheckCircle, ChevronDown } from 'lucide-react'
 import { AgentText } from '../../components/AgentText'
 import type { StageDetail } from '../../vanguard-output'

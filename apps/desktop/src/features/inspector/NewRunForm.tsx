@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Textarea } from 'chunks-ui';
+import { Button, Textarea } from '@/ui';
 import { Play } from 'lucide-react';
 
 const PRESETS: { label: string; cmd: string }[] = [
