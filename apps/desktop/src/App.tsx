@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { type Theme } from 'chunks-ui';
+import { type Theme } from '@/ui';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TopBar, type Crumb } from './TopBar';
 import { Rail, type Screen } from './Rail';

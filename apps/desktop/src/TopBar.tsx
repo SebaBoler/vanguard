@@ -1,7 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
-import { Breadcrumb, ThemeToggle, type Theme } from 'chunks-ui';
+import { Breadcrumb, Logo, ThemeToggle, type Theme } from '@/ui';
 import { Search } from 'lucide-react';
-import { Logo } from './Logo';
 
 export interface Crumb {
   label: string;

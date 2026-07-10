@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Chip } from 'chunks-ui';
+import { Button, Chip } from '@/ui';
 import { Minus, Plus } from 'lucide-react';
 import { spawnRun, killRun } from '../../ipc';
 import { useAppConfig } from '../../hooks';

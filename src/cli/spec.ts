@@ -54,6 +54,7 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
     fetcher: new GitHubTaskFetcher(repoSlug),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+    ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
   };
 
   if (deps.generateSpec !== undefined) {
