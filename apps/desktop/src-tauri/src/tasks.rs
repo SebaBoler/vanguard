@@ -290,6 +290,13 @@ mod tests {
     }
 
     #[test]
+    fn linear_board_resolved_team_with_zero_issues_is_ok() {
+        // A real team that simply has no issues resolves (teams non-empty) → Ok([]), NOT an error.
+        let resp = serde_json::json!({ "data": { "teams": { "nodes": [{"id": "t"}] }, "issues": { "nodes": [] } } });
+        assert_eq!(parse_linear_board(&resp, "DEV").unwrap().len(), 0);
+    }
+
+    #[test]
     fn github_task_mints_resolvable_id() {
         let item = serde_json::json!({
             "number": 904, "title": "Fix widget", "state": "open",
