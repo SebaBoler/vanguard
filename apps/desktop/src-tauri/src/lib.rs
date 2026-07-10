@@ -98,6 +98,11 @@ async fn kill_run(state: tauri::State<'_, spawn::SpawnState>, pid: u32) -> Resul
 }
 
 #[tauri::command]
+async fn list_spawns(state: tauri::State<'_, spawn::SpawnState>) -> Result<Vec<spawn::SpawnInfo>, String> {
+    Ok(spawn::list_spawns(&state))
+}
+
+#[tauri::command]
 async fn watch_project(
     app: tauri::AppHandle,
     state: tauri::State<'_, watch::WatchState>,
@@ -136,6 +141,7 @@ pub fn run() {
             fetch_spec,
             spawn_run,
             kill_run,
+            list_spawns,
             watch_project,
             unwatch_project
         ])

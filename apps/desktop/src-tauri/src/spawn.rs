@@ -12,9 +12,15 @@ use tauri::{AppHandle, Emitter, Manager};
 pub const OUTPUT_EVENT: &str = "spawn:output";
 pub const EXIT_EVENT: &str = "spawn:exit";
 
+struct SpawnEntry {
+    child: Child,
+    cwd: String,
+    command: String,
+}
+
 /// Child processes launched from the UI, keyed by OS pid — held so they stay alive and can be killed.
 #[derive(Default)]
-pub struct SpawnState(pub Mutex<HashMap<u32, Child>>);
+pub struct SpawnState(pub Mutex<HashMap<u32, SpawnEntry>>);
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +34,29 @@ struct OutputEvent {
 struct ExitEvent {
     pid: u32,
     code: Option<i32>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnInfo {
+    pub pid: u32,
+    pub cwd: String,
+    pub command: String,
+}
+
+/// Returns info about all currently-running spawned processes.
+pub fn list_spawns(state: &SpawnState) -> Vec<SpawnInfo> {
+    state
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(pid, entry)| SpawnInfo {
+            pid: *pid,
+            cwd: entry.cwd.clone(),
+            command: entry.command.clone(),
+        })
+        .collect()
 }
 
 /// Spawn `sh -c "<command> 2>&1"` in `cwd`, inheriting the app's environment (so operator LLM/platform
@@ -60,7 +89,7 @@ pub fn spawn(app: AppHandle, cwd: String, command: String) -> std::io::Result<u3
         });
     }
 
-    app.state::<SpawnState>().0.lock().unwrap().insert(pid, child);
+    app.state::<SpawnState>().0.lock().unwrap().insert(pid, SpawnEntry { child, cwd, command });
 
     // Waiter: poll try_wait under the lock so it coexists with kill(); emit exit + drop on end.
     // Before emitting exit, wait (bounded) for the stdout reader to drain so the exit line doesn't
@@ -71,7 +100,7 @@ pub fn spawn(app: AppHandle, cwd: String, command: String) -> std::io::Result<u3
         let state = app_wait.state::<SpawnState>();
         let mut map = state.0.lock().unwrap();
         match map.get_mut(&pid) {
-            Some(child) => match child.try_wait() {
+            Some(entry) => match entry.child.try_wait() {
                 Ok(Some(status)) => {
                     map.remove(&pid);
                     drop(map);
@@ -109,7 +138,7 @@ fn await_drain(reader_done: &AtomicBool) {
 
 /// Kill a spawned run. The waiter thread then observes the exit and emits `spawn:exit`.
 pub fn kill(state: &SpawnState, pid: u32) {
-    if let Some(child) = state.0.lock().unwrap().get_mut(&pid) {
-        let _ = child.kill();
+    if let Some(entry) = state.0.lock().unwrap().get_mut(&pid) {
+        let _ = entry.child.kill();
     }
 }

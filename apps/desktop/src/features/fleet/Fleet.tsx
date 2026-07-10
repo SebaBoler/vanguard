@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button, Chip } from '@/ui';
 import { Minus, Plus } from 'lucide-react';
-import { spawnRun, killRun } from '../../ipc';
+import { listen } from '@tauri-apps/api/event';
+import { spawnRun, killRun, listSpawns, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
 import { useAppConfig } from '../../hooks';
 import { SOURCES } from '../../sources';
+import { LaunchPanel, type Spawn } from '../inspector/LaunchPanel';
 import type { ActiveRun } from '../../vanguard-output';
 
 export function Fleet({ project, active }: { project: string; active: ActiveRun[] }) {
@@ -11,7 +13,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
   const [concurrency, setConcurrency] = useState(3);
   const [loopV1, setLoopV1] = useState(false);
   const [source, setSource] = useState('github');
-  const [watchPid, setWatchPid] = useState<number | null>(null);
+  const [spawn, setSpawn] = useState<Spawn | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Seed the editable controls from saved config once it loads.
@@ -20,7 +22,46 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
     if (cfg.source) setSource(cfg.source);
   }, [cfg]);
 
-  const running = watchPid !== null;
+  // On mount, reconcile against the backend spawn registry so the toggle survives navigation.
+  useEffect(() => {
+    listSpawns()
+      .then((spawns) => {
+        const existing = spawns.find(
+          (s) => s.cwd === project && s.command.includes('vanguard watch'),
+        );
+        if (existing) {
+          setSpawn((prev) =>
+            // Only restore if we don't already have a live entry for this pid.
+            prev && prev.pid === existing.pid ? prev : { pid: existing.pid, command: existing.command, lines: [] },
+          );
+        }
+      })
+      .catch(() => {
+        /* ignore — backend not available yet */
+      });
+  }, [project]);
+
+  // Stream output and exit events for the current watch spawn.
+  useEffect(() => {
+    const unOut = listen<{ pid: number; line: string }>(SPAWN_OUTPUT_EVENT, (e) => {
+      setSpawn((prev) =>
+        prev && prev.pid === e.payload.pid
+          ? { ...prev, lines: [...prev.lines.slice(-499), e.payload.line] }
+          : prev,
+      );
+    });
+    const unExit = listen<{ pid: number; code: number | null }>(SPAWN_EXIT_EVENT, (e) => {
+      setSpawn((prev) =>
+        prev && prev.pid === e.payload.pid ? { ...prev, exit: e.payload.code } : prev,
+      );
+    });
+    return () => {
+      void unOut.then((f) => f());
+      void unExit.then((f) => f());
+    };
+  }, []);
+
+  const running = spawn !== null && spawn.exit === undefined;
 
   const start = async (): Promise<void> => {
     // The command is built from config, so validate before it reaches the shell launcher.
@@ -32,14 +73,20 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
     const n = Math.max(1, Math.floor(concurrency) || 1);
     const cmd = `vanguard watch --${source} --concurrency ${n}${loopV1 ? ' --loop-v1' : ''} --provider zai --llm-proxy`;
     try {
-      setWatchPid(await spawnRun(project, cmd));
-    } catch {
-      /* surfaced via the launch panel */
+      const pid = await spawnRun(project, cmd);
+      setSpawn({ pid, command: cmd, lines: [] });
+    } catch (e) {
+      setError(String(e));
     }
   };
+
   const stop = async (): Promise<void> => {
-    if (watchPid) await killRun(watchPid);
-    setWatchPid(null);
+    if (spawn && spawn.exit === undefined) {
+      await killRun(spawn.pid);
+      // Optimistically mark stopped so the UI is never permanently stuck if spawn:exit is missed.
+      // spawn:exit will overwrite this with the real exit code when it arrives.
+      setSpawn((prev) => (prev && prev.exit === undefined ? { ...prev, exit: null } : prev));
+    }
   };
 
   const slots = Array.from({ length: concurrency }, (_, i) => active[i] ?? null);
@@ -119,6 +166,14 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
           </div>
         </div>
       </div>
+
+      {spawn && (
+        <LaunchPanel
+          spawn={spawn}
+          onKill={(pid) => void killRun(pid)}
+          onDismiss={(_pid) => setSpawn(null)}
+        />
+      )}
 
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Claimed / Running</div>
       <div className="space-y-2">

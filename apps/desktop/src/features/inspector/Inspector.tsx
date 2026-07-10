@@ -10,6 +10,8 @@ import {
   killRun,
   watchProject,
   unwatchProject,
+  SPAWN_OUTPUT_EVENT,
+  SPAWN_EXIT_EVENT,
 } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
@@ -131,12 +133,12 @@ export function Inspector({
 
   // Spawned-run output/exit streams.
   useEffect(() => {
-    const unOut = listen<{ pid: number; line: string }>('spawn:output', (e) => {
+    const unOut = listen<{ pid: number; line: string }>(SPAWN_OUTPUT_EVENT, (e) => {
       setSpawns((prev) =>
         prev.map((s) => (s.pid === e.payload.pid ? { ...s, lines: [...s.lines, e.payload.line] } : s)),
       );
     });
-    const unExit = listen<{ pid: number; code: number | null }>('spawn:exit', (e) => {
+    const unExit = listen<{ pid: number; code: number | null }>(SPAWN_EXIT_EVENT, (e) => {
       setSpawns((prev) => prev.map((s) => (s.pid === e.payload.pid ? { ...s, exit: e.payload.code } : s)));
     });
     return () => {
