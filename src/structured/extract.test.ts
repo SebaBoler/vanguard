@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { extractTag, extractJson, hasTerminationSignal } from './extract.js';
+import { extractTag, extractTagLenient, extractJson, hasTerminationSignal } from './extract.js';
 
 describe('extractTag', () => {
   it('returns inner text of the last matching tag', () => {
@@ -8,6 +8,24 @@ describe('extractTag', () => {
   });
   it('returns undefined when absent', () => {
     expect(extractTag('nothing', 'plan')).toBeUndefined();
+  });
+});
+
+describe('extractTagLenient', () => {
+  it('returns the closed block unflagged', () => {
+    expect(extractTagLenient('<tech_spec>done</tech_spec>', 'tech_spec')).toEqual({ text: 'done', salvaged: false });
+  });
+  it('salvages an unclosed block truncated mid-stream', () => {
+    expect(extractTagLenient('intro <tech_spec>partial spec cut off', 'tech_spec')).toEqual({
+      text: 'partial spec cut off',
+      salvaged: true,
+    });
+  });
+  it('returns undefined when the opening tag is absent', () => {
+    expect(extractTagLenient('nothing here', 'tech_spec')).toBeUndefined();
+  });
+  it('returns undefined when the opening tag has only whitespace after it', () => {
+    expect(extractTagLenient('<tech_spec>   ', 'tech_spec')).toBeUndefined();
   });
 });
 
