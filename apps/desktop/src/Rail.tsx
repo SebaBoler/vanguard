@@ -136,7 +136,7 @@ export function Rail({
             <Collapsible.Trigger
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               className={cn(
-                'items-center rounded py-1.5 text-sm font-normal text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground',
+                'flex w-full items-center rounded py-1.5 text-sm font-normal text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground',
                 collapsed ? 'justify-center px-0' : 'justify-start gap-2 px-2',
               )}
             >

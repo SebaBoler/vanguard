@@ -1,20 +1,33 @@
-import { Card, Chip } from '@/ui';
+import { Card, cn } from '@/ui';
 import { listTasks } from '../../ipc';
 import { useAsync } from '../../hooks';
 
-const COLUMNS = ['queued', 'claimed', 'running', 'verify-failed', 'review', 'done'];
+// Each column owns a color identity used across its header dot, count pill, lane tint, and card
+// hover border. Classes are spelled out (not interpolated) so Tailwind's JIT keeps them — a
+// `bg-${accent}-500` template would get purged. Add a row here to add a column.
+type Column = {
+  key: string;
+  label: string;
+  dot: string;
+  pill: string;
+  lane: string;
+  cardHover: string;
+  pulse?: boolean;
+};
+
+const COLUMNS: Column[] = [
+  { key: 'queued', label: 'Queued', dot: 'bg-slate-400', pill: 'bg-slate-400/15 text-slate-600 dark:text-slate-300', lane: 'bg-slate-400/[0.06]', cardHover: 'hover:border-slate-400' },
+  { key: 'claimed', label: 'Claimed', dot: 'bg-amber-500', pill: 'bg-amber-500/15 text-amber-700 dark:text-amber-300', lane: 'bg-amber-500/[0.06]', cardHover: 'hover:border-amber-500' },
+  { key: 'running', label: 'Running', dot: 'bg-blue-500', pill: 'bg-blue-500/15 text-blue-700 dark:text-blue-300', lane: 'bg-blue-500/[0.06]', cardHover: 'hover:border-blue-500', pulse: true },
+  { key: 'verify-failed', label: 'Verify failed', dot: 'bg-rose-500', pill: 'bg-rose-500/15 text-rose-700 dark:text-rose-300', lane: 'bg-rose-500/[0.06]', cardHover: 'hover:border-rose-500' },
+  { key: 'review', label: 'Review', dot: 'bg-violet-500', pill: 'bg-violet-500/15 text-violet-700 dark:text-violet-300', lane: 'bg-violet-500/[0.06]', cardHover: 'hover:border-violet-500' },
+  { key: 'done', label: 'Done', dot: 'bg-emerald-500', pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', lane: 'bg-emerald-500/[0.06]', cardHover: 'hover:border-emerald-500' },
+];
+
 // The backend fetches (gh/glab/linear) all page-cap at this many issues. When the board comes back
 // exactly full we can't tell "50 total" from "50+ truncated", so warn — cheaper than paginating.
 // ponytail: keep in sync with the -L/-P/first: 50 in tasks.rs; wire real pagination if boards grow.
 const FETCH_CAP = 50;
-
-function chipColor(col: string): 'primary' | 'destructive' | 'success' | 'warning' | 'secondary' {
-  if (col === 'running' || col === 'done') return 'success';
-  if (col === 'verify-failed') return 'destructive';
-  if (col === 'review') return 'primary';
-  if (col === 'claimed') return 'warning';
-  return 'secondary';
-}
 
 export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask: (taskId: string) => void }) {
   const { data: tasks, error, loading } = useAsync(() => listTasks(project), [project]);
@@ -38,30 +51,44 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
         </div>
       )}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-4">
-      {COLUMNS.map((col) => {
-        const items = (tasks ?? []).filter((t) => t.column === col);
-        return (
-          <div key={col} className="flex h-full min-h-0 w-64 shrink-0 flex-col">
-            <div className="mb-2 flex shrink-0 items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {col}
-              <span className="rounded bg-muted px-1.5 tabular-nums">{items.length}</span>
+        {COLUMNS.map((col) => {
+          const items = (tasks ?? []).filter((t) => t.column === col.key);
+          return (
+            <div
+              key={col.key}
+              className={cn('flex h-full min-h-0 w-72 shrink-0 flex-col rounded-xl border border-border/60 p-2', col.lane)}
+            >
+              <div className="mb-2 flex shrink-0 items-center gap-2 px-1 py-0.5">
+                <span className={cn('size-2 rounded-full', col.dot, col.pulse && items.length > 0 && 'animate-pulse')} />
+                <span className="text-sm font-semibold text-foreground">{col.label}</span>
+                <span className={cn('ml-auto rounded-full px-2 py-0.5 text-xs font-medium tabular-nums', col.pill)}>
+                  {items.length}
+                </span>
+              </div>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-0.5 pb-0.5">
+                {items.length === 0 ? (
+                  <div className="mt-2 rounded-lg border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground">
+                    No tasks
+                  </div>
+                ) : (
+                  items.map((t) => (
+                    <button key={t.id} onClick={() => onOpenTask(t.id)} className="block w-full text-left">
+                      <Card.Root className={cn('bg-background/80 shadow-sm transition-all hover:shadow-md', col.cardHover)}>
+                        <Card.Content className="space-y-1.5 p-3">
+                          <div className="font-mono text-[11px] font-medium text-muted-foreground">{t.id}</div>
+                          <div className="text-sm leading-snug">{t.title}</div>
+                          {t.state && t.state !== col.key && (
+                            <div className="pt-0.5 text-[11px] text-muted-foreground">{t.state}</div>
+                          )}
+                        </Card.Content>
+                      </Card.Root>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
-              {items.map((t) => (
-                <button key={t.id} onClick={() => onOpenTask(t.id)} className="block w-full text-left">
-                  <Card.Root className="transition-colors hover:border-primary/40">
-                    <Card.Content className="space-y-1 p-3">
-                      <div className="font-mono text-xs font-medium">{t.id}</div>
-                      <div className="text-sm">{t.title}</div>
-                      <Chip color={chipColor(col)} variant="outlined">{t.state || col}</Chip>
-                    </Card.Content>
-                  </Card.Root>
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
       </div>
     </div>
   );

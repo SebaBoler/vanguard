@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { Button, Card, Chip, Empty } from '@/ui';
 import { FolderPlus, LayoutGrid, X } from 'lucide-react';
 import { projectColor } from '../../color';
@@ -82,16 +83,19 @@ export function Dashboard({
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => {
               const last = p.lastRun ? relTime(new Date(p.lastRun).getTime()) : null;
+              const color = projectColor(p);
               return (
                 <Card.Root
                   key={p.path}
                   onClick={() => onOpen({ path: p.path, name: p.name })}
-                  className="relative cursor-pointer overflow-hidden pl-1.5 transition-colors hover:border-primary/40"
+                  style={{ ['--proj']: color } as CSSProperties}
+                  className="relative cursor-pointer overflow-hidden pl-1.5 transition-colors hover:border-[color:var(--proj)]"
                 >
-                  {/* Project identity color — matches the in-project top bar so cards are recognizable. */}
+                  {/* Project identity color — matches the in-project top bar and the border on hover so
+                      cards read as one consistent object. */}
                   <span
                     className="absolute inset-y-0 left-0 w-1.5"
-                    style={{ backgroundColor: projectColor(p) }}
+                    style={{ backgroundColor: color }}
                     aria-hidden
                   />
                   <Card.Header className="flex flex-row items-start justify-between gap-2 pb-2">
