@@ -22,7 +22,7 @@ import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
-import type { VanguardLogger } from '../core/logger.js';
+import { createLogger, type VanguardLogger } from '../core/logger.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -92,17 +92,22 @@ function defaultSandboxFactory(
  * the local `base` so the spec pass still runs.
  */
 export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
+  // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
+  // you which ref the spec was actually written against (vs a silent fallback to a stale local copy).
+  const log = logger ?? createLogger();
   try {
     await execa('git', ['fetch', 'origin', base], { cwd: repoPath });
   } catch (err) {
-    logger?.warn({ err, base }, `spec: git fetch origin ${base} failed — researching against local ${base}`);
+    log.warn({ err, base }, `spec: git fetch origin ${base} failed — researching against local ${base} (may be stale)`);
     return base;
   }
   try {
     // Cut from the freshly-fetched remote-tracking ref so the worktree reflects origin, not local.
-    await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath });
+    const { stdout: sha } = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath });
+    log.info({ base, sha }, `spec: researching against origin/${base} @ ${sha.slice(0, 7)}`);
     return `origin/${base}`;
   } catch {
+    log.warn({ base }, `spec: origin has no ${base} — researching against local ${base}`);
     return base;
   }
 }
