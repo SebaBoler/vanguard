@@ -3,6 +3,7 @@ mod appconfig;
 mod projects;
 mod remote;
 mod runs;
+mod sidecar;
 mod spawn;
 mod spec;
 mod taskid;
@@ -126,6 +127,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(watch::WatchState::default())
         .manage(spawn::SpawnState::default())
+        .manage(sidecar::Sidecar::default())
         .invoke_handler(tauri::generate_handler![
             list_runs,
             read_run,
@@ -143,7 +145,9 @@ pub fn run() {
             kill_run,
             list_spawns,
             watch_project,
-            unwatch_project
+            unwatch_project,
+            sidecar::api_capabilities,
+            sidecar::api_create_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
