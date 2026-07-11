@@ -48,4 +48,30 @@ describe('runSidecar', () => {
     await runSidecar(lines(JSON.stringify({ id: 'x', method: 'nope' })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'x', error: { kind: 'bad-request' } });
   });
+
+  it('rejects an unknown provider as bad-request, without invoking createRun', async () => {
+    const { write, out } = collect();
+    let called = false;
+    const deps = stubDeps({
+      createRun: async (): Promise<{ prUrl?: string }> => {
+        called = true;
+        return {};
+      },
+    });
+    await runSidecar(lines(JSON.stringify({ id: 'p', method: 'createRun', params: { issueRef: 'gh-1', provider: 'notaprovider' } })), write, deps);
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'p', error: { kind: 'bad-request' } });
+    expect(called).toBe(false);
+  });
+
+  it.each([
+    ['unknown transport', { issueRef: 'gh-1', transport: 'gitub' }],
+    ['unknown flow', { issueRef: 'gh-1', flow: 'nope' }],
+    ['empty issueRef', { issueRef: '' }],
+    ['missing issueRef', {}],
+  ])('rejects %s as bad-request', async (_label, params) => {
+    const { write, out } = collect();
+    await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request' } });
+  });
 });

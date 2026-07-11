@@ -1,5 +1,13 @@
+import { isProviderName, PROVIDER_NAMES } from '../agents/registry.js';
+import { FLOWS } from '../api/capabilities.js';
+import { VanguardError } from '../core/errors.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { Capabilities } from '../api/capabilities.js';
+
+/** A caller mistake in a request (bad params, unknown method) — classified `kind: "bad-request"`. */
+export class BadRequestError extends VanguardError {}
+
+const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
 
 /** Typed projection of a run request — a subset of RunOptions plus the issue ref and transport. */
 export interface CreateRunParams {
@@ -32,6 +40,28 @@ interface Request {
 }
 
 /**
+ * Validate a createRun request at the protocol boundary, before dispatch. Throws BadRequestError
+ * for any caller mistake so it is classified `bad-request` rather than surfacing as `internal` deep
+ * in the runner. Provider/flow are checked against the real registries (PROVIDER_NAMES, FLOWS) so an
+ * unknown value fails here instead of silently defaulting.
+ */
+export function validateCreateRun(params: unknown): void {
+  const p = (params ?? {}) as Record<string, unknown>;
+  if (typeof p.issueRef !== 'string' || p.issueRef === '') {
+    throw new BadRequestError('issueRef is required and must be a non-empty string');
+  }
+  if (p.provider !== undefined && (typeof p.provider !== 'string' || !isProviderName(p.provider))) {
+    throw new BadRequestError(`unknown provider "${String(p.provider)}" — choose one of: ${PROVIDER_NAMES.join(', ')}`);
+  }
+  if (p.transport !== undefined && !(TRANSPORTS as readonly unknown[]).includes(p.transport)) {
+    throw new BadRequestError(`unknown transport "${String(p.transport)}" — choose one of: ${TRANSPORTS.join(', ')}`);
+  }
+  if (p.flow !== undefined && (typeof p.flow !== 'string' || !(p.flow in FLOWS))) {
+    throw new BadRequestError(`unknown flow "${String(p.flow)}" — choose one of: ${Object.keys(FLOWS).join(', ')}`);
+  }
+}
+
+/**
  * Stdio JSON loop. Reads one request per line, writes correlated event/result/error lines.
  * DI on `deps` so the createRun event stream is testable without a real sandbox.
  */
@@ -55,6 +85,7 @@ export async function runSidecar(
       if (req.method === 'capabilities') {
         write(JSON.stringify({ id, result: deps.capabilities() }));
       } else if (req.method === 'createRun') {
+        validateCreateRun(req.params);
         const params = req.params as CreateRunParams;
         const result = await deps.createRun(params, (e) => write(JSON.stringify({ id, event: e })));
         write(JSON.stringify({ id, result }));
@@ -62,8 +93,9 @@ export async function runSidecar(
         write(JSON.stringify({ id, error: { message: `unknown method: ${String(req.method)}`, kind: 'bad-request' } }));
       }
     } catch (err) {
+      const kind = err instanceof BadRequestError ? 'bad-request' : 'internal';
       const message = err instanceof Error ? err.message : String(err);
-      write(JSON.stringify({ id, error: { message, kind: 'internal' } }));
+      write(JSON.stringify({ id, error: { message, kind } }));
     }
   }
 }
