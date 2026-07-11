@@ -32,6 +32,7 @@ import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
+import type { RunEvent } from '../pipeline/events.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
 
 /** Agent-pipeline options shared by the `run` and `watch` commands, threaded verbatim into the *Deps. */
@@ -109,6 +110,8 @@ export interface RunIssueDeps extends RunOptions {
   reuse?: boolean;
   forkN?: number;
   reviewGate?: boolean;
+  /** When set, receives structured run events. Absent ⇒ no events (CLI path). Threaded to runStages + run-start/run-end. */
+  onEvent?: (e: RunEvent) => void;
 }
 
 /** Semantic kind of a proof failure; adapters map it to a platform label string. */
@@ -278,6 +281,13 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      deps.onEvent?.({
+        type: 'run-start',
+        taskId: adapter.taskId(task),
+        flow: deps.plan === true ? 'plan' : 'default',
+        provider: agents.agent.name,
+        stages: pipeline.map((s) => s.name),
+      });
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
@@ -286,6 +296,7 @@ export async function runSourcedIssue(
           RETROSPECTIVE_MEMORY: retrospectiveMemory,
         },
         ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
+        ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
       });
       console.log(summarizeOutcomes(outcomes));
 
@@ -369,6 +380,7 @@ export async function runSourcedIssue(
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr (above) + run record.
         if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, block);
+        deps.onEvent?.({ type: 'run-end', secretBlocked: true });
         return { task, secretBlocked: true };
       }
 
@@ -384,6 +396,7 @@ export async function runSourcedIssue(
       });
       if (!commit.committed) {
         await persistStageOutcomes(deps.repoPath, outcomes);
+        deps.onEvent?.({ type: 'run-end' });
         return { task };
       }
 
@@ -438,6 +451,7 @@ export async function runSourcedIssue(
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
+      deps.onEvent?.({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };
     } finally {
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
