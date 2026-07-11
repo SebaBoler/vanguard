@@ -64,7 +64,7 @@ export function Inspector({
   // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
-  const [busy, setBusy] = useState<boolean | null>(null); // null until apiActiveRun() resolves
+  const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -174,32 +174,42 @@ export function Inspector({
     };
   }, []);
 
-  // On mount, learn whether a typed run is already in flight (guards the button) and re-attach its
-  // strip by replaying the buffered backlog. Runs after the listen effect so the live tail isn't lost;
-  // the reducer dedupes the overlap.
+  // On mount, learn whether a typed run is already in flight and re-attach its strip by replaying the
+  // buffered backlog. Runs after the listen effect so the live tail isn't lost. Fold the backlog INTO
+  // current state (not replace) so events that arrived on the channel during the await aren't dropped;
+  // the reducer's last-wins keys + idempotence make the merge safe.
   useEffect(() => {
     void apiActiveRun().then(async (id) => {
-      setBusy(id !== null);
+      setCheckedIdle(true);
       if (id === null) return;
-      const backlog = await apiRunBacklog(id);
-      let s = initialTypedRun();
-      for (const p of backlog) s = reduceTypedRun(s, p as { runId: string; event: RunEvent });
-      setTypedRun(s);
+      const backlog = (await apiRunBacklog(id)) as { runId: string; event: RunEvent }[];
+      setTypedRun((prev) => backlog.reduce((s, p) => reduceTypedRun(s, p), prev ?? initialTypedRun()));
     });
   }, []);
 
   const startTypedRun = (params: CreateRunParams): void => {
     setShowNewRun(false);
     setError(null);
-    setTypedRun(initialTypedRun()); // synchronous in-flight marker ("starting…")
-    setBusy(true);
+    setTypedRun(initialTypedRun()); // synchronous in-flight marker ("starting…") — "run live" derives from this
     setDetail(null);
     setLiveRun(null);
     setFocusedSpawn(null);
-    // The promise resolves at run-end and only clears the spinner/guard; terminal state is event-driven.
     void apiCreateRun(params)
-      .catch((e) => setError(String(e)))
-      .finally(() => setBusy(false));
+      .then((res) => {
+        // The event stream owns the terminal; this is a backstop only if the terminal event was lost —
+        // write it ONLY when still non-terminal, so it never double-renders over a folded terminal.
+        setTypedRun((prev) =>
+          prev !== null && prev.terminal === undefined
+            ? { ...prev, terminal: res.secretBlocked === true ? { kind: 'secret-blocked' } : res.prUrl !== undefined ? { kind: 'success', prUrl: res.prUrl } : { kind: 'no-changes' } }
+            : prev,
+        );
+      })
+      .catch((e) => {
+        // A rejected launch (e.g. the Rust single-in-flight guard) must clear the orphan "starting…"
+        // strip — else its Kill would cancel whatever real run is active.
+        setError(String(e));
+        setTypedRun(null);
+      });
   };
 
   const open = async (r: RunSummary): Promise<void> => {
@@ -244,8 +254,10 @@ export function Inspector({
             color="secondary"
             onClick={() => setShowNewRun((v) => !v)}
             startIcon={<Play className="size-4" />}
-            // Single-in-flight: disabled while a typed run is live or until the idle-check resolves.
-            disabled={busy !== false || (typedRun !== null && typedRun.terminal === undefined)}
+            // Single-in-flight: disabled until the mount idle-check resolves, and while a typed run is
+            // live (in-flight derives from typedRun.terminal — the listener updates it, so re-attach and
+            // run-end both clear the guard). No write-once busy latch.
+            disabled={!checkedIdle || (typedRun !== null && typedRun.terminal === undefined)}
           >
             New run
           </Button>

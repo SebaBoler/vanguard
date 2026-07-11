@@ -34,7 +34,9 @@ export function RunStrip({ state, onCancel }: { state: TypedRunState; onCancel: 
                       : 'border-border text-muted-foreground opacity-60'
               }`}
             >
-              {phase === 'running' && <RefreshCw className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />}
+              {phase === 'running' && terminal === undefined && (
+                <RefreshCw className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />
+              )}
               {name}
             </span>
           );
