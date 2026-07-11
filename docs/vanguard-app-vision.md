@@ -119,13 +119,26 @@ A thin typed surface over the existing `runSourcedIssue` / `assembleReviewPipeli
 events (stage-start, cost, verdict) instead of parsing stdout. The CLI is left
 untouched and continues to call the same core. **Everything below depends on this.**
 
+### Subsystem 0.5 — Sidecar hardening *(net-new, unblocks 1)*
+
+Three spec reviews of Subsystem 1 found the typed `apiCreateRun` path rests on a
+sidecar S0 shipped deliberately minimal — not ready for a real run UI. 0.5 hardens
+it: **run-id-tagged + buffered events** (S0's global `{id:"run"}` broadcast has no
+per-run key and no replay) with a **re-attach** command so a renavigated live view
+replays the backlog; a **non-blocking capabilities** path (S0's single mutex lets a
+minutes-long run starve `apiCapabilities`); **`cancelRun`** (`AbortSignal` →
+`api_cancel`; the typed path has no PID for `killRun`); the **`repoPath` param** (F6
+— `deps.ts` uses `process.cwd()`, wrong for multi-project); and a **provider gate**
+(interim — `capabilities().providers` returns only proxy-less providers the typed
+path runs today; superseded by Subsystem 6). *Depends on: 0. Blocks: 1.*
+
 ### Subsystem 1 — Structured run builder
 
 Kills "know the CLI." Replace the raw `<Textarea>` in
 `apps/desktop/src/features/inspector/NewRunForm.tsx` with proposed, validated fields
 — provider, budget, flow, transport, max-turns — sourced from the API's option
-surface. Still emits a composed CLI command for back-compat/debuggability, but the
-user never hand-types it. *Depends on: 0.*
+surface (typed `apiCreateRun` + live event strip). Still keeps a composed CLI command
+as an escape hatch, but the user never hand-types it. *Depends on: 0, **0.5**.*
 
 ### Subsystem 2 — Named workflows (HCL)
 
@@ -164,16 +177,32 @@ flow HCL**: blocks = stages referenced by name, drag to reorder, `ref =` blocks 
 custom TS steps. Fully unblocked by the Layer-1/Layer-2 decision. *Depends on: 2
 (HCL format must land first).*
 
+### Subsystem 6 — Custom providers
+
+Today `src/agents/registry.ts` `PROVIDERS` is a hardcoded name→factory map, so the
+typed run path can only run the built-ins — and proxy-requiring ones (zai/openrouter)
+fail because `deps.ts` hardcodes `egress:true/llmProxy:false`. Make providers
+**user-configurable**: a custom provider = `{ name, endpoint, apiKey, via: proxy }`
+stored in `AppConfig` (`.vanguard/app.json`, the same store Settings edits), merged
+with the built-ins in the registry. `capabilities().providers` then returns built-ins
++ configured customs; the typed path runs them with their per-provider proxy/endpoint.
+Motivating case: a Zai subscription routed through a self-hosted LLM proxy with a
+global proxy key. **Supersedes Subsystem 0.5's interim provider gate** — proxy becomes
+a per-provider config field, not a global hardcode. *Depends on: 0.5 (typed path +
+gate it replaces). Spans core (registry), config schema, UI.*
+
 ---
 
 ## Build order
 
 ```
-0  Typed core API        (foundation)
-1  Structured run builder
-2  Named workflows (HCL)
+0    Typed core API         (foundation)
+0.5  Sidecar hardening       (unblocks 1)
+1    Structured run builder
+2    Named workflows (HCL)
 3+4  Doc editor + transport write-side
-5  Visual workflow editor
+5    Visual workflow editor
+6    Custom providers        (supersedes 0.5's provider gate)
 ```
 
 ---
