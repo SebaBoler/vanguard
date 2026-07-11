@@ -6,12 +6,18 @@ import {
   listRuns,
   listActive,
   readRun,
-  spawnRun,
   killRun,
   watchProject,
   unwatchProject,
+  apiCapabilitiesCached,
+  apiCreateRun,
+  apiActiveRun,
+  apiRunBacklog,
+  apiCancel,
   SPAWN_OUTPUT_EVENT,
   SPAWN_EXIT_EVENT,
+  type Capabilities,
+  type CreateRunParams,
 } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
@@ -23,9 +29,10 @@ import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
 import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
+import { RunStrip } from './RunStrip';
+import { reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import { useAppConfig } from '../../hooks';
-import { runCommand, runPresets } from '../../command';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
 export function Inspector({
@@ -54,6 +61,10 @@ export function Inspector({
   const [focusedSpawn, setFocusedSpawn] = useState<number | null>(null);
   const [showNewRun, setShowNewRun] = useState(false);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
+  // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
+  const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
+  const [busy, setBusy] = useState<boolean | null>(null); // null until apiActiveRun() resolves
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -148,20 +159,47 @@ export function Inspector({
     };
   }, []);
 
-  const startRun = async (command: string): Promise<void> => {
-    localStorage.setItem(`vg-runcmd:${project}`, command);
+  // Load the capability surface once (cached; pure — never blocks on a live run).
+  useEffect(() => {
+    void apiCapabilitiesCached().then(setCaps).catch(() => setCaps(null));
+  }, []);
+
+  // Subscribe to the typed-run event stream and fold into `typedRun` (reducer drops foreign runIds).
+  useEffect(() => {
+    const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
+      setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload));
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
+
+  // On mount, learn whether a typed run is already in flight (guards the button) and re-attach its
+  // strip by replaying the buffered backlog. Runs after the listen effect so the live tail isn't lost;
+  // the reducer dedupes the overlap.
+  useEffect(() => {
+    void apiActiveRun().then(async (id) => {
+      setBusy(id !== null);
+      if (id === null) return;
+      const backlog = await apiRunBacklog(id);
+      let s = initialTypedRun();
+      for (const p of backlog) s = reduceTypedRun(s, p as { runId: string; event: RunEvent });
+      setTypedRun(s);
+    });
+  }, []);
+
+  const startTypedRun = (params: CreateRunParams): void => {
     setShowNewRun(false);
     setError(null);
-    try {
-      const pid = await spawnRun(project, command);
-      setSpawns((prev) => [...prev, { pid, command, lines: [] }]);
-      // Drop back to the run list so the new launch shows as an "in progress" row.
-      setDetail(null);
-      setLiveRun(null);
-      setFocusedSpawn(null);
-    } catch (e) {
-      setError(String(e));
-    }
+    setTypedRun(initialTypedRun()); // synchronous in-flight marker ("starting…")
+    setBusy(true);
+    setDetail(null);
+    setLiveRun(null);
+    setFocusedSpawn(null);
+    // The promise resolves at run-end and only clears the spinner/guard; terminal state is event-driven.
+    void apiCreateRun(params)
+      .catch((e) => setError(String(e)))
+      .finally(() => setBusy(false));
   };
 
   const open = async (r: RunSummary): Promise<void> => {
@@ -179,6 +217,10 @@ export function Inspector({
 
   // The launch whose live log is open (may be running or just-exited until dismissed).
   const focusedSpawnEntry = focusedSpawn !== null ? spawns.find((s) => s.pid === focusedSpawn) : undefined;
+
+  // Suppress the session-based `active` row for the typed run in flight (join key is taskId).
+  const liveTaskId = typedRun?.taskId;
+  const activeShown = liveTaskId !== undefined ? active.filter((a) => a.taskId !== liveTaskId) : active;
 
   return (
     // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
@@ -202,6 +244,8 @@ export function Inspector({
             color="secondary"
             onClick={() => setShowNewRun((v) => !v)}
             startIcon={<Play className="size-4" />}
+            // Single-in-flight: disabled while a typed run is live or until the idle-check resolves.
+            disabled={busy !== false || (typedRun !== null && typedRun.terminal === undefined)}
           >
             New run
           </Button>
@@ -218,18 +262,26 @@ export function Inspector({
         </div>
       )}
 
-      {showNewRun && (
+      {showNewRun && caps !== null && (
         <div className="shrink-0">
-          <NewRunForm
-            defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? runCommand(cfg)}
-            presets={runPresets(cfg)}
-            onRun={startRun}
-            onCancel={() => setShowNewRun(false)}
-          />
+          <NewRunForm capabilities={caps} project={project} onRun={startTypedRun} onCancel={() => setShowNewRun(false)} />
         </div>
       )}
 
-      {detail ? (
+      {typedRun !== null ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          {typedRun.terminal !== undefined && (
+            <button
+              onClick={() => setTypedRun(null)}
+              className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="size-3.5" />
+              Back to runs
+            </button>
+          )}
+          <RunStrip state={typedRun} onCancel={() => void apiCancel()} />
+        </div>
+      ) : detail ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <RunDetail detail={detail} project={project} />
         </div>
@@ -276,7 +328,7 @@ export function Inspector({
         <div className="flex min-h-0 flex-1 flex-col">
           <RunList
             runs={runs}
-            active={active}
+            active={activeShown}
             spawns={spawns}
             onSelect={open}
             onOpenActive={(a) => {
