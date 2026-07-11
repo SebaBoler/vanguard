@@ -134,7 +134,7 @@ export function apiRunBacklog(runId: string): Promise<unknown[]> {
   return invoke<unknown[]>('api_run_backlog', { runId });
 }
 
-/** Cancel the in-flight typed run (out-of-band SIGUSR1 to the sidecar child). */
+/** Cancel the in-flight typed run (out-of-band SIGUSR2 to the sidecar child). */
 export function apiCancel(): Promise<void> {
   return invoke<void>('api_cancel');
 }

@@ -252,20 +252,18 @@ pub fn api_create_run(
         },
     );
 
-    // Was this run cancelled? (api_cancel records the active runId.)
+    // Was this run cancelled? (api_cancel records the active runId.) Take the flag if it matches.
     let was_cancelled = state
         .cancelled
         .lock()
-        .ok()
-        .and_then(|mut c| {
-            if c.as_deref() == Some(&run_id) {
+        .map(|mut c| {
+            let hit = c.as_deref() == Some(&run_id);
+            if hit {
                 *c = None;
-                Some(())
-            } else {
-                None
             }
+            hit
         })
-        .is_some();
+        .unwrap_or(false);
 
     let (result, terminal) = resolve_terminal(outcome, was_cancelled);
     if let Some(terminal) = terminal {
@@ -298,7 +296,7 @@ pub fn api_run_backlog(state: State<'_, Sidecar>, run_id: String) -> Vec<serde_j
         .unwrap_or_default()
 }
 
-/// Cancel the in-flight run out-of-band: SIGUSR1 to the sidecar child (an in-band stdio message would
+/// Cancel the in-flight run out-of-band: SIGUSR2 to the sidecar child (an in-band stdio message would
 /// queue behind the run it must cancel). Reads `child_pid`/`active` only — never the run-held `proc`
 /// lock. The sidecar's handler aborts the run's AbortController without exiting.
 #[tauri::command]

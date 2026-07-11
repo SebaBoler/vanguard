@@ -18,7 +18,7 @@ export function endRun(): void {
   current = undefined;
 }
 
-/** Abort the current run, if any. No-op when idle. Called by the SIGUSR1 handler. */
+/** Abort the current run, if any. No-op when idle. Called by the SIGUSR2 handler. */
 export function cancelCurrent(): void {
   current?.abort();
 }
