@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Chip, cn } from '@/ui';
 import { listen } from '@tauri-apps/api/event';
-import { Play, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw } from 'lucide-react';
 import {
   listRuns,
   listActive,
@@ -51,6 +51,7 @@ export function Inspector({
   const [watching, setWatching] = useState(false);
   const [tick, setTick] = useState(0);
   const [spawns, setSpawns] = useState<Spawn[]>([]);
+  const [focusedSpawn, setFocusedSpawn] = useState<number | null>(null);
   const [showNewRun, setShowNewRun] = useState(false);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
 
@@ -154,6 +155,10 @@ export function Inspector({
     try {
       const pid = await spawnRun(project, command);
       setSpawns((prev) => [...prev, { pid, command, lines: [] }]);
+      // Drop back to the run list so the new launch shows as an "in progress" row.
+      setDetail(null);
+      setLiveRun(null);
+      setFocusedSpawn(null);
     } catch (e) {
       setError(String(e));
     }
@@ -161,6 +166,7 @@ export function Inspector({
 
   const open = async (r: RunSummary): Promise<void> => {
     setError(null);
+    setFocusedSpawn(null);
     try {
       setDetail(await readRun(project, r.taskId, r.timestamp));
     } catch (e) {
@@ -170,6 +176,9 @@ export function Inspector({
 
   const detailPassed =
     detail && (detail.proof ? detail.proof.passed : !detail.stages.some((s) => !s.record.completed));
+
+  // The launch whose live log is open (may be running or just-exited until dismissed).
+  const focusedSpawnEntry = focusedSpawn !== null ? spawns.find((s) => s.pid === focusedSpawn) : undefined;
 
   return (
     // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
@@ -220,22 +229,28 @@ export function Inspector({
         </div>
       )}
 
-      {spawns.length > 0 && (
-        <div className="shrink-0 space-y-2">
-          {spawns.map((s) => (
-            <LaunchPanel
-              key={s.pid}
-              spawn={s}
-              onKill={(pid) => void killRun(pid)}
-              onDismiss={(pid) => setSpawns((prev) => prev.filter((x) => x.pid !== pid))}
-            />
-          ))}
-        </div>
-      )}
-
       {detail ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <RunDetail detail={detail} project={project} />
+        </div>
+      ) : focusedSpawnEntry ? (
+        // A running launch clicked in the list: its live log + Kill, with a way back to the table.
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <button
+            onClick={() => setFocusedSpawn(null)}
+            className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
+            Back to runs
+          </button>
+          <LaunchPanel
+            spawn={focusedSpawnEntry}
+            onKill={(pid) => void killRun(pid)}
+            onDismiss={(pid) => {
+              setSpawns((prev) => prev.filter((x) => x.pid !== pid));
+              setFocusedSpawn(null);
+            }}
+          />
         </div>
       ) : liveRun ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -259,7 +274,17 @@ export function Inspector({
       ) : screen === 'runs' ? (
         // In-flight runs render as running rows at the top of the RunList table.
         <div className="flex min-h-0 flex-1 flex-col">
-          <RunList runs={runs} active={active} onSelect={open} onOpenActive={setLiveRun} />
+          <RunList
+            runs={runs}
+            active={active}
+            spawns={spawns}
+            onSelect={open}
+            onOpenActive={(a) => {
+              setFocusedSpawn(null);
+              setLiveRun(a);
+            }}
+            onOpenSpawn={setFocusedSpawn}
+          />
         </div>
       ) : screen === 'board' ? (
         <TaskBoard project={project} onOpenTask={setTaskDetailId} />

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Table, Chip, Empty, Input, ScrollTable } from '@/ui';
 import { Inbox, RefreshCw, Search } from 'lucide-react';
 import { relTime } from '../../time';
+import type { Spawn } from './LaunchPanel';
 import type { ActiveRun, RunSummary } from '../../vanguard-output';
 
 /** `2026-07-06T19:12:02.123Z` -> `2026-07-06 19:12`. */
@@ -9,19 +10,33 @@ function when(ts: string): string {
   return ts.replace('T', ' ').slice(0, 16);
 }
 
+/** A launched CLI run's label: the taskId once the process logs it, else the command sans `vanguard `. */
+function spawnLabel(s: Spawn): string {
+  for (const line of s.lines) {
+    const m = line.match(/"taskId":"([^"]+)"/);
+    if (m?.[1] !== undefined) return m[1];
+  }
+  return s.command.replace(/^vanguard\s+/, '');
+}
+
 type Filter = 'all' | 'passed' | 'failed';
 
 export function RunList({
   runs,
   active,
+  spawns,
   onSelect,
   onOpenActive,
+  onOpenSpawn,
 }: {
   runs: RunSummary[];
-  /** In-flight runs, rendered as running rows at the top of the table. */
+  /** In-flight runs discovered from `.vanguard` state, rendered as running rows at the top. */
   active: ActiveRun[];
+  /** Locally-launched CLI runs; the still-running ones render as rows above `active`. */
+  spawns: Spawn[];
   onSelect: (r: RunSummary) => void;
   onOpenActive: (a: ActiveRun) => void;
+  onOpenSpawn: (pid: number) => void;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -36,6 +51,14 @@ export function RunList({
     });
   }, [runs, query, filter]);
 
+  // Still-running local launches. Like active rows they have no verdict, so "all" filter only.
+  const runningSpawns = useMemo(() => spawns.filter((s) => s.exit === undefined), [spawns]);
+  const shownSpawns = useMemo(() => {
+    if (filter !== 'all') return [];
+    const q = query.trim().toLowerCase();
+    return runningSpawns.filter((s) => !q || spawnLabel(s).toLowerCase().includes(q));
+  }, [runningSpawns, query, filter]);
+
   // Running rows have no pass/fail verdict yet, so they only appear under the "all" filter.
   const shownActive = useMemo(() => {
     if (filter !== 'all') return [];
@@ -43,7 +66,7 @@ export function RunList({
     return active.filter((a) => !q || a.taskId.toLowerCase().includes(q));
   }, [active, query, filter]);
 
-  if (runs.length === 0 && active.length === 0) {
+  if (runs.length === 0 && active.length === 0 && runningSpawns.length === 0) {
     return (
       <Empty.Root>
         <Empty.Media>
@@ -81,11 +104,12 @@ export function RunList({
           ))}
         </div>
         <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-          {shown.length + shownActive.length} / {runs.length + (filter === 'all' ? active.length : 0)}
+          {shown.length + shownActive.length + shownSpawns.length} /{' '}
+          {runs.length + (filter === 'all' ? active.length + runningSpawns.length : 0)}
         </span>
       </div>
 
-      {shown.length === 0 && shownActive.length === 0 ? (
+      {shown.length === 0 && shownActive.length === 0 && shownSpawns.length === 0 ? (
         <div className="py-8 text-center text-sm text-muted-foreground">No runs match.</div>
       ) : (
         <ScrollTable>
@@ -100,6 +124,27 @@ export function RunList({
             </Table.Row>
           </Table.Header>
           <Table.Body>
+            {shownSpawns.map((s) => (
+              <Table.Row
+                key={`spawn:${s.pid}`}
+                onClick={() => onOpenSpawn(s.pid)}
+                className="cursor-pointer bg-primary/10"
+              >
+                <Table.Cell className="font-medium">{spawnLabel(s)}</Table.Cell>
+                <Table.Cell className="tabular-nums text-muted-foreground">now</Table.Cell>
+                <Table.Cell className="text-muted-foreground">—</Table.Cell>
+                <Table.Cell className="text-right tabular-nums text-muted-foreground">—</Table.Cell>
+                <Table.Cell>
+                  {/* Non-verdict color (blue) so a running row isn't mistaken for a green "passed" one. */}
+                  <Chip color="primary" variant="outlined">
+                    <span className="inline-flex items-center gap-1">
+                      <RefreshCw className="size-3 animate-spin motion-reduce:animate-none" aria-hidden />
+                      in progress
+                    </span>
+                  </Chip>
+                </Table.Cell>
+              </Table.Row>
+            ))}
             {shownActive.map((a) => (
               <Table.Row
                 key={`active:${a.taskId}`}
