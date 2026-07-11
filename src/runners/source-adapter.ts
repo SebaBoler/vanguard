@@ -112,6 +112,8 @@ export interface RunIssueDeps extends RunOptions {
   reviewGate?: boolean;
   /** When set, receives structured run events. Absent ⇒ no events (CLI path). Threaded to runStages + run-start/run-end. */
   onEvent?: (e: RunEvent) => void;
+  /** When set, aborts the run — the sandbox is torn down via the caller's finally. Threaded into runStages. */
+  signal?: AbortSignal;
 }
 
 /** Semantic kind of a proof failure; adapters map it to a platform label string. */
@@ -297,6 +299,7 @@ export async function runSourcedIssue(
         },
         ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
         ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
+        ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
       console.log(summarizeOutcomes(outcomes));
 

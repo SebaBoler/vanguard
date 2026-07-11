@@ -8,4 +8,6 @@ export type RunEvent =
   | { type: 'stage-start'; name: string; index: number; of: number }
   | { type: 'stage-end'; name: string; index: number; of: number; outcome: string }
   | { type: 'cost'; usdSpent: number }
-  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean };
+  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean }
+  | { type: 'run-error'; message: string }
+  | { type: 'run-cancelled' };
