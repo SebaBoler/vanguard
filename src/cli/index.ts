@@ -91,7 +91,9 @@ async function main(): Promise<void> {
   if (command.kind === 'sidecar') {
     const { runSidecar } = await import('../sidecar/sidecar.js');
     const { productionDeps } = await import('../sidecar/deps.js');
+    const { installCancelHandler } = await import('../sidecar/cancel.js');
     const { createInterface } = await import('node:readline');
+    installCancelHandler();
     const rl = createInterface({ input: process.stdin });
     await runSidecar(rl, (l: string) => void process.stdout.write(l + '\n'), productionDeps());
     return;
