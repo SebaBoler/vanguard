@@ -345,6 +345,9 @@ export async function runSourcedIssue(
           promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
           agent: agents.agent,
           resumeSessionId,
+          // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
+          // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
+          ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
         });
         const prior = outcomes[implementerIdx];
         if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };

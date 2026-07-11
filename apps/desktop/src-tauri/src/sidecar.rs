@@ -91,11 +91,17 @@ fn request(
             if trimmed.is_empty() {
                 continue;
             }
-            let v: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
+            // Only protocol messages count. Anything else on stdout (a stray log line that escaped the
+            // stderr redirect, non-JSON noise) is skipped, never misread as a terminal.
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+                continue;
+            };
             if v.get("event").is_some() {
                 on_event(v);
-            } else {
+            } else if v.get("result").is_some() || v.get("error").is_some() {
                 break Ok(v);
+            } else {
+                continue;
             }
         }
     };
@@ -164,6 +170,21 @@ fn resolve_terminal(
         serde_json::json!({ "type": "run-error", "message": err_msg })
     };
     (Err(err_msg), Some(terminal))
+}
+
+/// Whether a run's buffer already holds a terminal event, so we don't emit a second one.
+fn has_terminal(state: &Sidecar, run_id: &str) -> bool {
+    let Ok(buf) = state.buffer.lock() else {
+        return false;
+    };
+    buf.get(run_id).is_some_and(|events| {
+        events.iter().any(|e| {
+            e.get("event")
+                .and_then(|ev| ev.get("type"))
+                .and_then(|t| t.as_str())
+                .is_some_and(|t| matches!(t, "run-end" | "run-error" | "run-cancelled"))
+        })
+    })
 }
 
 /// Emit + buffer a `{runId, event}` payload on the `api:event` channel.
@@ -249,8 +270,12 @@ pub fn api_create_run(
     let (result, terminal) = resolve_terminal(outcome, was_cancelled);
     if let Some(terminal) = terminal {
         // Any non-success run (error envelope or child death) synthesizes its terminal so a
-        // re-attaching strip reaches a terminal state instead of hanging on "accepted".
-        emit_event(&app, &state, &run_id, terminal);
+        // re-attaching strip reaches a terminal state instead of hanging on "accepted" — unless a
+        // terminal was already streamed (e.g. run-end emitted, then a teardown throw), to keep the
+        // "exactly one terminal" guarantee.
+        if !has_terminal(&state, &run_id) {
+            emit_event(&app, &state, &run_id, terminal);
+        }
     }
     finish_run(&state, &run_id);
     result
@@ -287,8 +312,9 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
     }
     let pid = *state.child_pid.lock().map_err(|e| e.to_string())?;
     if let Some(pid) = pid {
-        // No libc dep: shell `kill -USR1` (Unix; the sidecar itself is Unix-only, spawned via `sh -c`).
-        let _ = Command::new("kill").arg("-USR1").arg(pid.to_string()).status();
+        // No libc dep: shell `kill -USR2` (Unix; the sidecar itself is Unix-only, spawned via `sh -c`).
+        // SIGUSR2 not SIGUSR1 — SIGUSR1 is Node's reserved inspector-start signal.
+        let _ = Command::new("kill").arg("-USR2").arg(pid.to_string()).status();
     }
     Ok(())
 }

@@ -1,8 +1,9 @@
 /**
  * Current-run cancellation for the sidecar. Cancel is out-of-band: the desktop sends the sidecar
- * process a SIGUSR1 (an in-band stdio message would queue behind the run it must cancel), and the
+ * process a SIGUSR2 (an in-band stdio message would queue behind the run it must cancel), and the
  * handler aborts the run's controller WITHOUT exiting, so the loop stays alive for the next run.
- * Single-in-flight ⇒ one current controller at a time.
+ * SIGUSR2 not SIGUSR1 — SIGUSR1 is Node's reserved inspector-start signal. Single-in-flight ⇒ one
+ * current controller at a time.
  */
 let current: AbortController | undefined;
 
@@ -22,7 +23,7 @@ export function cancelCurrent(): void {
   current?.abort();
 }
 
-/** Install the SIGUSR1 → cancelCurrent handler once. The process does NOT exit on the signal. */
+/** Install the SIGUSR2 → cancelCurrent handler once. The process does NOT exit on the signal. */
 export function installCancelHandler(): void {
-  process.on('SIGUSR1', cancelCurrent);
+  process.on('SIGUSR2', cancelCurrent);
 }
