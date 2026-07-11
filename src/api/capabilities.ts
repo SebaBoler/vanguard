@@ -15,6 +15,9 @@ export interface Capabilities {
   defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
 }
 
+/** The task transports vanguard reads/publishes through. Single source for the capability + validation. */
+export const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
+
 /**
  * Name-addressable flow registry. v0 registers only the TS-authored flows that already exist;
  * Subsystem 2 populates HCL-loaded flows (A/B). Kept intentionally tiny — this is not the HCL loader.
@@ -29,7 +32,7 @@ export function capabilities(): Capabilities {
   return {
     providers: [...PROVIDER_NAMES],
     flows: Object.entries(FLOWS).map(([name, f]) => ({ name, label: f.label })),
-    transports: ['github', 'gitlab', 'linear'],
+    transports: [...TRANSPORTS],
     defaults: { provider: 'claude', maxTurns: 30, maxCostUsd: 5, baseBranch: 'main' },
   };
 }

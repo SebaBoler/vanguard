@@ -1,13 +1,11 @@
 import { isProviderName, PROVIDER_NAMES } from '../agents/registry.js';
-import { FLOWS } from '../api/capabilities.js';
+import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
 import { VanguardError } from '../core/errors.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { Capabilities } from '../api/capabilities.js';
 
 /** A caller mistake in a request (bad params, unknown method) — classified `kind: "bad-request"`. */
 export class BadRequestError extends VanguardError {}
-
-const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
 
 /** Typed projection of a run request — a subset of RunOptions plus the issue ref and transport. */
 export interface CreateRunParams {
@@ -47,8 +45,8 @@ interface Request {
  */
 export function validateCreateRun(params: unknown): void {
   const p = (params ?? {}) as Record<string, unknown>;
-  if (typeof p.issueRef !== 'string' || p.issueRef === '') {
-    throw new BadRequestError('issueRef is required and must be a non-empty string');
+  if (typeof p.issueRef !== 'string' || p.issueRef.trim() === '') {
+    throw new BadRequestError('issueRef is required and must be a non-blank string');
   }
   if (p.provider !== undefined && (typeof p.provider !== 'string' || !isProviderName(p.provider))) {
     throw new BadRequestError(`unknown provider "${String(p.provider)}" — choose one of: ${PROVIDER_NAMES.join(', ')}`);
@@ -56,8 +54,14 @@ export function validateCreateRun(params: unknown): void {
   if (p.transport !== undefined && !(TRANSPORTS as readonly unknown[]).includes(p.transport)) {
     throw new BadRequestError(`unknown transport "${String(p.transport)}" — choose one of: ${TRANSPORTS.join(', ')}`);
   }
-  if (p.flow !== undefined && (typeof p.flow !== 'string' || !(p.flow in FLOWS))) {
+  if (p.flow !== undefined && (typeof p.flow !== 'string' || !Object.hasOwn(FLOWS, p.flow))) {
     throw new BadRequestError(`unknown flow "${String(p.flow)}" — choose one of: ${Object.keys(FLOWS).join(', ')}`);
+  }
+  if (p.maxTurns !== undefined && (typeof p.maxTurns !== 'number' || !Number.isInteger(p.maxTurns) || p.maxTurns <= 0)) {
+    throw new BadRequestError(`maxTurns must be a positive integer, got ${String(p.maxTurns)}`);
+  }
+  if (p.baseBranch !== undefined && (typeof p.baseBranch !== 'string' || p.baseBranch.trim() === '')) {
+    throw new BadRequestError(`baseBranch must be a non-blank string, got ${String(p.baseBranch)}`);
   }
 }
 

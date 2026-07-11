@@ -67,7 +67,14 @@ describe('runSidecar', () => {
   it.each([
     ['unknown transport', { issueRef: 'gh-1', transport: 'gitub' }],
     ['unknown flow', { issueRef: 'gh-1', flow: 'nope' }],
+    ['prototype-key flow', { issueRef: 'gh-1', flow: 'toString' }],
+    ['non-numeric maxTurns', { issueRef: 'gh-1', maxTurns: 'abc' }],
+    ['non-positive maxTurns', { issueRef: 'gh-1', maxTurns: -5 }],
+    ['fractional maxTurns', { issueRef: 'gh-1', maxTurns: 2.5 }],
+    ['non-string baseBranch', { issueRef: 'gh-1', baseBranch: 42 }],
+    ['blank baseBranch', { issueRef: 'gh-1', baseBranch: '  ' }],
     ['empty issueRef', { issueRef: '' }],
+    ['whitespace issueRef', { issueRef: '  \n ' }],
     ['missing issueRef', {}],
   ])('rejects %s as bad-request', async (_label, params) => {
     const { write, out } = collect();
