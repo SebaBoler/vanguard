@@ -147,7 +147,11 @@ pub fn run() {
             watch_project,
             unwatch_project,
             sidecar::api_capabilities,
-            sidecar::api_create_run
+            sidecar::api_create_run,
+            sidecar::api_active_run,
+            sidecar::api_run_backlog,
+            sidecar::api_cancel,
+            sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

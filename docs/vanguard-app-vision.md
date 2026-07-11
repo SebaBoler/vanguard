@@ -119,13 +119,29 @@ A thin typed surface over the existing `runSourcedIssue` / `assembleReviewPipeli
 events (stage-start, cost, verdict) instead of parsing stdout. The CLI is left
 untouched and continues to call the same core. **Everything below depends on this.**
 
+### Subsystem 0.5 — Sidecar hardening *(net-new, unblocks 1)*
+
+Five reviews (three of the S1 spec, two of this one) found the typed `apiCreateRun`
+path rests on a sidecar S0 shipped deliberately minimal — and that its single-mutex,
+one-pipe, inline-`await` model needs a real concurrency design, not just added methods.
+0.5 hardens it: **run-id-tagged + buffered events** behind a Rust lock *separate* from
+the run pipe, with **re-attach** (`api_run_backlog`/`api_active_run`) so a renavigated
+strip replays the backlog *while the run is still live*; a **non-blocking capabilities**
+fix (frontend cache — S0's single mutex lets a run starve `apiCapabilities`);
+**out-of-band `cancelRun`** (a `SIGUSR1` to the sidecar child aborts the pipeline's
+existing `AbortSignal`; an in-band stdio message would queue behind the run); a
+**terminal-event guarantee** (every run emits exactly one of run-end/error/cancelled or
+re-attach hangs); and the **`repoPath` param** (F6). *No provider gate* — a review
+proved the built-ins all run on the typed path today (the first draft's gate rested on
+a false "zai/openrouter fail" premise). *Depends on: 0. Blocks: 1.*
+
 ### Subsystem 1 — Structured run builder
 
 Kills "know the CLI." Replace the raw `<Textarea>` in
 `apps/desktop/src/features/inspector/NewRunForm.tsx` with proposed, validated fields
 — provider, budget, flow, transport, max-turns — sourced from the API's option
-surface. Still emits a composed CLI command for back-compat/debuggability, but the
-user never hand-types it. *Depends on: 0.*
+surface (typed `apiCreateRun` + live event strip). Still keeps a composed CLI command
+as an escape hatch, but the user never hand-types it. *Depends on: 0, **0.5**.*
 
 ### Subsystem 2 — Named workflows (HCL)
 
@@ -164,16 +180,30 @@ flow HCL**: blocks = stages referenced by name, drag to reorder, `ref =` blocks 
 custom TS steps. Fully unblocked by the Layer-1/Layer-2 decision. *Depends on: 2
 (HCL format must land first).*
 
+### Subsystem 6 — Custom providers
+
+Today `src/agents/registry.ts` `PROVIDERS` is a hardcoded name→factory map — the
+built-ins are all you can run. Make providers **user-configurable**: a custom provider
+= `{ name, endpoint, apiKey, via: proxy }` stored in `AppConfig` (`.vanguard/app.json`,
+the same store Settings edits), merged with the built-ins in the registry.
+`capabilities().providers` then returns built-ins + configured customs; the typed path
+runs them with their per-provider proxy/endpoint. Motivating case: a Zai subscription
+routed through a self-hosted LLM proxy with a global proxy key and a custom endpoint —
+something no hardcoded built-in can express. *Depends on: 0.5 (typed path). Spans core
+(registry), config schema, UI.*
+
 ---
 
 ## Build order
 
 ```
-0  Typed core API        (foundation)
-1  Structured run builder
-2  Named workflows (HCL)
+0    Typed core API         (foundation)
+0.5  Sidecar hardening       (unblocks 1)
+1    Structured run builder
+2    Named workflows (HCL)
 3+4  Doc editor + transport write-side
-5  Visual workflow editor
+5    Visual workflow editor
+6    Custom providers        (user-configured providers in AppConfig)
 ```
 
 ---

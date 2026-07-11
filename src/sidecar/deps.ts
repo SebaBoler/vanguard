@@ -1,4 +1,5 @@
 import { capabilities } from '../api/capabilities.js';
+import { beginRun, endRun } from './cancel.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { githubDepsFromEnv, runGithubIssue } from '../runners/github.js';
 import { gitlabDepsFromEnv, runGitlabIssue } from '../runners/gitlab.js';
@@ -36,10 +37,11 @@ function linearExtras(
 
 /**
  * Production wiring: build a sandbox context + provider auth from env, then dispatch to the same
- * source runner the CLI uses (mirrors `src/cli/run.ts`), with `onEvent` threaded in — the only field
- * this bridge adds. Smoke-verified (needs Docker + creds), not unit-tested. The child's cwd is the
- * project dir (spawned per `spawn.rs`), so `repoPath = process.cwd()`. Keep this thin — logic belongs
- * in the runners, not here.
+ * source runner the CLI uses (mirrors `src/cli/run.ts`), with `onEvent` + the cancel `signal` threaded
+ * in. Smoke-verified (needs Docker + creds), not unit-tested. The sidecar child is spawned WITHOUT a
+ * project cwd (sidecar.rs runs `sh -c 'exec vanguard __sidecar'`, inheriting the app cwd — unlike
+ * spawn.rs's raw-CLI path which sets current_dir), so the target repo must arrive explicitly as
+ * `params.repoPath`, per run. Keep this thin — logic belongs in the runners, not here.
  */
 export function productionDeps(): SidecarDeps {
   return {
@@ -47,7 +49,8 @@ export function productionDeps(): SidecarDeps {
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       const transport = params.transport ?? 'github';
       const provider = toProvider(params.provider);
-      const repoPath = process.cwd();
+      const repoPath = params.repoPath;
+      const signal = beginRun();
       const auth = agentAuthFromEnv(provider !== undefined ? { provider } : {});
       const ctx = await startSandboxContext({
         egress: true,
@@ -59,6 +62,7 @@ export function productionDeps(): SidecarDeps {
         // The RunOptions the sidecar exposes + the sandbox wiring + the event seam, shared across transports.
         const common = {
           onEvent,
+          signal,
           ...(provider !== undefined ? { provider } : {}),
           ...(params.maxTurns !== undefined ? { maxTurns: params.maxTurns } : {}),
           ...(params.baseBranch !== undefined ? { baseBranch: params.baseBranch } : {}),
@@ -82,6 +86,7 @@ export function productionDeps(): SidecarDeps {
         return await runGithubIssue(params.issueRef, { ...deps, ...common });
       } finally {
         await ctx.destroy();
+        endRun();
       }
     },
   };

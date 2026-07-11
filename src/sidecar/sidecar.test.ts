@@ -31,7 +31,7 @@ describe('runSidecar', () => {
 
   it('streams events then a result for createRun', async () => {
     const { write, out } = collect();
-    await runSidecar(lines(JSON.stringify({ id: 'r1', method: 'createRun', params: { issueRef: 'gh-1', flow: 'default', provider: 'claude' } })), write, stubDeps());
+    await runSidecar(lines(JSON.stringify({ id: 'r1', method: 'createRun', params: { issueRef: 'gh-1', repoPath: '/repo', flow: 'default', provider: 'claude' } })), write, stubDeps());
     const parsed = out.map((l) => JSON.parse(l));
     expect(parsed[0]).toMatchObject({ id: 'r1', event: { type: 'stage-start' } });
     expect(parsed[1]).toMatchObject({ id: 'r1', result: { prUrl: 'https://example/pr/1' } });
@@ -58,24 +58,26 @@ describe('runSidecar', () => {
         return {};
       },
     });
-    await runSidecar(lines(JSON.stringify({ id: 'p', method: 'createRun', params: { issueRef: 'gh-1', provider: 'notaprovider' } })), write, deps);
+    await runSidecar(lines(JSON.stringify({ id: 'p', method: 'createRun', params: { issueRef: 'gh-1', repoPath: '/repo', provider: 'notaprovider' } })), write, deps);
     expect(out).toHaveLength(1);
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'p', error: { kind: 'bad-request' } });
     expect(called).toBe(false);
   });
 
   it.each([
-    ['unknown transport', { issueRef: 'gh-1', transport: 'gitub' }],
-    ['unknown flow', { issueRef: 'gh-1', flow: 'nope' }],
-    ['prototype-key flow', { issueRef: 'gh-1', flow: 'toString' }],
-    ['non-numeric maxTurns', { issueRef: 'gh-1', maxTurns: 'abc' }],
-    ['non-positive maxTurns', { issueRef: 'gh-1', maxTurns: -5 }],
-    ['fractional maxTurns', { issueRef: 'gh-1', maxTurns: 2.5 }],
-    ['non-string baseBranch', { issueRef: 'gh-1', baseBranch: 42 }],
-    ['blank baseBranch', { issueRef: 'gh-1', baseBranch: '  ' }],
+    ['unknown transport', { issueRef: 'gh-1', repoPath: '/repo', transport: 'gitub' }],
+    ['unknown flow', { issueRef: 'gh-1', repoPath: '/repo', flow: 'nope' }],
+    ['prototype-key flow', { issueRef: 'gh-1', repoPath: '/repo', flow: 'toString' }],
+    ['non-numeric maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 'abc' }],
+    ['non-positive maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: -5 }],
+    ['fractional maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 2.5 }],
+    ['non-string baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 42 }],
+    ['blank baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '  ' }],
     ['empty issueRef', { issueRef: '' }],
     ['whitespace issueRef', { issueRef: '  \n ' }],
     ['missing issueRef', {}],
+    ['missing repoPath', { issueRef: 'gh-1' }],
+    ['blank repoPath', { issueRef: 'gh-1', repoPath: '  ' }],
   ])('rejects %s as bad-request', async (_label, params) => {
     const { write, out } = collect();
     await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());

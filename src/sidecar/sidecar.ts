@@ -10,6 +10,8 @@ export class BadRequestError extends VanguardError {}
 /** Typed projection of a run request — a subset of RunOptions plus the issue ref and transport. */
 export interface CreateRunParams {
   issueRef: string;
+  /** Absolute path to the target project repo. Required — the sidecar child has no project cwd. */
+  repoPath: string;
   flow?: string;
   provider?: string;
   transport?: string;
@@ -47,6 +49,9 @@ export function validateCreateRun(params: unknown): void {
   const p = (params ?? {}) as Record<string, unknown>;
   if (typeof p.issueRef !== 'string' || p.issueRef.trim() === '') {
     throw new BadRequestError('issueRef is required and must be a non-blank string');
+  }
+  if (typeof p.repoPath !== 'string' || p.repoPath.trim() === '') {
+    throw new BadRequestError('repoPath is required and must be a non-blank string');
   }
   if (p.provider !== undefined && (typeof p.provider !== 'string' || !isProviderName(p.provider))) {
     throw new BadRequestError(`unknown provider "${String(p.provider)}" — choose one of: ${PROVIDER_NAMES.join(', ')}`);

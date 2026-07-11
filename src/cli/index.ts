@@ -89,9 +89,17 @@ async function main(): Promise<void> {
     return;
   }
   if (command.kind === 'sidecar') {
+    // The JSON protocol owns stdout. Route everything else to stderr so a stray log line can't
+    // corrupt the stream the desktop parses: pino via VANGUARD_SIDECAR (see logger.ts), and the
+    // runner's console.log/info (e.g. summarizeOutcomes, gate messages) redirected here.
+    process.env.VANGUARD_SIDECAR = '1';
+    console.log = (...args: unknown[]): void => console.error(...args);
+    console.info = (...args: unknown[]): void => console.error(...args);
     const { runSidecar } = await import('../sidecar/sidecar.js');
     const { productionDeps } = await import('../sidecar/deps.js');
+    const { installCancelHandler } = await import('../sidecar/cancel.js');
     const { createInterface } = await import('node:readline');
+    installCancelHandler();
     const rl = createInterface({ input: process.stdin });
     await runSidecar(rl, (l: string) => void process.stdout.write(l + '\n'), productionDeps());
     return;
