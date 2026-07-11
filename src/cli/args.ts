@@ -253,6 +253,7 @@ export type Command =
       /** Also write the drafted candidates to this scratch path (refused if under src/evals/corpus/). */
       out?: string;
     }
+  | { kind: 'sidecar' }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -406,6 +407,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   if (values.help === true) return { kind: 'help' };
+
+  // Hidden desktop entrypoint: a persistent stdio JSON server (not a documented subcommand). Takes no
+  // flags; parsed before provider validation so it never touches the run/watch surface.
+  if (positionals[0] === '__sidecar') return { kind: 'sidecar' };
+
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 
   // Provider flags (run + watch). An unknown provider name is an error.
