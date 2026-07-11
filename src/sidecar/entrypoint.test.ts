@@ -36,8 +36,9 @@ describe('__sidecar entrypoint (integration)', () => {
     expect(lines[1]).toMatchObject({ id: '2', error: { kind: 'bad-request' } });
     // malformed JSON: error with no id (parse fails before id extraction)
     expect(lines[2]).toMatchObject({ error: { message: 'invalid JSON' } });
-    // blank line produced no output line — so the createRun reply is lines[3], not lines[4]
-    expect(lines[3]).toMatchObject({ id: '5', error: {} });
+    // blank line produced no output line — so the createRun reply is lines[3], not lines[4].
+    // Unknown provider is now caught at the validation boundary → bad-request.
+    expect(lines[3]).toMatchObject({ id: '5', error: { kind: 'bad-request' } });
     expect(lines).toHaveLength(4);
     // clean shutdown once stdin closes
     expect(exitCode).toBe(0);
