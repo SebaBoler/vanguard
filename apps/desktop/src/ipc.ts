@@ -99,6 +99,8 @@ export interface Capabilities {
 
 export interface CreateRunParams {
   issueRef: string;
+  /** Absolute path to the target project repo — required (the sidecar child has no project cwd). */
+  repoPath: string;
   flow?: string;
   provider?: string;
   transport?: string;
@@ -110,6 +112,34 @@ export function apiCapabilities(): Promise<Capabilities> {
   return invoke<Capabilities>('api_capabilities');
 }
 
+// capabilities() is pure and never changes in a session — cache it once so a live run's held proc
+// mutex (api_create_run) never blocks the New Run form's populate call.
+let capsCache: Promise<Capabilities> | undefined;
+export function apiCapabilitiesCached(): Promise<Capabilities> {
+  capsCache ??= apiCapabilities();
+  return capsCache;
+}
+
 export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string; secretBlocked?: boolean }> {
   return invoke('api_create_run', { params });
+}
+
+/** The in-flight typed run's id, or null when idle. */
+export function apiActiveRun(): Promise<string | null> {
+  return invoke<string | null>('api_active_run');
+}
+
+/** Buffered `{ runId, event }` backlog for a run, for a re-attaching live strip. */
+export function apiRunBacklog(runId: string): Promise<unknown[]> {
+  return invoke<unknown[]>('api_run_backlog', { runId });
+}
+
+/** Cancel the in-flight typed run (out-of-band SIGUSR1 to the sidecar child). */
+export function apiCancel(): Promise<void> {
+  return invoke<void>('api_cancel');
+}
+
+/** Click-time pre-flight: is `repoPath` a git work tree? */
+export function apiRepoOk(repoPath: string): Promise<boolean> {
+  return invoke<boolean>('api_repo_ok', { repoPath });
 }
