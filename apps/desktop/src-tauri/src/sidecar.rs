@@ -26,6 +26,8 @@ pub struct Sidecar {
 
 /// Completed runs kept in the backlog buffer before eviction.
 const RETAINED_RUNS: usize = 4;
+/// Per-run event cap (crash guard) — a real run emits ~dozens; beyond this the oldest are dropped.
+const MAX_EVENTS_PER_RUN: usize = 2000;
 
 pub struct SidecarProc {
     /// Held so the process stays alive and its pipes stay open; never read directly (Drop detaches
@@ -121,11 +123,47 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
     resp.get("result").cloned().ok_or_else(|| "no result".to_string())
 }
 
-/// Append an event to a run's backlog buffer.
+/// Append an event to a run's backlog buffer (bounded ring — drops the oldest past the cap so the
+/// terminal event is always retained).
 fn buffer_push(state: &Sidecar, run_id: &str, event: &serde_json::Value) {
     if let Ok(mut buf) = state.buffer.lock() {
-        buf.entry(run_id.to_string()).or_default().push(event.clone());
+        let events = buf.entry(run_id.to_string()).or_default();
+        events.push(event.clone());
+        if events.len() > MAX_EVENTS_PER_RUN {
+            events.remove(0);
+        }
     }
+}
+
+/// Decide a run's invoke outcome + whether Rust must synthesize a terminal event. Success (the resp
+/// carries `result`) needs none — the pipeline already streamed `run-end`. Any other case (in-band
+/// `{id,error}` envelope from validation / a mid-run throw / a cancel-induced abort, OR a hard
+/// `Err` from child death) has emitted no terminal, so one is synthesized: `run-cancelled` when this
+/// run was cancelled, else `run-error`. This is the C1 fix — the in-band error envelope arrives as
+/// `Ok(resp-without-result)`, not `Err`, so both must be handled here.
+fn resolve_terminal(
+    outcome: Result<serde_json::Value, String>,
+    was_cancelled: bool,
+) -> (Result<serde_json::Value, String>, Option<serde_json::Value>) {
+    let err_msg = match &outcome {
+        Ok(resp) => {
+            if let Some(result) = resp.get("result") {
+                return (Ok(result.clone()), None);
+            }
+            resp.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| "run failed".to_string())
+        }
+        Err(msg) => msg.clone(),
+    };
+    let terminal = if was_cancelled {
+        serde_json::json!({ "type": "run-cancelled" })
+    } else {
+        serde_json::json!({ "type": "run-error", "message": err_msg })
+    };
+    (Err(err_msg), Some(terminal))
 }
 
 /// Emit + buffer a `{runId, event}` payload on the `api:event` channel.
@@ -140,6 +178,12 @@ fn finish_run(state: &Sidecar, run_id: &str) {
     if let Ok(mut active) = state.active.lock() {
         if active.as_deref() == Some(run_id) {
             *active = None;
+        }
+    }
+    // Clear a stale cancel flag for this run so it can't leak onto a later run's terminal.
+    if let Ok(mut c) = state.cancelled.lock() {
+        if c.as_deref() == Some(run_id) {
+            *c = None;
         }
     }
     let evict = {
@@ -202,24 +246,12 @@ pub fn api_create_run(
         })
         .is_some();
 
-    let result = match outcome {
-        Ok(resp) => {
-            // Success: the run-end event was already streamed + buffered by on_event above.
-            resp.get("result")
-                .cloned()
-                .ok_or_else(|| resp.get("error").map(|e| e.to_string()).unwrap_or_else(|| "no result".to_string()))
-        }
-        Err(msg) => {
-            // No terminal event was emitted on a throw — synthesize one so re-attach doesn't hang.
-            let terminal = if was_cancelled {
-                serde_json::json!({ "type": "run-cancelled" })
-            } else {
-                serde_json::json!({ "type": "run-error", "message": msg })
-            };
-            emit_event(&app, &state, &run_id, terminal);
-            Err(msg)
-        }
-    };
+    let (result, terminal) = resolve_terminal(outcome, was_cancelled);
+    if let Some(terminal) = terminal {
+        // Any non-success run (error envelope or child death) synthesizes its terminal so a
+        // re-attaching strip reaches a terminal state instead of hanging on "accepted".
+        emit_event(&app, &state, &run_id, terminal);
+    }
     finish_run(&state, &run_id);
     result
 }
@@ -273,4 +305,41 @@ pub fn api_repo_ok(repo_path: String) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_terminal;
+    use serde_json::json;
+
+    #[test]
+    fn success_result_needs_no_terminal() {
+        // The success line from request() is the `{id, result}` envelope.
+        let (result, terminal) = resolve_terminal(Ok(json!({ "id": "run", "result": { "prUrl": "x" } })), false);
+        assert_eq!(result.unwrap(), json!({ "prUrl": "x" }));
+        assert!(terminal.is_none()); // run-end was already streamed by the pipeline
+    }
+
+    #[test]
+    fn in_band_error_envelope_synthesizes_run_error() {
+        // The common failure path: Node writes {id,error}, which request() returns as Ok(non-result).
+        let outcome = Ok(json!({ "error": { "message": "boom", "kind": "internal" } }));
+        let (result, terminal) = resolve_terminal(outcome, false);
+        assert!(result.is_err());
+        assert_eq!(terminal.unwrap(), json!({ "type": "run-error", "message": "boom" }));
+    }
+
+    #[test]
+    fn cancelled_run_synthesizes_run_cancelled() {
+        let outcome = Ok(json!({ "error": { "message": "aborted" } }));
+        let (_result, terminal) = resolve_terminal(outcome, true);
+        assert_eq!(terminal.unwrap(), json!({ "type": "run-cancelled" }));
+    }
+
+    #[test]
+    fn child_death_err_also_synthesizes_terminal() {
+        let (result, terminal) = resolve_terminal(Err("sidecar closed".into()), false);
+        assert!(result.is_err());
+        assert_eq!(terminal.unwrap(), json!({ "type": "run-error", "message": "sidecar closed" }));
+    }
 }
