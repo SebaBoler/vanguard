@@ -65,6 +65,8 @@ export function Inspector({
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
   const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
+  const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
+  const dismissedRunId = useRef<string | null>(null); // a run the user closed — ignore its late events
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -164,9 +166,16 @@ export function Inspector({
     void apiCapabilitiesCached().then(setCaps).catch(() => setCaps(null));
   }, []);
 
+  // Mirror typedRun into a ref so async callbacks (the apiCreateRun catch) can read the latest value.
+  useEffect(() => {
+    typedRunRef.current = typedRun;
+  }, [typedRun]);
+
   // Subscribe to the typed-run event stream and fold into `typedRun` (reducer drops foreign runIds).
+  // Ignore events for a run the user has dismissed, so a late event can't resurrect a closed strip.
   useEffect(() => {
     const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
+      if (e.payload.runId === dismissedRunId.current) return;
       setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload));
     });
     return () => {
@@ -205,10 +214,15 @@ export function Inspector({
         );
       })
       .catch((e) => {
-        // A rejected launch (e.g. the Rust single-in-flight guard) must clear the orphan "starting…"
-        // strip — else its Kill would cancel whatever real run is active.
-        setError(String(e));
-        setTypedRun(null);
+        // apiCreateRun rejects on BOTH a pre-start rejection (the Rust single-in-flight guard, which
+        // returns Err before any run-accepted event) AND a run that started then errored/cancelled
+        // (resolve_terminal returns Err for those). Only the former needs clearing + a banner — it never
+        // adopted a runId. A real error/cancel already folded run-accepted, so its runId is set and the
+        // terminal EVENT renders it in the strip; don't wipe it or double-report.
+        if (typedRunRef.current?.runId === undefined) {
+          setError(String(e));
+          setTypedRun(null);
+        }
       });
   };
 
@@ -280,11 +294,15 @@ export function Inspector({
         </div>
       )}
 
-      {typedRun !== null ? (
+      {typedRun !== null && screen === 'runs' ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           {typedRun.terminal !== undefined && (
             <button
-              onClick={() => setTypedRun(null)}
+              onClick={() => {
+                // Record the runId as dismissed so a late event can't resurrect the closed strip.
+                if (typedRun.runId !== undefined) dismissedRunId.current = typedRun.runId;
+                setTypedRun(null);
+              }}
               className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="size-3.5" />

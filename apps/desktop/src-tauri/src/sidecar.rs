@@ -236,15 +236,15 @@ pub fn api_create_run(
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     // Single-in-flight guard: reject a second concurrent run instead of overwriting `active` (which
-    // would orphan the first run's re-attach). Enforced server-side even if the UI guard races.
+    // would orphan the first run's re-attach). Check-and-set under ONE lock scope so two concurrent
+    // api_create_run calls (Tauri runs commands on a thread pool, not serialized) can't both pass the
+    // check before either sets — a check-then-release-then-set would be a TOCTOU race.
+    let run_id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
     {
-        let active = state.active.lock().map_err(|e| e.to_string())?;
+        let mut active = state.active.lock().map_err(|e| e.to_string())?;
         if active.is_some() {
             return Err("a run is already in flight (single-in-flight)".to_string());
         }
-    }
-    let run_id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
-    if let Ok(mut active) = state.active.lock() {
         *active = Some(run_id.clone());
     }
     emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted" }));
