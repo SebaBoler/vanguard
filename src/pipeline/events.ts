@@ -7,5 +7,5 @@ export type RunEvent =
   | { type: 'run-start'; taskId: string; flow: string; provider: string; stages: string[] }
   | { type: 'stage-start'; name: string; index: number; of: number }
   | { type: 'stage-end'; name: string; index: number; of: number; outcome: string }
-  | { type: 'cost'; usdSpent: number; usdCap: number }
-  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean; partial?: boolean; reason?: string };
+  | { type: 'cost'; usdSpent: number }
+  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean };

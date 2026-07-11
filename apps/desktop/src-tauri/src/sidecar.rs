@@ -82,8 +82,12 @@ fn request(
 }
 
 /// The pure capability surface (providers/flows/transports/defaults). No stdout scraping.
+///
+/// Sync (not `async`) on purpose: `request` holds a std Mutex across a blocking `read_line`, which
+/// would stall the shared async runtime. As a plain command Tauri runs it on its own thread pool
+/// thread, so a long-running exchange never blocks other IPC.
 #[tauri::command]
-pub async fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, String> {
+pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, String> {
     let resp = request(&state, serde_json::json!({ "id": "cap", "method": "capabilities" }), |_| {})?;
     resp.get("result").cloned().ok_or_else(|| "no result".to_string())
 }
@@ -91,7 +95,7 @@ pub async fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::V
 /// Start a run over the sidecar; each event line is re-emitted to the UI as `api:event`. Resolves with
 /// the run's result (e.g. `{ prUrl }`), or rejects with the sidecar's error message.
 #[tauri::command]
-pub async fn api_create_run(
+pub fn api_create_run(
     app: AppHandle,
     state: State<'_, Sidecar>,
     params: serde_json::Value,

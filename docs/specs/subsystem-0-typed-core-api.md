@@ -80,24 +80,35 @@ pipeline, {…}); console.log(summarizeOutcomes(outcomes));`. Stages run inside
 Add an **optional** `onEvent` to the runner opts and to `RunIssueDeps`. Thread it
 into `runBudgetedStages` so it fires:
 
-- `run-start` — `{ taskId, flow, provider, stages: StageName[] }`
-- `stage-start` / `stage-end` — `{ name: StageName, index, of, outcome? }`
-- `cost` — `{ usdSpent, usdCap }` (the runner already tracks a cumulative USD cap)
-- `run-end` — `{ prUrl?, secretBlocked?, partial?, reason? }` (mirrors
-  `RunIssueResult`)
+- `run-start` — `{ taskId, flow, provider, stages: string[] }`
+- `stage-start` / `stage-end` — `{ name, index, of, outcome? }`
+- `cost` — `{ usdSpent }` (cumulative USD spent so far). **No `usdCap`:** the run path
+  calls `runStages`, the *uncapped* wrapper (`maxCostUsd = Infinity`), so a cap would
+  serialize to `null` over the wire and mislead. The desktop already knows the budget
+  from app config; the event carries only what the run actually spent.
+- `run-end` — `{ prUrl?, secretBlocked? }` (a structural subset of `RunIssueResult`;
+  the runner also returns `task`, which the wire never needs)
 
 ```ts
 export type RunEvent =
-  | { type: 'run-start'; taskId: string; flow: string; provider: string; stages: StageName[] }
-  | { type: 'stage-start'; name: StageName; index: number; of: number }
-  | { type: 'stage-end'; name: StageName; index: number; of: number; outcome: string }
-  | { type: 'cost'; usdSpent: number; usdCap: number }
-  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean; partial?: boolean; reason?: string };
+  | { type: 'run-start'; taskId: string; flow: string; provider: string; stages: string[] }
+  | { type: 'stage-start'; name: string; index: number; of: number }
+  | { type: 'stage-end'; name: string; index: number; of: number; outcome: string }
+  | { type: 'cost'; usdSpent: number }
+  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean };
 ```
 
-The reviewer/adversary `<findings>` block stays raw text inside `stage-end.outcome`
-for v0 — no consumer renders parsed findings yet. Add a typed `verdict` event when
-a UI actually needs it (deferred, additive).
+Stage names are plain `string` (matching `StageOutcome.name`), keeping `events.ts`
+import-free. The reviewer/adversary `<findings>` block stays raw text inside
+`stage-end.outcome` for v0 — no consumer renders parsed findings yet. Add a typed
+`verdict` event when a UI actually needs it (deferred, additive).
+
+**v0 event scope — pipeline stages only.** These events fire inside
+`runBudgetedStages`. The conformance/verify repair loop
+(`source-adapter.ts:~312`) calls `runAgent` directly, *outside* the runner, so
+repair/verify/visual-proof passes emit nothing — a run that enters repair goes
+silent between the last `stage-end` and `run-end`. Acceptable for v0; add a
+`repair` event when a consumer needs to observe the loop.
 
 **Back-compat invariant:** `onEvent === undefined` ⇒ zero behavioral change; all
 current `console.log` output preserved. The sidecar passes `onEvent`; the CLI does
@@ -120,7 +131,7 @@ Responses (sidecar → Rust, one per line, correlated by `id`):
 
 ```json
 { "id": "r1", "event": { "type": "stage-start", "name": "implementer", "index": 0, "of": 3 } }
-{ "id": "r1", "event": { "type": "cost", "usdSpent": 0.42, "usdCap": 5 } }
+{ "id": "r1", "event": { "type": "cost", "usdSpent": 0.42 } }
 { "id": "r1", "result": { "prUrl": "https://github.com/...", "partial": false } }
 { "id": "r1", "error": { "message": "...", "kind": "budget|secret-block|fetch|internal" } }
 ```
@@ -146,16 +157,24 @@ export function capabilities(): Capabilities;
 // providers: PROVIDER_NAMES (src/agents/registry.ts:159)
 // flows:     flow-name registry (see below)
 // transports: ['github','gitlab','linear']  (the SourceAdapter set)
-// defaults:  the documented RunOptions defaults (maxTurns 30, cap $5, base 'main', …)
+// defaults:  provider 'claude', maxTurns 30, maxCostUsd 5, base 'main' (UI initial
+//            field values — note maxCostUsd here is a UI default, not an enforced
+//            run cap; the run path is uncapped, see the cost-event note above)
 ```
 
-**Flow-name registry (new, minimal).** Today the three flow builders
-(`implementReviewSimplifyStages`, `planImplementReviewStages`,
-`planImplementAdversaryStages`) are exported functions with **no name table**. Add a
-small `FLOWS: Record<string, { label: string; build: () => PipelineStage[] }>`
-seam owned here. v0 registers what exists (`default`, `plan`). Subsystem 2 populates
-`A` / `B` (HCL-loaded). This is the name registry `--flow` and the UI dropdown read
-from — keep it tiny; do not build the HCL loader here.
+**Flow-name registry (new, minimal).** Several flow builders are exported from
+`pipeline.ts` (`implementReviewSimplifyStages`, `planImplementReviewStages`,
+`planImplementAdversaryStages`, `fastStages`, `generateEvaluateRepairStages`) with
+**no name table**. Only two are reachable from `vanguard run` today:
+`implementReviewSimplifyStages` (the default via `adapter.stages()`) and
+`planImplementReviewStages` (via the existing **`--plan` boolean**). Add a small
+`FLOWS: Record<string, { label: string; build: () => PipelineStage[] }>` seam owned
+here; v0 registers exactly those two (`default`, `plan`). Subsystem 2 populates
+`A` / `B` (HCL-loaded) and introduces a `--flow` flag — at which point it must
+reconcile `--flow` with the existing `--plan` (alias, or `--plan` becomes
+`--flow plan`). **v0 does not add `--flow`**; the sidecar selects a flow via the
+`flow` param, which maps `plan → { plan: true }`. Keep this tiny; do not build the
+HCL loader here.
 
 ---
 
@@ -190,7 +209,8 @@ from — keep it tiny; do not build the HCL loader here.
    (regression test around `summarizeOutcomes` path).
 3. `runSourcedIssue` with `onEvent` set emits `run-start` … `run-end` in order, with
    at least one `stage-start`/`stage-end` pair per pipeline stage and a terminal
-   `run-end` mirroring `RunIssueResult`. Unit test with a stubbed pipeline.
+   `run-end` carrying the `RunIssueResult` subset (`prUrl?` / `secretBlocked?`).
+   Unit test with a stubbed pipeline.
 4. Sidecar loop: given a `createRun` request against a `<synthetic>` provider, emits
    correlated event lines then a `result` line; a malformed request yields an `error`
    line, not a crash. Test drives the loop with piped stdin/stdout.

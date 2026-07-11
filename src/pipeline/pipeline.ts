@@ -286,7 +286,7 @@ export async function runBudgetedStages(
       if (result.sessionId !== undefined) sessionId = result.sessionId;
       spentUsd = roundUsd(spentUsd + forkStageCost);
       emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
-      emit({ type: 'cost', usdSpent: spentUsd, usdCap: maxCostUsd });
+      emit({ type: 'cost', usdSpent: spentUsd });
       index += 1;
 
       // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
@@ -385,7 +385,7 @@ export async function runBudgetedStages(
     if (result.sessionId !== undefined) sessionId = result.sessionId;
     spentUsd = roundUsd(spentUsd + stageCost);
     emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
-    emit({ type: 'cost', usdSpent: spentUsd, usdCap: maxCostUsd });
+    emit({ type: 'cost', usdSpent: spentUsd });
     index += 1;
 
     // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
