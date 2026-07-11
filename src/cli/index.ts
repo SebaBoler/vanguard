@@ -88,6 +88,14 @@ async function main(): Promise<void> {
     await memoryCommand(command);
     return;
   }
+  if (command.kind === 'sidecar') {
+    const { runSidecar } = await import('../sidecar/sidecar.js');
+    const { productionDeps } = await import('../sidecar/deps.js');
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input: process.stdin });
+    await runSidecar(rl, (l: string) => void process.stdout.write(l + '\n'), productionDeps());
+    return;
+  }
   const report = await runGc(command);
   const tag = command.dryRun ? ' (dry-run)' : '';
   const remote = command.remoteRepo !== undefined ? `, ${report.branches.length} merged remote branch(es)` : '';

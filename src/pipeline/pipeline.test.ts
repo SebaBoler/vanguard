@@ -32,6 +32,7 @@ import {
   STAGE,
 } from './pipeline.js';
 import type { PipelineStage, StageName, StageRouting } from './pipeline.js';
+import type { RunEvent } from './events.js';
 import type { Complete } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { WorktreeManager } from '../worktree/manager.js';
@@ -215,6 +216,26 @@ describe('runBudgetedStages', () => {
     expect(primaryInputs[0]?.model).toBe('gpt-5');
     expect(fallbackInputs).toHaveLength(1);
     expect(fallbackInputs[0]?.model).toBe('sonnet');
+    await disposeContext(ctx);
+  });
+
+  it('emits ordered stage + cost events when onEvent is set', async () => {
+    const wm = new WorktreeManager(repo);
+    const ctx = await prepareContext({ taskId: 'ev', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const events: RunEvent[] = [];
+    await runBudgetedStages(ctx, threeStages, {
+      agent: costingAgent(0.01),
+      maxCostUsd: 1,
+      onEvent: (e) => events.push(e),
+    });
+    expect(events.map((e) => e.type)).toEqual([
+      'stage-start', 'stage-end', 'cost',
+      'stage-start', 'stage-end', 'cost',
+      'stage-start', 'stage-end', 'cost',
+    ]);
+    expect(events.filter((e) => e.type === 'stage-start').map((e) => (e as { name: string }).name)).toEqual(['a', 'b', 'c']);
+    const lastCost = events.filter((e) => e.type === 'cost').at(-1) as { usdSpent: number } | undefined;
+    expect(lastCost?.usdSpent).toBeCloseTo(0.03);
     await disposeContext(ctx);
   });
 });

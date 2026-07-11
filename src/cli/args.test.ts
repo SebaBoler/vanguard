@@ -37,6 +37,10 @@ describe('parseCli', () => {
     expect(parseCli(['gc', '--bogus-flag'], '/work').kind).toBe('help');
   });
 
+  it('parses the hidden __sidecar entrypoint (no flags)', () => {
+    expect(parseCli(['__sidecar'], '/work')).toEqual({ kind: 'sidecar' });
+  });
+
   it('parses a linear run with parent fan-out', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--parent', '--skills', '/s', '--concurrency', '3'], '/work')).toEqual({
       kind: 'run',

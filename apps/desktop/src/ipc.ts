@@ -86,3 +86,30 @@ export function watchProject(repoPath: string): Promise<void> {
 export function unwatchProject(repoPath: string): Promise<void> {
   return invoke<void>('unwatch_project', { repoPath });
 }
+
+// Typed core API over the `vanguard __sidecar` child (no stdout scraping). Run events arrive on the
+// `api:event` Tauri channel — subscribe with `listen('api:event', …)` where the run UI needs them
+// (that consumption is Subsystem 1; this only exposes the wrappers).
+export interface Capabilities {
+  providers: string[];
+  flows: { name: string; label: string }[];
+  transports: string[];
+  defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
+}
+
+export interface CreateRunParams {
+  issueRef: string;
+  flow?: string;
+  provider?: string;
+  transport?: string;
+  maxTurns?: number;
+  baseBranch?: string;
+}
+
+export function apiCapabilities(): Promise<Capabilities> {
+  return invoke<Capabilities>('api_capabilities');
+}
+
+export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string; secretBlocked?: boolean }> {
+  return invoke('api_create_run', { params });
+}
