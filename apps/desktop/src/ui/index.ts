@@ -14,6 +14,7 @@ export {
   cn,
   Empty,
   Input,
+  Select,
   Table,
   Tabs,
   Textarea,
