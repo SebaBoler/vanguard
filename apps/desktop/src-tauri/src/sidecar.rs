@@ -235,6 +235,14 @@ pub fn api_create_run(
     state: State<'_, Sidecar>,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    // Single-in-flight guard: reject a second concurrent run instead of overwriting `active` (which
+    // would orphan the first run's re-attach). Enforced server-side even if the UI guard races.
+    {
+        let active = state.active.lock().map_err(|e| e.to_string())?;
+        if active.is_some() {
+            return Err("a run is already in flight (single-in-flight)".to_string());
+        }
+    }
     let run_id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
     if let Ok(mut active) = state.active.lock() {
         *active = Some(run_id.clone());
