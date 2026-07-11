@@ -12,6 +12,7 @@ import type { AgentProvider } from '../agents/provider.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
+import type { RunEvent } from './events.js';
 
 /** Single source of truth for all canonical pipeline stage names. String values are stable. */
 export const STAGE = {
@@ -154,6 +155,8 @@ export interface RunStagesOptions {
   maxCostUsd?: number;
   /** When set, run the implementer stage via forkAndSelect instead of a single pass. */
   fork?: ForkOptions;
+  /** When set, receives structured run events (stage lifecycle + cost). Absent ⇒ no events, no behavior change. */
+  onEvent?: (e: RunEvent) => void;
 }
 
 /** Sandbox dir for the fork scorer: a throwaway cwd so any stray write never touches the worktree. */
@@ -227,10 +230,14 @@ export async function runBudgetedStages(
   let prevName = '';
   let sessionId: string | undefined;
   let spentUsd = 0;
+  const emit = opts.onEvent ?? ((): void => {});
+  let index = 0;
+  const of = stages.length;
   for (const stage of stages) {
     if (spentUsd >= maxCostUsd) {
       return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
+    emit({ type: 'stage-start', name: stage.name, index, of });
     const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
 
@@ -278,6 +285,9 @@ export async function runBudgetedStages(
       prevName = stage.name;
       if (result.sessionId !== undefined) sessionId = result.sessionId;
       spentUsd = roundUsd(spentUsd + forkStageCost);
+      emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
+      emit({ type: 'cost', usdSpent: spentUsd, usdCap: maxCostUsd });
+      index += 1;
 
       // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
       if (isFiniteCap && forkStageCost >= effectiveCap) {
@@ -374,6 +384,9 @@ export async function runBudgetedStages(
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
     spentUsd = roundUsd(spentUsd + stageCost);
+    emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
+    emit({ type: 'cost', usdSpent: spentUsd, usdCap: maxCostUsd });
+    index += 1;
 
     // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
     if (isFiniteCap && stageCost >= effectiveCap) {
