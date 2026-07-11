@@ -12,7 +12,7 @@
 Give the desktop app a **typed API** over Vanguard core so it stops shelling out
 `sh -c "vanguard run …"` and scraping stdout. The API calls the *same* core
 functions the CLI calls, accepts typed requests, and emits **structured events**
-(stage lifecycle, cost, verdict) instead of text lines.
+(stage lifecycle, cost, run result) instead of text lines.
 
 Non-goal: replacing the CLI. CLI and API are two mouths on one brain.
 
@@ -57,7 +57,7 @@ Three new pieces + one core seam:
    void` threaded through `runStages` / `runBudgetedStages` and `runSourcedIssue`.
    When absent (CLI path), behavior is byte-for-byte unchanged — existing
    `console.log` stays. When present (sidecar path), the runner emits structured
-   events at stage boundaries, on cost updates, and on verdict.
+   events at stage boundaries, on cost updates, and on run completion.
 2. **Core: capability surface** (`src/api/` new). Pure functions returning the data
    the run builder (Subsystem 1) renders from: provider names (`PROVIDER_NAMES`),
    flow names, transport names, `RunOptions` defaults.
@@ -83,8 +83,6 @@ into `runBudgetedStages` so it fires:
 - `run-start` — `{ taskId, flow, provider, stages: StageName[] }`
 - `stage-start` / `stage-end` — `{ name: StageName, index, of, outcome? }`
 - `cost` — `{ usdSpent, usdCap }` (the runner already tracks a cumulative USD cap)
-- `verdict` — reviewer/adversary structured `<findings>` already emitted as text
-  today; parse once, emit typed
 - `run-end` — `{ prUrl?, secretBlocked?, partial?, reason? }` (mirrors
   `RunIssueResult`)
 
@@ -94,9 +92,12 @@ export type RunEvent =
   | { type: 'stage-start'; name: StageName; index: number; of: number }
   | { type: 'stage-end'; name: StageName; index: number; of: number; outcome: string }
   | { type: 'cost'; usdSpent: number; usdCap: number }
-  | { type: 'verdict'; stage: StageName; findings: Finding[] }
   | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean; partial?: boolean; reason?: string };
 ```
+
+The reviewer/adversary `<findings>` block stays raw text inside `stage-end.outcome`
+for v0 — no consumer renders parsed findings yet. Add a typed `verdict` event when
+a UI actually needs it (deferred, additive).
 
 **Back-compat invariant:** `onEvent === undefined` ⇒ zero behavioral change; all
 current `console.log` output preserved. The sidecar passes `onEvent`; the CLI does
@@ -106,7 +107,10 @@ not (or the CLI opts in later, separately — out of scope here).
 
 ## Sidecar protocol (stdio, newline-delimited JSON)
 
-Request (Rust → sidecar, one JSON object per line):
+Request (Rust → sidecar, one JSON object per line). The `id` correlates responses;
+v0 runs one job at a time (Fleet concurrency stays on the CLI/`watch` path), so `id`
+is not multiplexing today — it is kept deliberately because re-adding it later would
+be a wire break, and it costs one field:
 
 ```json
 { "id": "r1", "method": "createRun", "params": { "issueRef": "gh-42", "flow": "default", "provider": "claude", "maxTurns": 30 } }
@@ -124,7 +128,10 @@ Responses (sidecar → Rust, one per line, correlated by `id`):
 Methods for v0:
 - `capabilities()` → `{ providers: string[], flows: FlowInfo[], transports: string[], defaults: RunOptionsDefaults }`
 - `createRun(params)` → streams events, ends with `result` or `error`
-- `cancelRun({ id })` → cooperative cancel (maps to sandbox teardown)
+
+No `cancelRun` in v0 — Tauri owns the sidecar lifecycle, so killing the process
+cancels the run. Add a cooperative cancel only if a consumer needs to stop a run
+*without* tearing down the sidecar (deferred, additive).
 
 `params` for `createRun` is a **typed projection of `RunOptions` + issueRef +
 transport**, not a CLI string. The sidecar maps it to `RunIssueDeps` and dispatches
@@ -156,7 +163,7 @@ from — keep it tiny; do not build the HCL loader here.
 
 - `src-tauri`: add the sidecar to `tauri.conf.json` `externalBin`; a supervisor
   module spawns it, forwards line-JSON both ways, exposes `invoke`-able commands
-  (`api_capabilities`, `api_create_run`, `api_cancel_run`) and re-emits sidecar
+  (`api_capabilities`, `api_create_run`) and re-emits sidecar
   events as Tauri events (same pattern as today's `spawn:output`).
 - `apps/desktop/src/ipc.ts`: typed wrappers returning structured results/event
   streams. The existing `spawnRun` stdout path **stays** for the raw-CLI escape hatch
