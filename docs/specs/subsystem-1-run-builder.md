@@ -39,18 +39,18 @@ inspectable as an escape hatch, but the user never has to hand-type it.
 
 ## Part 1 — F6: project targeting (delivered by S0.5, consumed here)
 
-Today the sidecar is a cwd-blind singleton and `productionDeps().createRun` uses
-`process.cwd()` (`src/sidecar/deps.ts:50`) — wrong for a multi-project desktop. The
-`repoPath` param (add to `CreateRunParams`, validate non-blank, use in `deps.ts`
-instead of `process.cwd()`, thread into `RunIssueDeps.repoPath`) is **moved to
-Subsystem 0.5** so a single subsystem owns the `deps.ts`/`sidecar.ts`/`ipc.ts`
-changes (S0.5 also rewrites `deps.ts` for proxy handling — splitting the edits across
-two subsystems would collide).
+**Delivered by S0.5.** The `repoPath` param on `CreateRunParams` (validated non-blank),
+`deps.ts` using `params.repoPath` (was `process.cwd()`), and threading into
+`RunIssueDeps.repoPath` all landed in Subsystem 0.5. S1 only *uses* them.
 
 S1's only F6 responsibility: **the builder passes the current project
 (`Inspector`'s `project`) as `repoPath`** in the `apiCreateRun` call, and a cheap
-client pre-flight (is `project` a git repo?) so a misconfigured target fails at click,
-not after minutes (S0.5 defines the pre-flight command).
+client pre-flight via `apiRepoOk(project)` (S0.5) so a misconfigured target fails at
+click, not minutes in. **Cache the pre-flight per project** (a repo doesn't stop being a
+repo; `api_repo_ok` shells out each call — review G8); treat `false` as a warning, not
+necessarily a hard block (it also collapses "not a repo" and "git errored"). (Note:
+S0.5 already delivered the `repoPath` param + `deps.ts` now uses `params.repoPath`, not
+`process.cwd()`.)
 
 ---
 
@@ -70,14 +70,20 @@ held proc mutex never blocks the form's populate call; do NOT call the raw
 - **Advanced (`Collapsible`, collapsed by default):**
   - `maxTurns` — number, default `capabilities().defaults.maxTurns`
   - `baseBranch` — text, default `capabilities().defaults.baseBranch`
-- **Escape hatch:** an "Edit command" toggle reveals the composed `vanguard run …`
-  string (read-only preview, or editable → falls back to the `spawnRun` path). This
-  preserves the current textarea flow for power users and debugging.
+- **Command preview (read-only):** a collapsible "≈ command" line showing the
+  composed `vanguard run …` string, for learning/debug. **Read-only** — no editable
+  drop-to-`spawnRun` (cut per review G5: it's a divergent execution — PID-based, its own
+  sandbox flags, and `command.ts` doesn't serialize `flow`/`transport` so the preview is
+  approximate and switching mid-form loses fields). Label it "approximate." `spawnRun`
+  and `command.ts` stay untouched for Fleet/watch. A dedicated raw-CLI mode can return
+  later if asked.
 
-> **UI kit (review F9):** `@/ui` exports **no `Select`** — use `Combobox` for the
-> three enum fields and `Collapsible` for the Advanced section + the raw log. Adding a
-> `Select` to the seam is optional; `Combobox` is the natural fit and scales as the
-> provider list grows.
+> **UI kit (review F9):** `@/ui` exports **no `Select`** — use `Combobox` + `Collapsible`.
+> Both are **compound namespaces** (base-ui), not single-prop components: `Combobox` =
+> `{ Root, Control, Input, Trigger, Popup, List, Item, ItemIndicator, Value, … }`,
+> `Collapsible` = `{ Root, Trigger, Panel }`. An enum select composes `Combobox.Root
+> value/onValueChange` + mapped `Combobox.Item`s — more markup than a one-liner. The plan
+> shows the exact composition.
 
 **Client validation mirrors the FULL `validateCreateRun`** (S0), not just `issueRef`
 — so a bad request never round-trips: disable Run when `issueRef`/`repoPath` blank,
@@ -88,13 +94,9 @@ truth and still returns `bad-request` for anything the client misses.
 On Run: `apiCreateRun({ issueRef, repoPath: project, transport, provider, flow,
 maxTurns?, baseBranch? })`.
 
-> **`command.ts` role shift (review F10):** once the form composes the run from
-> fields, `runCommand` becomes the escape-hatch *string composer* (read-only preview)
-> rather than the primary input. Keep it (Fleet/watch still use `watchCommand`); its
-> `command.test.ts` needs revisiting, not deleting. Note the composed string today
-> omits `flow`/`transport`/sandbox flags — the escape-hatch preview is *approximate*
-> unless a full `params → argv` serializer is written (defer; label the preview
-> "approximate").
+> **`command.ts` (review F10):** `runCommand` feeds the read-only preview only. Keep it
+> as-is (Fleet/watch use `watchCommand`/`runPresets`); no serializer work (the preview is
+> explicitly approximate). `command.test.ts` unchanged.
 
 ---
 
@@ -115,10 +117,18 @@ Consume S0.5's **run-id-tagged, buffered** event channel. Every `api:event` payl
   `stage-start` / `stage-end` (name, index, of, **`outcome` — a string**: `'completed'`
   or an `exitReason`, not a boolean), `cost` (usdSpent), and the terminal set
   `run-end` (prUrl? / secretBlocked?) | `run-error` (message) | `run-cancelled`.
+- **Reducer = last-write-wins per key** (review G4 — do NOT sum). `cost` carries a
+  **cumulative** `usdSpent` (confirmed `pipeline.ts:287` — `spentUsd + delta` then emits
+  the total), so it's a singleton key: `usdSpent = event.usdSpent` (latest wins). Each
+  stage is keyed by its `index`; the event is its value (`stage-start` then `stage-end`
+  overwrite the same slot → phase = latest). The reducer **drops any payload whose
+  `runId` ≠ the adopted run** so a prior run's buffered tail can't bleed in. With
+  last-wins keys, backlog + live tail dedupe for free and replay is idempotent — no
+  index/phase composite needed.
 - **Structured strip (top):** stages as a progress row from `run-start.stages`
   (pending greyed ahead) — spinner on `stage-start` → resolved on `stage-end`, mapping
   the **`outcome` string** (`'completed'` → check; else ✗/warn). Live `usdSpent` from the
-  latest `cost` (a step function — one per `stage-end`, not continuous).
+  `cost` key.
 - **Terminal state is an EVENT** (S0.5's terminal guarantee — this is why it survives a
   reload; the invoke promise does not). Every run ends in exactly one of, and the strip
   renders each:
@@ -128,24 +138,40 @@ Consume S0.5's **run-id-tagged, buffered** event channel. Every `api:event` payl
   - `run-error` (message) → error render (covers issue-not-found, bad repo, missing
     creds, mid-run throw, sidecar crash — S0.5 synthesizes it)
   - `run-cancelled` → cancelled badge
-  The `apiCreateRun` promise result/rejection is a best-effort secondary signal for the
-  launching component only; the event stream is the source of truth.
+  The reducer **owns** terminal state (review G6). The `apiCreateRun` promise
+  settling is a secondary signal for the launching component only — it may clear the
+  launching spinner / re-enable the Run button, but must **never write terminal state**
+  (else a double-badge race). Rust guarantees a buffered terminal on every in-session
+  path (`resolve_terminal` + `has_terminal`), so "promise rejects, no terminal" can't
+  happen within a session.
 - **Raw log (collapsible, below):** the existing `LaunchPanel` surface. **Kill** on the
   typed path calls `apiCancel()` (not `killRun` — a typed run has no PID; S0.5 signals
   the sidecar out-of-band).
-- **Run lifecycle (review F4 — the critical gap).** A typed run has no shipped
-  in-progress row: `spawns` are PID-based, `active` is session-file-based and only
-  appears once the runner writes session bytes (after sandbox spin-up + auth + first
-  stage). S1's decision:
-  - **Instant placeholder row** keyed by the run id (optimistic `active`-style entry)
-    the moment `apiCreateRun` is called, reconciled/removed when the run appears in
-    `active` or ends. No pre-session blind window.
-  - **Re-attach:** clicking the row opens **this strip** (via S0.5's buffered replay),
-    not the session-based `LiveRun`. One live surface for typed runs, resolving the
-    "two views" ambiguity.
-  - **Second concurrent typed run is disabled** in the UI while one is in flight (the
-    sidecar is single-in-flight; a second `apiCreateRun` would block). Raw-CLI spawns
-    are unaffected (separate processes).
+- **Run lifecycle — ONE Inspector-level "typed run in flight" (review G1–G3).** Do NOT
+  key rows by `runId`: it's unavailable at click (it arrives on the async `run-accepted`
+  event *after* `apiCreateRun` fires), and session-based `active` rows carry no `runId`.
+  The sidecar is single-in-flight, so there is only ever one typed run. Model it as a
+  single nullable `typedRun` object at `Inspector` level:
+  - On click, set `typedRun = { status: 'starting' }` **synchronously** and render the
+    **strip as the content view** (the way `focusedSpawn`/`liveRun` already swap in — not
+    a placeholder *row*). Adopt `runId` from the first `run-accepted`, `taskId` from
+    `run-start`.
+  - **Join to session `active` by `taskId`** (the only shared key): while `typedRun` is
+    live, **filter its `taskId` out of the `active[]`** passed to `RunList`, so the same
+    run never shows as both a strip and a session-based `LiveRun` row. After the terminal
+    event it becomes a normal historical row.
+  - **Second-run guard (correctness, not just UX):** the Run button is **disabled until
+    `apiActiveRun()` resolves idle on mount/reload**, and the synchronous `typedRun`
+    flag blocks a second click. A second `apiCreateRun` before the guard would overwrite
+    the sidecar's `active` and corrupt re-attach — so S1 also adds a **server-side guard
+    in Rust `api_create_run`**: if `active` is already `Some`, return an `{error}`
+    envelope (busy) instead of minting + overwriting. (~3 lines; single-in-flight
+    enforced on both sides.)
+  - **In-memory / session-scoped (review G7):** the strip + backlog live in the
+    sidecar's in-process state and the Inspector's `typedRun`. Across an **app restart**
+    a typed run reverts to the session-file (`active`/historical `LiveRun`)
+    representation — re-attach guarantees hold only within one app process. State this;
+    don't imply cross-restart durability.
 
 **Budget note:** the `cost` event carries only `usdSpent` (S0 dropped `usdCap` — the
 run path is uncapped). The budget bar, if shown, reads `budgetUsd` from app config
@@ -185,21 +211,25 @@ run path is uncapped). The budget bar, if shown, reads `budgetUsd` from app conf
    → PR link; `run-end`+neither → "no PR (no changes)"; `run-error` → error render;
    `run-cancelled` → cancelled badge. Terminal state reads from the **event**, so it
    holds after a simulated re-mount (re-attach via `apiRunBacklog`), not just live.
-5. Run lifecycle (review F4): launching a typed run adds an **instant placeholder row**
-   keyed by run id; clicking an in-flight typed run opens the **event strip** (via
-   S0.5 re-attach), not `LiveRun`; a second typed run is disabled while one is in
-   flight.
-6. The raw-CLI escape hatch still launches via `spawnRun` unchanged.
-7. `pnpm typecheck`, `pnpm test`, desktop `tsc` + tests, `cargo build`/`clippy` green.
+5. Run lifecycle (collapsed model): clicking Run sets a single Inspector `typedRun`
+   synchronously and swaps in the strip as the content view; on re-mount, `apiActiveRun()`
+   returning a live id + `apiRunBacklog` rebuilds the strip. A typed run's `taskId` is
+   filtered out of the `active[]` given to `RunList` while live (no double surface). The
+   Run button is disabled until `apiActiveRun()` resolves idle.
+6. Second-run guard: `api_create_run` (Rust) returns a busy `{error}` when `active` is
+   already set, instead of overwriting it (unit-testable at the Rust level via the state;
+   at minimum assert the guard branch exists).
+7. Read-only command preview renders the composed string; there is **no** editable
+   drop-to-`spawnRun` (that path is cut). `spawnRun`/Fleet unchanged.
+8. `pnpm typecheck`, `pnpm test`, desktop `tsc` + tests, `cargo build`/`clippy` green.
 
 ---
 
 ## Open (design pass during implementation)
 
 - Exact strip visuals (chip vs stepper) — pick during build; the data contract
-  (stages from `run-start`, transitions from `stage-start`/`stage-end`) is fixed.
-- Whether the escape-hatch command is read-only preview or fully editable. Default:
-  read-only preview + an "edit & run as command" button that drops to `spawnRun`.
+  (stages from `run-start`, transitions from `stage-start`/`stage-end`, last-wins
+  reducer) is fixed.
 
 ## Out of scope
 
