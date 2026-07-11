@@ -121,16 +121,19 @@ untouched and continues to call the same core. **Everything below depends on thi
 
 ### Subsystem 0.5 — Sidecar hardening *(net-new, unblocks 1)*
 
-Three spec reviews of Subsystem 1 found the typed `apiCreateRun` path rests on a
-sidecar S0 shipped deliberately minimal — not ready for a real run UI. 0.5 hardens
-it: **run-id-tagged + buffered events** (S0's global `{id:"run"}` broadcast has no
-per-run key and no replay) with a **re-attach** command so a renavigated live view
-replays the backlog; a **non-blocking capabilities** path (S0's single mutex lets a
-minutes-long run starve `apiCapabilities`); **`cancelRun`** (`AbortSignal` →
-`api_cancel`; the typed path has no PID for `killRun`); the **`repoPath` param** (F6
-— `deps.ts` uses `process.cwd()`, wrong for multi-project); and a **provider gate**
-(interim — `capabilities().providers` returns only proxy-less providers the typed
-path runs today; superseded by Subsystem 6). *Depends on: 0. Blocks: 1.*
+Five reviews (three of the S1 spec, two of this one) found the typed `apiCreateRun`
+path rests on a sidecar S0 shipped deliberately minimal — and that its single-mutex,
+one-pipe, inline-`await` model needs a real concurrency design, not just added methods.
+0.5 hardens it: **run-id-tagged + buffered events** behind a Rust lock *separate* from
+the run pipe, with **re-attach** (`api_run_backlog`/`api_active_run`) so a renavigated
+strip replays the backlog *while the run is still live*; a **non-blocking capabilities**
+fix (frontend cache — S0's single mutex lets a run starve `apiCapabilities`);
+**out-of-band `cancelRun`** (a `SIGUSR1` to the sidecar child aborts the pipeline's
+existing `AbortSignal`; an in-band stdio message would queue behind the run); a
+**terminal-event guarantee** (every run emits exactly one of run-end/error/cancelled or
+re-attach hangs); and the **`repoPath` param** (F6). *No provider gate* — a review
+proved the built-ins all run on the typed path today (the first draft's gate rested on
+a false "zai/openrouter fail" premise). *Depends on: 0. Blocks: 1.*
 
 ### Subsystem 1 — Structured run builder
 
@@ -179,17 +182,15 @@ custom TS steps. Fully unblocked by the Layer-1/Layer-2 decision. *Depends on: 2
 
 ### Subsystem 6 — Custom providers
 
-Today `src/agents/registry.ts` `PROVIDERS` is a hardcoded name→factory map, so the
-typed run path can only run the built-ins — and proxy-requiring ones (zai/openrouter)
-fail because `deps.ts` hardcodes `egress:true/llmProxy:false`. Make providers
-**user-configurable**: a custom provider = `{ name, endpoint, apiKey, via: proxy }`
-stored in `AppConfig` (`.vanguard/app.json`, the same store Settings edits), merged
-with the built-ins in the registry. `capabilities().providers` then returns built-ins
-+ configured customs; the typed path runs them with their per-provider proxy/endpoint.
-Motivating case: a Zai subscription routed through a self-hosted LLM proxy with a
-global proxy key. **Supersedes Subsystem 0.5's interim provider gate** — proxy becomes
-a per-provider config field, not a global hardcode. *Depends on: 0.5 (typed path +
-gate it replaces). Spans core (registry), config schema, UI.*
+Today `src/agents/registry.ts` `PROVIDERS` is a hardcoded name→factory map — the
+built-ins are all you can run. Make providers **user-configurable**: a custom provider
+= `{ name, endpoint, apiKey, via: proxy }` stored in `AppConfig` (`.vanguard/app.json`,
+the same store Settings edits), merged with the built-ins in the registry.
+`capabilities().providers` then returns built-ins + configured customs; the typed path
+runs them with their per-provider proxy/endpoint. Motivating case: a Zai subscription
+routed through a self-hosted LLM proxy with a global proxy key and a custom endpoint —
+something no hardcoded built-in can express. *Depends on: 0.5 (typed path). Spans core
+(registry), config schema, UI.*
 
 ---
 
@@ -202,7 +203,7 @@ gate it replaces). Spans core (registry), config schema, UI.*
 2    Named workflows (HCL)
 3+4  Doc editor + transport write-side
 5    Visual workflow editor
-6    Custom providers        (supersedes 0.5's provider gate)
+6    Custom providers        (user-configured providers in AppConfig)
 ```
 
 ---
