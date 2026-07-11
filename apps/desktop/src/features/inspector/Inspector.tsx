@@ -14,6 +14,7 @@ import {
   apiActiveRun,
   apiRunBacklog,
   apiCancel,
+  apiRepoOk,
   SPAWN_OUTPUT_EVENT,
   SPAWN_EXIT_EVENT,
   type Capabilities,
@@ -67,6 +68,7 @@ export function Inspector({
   const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
   const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
   const dismissedRunId = useRef<string | null>(null); // a run the user closed — ignore its late events
+  const [repoOk, setRepoOk] = useState(true); // cached: is `project` a git work tree? (fails a run at click)
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -166,6 +168,11 @@ export function Inspector({
     void apiCapabilitiesCached().then(setCaps).catch(() => setCaps(null));
   }, []);
 
+  // Cached repo pre-flight per project (Inspector is key={project}, so this runs once per project).
+  useEffect(() => {
+    void apiRepoOk(project).then(setRepoOk).catch(() => setRepoOk(true)); // couldn't verify → don't block
+  }, [project]);
+
   // Mirror typedRun into a ref so async callbacks (the apiCreateRun catch) can read the latest value.
   useEffect(() => {
     typedRunRef.current = typedRun;
@@ -197,19 +204,29 @@ export function Inspector({
   }, []);
 
   const startTypedRun = (params: CreateRunParams): void => {
+    // Guard the launch itself, not just the toolbar button — the form has a second entry point
+    // (board → TaskDetail → New Run) that isn't screen-gated, so a click there could clobber the
+    // in-flight run's client state. The ref is synced for a run that's been live a moment.
+    if (typedRunRef.current !== null && typedRunRef.current.terminal === undefined) return;
+    if (!repoOk) {
+      setError(`${project} is not a git work tree — cannot run here.`);
+      return;
+    }
     setShowNewRun(false);
     setError(null);
-    setTypedRun(initialTypedRun()); // synchronous in-flight marker ("starting…") — "run live" derives from this
+    const started = initialTypedRun();
+    typedRunRef.current = started; // sync in-flight marker (the effect-synced ref lags a render)
+    setTypedRun(started); // "starting…" — "run live" derives from this
     setDetail(null);
     setLiveRun(null);
     setFocusedSpawn(null);
     void apiCreateRun(params)
       .then((res) => {
         // The event stream owns the terminal; this is a backstop only if the terminal event was lost —
-        // write it ONLY when still non-terminal, so it never double-renders over a folded terminal.
+        // write it ONLY when still non-terminal. Precedence matches the reducer (prUrl → secretBlocked).
         setTypedRun((prev) =>
           prev !== null && prev.terminal === undefined
-            ? { ...prev, terminal: res.secretBlocked === true ? { kind: 'secret-blocked' } : res.prUrl !== undefined ? { kind: 'success', prUrl: res.prUrl } : { kind: 'no-changes' } }
+            ? { ...prev, terminal: res.prUrl !== undefined ? { kind: 'success', prUrl: res.prUrl } : res.secretBlocked === true ? { kind: 'secret-blocked' } : { kind: 'no-changes' } }
             : prev,
         );
       })
