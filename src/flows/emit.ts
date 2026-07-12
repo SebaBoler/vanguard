@@ -6,13 +6,7 @@ const IDENTITY = new Set(['name', 'promptTemplate', 'systemPrompt']);
 /** Emittable override fields, in canonical output order. HCL keys are the snake_case of these. */
 const EMITTABLE = ['model', 'effort', 'maxTurns', 'provider', 'resumePrevious'] as const;
 
-const SNAKE: Record<(typeof EMITTABLE)[number], string> = {
-  model: 'model',
-  effort: 'effort',
-  maxTurns: 'max_turns',
-  provider: 'provider',
-  resumePrevious: 'resume_previous',
-};
+const snake = (s: string): string => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
 /**
  * Emit a canonical HCL flow. Total-or-throw: any stage field that is neither library identity nor
@@ -40,7 +34,7 @@ function emitStage(stage: PipelineStage): string[] {
   for (const field of EMITTABLE) {
     const value = stage[field];
     if (value === undefined) continue;
-    body.push(`    ${SNAKE[field]} = ${emitValue(field, value)}`);
+    body.push(`    ${snake(field)} = ${emitValue(field, value)}`);
   }
   return ['  stage {', ...body, '  }'];
 }

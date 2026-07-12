@@ -8,6 +8,6 @@ import { planImplementAdversaryStages, type PipelineStage } from '../pipeline/pi
  * `.map`, so they extract cleanly by name with no cross-builder prompt collision (spec §2). A name
  * enters here only when a shipped HCL flow needs it, with its source builder named.
  */
-export const STAGE_LIBRARY: Record<string, () => PipelineStage> = Object.fromEntries(
-  planImplementAdversaryStages().map((s) => [s.name, (): PipelineStage => ({ ...s })]),
+export const STAGE_LIBRARY: Record<string, PipelineStage> = Object.fromEntries(
+  planImplementAdversaryStages().map((s) => [s.name, s]),
 );

@@ -5,7 +5,6 @@ import {
   planImplementAdversaryStages,
   type PipelineStage,
 } from '../pipeline/pipeline.js';
-import { FLOW_B_LABEL } from '../flows/flow-b-label.js';
 
 /** A selectable flow: its stable key and a human label for the UI. */
 export interface FlowInfo {
@@ -31,7 +30,7 @@ export const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
 export const FLOWS: Record<string, { label: string; build: () => PipelineStage[] }> = {
   default: { label: 'Implement → review → simplify', build: implementReviewSimplifyStages },
   plan: { label: 'Plan → implement → review', build: planImplementReviewStages },
-  'flow-b': { label: FLOW_B_LABEL, build: planImplementAdversaryStages },
+  'flow-b': { label: 'Plan → implement → adversary → repair', build: planImplementAdversaryStages },
 };
 
 /** Pure capability surface for the typed API. No side effects. */

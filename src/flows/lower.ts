@@ -22,11 +22,12 @@ export async function lowerFlow(doc: FlowDoc, opts: { repoPath: string }): Promi
 
 async function resolveBase(decl: StageDecl, repoPath: string): Promise<PipelineStage> {
   if (decl.ref !== undefined) return resolveRef(decl.ref, repoPath);
-  const factory = STAGE_LIBRARY[decl.name];
-  if (factory === undefined) {
+  const record = STAGE_LIBRARY[decl.name];
+  if (record === undefined) {
     throw new Error(`unknown stage "${decl.name}": not in the stage library and no ref given`);
   }
-  return factory();
+  // applyOverrides always spreads into a fresh object, so returning the shared record is safe.
+  return record;
 }
 
 async function resolveRef(ref: string, repoPath: string): Promise<PipelineStage> {
@@ -52,13 +53,13 @@ async function resolveRef(ref: string, repoPath: string): Promise<PipelineStage>
 }
 
 function applyOverrides(base: PipelineStage, o: StageOverrides): PipelineStage {
+  // Every StageOverrides key is a PipelineStage field except `provider`, a name that resolves to an
+  // AgentProvider. So spread the rest through and resolve provider on top.
+  const { provider, ...rest } = o;
   return {
     ...base,
-    ...(o.model !== undefined ? { model: o.model } : {}),
-    ...(o.effort !== undefined ? { effort: o.effort } : {}),
-    ...(o.maxTurns !== undefined ? { maxTurns: o.maxTurns } : {}),
-    ...(o.resumePrevious !== undefined ? { resumePrevious: o.resumePrevious } : {}),
-    ...(o.provider !== undefined ? { provider: resolveProvider(o.provider) } : {}),
+    ...rest,
+    ...(provider !== undefined ? { provider: resolveProvider(provider) } : {}),
   };
 }
 

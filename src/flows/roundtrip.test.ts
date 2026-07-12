@@ -2,10 +2,12 @@ import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { planImplementAdversaryStages, type PipelineStage } from '../pipeline/pipeline.js';
+import { FLOWS } from '../api/capabilities.js';
 import { emitFlowHcl } from './emit.js';
 import { parseFlowHcl } from './parse.js';
 import { lowerFlow } from './lower.js';
-import { FLOW_B_LABEL } from './flow-b-label.js';
+
+const FLOW_B_LABEL = FLOWS['flow-b']!.label;
 
 const KEYS = ['name', 'model', 'effort', 'maxTurns', 'resumePrevious', 'promptTemplate', 'systemPrompt'] as const;
 const pick = (s: PipelineStage): Record<string, unknown> =>
