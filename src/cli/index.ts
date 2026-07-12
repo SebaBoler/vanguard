@@ -110,6 +110,7 @@ async function main(): Promise<void> {
     process.env.VANGUARD_SIDECAR = '1';
     console.log = (...args: unknown[]): void => console.error(...args);
     console.info = (...args: unknown[]): void => console.error(...args);
+    console.debug = (...args: unknown[]): void => console.error(...args);
     const [{ runComplete }, { authFromEnv }, { default: Anthropic }, { createInterface: mkRl }] = await Promise.all([
       import('../api/complete.js'),
       import('../agents/auth.js'),

@@ -9,9 +9,14 @@ test('extractDoc with no tag returns plain note', () => {
   expect(extractDoc('just chatting')).toEqual({ note: 'just chatting' });
 });
 
-test('extractDoc is non-greedy and multiline', () => {
+test('extractDoc captures the full multiline body', () => {
   const { doc } = extractDoc('a\n<doc># Plan\n\n- x\n</doc>\nb');
   expect(doc).toBe('# Plan\n\n- x\n');
+});
+
+test('extractDoc is greedy so a body mentioning </doc> is not truncated', () => {
+  const { doc } = extractDoc('sure <doc># Plan\nWrap output in </doc> tags.\nrest</doc>');
+  expect(doc).toBe('# Plan\nWrap output in </doc> tags.\nrest');
 });
 
 test('send appends a user message and sets busy', () => {

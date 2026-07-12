@@ -43,8 +43,10 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
     return { error: { message: `${NEED_KEY} (found a Claude-Code subscription token, which the Messages API cannot use)` } };
   }
 
-  const client = deps.anthropic({ apiKey: auth.apiKey, ...(parsed.baseUrl !== undefined ? { baseURL: parsed.baseUrl } : {}) });
   try {
+    // Construct inside the try: a bad baseURL/opts throwing synchronously becomes {error}, not a
+    // reject that Rust would report as the generic "produced no output".
+    const client = deps.anthropic({ apiKey: auth.apiKey, ...(parsed.baseUrl !== undefined ? { baseURL: parsed.baseUrl } : {}) });
     const res = await client.messages.create({
       model: parsed.model,
       max_tokens: parsed.maxTokens ?? 4096,

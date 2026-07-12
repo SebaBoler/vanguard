@@ -25,7 +25,9 @@ export const initialDocChat = (): DocChatState => ({ messages: [], busy: false }
 
 /** Split an assistant reply into the prose note (shown as the message) and an optional <doc> body. */
 export function extractDoc(text: string): { note: string; doc?: string } {
-  const m = /<doc>([\s\S]*?)<\/doc>/.exec(text);
+  // Greedy: match to the LAST </doc> so a doc body that itself mentions the sentinel (the model is
+  // told to use <doc> tags) isn't silently truncated at an inner close.
+  const m = /<doc>([\s\S]*)<\/doc>/.exec(text);
   if (m === null) return { note: text.trim() };
   const doc = m[1] ?? '';
   const note = (text.slice(0, m.index) + text.slice(m.index + m[0].length)).trim();

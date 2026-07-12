@@ -53,9 +53,11 @@ test('a <doc> reply proposes an edit; accept applies it, writes it, and re-enabl
   expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'false');
 });
 
-test('New doc creates and opens a note', async () => {
+test('New doc creates the first free note-N (no collision on a numbering gap)', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['note-1.md', 'note-3.md']);
   render(<DocsScreen project="/repo" />);
-  await screen.findByText('plan.md');
+  await screen.findByText('note-1.md');
   fireEvent.click(screen.getByRole('button', { name: /new doc/i }));
+  // note-1 exists → skip; note-2 is free → use it (must NOT reuse note-1 or clobber note-3).
   await waitFor(() => expect(ipc.writeDoc).toHaveBeenCalledWith('/repo', 'note-2.md', expect.stringContaining('# note-2')));
 });
