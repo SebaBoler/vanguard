@@ -145,7 +145,15 @@ pub fn api_complete(req: serde_json::Value) -> Result<serde_json::Value, String>
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn vanguard __complete: {e}"))?;
-    let line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+    // Run the exchange, then ALWAYS reap the child — an early `?` return would otherwise leave a
+    // zombie (Child's Drop neither waits nor kills on Unix). The child self-terminates on stdin EOF.
+    let result = complete_exchange(&mut child, &req);
+    let _ = child.wait();
+    result
+}
+
+fn complete_exchange(child: &mut Child, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let line = serde_json::to_string(req).map_err(|e| e.to_string())?;
     {
         let mut stdin = child.stdin.take().ok_or("no stdin")?;
         writeln!(stdin, "{line}").map_err(|e| e.to_string())?;
@@ -156,9 +164,8 @@ pub fn api_complete(req: serde_json::Value) -> Result<serde_json::Value, String>
     BufReader::new(stdout)
         .read_line(&mut resp)
         .map_err(|e| e.to_string())?;
-    let status = child.wait().map_err(|e| e.to_string())?;
     if resp.trim().is_empty() {
-        return Err(format!("vanguard __complete produced no output (exit {status})"));
+        return Err("vanguard __complete produced no output".to_string());
     }
     serde_json::from_str(resp.trim()).map_err(|e| format!("bad __complete response: {e}"))
 }

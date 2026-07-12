@@ -53,6 +53,36 @@ test('a <doc> reply proposes an edit; accept applies it, writes it, and re-enabl
   expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'false');
 });
 
+test('an in-flight completion that resolves AFTER a doc switch is dropped (no cross-doc bar)', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md', 'b.md']);
+  let resolveA: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveA = r)));
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('a.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'a.md'));
+
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan a' } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i })); // in flight, unresolved
+
+  fireEvent.click(screen.getByText('b.md')); // switch before the reply lands
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'b.md'));
+
+  resolveA({ text: 'done <doc>REVISED-A</doc>' }); // a.md's reply resolves now
+  await Promise.resolve();
+  // The stale reply must NOT surface a proposal on b.md.
+  expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
+});
+
+test('re-clicking the already-open doc does not reset the chat', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md']);
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('a.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByText('a.md')); // re-click the active doc
+  await Promise.resolve();
+  expect(ipc.readDoc).toHaveBeenCalledTimes(1); // no re-read, no reset
+});
+
 test('switching docs clears a pending proposal (no cross-doc write on accept)', async () => {
   vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md', 'b.md']);
   render(<DocsScreen project="/repo" />);
