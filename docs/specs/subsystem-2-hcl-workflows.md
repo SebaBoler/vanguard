@@ -190,6 +190,27 @@ Parsed into a **separate `FlowDoc.loops` field** — not interleaved with stages
 `@cdktf/hcl2json` emits label-keyed objects and cross-block-type source order is not reliable
 (Feasibility F9). Emitted after the stage list. Execution deferred (Non-goals).
 
+### Precedence (HCL is a baseline, not the last word)
+
+An HCL flow is **not** a complete description of what runs — it is the base stage array, which
+existing runtime flags then mutate, exactly as they do a TS builder's array. Resolved order,
+lowest to highest:
+
+1. **Library / `ref` record** — supplies defaults (prompt, effort, budgets).
+2. **HCL override block** — wins over the library defaults (`model`, `effort`, `max_turns`, …).
+3. **Runtime flags / params** — win over HCL, in the same stage-specific ways they already do:
+   - `--provider-model <m>` overwrites `model` on every stage except a cross-provider reviewer
+     (`assembleReviewPipeline`, `pipeline.ts:679`).
+   - `--max-turns <n>` overwrites `max_turns` **only on the implementer** (`withStageMaxTurns`
+     defaults to `STAGE.IMPLEMENTER`), so an HCL `max_turns` on any other stage survives.
+   - `--no-simplify` drops a `simplifier` stage from the flow; `--conformance` appends a
+     `conformance` stage the flow never declared.
+
+This is intentional — CLI/params are the escape hatch above HCL, mirroring `ref =` being the
+escape hatch above composition. It is not a bug that `--flow flow-b --max-turns 10` changes only
+the implementer's cap. (Feasibility-adjacent: verified in code; the dispatch and `withStage*`
+transforms are unchanged by S2.)
+
 ### Lowering (`FlowDoc → PipelineStage[]`)
 
 1. Per stage: resolve base record (library or `ref`), apply overrides via the same

@@ -223,6 +223,14 @@ describe('runSourcedIssue', () => {
     expect(adapter.publishVerdict).not.toHaveBeenCalled();
   });
 
+  it('--max-turns overrides only the implementer of an HCL-shaped flow; other stages survive', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', maxTurns: 10 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(10); // flag wins on implementer
+    expect(assembled.find((s) => s.name === 'adversary')?.maxTurns).toBe(12); // non-implementer HCL value survives
+  });
+
   it('an unknown flow key throws', async () => {
     const adapter = fakeAdapter([], STAGES);
     await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
