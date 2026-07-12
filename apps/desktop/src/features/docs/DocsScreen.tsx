@@ -29,24 +29,23 @@ export function DocsScreen({ project }: { project: string }) {
   );
   useEffect(() => refresh(), [refresh]);
 
-  const open = useCallback(
-    (name: string) => {
-      if (name === active) return; // re-clicking the open doc must not wipe an in-progress chat
-      gen.current++; // invalidate any in-flight completion for the doc we're leaving
-      void readDoc(project, name)
-        .then((content) => {
-          // Reset chat only once the new doc is loaded: the transcript + pending proposal belong to
-          // the doc we left, and accept must never apply one doc's proposal to another.
-          setActive(name);
-          setDoc(content);
-          dispatch({ type: 'reset' });
-        })
-        .catch((err: unknown) => dispatch({ type: 'fail', message: `open failed: ${String(err)}` }));
-    },
-    [project, active],
-  );
+  // Plain closures (recreated each render): nothing downstream is memoized, and fresh closures avoid
+  // stale-dep hazards. Only `refresh` needs a stable identity (it's a useEffect dep).
+  const open = (name: string): void => {
+    if (name === active) return; // re-clicking the open doc must not wipe an in-progress chat
+    gen.current++; // invalidate any in-flight completion for the doc we're leaving
+    void readDoc(project, name)
+      .then((content) => {
+        // Reset chat only once the new doc is loaded: the transcript + pending proposal belong to
+        // the doc we left, and accept must never apply one doc's proposal to another.
+        setActive(name);
+        setDoc(content);
+        dispatch({ type: 'reset' });
+      })
+      .catch((err: unknown) => dispatch({ type: 'fail', message: `open failed: ${String(err)}` }));
+  };
 
-  const newDoc = useCallback(() => {
+  const newDoc = (): void => {
     // First free note-N so a numbering gap (deleted/renamed doc) can't overwrite a live file.
     let n = 1;
     while (names.includes(`note-${n}.md`)) n++;
@@ -57,44 +56,41 @@ export function DocsScreen({ project }: { project: string }) {
         open(name);
       })
       .catch((err: unknown) => dispatch({ type: 'fail', message: `create failed: ${String(err)}` }));
-  }, [project, names, refresh, open]);
+  };
 
-  const save = useCallback(() => {
+  const save = (): void => {
     // Never save while a proposal is pending — the editor shows the old doc read-only, and an accept
     // is about to write the new one; a blur-save here would clobber it with stale content.
     if (active === undefined || chat.pending !== undefined) return;
     void writeDoc(project, active, doc).catch((err: unknown) =>
       dispatch({ type: 'fail', message: `save failed: ${String(err)}` }),
     );
-  }, [project, active, doc, chat.pending]);
+  };
 
-  const send = useCallback(
-    (text: string) => {
-      const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
-      const issued = gen.current; // the doc this turn was issued for
-      dispatch({ type: 'send', text });
-      void readAppConfig(project)
-        .then((cfg) =>
-          apiComplete({
-            system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${doc}</doc>`,
-            messages: apiMessages,
-            model: cfg.chatModel ?? DEFAULT_CHAT_MODEL,
-            ...(cfg.chatBaseUrl !== undefined && cfg.chatBaseUrl !== null ? { baseUrl: cfg.chatBaseUrl } : {}),
-          }),
-        )
-        .then((res) => {
-          if (issued !== gen.current) return; // switched docs mid-flight — this reply is for another doc
-          if (res.error !== undefined) dispatch({ type: 'fail', message: res.error.message });
-          else dispatch({ type: 'reply', text: res.text ?? '' });
-        })
-        .catch((err: unknown) => {
-          if (issued === gen.current) dispatch({ type: 'fail', message: String(err) });
-        });
-    },
-    [chat.messages, doc, project],
-  );
+  const send = (text: string): void => {
+    const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
+    const issued = gen.current; // the doc this turn was issued for
+    dispatch({ type: 'send', text });
+    void readAppConfig(project)
+      .then((cfg) =>
+        apiComplete({
+          system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${doc}</doc>`,
+          messages: apiMessages,
+          model: cfg.chatModel ?? DEFAULT_CHAT_MODEL,
+          ...(cfg.chatBaseUrl !== undefined && cfg.chatBaseUrl !== null ? { baseUrl: cfg.chatBaseUrl } : {}),
+        }),
+      )
+      .then((res) => {
+        if (issued !== gen.current) return; // switched docs mid-flight — this reply is for another doc
+        if (res.error !== undefined) dispatch({ type: 'fail', message: res.error.message });
+        else dispatch({ type: 'reply', text: res.text ?? '' });
+      })
+      .catch((err: unknown) => {
+        if (issued === gen.current) dispatch({ type: 'fail', message: String(err) });
+      });
+  };
 
-  const accept = useCallback(() => {
+  const accept = (): void => {
     if (chat.pending === undefined) return;
     const next = chat.pending;
     setDoc(next);
@@ -104,7 +100,7 @@ export function DocsScreen({ project }: { project: string }) {
         dispatch({ type: 'fail', message: `save failed: ${String(err)}` }),
       );
     }
-  }, [chat.pending, active, project]);
+  };
 
   return (
     <div className="flex h-full gap-3">

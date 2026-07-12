@@ -130,7 +130,6 @@ export interface CompleteParams {
   messages: { role: 'user' | 'assistant'; content: string }[];
   model: string;
   baseUrl?: string;
-  maxTokens?: number;
 }
 export function apiComplete(params: CompleteParams): Promise<{ text?: string; error?: { message: string } }> {
   return invoke('api_complete', { req: params });

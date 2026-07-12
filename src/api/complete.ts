@@ -6,7 +6,6 @@ export interface CompleteRequest {
   messages: { role: 'user' | 'assistant'; content: string }[];
   model: string;
   baseUrl?: string;
-  maxTokens?: number;
 }
 
 /** The single JSON line `vanguard __complete` writes to stdout. */
@@ -49,7 +48,7 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
     const client = deps.anthropic({ apiKey: auth.apiKey, ...(parsed.baseUrl !== undefined ? { baseURL: parsed.baseUrl } : {}) });
     const res = await client.messages.create({
       model: parsed.model,
-      max_tokens: parsed.maxTokens ?? 4096,
+      max_tokens: 4096,
       ...(parsed.system !== undefined ? { system: parsed.system } : {}),
       messages: parsed.messages,
     });
@@ -83,6 +82,5 @@ function validate(req: unknown): CompleteRequest | { error: { message: string } 
     messages: r['messages'] as CompleteRequest['messages'],
     ...(typeof r['system'] === 'string' ? { system: r['system'] } : {}),
     ...(typeof r['baseUrl'] === 'string' ? { baseUrl: r['baseUrl'] } : {}),
-    ...(typeof r['maxTokens'] === 'number' ? { maxTokens: r['maxTokens'] } : {}),
   };
 }

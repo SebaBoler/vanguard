@@ -60,12 +60,9 @@ export function reduceDocChat(state: DocChatState, action: DocChatAction): DocCh
       };
     }
     case 'acceptApplied':
-      return { ...state, pending: undefined };
     case 'reject':
       return { ...state, pending: undefined };
     case 'fail':
       return { ...state, busy: false, error: action.message };
-    default:
-      return state;
   }
 }
