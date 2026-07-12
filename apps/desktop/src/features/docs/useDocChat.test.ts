@@ -50,6 +50,18 @@ test('reject clears pending without changing anything else', () => {
   expect(s.pending).toBeUndefined();
 });
 
+test('reset drops the transcript and any pending proposal', () => {
+  const s0 = reduceDocChat(initialDocChat(), { type: 'reply', text: 'x <doc>NEW</doc>' });
+  expect(reduceDocChat(s0, { type: 'reset' })).toEqual(initialDocChat());
+});
+
+test('send is a no-op while busy (no double in-flight)', () => {
+  const busy = reduceDocChat(initialDocChat(), { type: 'send', text: 'first' });
+  const again = reduceDocChat(busy, { type: 'send', text: 'second' });
+  expect(again).toBe(busy);
+  expect(again.messages).toHaveLength(1);
+});
+
 test('fail sets an error and clears busy, no throw', () => {
   const s0 = reduceDocChat(initialDocChat(), { type: 'send', text: 'x' });
   const s = reduceDocChat(s0, { type: 'fail', message: 'no ANTHROPIC_API_KEY' });

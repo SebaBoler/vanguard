@@ -28,6 +28,9 @@ export function DocsScreen({ project }: { project: string }) {
 
   const open = useCallback(
     (name: string) => {
+      // Reset chat first: the transcript + any pending proposal belong to the doc being left, and an
+      // accept must never apply one doc's proposal to another.
+      dispatch({ type: 'reset' });
       void readDoc(project, name)
         .then((content) => {
           setActive(name);

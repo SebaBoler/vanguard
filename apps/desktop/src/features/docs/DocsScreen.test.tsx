@@ -53,6 +53,22 @@ test('a <doc> reply proposes an edit; accept applies it, writes it, and re-enabl
   expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'false');
 });
 
+test('switching docs clears a pending proposal (no cross-doc write on accept)', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md', 'b.md']);
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('a.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'a.md'));
+
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan a' } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  await screen.findByRole('button', { name: /accept/i }); // proposal pending for a.md
+
+  fireEvent.click(screen.getByText('b.md')); // switch docs
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'b.md'));
+  // The accept bar is gone — no way to write a.md's proposal into b.md.
+  expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
+});
+
 test('New doc creates the first free note-N (no collision on a numbering gap)', async () => {
   vi.mocked(ipc.listDocs).mockResolvedValueOnce(['note-1.md', 'note-3.md']);
   render(<DocsScreen project="/repo" />);
