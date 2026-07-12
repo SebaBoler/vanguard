@@ -205,12 +205,22 @@ describe('runSourcedIssue', () => {
   it('--flow flow-b runs planner→implementer→adversary→repairer and reports the flow key', async () => {
     const events: RunEvent[] = [];
     const adapter = fakeAdapter([], STAGES);
-    await runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', onEvent: (e) => events.push(e) }, adapter);
+    // Faithful mock: echo outcomes for the ACTUAL assembled stages (no synthetic 'reviewer'), so the
+    // reviewer-less publish path is exercised — flow-b has adversary+repairer but no reviewer.
+    runStages.mockImplementation(async (_ctx: unknown, stages: PipelineStage[]) => stages.map((s) => stageOutcome(s.name)));
+    const result = await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', flow: 'flow-b', onEvent: (e) => events.push(e) },
+      adapter,
+    );
 
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
     const runStart = events.find((e) => e.type === 'run-start');
     expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('flow-b');
+    // A reviewer-less flow completes and publishes the PR, but posts no verdict comment.
+    expect(result.prUrl).toBe(MR_URL);
+    expect(adapter.publishVerdict).not.toHaveBeenCalled();
   });
 
   it('an unknown flow key throws', async () => {

@@ -91,8 +91,8 @@ function applyOverride(o: StageOverrides, key: string, value: unknown, stage: st
       o.provider = value;
       return;
     case 'effort':
-      if (value !== 'low' && value !== 'medium' && value !== 'high') {
-        throw new Error(`stage "${stage}" effort must be low|medium|high`);
+      if (value !== 'low' && value !== 'medium' && value !== 'high' && value !== 'xhigh' && value !== 'max') {
+        throw new Error(`stage "${stage}" effort must be low|medium|high|xhigh|max`);
       }
       o.effort = value;
       return;
@@ -135,6 +135,10 @@ function parseLoops(raw: unknown): LoopDecl[] {
 /** A `meta {}` block deserializes to a single-element array; return its object verbatim. */
 function parseMeta(raw: unknown): Record<string, unknown> | undefined {
   if (raw === undefined) return undefined;
-  if (Array.isArray(raw)) return raw[0] as Record<string, unknown>;
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1) throw new Error(`expected at most one meta block, found ${raw.length}`);
+    raw = raw[0];
+  }
+  if (raw === null || typeof raw !== 'object') throw new Error('meta must be a block, not a scalar');
   return raw as Record<string, unknown>;
 }

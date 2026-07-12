@@ -1,14 +1,15 @@
 import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { planImplementAdversaryStages } from '../pipeline/pipeline.js';
+import { planImplementAdversaryStages, type PipelineStage } from '../pipeline/pipeline.js';
 import { emitFlowHcl } from './emit.js';
 import { parseFlowHcl } from './parse.js';
 import { lowerFlow } from './lower.js';
 import { FLOW_B_LABEL } from './flow-b-label.js';
 
 const KEYS = ['name', 'model', 'effort', 'maxTurns', 'resumePrevious', 'promptTemplate', 'systemPrompt'] as const;
-const pick = (s: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(KEYS.map((k) => [k, s[k]]));
+const pick = (s: PipelineStage): Record<string, unknown> =>
+  Object.fromEntries(KEYS.map((k) => [k, (s as unknown as Record<string, unknown>)[k]]));
 
 test('Flow B round-trips through emit → parse → lower', async () => {
   const src = planImplementAdversaryStages();
@@ -21,6 +22,23 @@ test('checked-in flow-b.hcl equals the emitter output (codegen drift guard)', ()
   const disk = readFileSync(fileURLToPath(new URL('./flow-b.hcl', import.meta.url)), 'utf8');
   const emitted = emitFlowHcl(planImplementAdversaryStages(), { name: 'flow-b', label: FLOW_B_LABEL });
   expect(disk.trimEnd()).toBe(emitted.trimEnd());
+});
+
+test('a provider override + xhigh effort round-trip through emit → parse → lower', async () => {
+  // emit reads only provider.name; a partial object suffices for the round-trip.
+  const stages: PipelineStage[] = [
+    {
+      name: 'planner',
+      promptTemplate: 'p',
+      model: 'gpt-5',
+      effort: 'xhigh',
+      provider: { name: 'codex' } as unknown as NonNullable<PipelineStage['provider']>,
+    },
+  ];
+  const hcl = emitFlowHcl(stages, { name: 'f', label: 'L' });
+  const lowered = await lowerFlow(await parseFlowHcl(hcl), { repoPath: '/nonexistent' });
+  expect(lowered[0]?.provider?.name).toBe('codex');
+  expect(lowered[0]?.effort).toBe('xhigh');
 });
 
 test('flow-a.hcl parses (loop + stages) and re-emits its stages', async () => {

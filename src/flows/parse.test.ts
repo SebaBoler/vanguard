@@ -82,3 +82,13 @@ test('rejects two flow blocks sharing a label (drops none silently)', async () =
 test('rejects a label-less flow block with a clear message', async () => {
   await expect(parseFlowHcl('flow {\n label = "l"\n}')).rejects.toThrow(/missing its .*label/i);
 });
+
+test('rejects two meta blocks', async () => {
+  await expect(parseFlowHcl('flow "f" {\n label = "l"\n meta {\n a = 1\n }\n meta {\n b = 2\n }\n}')).rejects.toThrow(
+    /at most one meta/i,
+  );
+});
+
+test('rejects a scalar meta', async () => {
+  await expect(parseFlowHcl('flow "f" {\n label = "l"\n meta = "oops"\n}')).rejects.toThrow(/meta must be a block/i);
+});

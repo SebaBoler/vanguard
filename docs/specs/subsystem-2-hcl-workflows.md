@@ -263,7 +263,10 @@ indent, snake_case. Round-trip is the contract; never silent-drop (Scope §4).
   `{name, model, effort, maxTurns, resumePrevious, promptTemplate, systemPrompt}` (identity via
   library both times). A hand-written `flow-a.hcl` (loop + stages) **parses and re-emits**
   equal (positive Flow-A path — Design-gap #5), though it does not run.
-- **AC5** `meta {}` on a flow/stage round-trips verbatim and does not affect `lowerFlow` output.
+- **AC5** `meta {}` on a flow/stage is captured by `parseFlowHcl` and does not affect `lowerFlow`
+  output (it is the forward-compat escape valve). Emitting `meta` verbatim is deferred to S5, whose
+  editor round-trips at the `FlowDoc` layer — the S2 emitter operates on lowered `PipelineStage[]`,
+  which by design no longer carries `meta`.
 - **AC6** `--flow flow-b` (CLI) and `flow:'flow-b'` (sidecar) run planner→implementer→adversary→
   repairer; `run-start.flow==='flow-b'`. Asserted at the `runSourcedIssue` layer with an
   `onEvent` spy over mocked context (`source-adapter.test.ts:85` pattern), no live LLM.

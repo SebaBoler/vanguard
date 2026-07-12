@@ -1,9 +1,11 @@
+import type { ReasoningEffort } from '../core/types.js';
+
 /** Typed representation of a parsed HCL flow file. Layer 1 (composition) of the two-layer format. */
 
 /** Per-stage routing/budget overrides expressible in HCL (snake_case keys map to these camelCase fields). */
 export interface StageOverrides {
   model?: string;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: ReasoningEffort;
   maxTurns?: number;
   provider?: string;
   resumePrevious?: boolean;
