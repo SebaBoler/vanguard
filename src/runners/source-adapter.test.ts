@@ -8,6 +8,7 @@ import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './so
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
+import type { RunEvent } from '../pipeline/events.js';
 
 describe('PR body assembly', () => {
   it('starts with Closes <task.id> for auto-close on merge', () => {
@@ -30,6 +31,7 @@ describe('pickRunOptions', () => {
       conformance: false,
       conformanceModel: 'opus',
       reviewGate: true,
+      flow: 'flow-b',
     };
 
     expect(pickRunOptions(cmd)).toEqual({
@@ -42,6 +44,7 @@ describe('pickRunOptions', () => {
       visualProofCmd: 'pnpm screenshots',
       conformance: false,
       conformanceModel: 'opus',
+      flow: 'flow-b',
     });
   });
 
@@ -197,6 +200,24 @@ describe('runSourcedIssue', () => {
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled[0]?.name).toBe('planner'); // planning runs before the implementer
     expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
+  });
+
+  it('--flow flow-b runs planner→implementer→adversary→repairer and reports the flow key', async () => {
+    const events: RunEvent[] = [];
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', onEvent: (e) => events.push(e) }, adapter);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
+    const runStart = events.find((e) => e.type === 'run-start');
+    expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('flow-b');
+  });
+
+  it('an unknown flow key throws', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
+      /unknown flow "nope"/,
+    );
   });
 
   it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {

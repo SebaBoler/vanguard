@@ -4,7 +4,8 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { FLOWS } from '../api/capabilities.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -53,6 +54,12 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /**
+   * Named flow key (a `FLOWS` registry entry, e.g. 'flow-b'). Set via `--flow`. `--plan` is the
+   * back-compat alias for `flow: 'plan'`. When set, `FLOWS[flow].build()` supplies the base stages
+   * instead of the adapter's default. Validated at the CLI/sidecar boundary.
+   */
+  flow?: string;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
   baseBranch?: string;
   /**
@@ -93,6 +100,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.flow !== undefined ? { flow: cmd.flow } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
@@ -272,9 +280,11 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
-      // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
-      const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
+      // Named-flow dispatch. `--flow <name>` selects a FLOWS builder; `--plan` is the back-compat
+      // alias for flow 'plan'. Absent ⇒ the adapter's default stages (== FLOWS.default.build today).
+      const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
+      if (flow !== undefined && !Object.hasOwn(FLOWS, flow)) throw new Error(`unknown flow "${flow}"`);
+      const baseStages = flow !== undefined ? FLOWS[flow]!.build() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
@@ -286,7 +296,7 @@ export async function runSourcedIssue(
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
-        flow: deps.plan === true ? 'plan' : 'default',
+        flow: flow ?? 'default',
         provider: agents.agent.name,
         stages: pipeline.map((s) => s.name),
       });

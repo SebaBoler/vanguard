@@ -66,11 +66,10 @@ export function productionDeps(): SidecarDeps {
           ...(provider !== undefined ? { provider } : {}),
           ...(params.maxTurns !== undefined ? { maxTurns: params.maxTurns } : {}),
           ...(params.baseBranch !== undefined ? { baseBranch: params.baseBranch } : {}),
-          // Only `plan` maps to runner behavior today; `default` is the no-op default. Both current
-          // FLOWS keys (validated in sidecar.ts) dispatch correctly here. Subsystem 2 replaces this
-          // with real flow→pipeline dispatch — any new FLOWS entry MUST be wired here too, or it
-          // passes validation and silently runs the default pipeline.
-          ...(params.flow === 'plan' ? { plan: true } : {}),
+          // Named-flow dispatch: pass the validated flow key straight through. runSourcedIssue
+          // resolves it via FLOWS[flow].build() (Subsystem 2). Any registered FLOWS entry works with
+          // no per-flow wiring here; validation happened in sidecar.ts::validateCreateRun.
+          ...(params.flow !== undefined ? { flow: params.flow } : {}),
           ...(ctx.proxyUrl !== undefined ? { proxyUrl: ctx.proxyUrl } : {}),
           ...(ctx.network !== undefined ? { network: ctx.network } : {}),
           ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
