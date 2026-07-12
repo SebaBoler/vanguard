@@ -132,6 +132,37 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
     resp.get("result").cloned().ok_or_else(|| "no result".to_string())
 }
 
+/// One-shot doc-chat completion (Subsystem 3). Deliberately NOT on the `Sidecar` — it spawns a fresh
+/// `vanguard __complete` per call, so an interactive chat turn never queues behind the run pipe's
+/// mutex. Writes the request, closes stdin (EOF), reads the single JSON response line. The API key
+/// is read from the inherited env inside the child; it never touches the webview or app.json.
+#[tauri::command]
+pub fn api_complete(req: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg("exec vanguard __complete")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn vanguard __complete: {e}"))?;
+    let line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+    {
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        writeln!(stdin, "{line}").map_err(|e| e.to_string())?;
+        // stdin drops here → the child sees EOF.
+    }
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let mut resp = String::new();
+    BufReader::new(stdout)
+        .read_line(&mut resp)
+        .map_err(|e| e.to_string())?;
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if resp.trim().is_empty() {
+        return Err(format!("vanguard __complete produced no output (exit {status})"));
+    }
+    serde_json::from_str(resp.trim()).map_err(|e| format!("bad __complete response: {e}"))
+}
+
 /// Append an event to a run's backlog buffer (bounded ring — drops the oldest past the cap so the
 /// terminal event is always retained).
 fn buffer_push(state: &Sidecar, run_id: &str, event: &serde_json::Value) {
