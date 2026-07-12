@@ -453,7 +453,9 @@ export async function runSourcedIssue(
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
       // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
-      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome.
+      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A conformance
+      // stage's narrative rides on this verdict comment, so it too is surfaced only for reviewer-bearing
+      // flows; it is still persisted to the run record, and the deterministic manifest still gates the body.)
       const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
       if (!whiteLabel && pipelineHasReviewer) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
