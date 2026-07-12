@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
+import { FLOWS } from '../api/capabilities.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { RunOptions } from '../runners/source-adapter.js';
 
@@ -373,6 +374,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'commit-author': { type: 'string' },
         // run a dedicated opus planning stage before implement/review (run + watch)
         plan: { type: 'boolean' },
+        // named workflow selection (run + watch); a FLOWS registry key, e.g. flow-b. --plan == --flow plan
+        flow: { type: 'string' },
         // base branch to branch off and target the PR at (run + watch); default main
         base: { type: 'string' },
         // opt-in overrides to let a single run finish a large task (run + watch)
@@ -425,6 +428,15 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
+
+  // Named flow (run + watch). --flow selects a FLOWS entry; --plan stays the alias for flow 'plan'.
+  const flowRaw = typeof values.flow === 'string' ? values.flow : undefined;
+  if (flowRaw !== undefined && values.plan === true) {
+    return fail('Use either --plan or --flow <name>, not both — --plan is the alias for --flow plan.');
+  }
+  if (flowRaw !== undefined && !Object.hasOwn(FLOWS, flowRaw)) {
+    return fail(`Unknown flow "${flowRaw}". Choose one of: ${Object.keys(FLOWS).join(', ')}.`);
+  }
 
   let commitAuthor: { name: string; email: string } | undefined;
   try {
@@ -711,6 +723,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
+      ...(flowRaw !== undefined ? { flow: flowRaw } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
@@ -830,6 +843,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(values.plan === true ? { plan: true } : {}),
+      ...(flowRaw !== undefined ? { flow: flowRaw } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
@@ -919,6 +933,7 @@ Commands:
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
@@ -991,6 +1006,7 @@ Commands:
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
