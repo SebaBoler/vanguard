@@ -12,31 +12,44 @@ import type { FlowDoc, LoopDecl, StageDecl, StageOverrides } from './types.js';
 export async function parseFlowHcl(src: string): Promise<FlowDoc> {
   const json = (await hcl2json('flow.hcl', src)) as Record<string, unknown>;
   const flow = json['flow'];
-  if (flow === undefined || typeof flow !== 'object') {
-    throw new Error('expected exactly one flow block, found none');
+  if (flow === undefined) throw new Error('expected exactly one flow block, found none');
+  // A label-less `flow {}` deserializes to an array; a labeled block to a name-keyed object.
+  if (Array.isArray(flow) || typeof flow !== 'object') {
+    throw new Error('flow block is missing its "<name>" label');
   }
   const names = Object.keys(flow as Record<string, unknown>);
-  if (names.length !== 1) {
-    throw new Error(`expected exactly one flow block, found ${names.length}`);
-  }
+  if (names.length !== 1) throw new Error(`expected exactly one flow block, found ${names.length}`);
   const name = names[0]!;
   const bodies = (flow as Record<string, unknown>)[name];
-  const body = Array.isArray(bodies) ? (bodies[0] as Record<string, unknown>) : undefined;
-  if (body === undefined) throw new Error(`flow "${name}" has no body`);
+  // A second label (`flow "a" "b" {}`) leaves `bodies` a nested object, not the block array.
+  if (!Array.isArray(bodies)) throw new Error(`flow "${name}" has an invalid or extra label`);
+  if (bodies.length !== 1) throw new Error(`expected exactly one flow block named "${name}", found ${bodies.length}`);
+  const body = bodies[0] as Record<string, unknown>;
 
   const label = body['label'];
   if (typeof label !== 'string') throw new Error(`flow "${name}" is missing a string label`);
+  rejectUnknownKeys(body, FLOW_KEYS, `flow "${name}"`);
 
+  const meta = parseMeta(body['meta']);
   return {
     name,
     label,
     stages: parseStages(body['stage'], name),
     loops: parseLoops(body['loop']),
-    ...(parseMeta(body['meta']) !== undefined ? { meta: parseMeta(body['meta']) } : {}),
+    ...(meta !== undefined ? { meta } : {}),
   };
 }
 
 const OVERRIDE_KEYS = new Set(['model', 'effort', 'max_turns', 'provider', 'resume_previous']);
+const FLOW_KEYS = new Set(['label', 'meta', 'stage', 'loop']);
+const LOOP_KEYS = new Set(['stages', 'until', 'max']);
+
+/** Throw on any key outside the allowed set — typo protection (spec §"HCL flow format v1"). */
+function rejectUnknownKeys(block: Record<string, unknown>, allowed: Set<string>, where: string): void {
+  for (const key of Object.keys(block)) {
+    if (!allowed.has(key)) throw new Error(`unknown key "${key}" in ${where}`);
+  }
+}
 
 function parseStages(raw: unknown, flowName: string): StageDecl[] {
   if (raw === undefined) return [];
@@ -106,6 +119,7 @@ function parseLoops(raw: unknown): LoopDecl[] {
     if (block['until'] === 'user_accept') {
       throw new Error('interactive gate not yet supported (needs pause/resume — future subsystem)');
     }
+    rejectUnknownKeys(block, LOOP_KEYS, 'loop');
     const stages = block['stages'];
     const until = block['until'];
     const max = block['max'];

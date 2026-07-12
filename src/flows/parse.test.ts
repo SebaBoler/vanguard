@@ -62,3 +62,23 @@ test('rejects a syntactically invalid flow', async () => {
 test('rejects a file with no flow block', async () => {
   await expect(parseFlowHcl('resource "x" "y" {}')).rejects.toThrow(/exactly one flow/i);
 });
+
+test('rejects an unknown key at flow level', async () => {
+  await expect(parseFlowHcl('flow "f" {\n label = "l"\n bogus = 1\n}')).rejects.toThrow(/unknown key "bogus" in flow/i);
+});
+
+test('rejects an unknown key at loop level', async () => {
+  await expect(
+    parseFlowHcl('flow "f" {\n label = "l"\n loop {\n stages = ["a"]\n until = "u"\n max = 2\n bogus = 1\n }\n}'),
+  ).rejects.toThrow(/unknown key "bogus" in loop/i);
+});
+
+test('rejects two flow blocks sharing a label (drops none silently)', async () => {
+  await expect(
+    parseFlowHcl('flow "a" {\n label = "l"\n stage {\n name = "planner"\n }\n}\nflow "a" {\n label = "l"\n stage {\n name = "implementer"\n }\n}'),
+  ).rejects.toThrow(/exactly one flow block named "a"/i);
+});
+
+test('rejects a label-less flow block with a clear message', async () => {
+  await expect(parseFlowHcl('flow {\n label = "l"\n}')).rejects.toThrow(/missing its .*label/i);
+});
