@@ -231,8 +231,11 @@ custom-provider routing (the Zai-via-proxy case) are **Subsystem 6**; `__complet
 ## Test plan
 
 **Core (Vitest):**
-- **T1** `__complete` with `@anthropic-ai/sdk` mocked: `mode:'api'` → `{text}`; thrown SDK error
-  → `{error}`; **subscription-only env → `{error}` naming `ANTHROPIC_API_KEY`**; no key → `{error}`.
+- **T1** `__complete` with `@anthropic-ai/claude-agent-sdk`'s `query()` mocked (injected via
+  `CompleteDeps`): a `result`/`success` message → `{text}`; a non-success `result` subtype →
+  `{error}`; a thrown SDK error → `{error}`; a stream that ends with no `result` → `{error}`.
+  There is no auth case to test — the SDK reads the environment itself and we write no auth code,
+  so an auth failure is just another `{error}` subtype.
 - **T2** request parsing/validation: malformed stdin JSON, empty `messages`, missing `model`.
 
 **Desktop (Vitest + Testing Library):**

@@ -73,6 +73,41 @@ test('an in-flight completion that resolves AFTER a doc switch is dropped (no cr
   expect(screen.queryByRole('button', { name: /accept/i })).toBeNull();
 });
 
+test('a double-click on Send fires only one completion', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md']);
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise(() => {})); // never settles — stays in flight
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('a.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'a.md'));
+
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan a' } });
+  const send = screen.getByRole('button', { name: /send/i });
+  // Both clicks land in the same tick, before `chat.busy` (and the disabled prop) can re-render.
+  fireEvent.click(send);
+  fireEvent.click(send);
+
+  // apiComplete is reached through an awaited readAppConfig, so let the microtasks drain first.
+  await waitFor(() => expect(ipc.apiComplete).toHaveBeenCalled());
+  expect(ipc.apiComplete).toHaveBeenCalledTimes(1);
+});
+
+test('a stale readDoc landing after a fast doc switch does not show the wrong doc', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md', 'b.md']);
+  let resolveA: (v: string) => void = () => {};
+  vi.mocked(ipc.readDoc)
+    .mockReturnValueOnce(new Promise((r) => (resolveA = r))) // a.md — hangs
+    .mockResolvedValueOnce('# B'); // b.md — lands first
+  render(<DocsScreen project="/repo" />);
+
+  fireEvent.click(await screen.findByText('a.md'));
+  fireEvent.click(screen.getByText('b.md')); // switch before a.md's read resolves
+  await waitFor(() => expect(screen.getByTestId('editor')).toHaveTextContent('# B'));
+
+  resolveA('# A'); // a.md's read finally lands — it must not overwrite the doc the user clicked
+  await Promise.resolve();
+  expect(screen.getByTestId('editor')).toHaveTextContent('# B');
+});
+
 test('re-clicking the already-open doc does not reset the chat', async () => {
   vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md']);
   render(<DocsScreen project="/repo" />);

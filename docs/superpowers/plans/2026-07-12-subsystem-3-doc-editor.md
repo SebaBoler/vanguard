@@ -1,5 +1,16 @@
 # Subsystem 3 — Doc Editor + Sidebar Chat (v1) Implementation Plan
 
+> **SUPERSEDED ON AUTH — read this first.** Every mention below of `@anthropic-ai/sdk`,
+> `authFromEnv()`, api-mode, `ANTHROPIC_API_KEY`, or "subscription token → specific error" is
+> **wrong** and was corrected during implementation. The shipped code uses
+> `@anthropic-ai/claude-agent-sdk`'s `query()` — the Claude Code programmatic interface — which
+> reads credentials from the environment exactly like the `claude` CLI. **A
+> `CLAUDE_CODE_OAUTH_TOKEN` subscription token works with no API key, and we write no auth code of
+> our own.** The plain `@anthropic-ai/sdk` Messages endpoint is `x-api-key`-only and *rejects* that
+> token; reaching for it was the mistake. `docs/specs/subsystem-3-doc-editor.md` §2 is the source of
+> truth. Task 1 Step 1 (`pnpm add @anthropic-ai/sdk`) was **not** performed — `claude-agent-sdk` was
+> already a dependency. If you are writing auth branching for an LLM call, you have picked the wrong SDK.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Ship a CodeMirror doc editor with a sidebar LLM chat that proposes whole-doc edits (accept/reject), backed by a one-shot `vanguard __complete` Anthropic-SDK call. Stop at a saved `.vanguard/docs/*.md`; create-task is S4.

@@ -22,6 +22,10 @@ export function DocsScreen({ project }: { project: string }) {
   // Bumped on every doc switch; an in-flight completion whose generation is stale is dropped so a
   // reply for the doc we LEFT can never land on (and be accepted into) the doc we switched to.
   const gen = useRef(0);
+  // The chat turn currently in flight (0 = none). A ref, not `chat.busy`, because it must be readable
+  // synchronously within one tick — see `send`. `turnSeq` only mints the ids.
+  const inFlight = useRef(0);
+  const turnSeq = useRef(0);
 
   const refresh = useCallback(
     () => void listDocs(project).then(setNames).catch(() => setNames([])),
@@ -33,16 +37,27 @@ export function DocsScreen({ project }: { project: string }) {
   // stale-dep hazards. Only `refresh` needs a stable identity (it's a useEffect dep).
   const open = (name: string): void => {
     if (name === active) return; // re-clicking the open doc must not wipe an in-progress chat
-    gen.current++; // invalidate any in-flight completion for the doc we're leaving
+    const issued = ++gen.current; // invalidate any in-flight completion for the doc we're leaving
+    // The `reset` below clears `chat.busy`, so the in-flight slot must be released with it or the new
+    // doc's chat would be permanently unable to send. The abandoned turn's `.finally` sees a different
+    // id and leaves the slot alone.
+    inFlight.current = 0;
     void readDoc(project, name)
       .then((content) => {
+        // Same generation guard the completion path uses: on a fast B→C switch readDoc(C) can resolve
+        // before readDoc(B), and without this the later-landing B would overwrite the doc the user
+        // actually clicked. Name and content are set together, so the view stays self-consistent —
+        // it would just be showing the wrong document.
+        if (issued !== gen.current) return;
         // Reset chat only once the new doc is loaded: the transcript + pending proposal belong to
         // the doc we left, and accept must never apply one doc's proposal to another.
         setActive(name);
         setDoc(content);
         dispatch({ type: 'reset' });
       })
-      .catch((err: unknown) => dispatch({ type: 'fail', message: `open failed: ${String(err)}` }));
+      .catch((err: unknown) => {
+        if (issued === gen.current) dispatch({ type: 'fail', message: `open failed: ${String(err)}` });
+      });
   };
 
   const newDoc = (): void => {
@@ -68,6 +83,14 @@ export function DocsScreen({ project }: { project: string }) {
   };
 
   const send = (text: string): void => {
+    // `chat.busy` (and the disabled Send button) only reflect the dispatch on the NEXT render, so a
+    // fast double-click fires two apiComplete calls before either is visible. The reducer no-ops the
+    // second `send`, so the transcript is fine — but two requests go out and both replies dispatch.
+    // A ref updates synchronously, so it closes the window the reducer state cannot.
+    if (inFlight.current !== 0) return;
+    const turn = ++turnSeq.current;
+    inFlight.current = turn;
+
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
     const issued = gen.current; // the doc this turn was issued for
     dispatch({ type: 'send', text });
@@ -88,6 +111,11 @@ export function DocsScreen({ project }: { project: string }) {
       })
       .catch((err: unknown) => {
         if (issued === gen.current) dispatch({ type: 'fail', message: String(err) });
+      })
+      .finally(() => {
+        // Only the turn that still owns the slot may release it: a doc switch clears it eagerly (see
+        // `open`), and a stale turn settling afterwards must not free a newer turn's slot.
+        if (inFlight.current === turn) inFlight.current = 0;
       });
   };
 
