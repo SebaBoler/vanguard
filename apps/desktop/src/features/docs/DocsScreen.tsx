@@ -71,13 +71,14 @@ export function DocsScreen({ project }: { project: string }) {
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
     const issued = gen.current; // the doc this turn was issued for
     dispatch({ type: 'send', text });
+    // chatBaseUrl is deliberately NOT forwarded: Rust reads it from app.json itself, so the webview
+    // cannot pick where the inherited Anthropic credential gets sent. See CompleteParams in ipc.ts.
     void readAppConfig(project)
       .then((cfg) =>
-        apiComplete({
+        apiComplete(project, {
           system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${doc}</doc>`,
           messages: apiMessages,
           model: cfg.chatModel ?? DEFAULT_CHAT_MODEL,
-          ...(cfg.chatBaseUrl !== undefined && cfg.chatBaseUrl !== null ? { baseUrl: cfg.chatBaseUrl } : {}),
         }),
       )
       .then((res) => {

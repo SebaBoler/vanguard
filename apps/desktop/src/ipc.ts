@@ -124,15 +124,23 @@ export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string;
   return invoke('api_create_run', { params });
 }
 
-/** Doc-editor chat completion (Subsystem 3). One-shot spawn, never the run mutex. */
+/**
+ * Doc-editor chat completion (Subsystem 3). One-shot spawn, never the run mutex.
+ *
+ * No `baseUrl` here on purpose: the completion runs with the inherited Anthropic credential, so a
+ * caller-supplied base URL would be a way for anything running in the webview to redirect that token
+ * to a host of its choosing. Rust reads `chatBaseUrl` from `app.json` itself — hence `repoPath`.
+ */
 export interface CompleteParams {
   system?: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   model: string;
-  baseUrl?: string;
 }
-export function apiComplete(params: CompleteParams): Promise<{ text?: string; error?: { message: string } }> {
-  return invoke('api_complete', { req: params });
+export function apiComplete(
+  repoPath: string,
+  params: CompleteParams,
+): Promise<{ text?: string; error?: { message: string } }> {
+  return invoke('api_complete', { repoPath, req: params });
 }
 
 export function listDocs(repoPath: string): Promise<string[]> {

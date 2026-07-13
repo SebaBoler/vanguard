@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex};
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 /// Sidecar state. `proc` (the run pipe) is held for a whole run; `buffer`/`active`/`child_pid`/
@@ -136,8 +138,18 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
 /// `vanguard __complete` per call, so an interactive chat turn never queues behind the run pipe's
 /// mutex. Writes the request, closes stdin (EOF), reads the single JSON response line. The API key
 /// is read from the inherited env inside the child; it never touches the webview or app.json.
+///
+/// `baseUrl` is NOT taken from the request. `__complete` points the SDK's `ANTHROPIC_BASE_URL` at it
+/// while passing the inherited credential, so a renderer-supplied value would let anything executing
+/// in the webview (the chat renders untrusted model output, and the board renders remote task data)
+/// redirect the OAuth token to a host of its choosing. The credential is never IN the webview, but
+/// that is worth little if the webview picks its destination. It is read from `app.json` here, on the
+/// trusted side, and overwrites whatever the caller sent.
 #[tauri::command]
-pub fn api_complete(req: serde_json::Value) -> Result<serde_json::Value, String> {
+pub fn api_complete(repo_path: String, req: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut req = req;
+    let trusted = crate::appconfig::read(std::path::Path::new(&repo_path)).chat_base_url;
+    set_base_url(&mut req, trusted)?;
     let mut child = Command::new("sh")
         .arg("-c")
         .arg("exec vanguard __complete")
@@ -145,12 +157,31 @@ pub fn api_complete(req: serde_json::Value) -> Result<serde_json::Value, String>
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn vanguard __complete: {e}"))?;
-    // Run the exchange, then ALWAYS reap the child — an early `?` return would otherwise leave a
-    // zombie (Child's Drop neither waits nor kills on Unix). The child self-terminates on stdin EOF.
+    // Run the exchange, then ALWAYS kill + reap the child — an early `?` return (or a timeout, where
+    // the child is still waiting on a stalled network call) would otherwise leave a zombie: Child's
+    // Drop neither waits nor kills on Unix. On the happy path the child has already self-terminated
+    // on stdin EOF and the kill is a no-op.
     let result = complete_exchange(&mut child, &req);
+    let _ = child.kill();
     let _ = child.wait();
     result
 }
+
+/// Drop any caller-supplied `baseUrl` and substitute the one from `app.json` (or none). Split out so
+/// the "the renderer cannot choose where the credential goes" property is directly testable.
+fn set_base_url(req: &mut serde_json::Value, trusted: Option<String>) -> Result<(), String> {
+    let obj = req.as_object_mut().ok_or("invalid request")?;
+    obj.remove("baseUrl");
+    if let Some(base_url) = trusted {
+        obj.insert("baseUrl".to_string(), serde_json::Value::String(base_url));
+    }
+    Ok(())
+}
+
+/// Wall-clock cap on one doc-chat turn. Without it a stalled Anthropic call (network hang, rate-limit
+/// stall) pins a Tauri worker thread on a blocking read forever, the `invoke` promise never settles,
+/// and the chat is stuck on "thinking…" with no way back. Generous — a long reply is normal.
+const COMPLETE_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn complete_exchange(child: &mut Child, req: &serde_json::Value) -> Result<serde_json::Value, String> {
     let line = serde_json::to_string(req).map_err(|e| e.to_string())?;
@@ -160,14 +191,40 @@ fn complete_exchange(child: &mut Child, req: &serde_json::Value) -> Result<serde
         // stdin drops here → the child sees EOF.
     }
     let stdout = child.stdout.take().ok_or("no stdout")?;
-    let mut resp = String::new();
-    BufReader::new(stdout)
-        .read_line(&mut resp)
-        .map_err(|e| e.to_string())?;
-    if resp.trim().is_empty() {
-        return Err("vanguard __complete produced no output".to_string());
+
+    // Read on a helper thread so the blocking read_line can be abandoned on timeout. The thread is not
+    // leaked: the caller kills the child, which closes stdout, which ends the read.
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut resp = String::new();
+        loop {
+            resp.clear();
+            match reader.read_line(&mut resp) {
+                Ok(0) | Err(_) => break, // EOF or read error → send nothing; the recv sees a closed channel
+                Ok(_) => {}
+            }
+            // The agent SDK spawns its own child inside __complete. Console output is redirected to
+            // stderr, but anything written straight to stdout would land on this pipe — so skip lines
+            // that aren't the JSON response rather than misreading noise as the reply.
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(resp.trim()) {
+                let _ = tx.send(v);
+                return;
+            }
+        }
+    });
+
+    match rx.recv_timeout(COMPLETE_TIMEOUT) {
+        Ok(v) => Ok(v),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "doc chat timed out after {}s",
+            COMPLETE_TIMEOUT.as_secs()
+        )),
+        // Channel closed without a value: the child exited without writing a parseable response line.
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("vanguard __complete produced no response".to_string())
+        }
     }
-    serde_json::from_str(resp.trim()).map_err(|e| format!("bad __complete response: {e}"))
 }
 
 /// Append an event to a run's backlog buffer (bounded ring — drops the oldest past the cap so the
@@ -404,7 +461,7 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_terminal, RunGuard, Sidecar};
+    use super::{resolve_terminal, set_base_url, RunGuard, Sidecar};
     use serde_json::json;
 
     #[test]
@@ -418,6 +475,19 @@ mod tests {
         assert!(hit.is_err());
         // A leaked `active` would make the busy guard reject every subsequent run forever.
         assert_eq!(*state.active.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn set_base_url_ignores_a_renderer_supplied_base_url() {
+        // The completion runs with the inherited Anthropic credential. If the webview could choose the
+        // base URL it could redirect that token to any host, so the request's value is always dropped.
+        let mut req = json!({ "messages": [], "baseUrl": "https://attacker.example" });
+        set_base_url(&mut req, None).unwrap();
+        assert_eq!(req.get("baseUrl"), None);
+
+        let mut req = json!({ "messages": [], "baseUrl": "https://attacker.example" });
+        set_base_url(&mut req, Some("https://proxy.internal".to_string())).unwrap();
+        assert_eq!(req["baseUrl"], json!("https://proxy.internal")); // app.json wins, not the caller
     }
 
     #[test]
