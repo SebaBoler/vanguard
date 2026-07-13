@@ -42,5 +42,10 @@ describe('__sidecar entrypoint (integration)', () => {
     expect(lines).toHaveLength(4);
     // clean shutdown once stdin closes
     expect(exitCode).toBe(0);
-  }, 30_000);
+    // 120s, not 30s: this spawns a real `tsx` that transpiles the whole CLI import graph on a cold
+    // start. It runs in ~seconds idle, but under CPU contention (the rest of the suite, or a
+    // concurrent `cargo build`) it was being starved past 30s and failing as a "timeout" while the
+    // process was merely slow — a false failure that trained us to ignore a red test. The timeout is
+    // here to catch a HANG, and 120s still does that; it is not a performance budget.
+  }, 120_000);
 });

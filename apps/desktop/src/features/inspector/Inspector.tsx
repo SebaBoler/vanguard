@@ -6,7 +6,6 @@ import {
   listRuns,
   listActive,
   readRun,
-  killRun,
   watchProject,
   unwatchProject,
   apiCapabilitiesCached,
@@ -15,8 +14,6 @@ import {
   apiRunBacklog,
   apiCancel,
   apiRepoOk,
-  SPAWN_OUTPUT_EVENT,
-  SPAWN_EXIT_EVENT,
   type Capabilities,
   type CreateRunParams,
 } from '../../ipc';
@@ -33,7 +30,6 @@ import { DocsScreen } from '../docs/DocsScreen';
 import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
 import { reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
-import { LaunchPanel, type Spawn } from './LaunchPanel';
 import { useAppConfig } from '../../hooks';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
@@ -59,8 +55,6 @@ export function Inspector({
   const [loading, setLoading] = useState(false);
   const [watching, setWatching] = useState(false);
   const [tick, setTick] = useState(0);
-  const [spawns, setSpawns] = useState<Spawn[]>([]);
-  const [focusedSpawn, setFocusedSpawn] = useState<number | null>(null);
   const [showNewRun, setShowNewRun] = useState(false);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
   // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
@@ -149,22 +143,6 @@ export function Inspector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
-  // Spawned-run output/exit streams.
-  useEffect(() => {
-    const unOut = listen<{ pid: number; line: string }>(SPAWN_OUTPUT_EVENT, (e) => {
-      setSpawns((prev) =>
-        prev.map((s) => (s.pid === e.payload.pid ? { ...s, lines: [...s.lines, e.payload.line] } : s)),
-      );
-    });
-    const unExit = listen<{ pid: number; code: number | null }>(SPAWN_EXIT_EVENT, (e) => {
-      setSpawns((prev) => prev.map((s) => (s.pid === e.payload.pid ? { ...s, exit: e.payload.code } : s)));
-    });
-    return () => {
-      void unOut.then((f) => f());
-      void unExit.then((f) => f());
-    };
-  }, []);
-
   // Load the capability surface once (cached; pure — never blocks on a live run).
   useEffect(() => {
     void apiCapabilitiesCached().then(setCaps).catch(() => setCaps(null));
@@ -247,7 +225,6 @@ export function Inspector({
     setTypedRun(started); // "starting…" — "run live" derives from this
     setDetail(null);
     setLiveRun(null);
-    setFocusedSpawn(null);
     void apiCreateRun(params)
       .then((res) => {
         if (runGen.current !== gen) return; // a newer run owns the strip
@@ -283,7 +260,6 @@ export function Inspector({
 
   const open = async (r: RunSummary): Promise<void> => {
     setError(null);
-    setFocusedSpawn(null);
     try {
       setDetail(await readRun(project, r.taskId, r.timestamp));
     } catch (e) {
@@ -293,9 +269,6 @@ export function Inspector({
 
   const detailPassed =
     detail && (detail.proof ? detail.proof.passed : !detail.stages.some((s) => !s.record.completed));
-
-  // The launch whose live log is open (may be running or just-exited until dismissed).
-  const focusedSpawnEntry = focusedSpawn !== null ? spawns.find((s) => s.pid === focusedSpawn) : undefined;
 
   return (
     // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
@@ -371,25 +344,6 @@ export function Inspector({
         <div className="flex min-h-0 flex-1 flex-col">
           <RunDetail detail={detail} project={project} />
         </div>
-      ) : focusedSpawnEntry ? (
-        // A running launch clicked in the list: its live log + Kill, with a way back to the table.
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <button
-            onClick={() => setFocusedSpawn(null)}
-            className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="size-3.5" />
-            Back to runs
-          </button>
-          <LaunchPanel
-            spawn={focusedSpawnEntry}
-            onKill={(pid) => void killRun(pid)}
-            onDismiss={(pid) => {
-              setSpawns((prev) => prev.filter((x) => x.pid !== pid));
-              setFocusedSpawn(null);
-            }}
-          />
-        </div>
       ) : liveRun ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <LiveRun active={liveRun} refreshKey={tick} budgetUsd={cfg.budgetUsd} />
@@ -412,17 +366,7 @@ export function Inspector({
       ) : screen === 'runs' ? (
         // In-flight runs render as running rows at the top of the RunList table.
         <div className="flex min-h-0 flex-1 flex-col">
-          <RunList
-            runs={runs}
-            active={active}
-            spawns={spawns}
-            onSelect={open}
-            onOpenActive={(a) => {
-              setFocusedSpawn(null);
-              setLiveRun(a);
-            }}
-            onOpenSpawn={setFocusedSpawn}
-          />
+          <RunList runs={runs} active={active} onSelect={open} onOpenActive={setLiveRun} />
         </div>
       ) : screen === 'board' ? (
         <TaskBoard project={project} onOpenTask={setTaskDetailId} />
