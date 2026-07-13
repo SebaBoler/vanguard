@@ -1,4 +1,7 @@
 import { test, expect } from 'vitest';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lowerFlow } from './lower.js';
 import type { FlowDoc } from './types.js';
@@ -59,4 +62,24 @@ test('rejects an unknown provider override', async () => {
   await expect(lowerFlow(doc([{ name: 'planner', overrides: { provider: 'bogus' } }]), { repoPath: REPO })).rejects.toThrow(
     /unknown provider "bogus"/,
   );
+});
+
+test('re-imports an edited ref module (mtime cache-bust) — the long-lived sidecar must not run stale code', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'vg-ref-'));
+  try {
+    const dir = join(repo, '.vanguard', 'scripts');
+    await mkdir(dir, { recursive: true });
+    const mod = join(dir, 'gen.mjs');
+    await writeFile(mod, "export const stage = { name: 'gen', promptTemplate: 'v1' };\n", 'utf8');
+    const first = await lowerFlow(doc([{ name: 'x', ref: 'scripts/gen.mjs#stage', overrides: {} }]), { repoPath: repo });
+    expect(first[0]?.promptTemplate).toBe('v1');
+
+    await writeFile(mod, "export const stage = { name: 'gen', promptTemplate: 'v2' };\n", 'utf8');
+    // guarantee a distinct integer mtime even on coarse filesystem clocks
+    await utimes(mod, new Date(), new Date(Date.now() + 5000));
+    const second = await lowerFlow(doc([{ name: 'x', ref: 'scripts/gen.mjs#stage', overrides: {} }]), { repoPath: repo });
+    expect(second[0]?.promptTemplate).toBe('v2');
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });

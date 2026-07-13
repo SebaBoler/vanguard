@@ -93,6 +93,8 @@ export function unwatchProject(repoPath: string): Promise<void> {
 export interface Capabilities {
   providers: string[];
   flows: { name: string; label: string }[];
+  /** Stage-library names — the flow editor's palette. Static per session, like everything here. */
+  stages: string[];
   transports: string[];
   defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
 }
@@ -165,6 +167,55 @@ export function readDoc(repoPath: string, name: string): Promise<string> {
 }
 export function writeDoc(repoPath: string, name: string, content: string): Promise<void> {
   return invoke<void>('write_doc', { repoPath, name, content });
+}
+
+// Flow-file editing (S5). Hand-mirrors of src/flows/types.ts + src/flows/repo.ts — same
+// manual-mirror discipline as RunEvent; the shared-types seam is backlog.
+export interface StageOverrides {
+  model?: string;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  maxTurns?: number;
+  provider?: string;
+  resumePrevious?: boolean;
+}
+export interface StageDecl {
+  name: string;
+  /** `"relpath#export"` under `.vanguard/` — the Layer-2 escape hatch. */
+  ref?: string;
+  overrides: StageOverrides;
+  meta?: Record<string, unknown>;
+}
+export interface LoopDecl {
+  stages: string[];
+  until: string;
+  max: number;
+}
+export interface FlowDoc {
+  name: string;
+  label: string;
+  stages: StageDecl[];
+  loops: LoopDecl[];
+  meta?: Record<string, unknown>;
+}
+/** One discovered flow file. `name` present ⇔ parsed (openable); `error` present ⇔ not runnable. */
+export interface RepoFlowInfo {
+  file: string;
+  name?: string;
+  label?: string;
+  error?: string;
+}
+
+export function apiListFlows(repoPath: string): Promise<{ flows: RepoFlowInfo[] }> {
+  return invoke('api_list_flows', { repoPath });
+}
+
+/** `source` is the raw file bytes on read; the canonical form appears only after a write. */
+export function apiReadFlow(repoPath: string, file: string): Promise<{ doc: FlowDoc; source: string }> {
+  return invoke('api_read_flow', { repoPath, file });
+}
+
+export function apiWriteFlow(repoPath: string, file: string, doc: FlowDoc): Promise<{ source: string }> {
+  return invoke('api_write_flow', { repoPath, file, doc });
 }
 
 /** The in-flight typed run's id, or null when idle. */

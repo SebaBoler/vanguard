@@ -644,6 +644,49 @@ pub fn api_create_task(
     resp.get("result").cloned().ok_or_else(|| "createTask returned no result".to_string())
 }
 
+/// Shared exchange for the S5 flow-file methods. Timed on the query pipe: these are local,
+/// idempotent file operations — same doc, same bytes, a watchdog-killed write retried converges,
+/// and the sidecar's temp+rename write can't tear the target (spec D5). The in-band error envelope
+/// is surfaced verbatim: a parse message or validation rejection must reach the UI, not collapse
+/// to "no result" (same rule as api_create_task, for the same reason).
+fn flow_request(state: &Sidecar, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    let resp = request(
+        state,
+        Pipe::Query,
+        Bound::Timed,
+        serde_json::json!({ "id": method, "method": method, "params": params }),
+        |_| {},
+    )?;
+    if let Some(err) = resp.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("flow request failed");
+        return Err(msg.to_string());
+    }
+    resp.get("result").cloned().ok_or_else(|| format!("{method} returned no result"))
+}
+
+/// List `.vanguard/flows/*.hcl` — the flow editor's rail + the run builder's repo-flow dropdown.
+#[tauri::command(async)]
+pub fn api_list_flows(state: State<'_, Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    flow_request(&state, "listFlows", serde_json::json!({ "repoPath": repo_path }))
+}
+
+/// Read one flow file: `{ doc, source }` (raw bytes; canonical form appears only after a write).
+#[tauri::command(async)]
+pub fn api_read_flow(state: State<'_, Sidecar>, repo_path: String, file: String) -> Result<serde_json::Value, String> {
+    flow_request(&state, "readFlow", serde_json::json!({ "repoPath": repo_path, "file": file }))
+}
+
+/// Validate + emit + atomically write one flow file; returns `{ source }` (the canonical HCL).
+#[tauri::command(async)]
+pub fn api_write_flow(
+    state: State<'_, Sidecar>,
+    repo_path: String,
+    file: String,
+    doc: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    flow_request(&state, "writeFlow", serde_json::json!({ "repoPath": repo_path, "file": file, "doc": doc }))
+}
+
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project
 /// at click instead of minutes into a run. `(async)` — it shells out to git, and process spawns do not
 /// belong on the main thread even when they're fast.

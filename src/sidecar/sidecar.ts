@@ -1,6 +1,10 @@
+import { isAbsolute } from 'node:path';
 import { isProviderName, PROVIDER_NAMES } from '../agents/registry.js';
 import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
 import { VanguardError } from '../core/errors.js';
+import { coerceFlowDoc, flowDocError, FlowError, FLOW_FILE_RE } from '../flows/repo.js';
+import type { RepoFlowInfo } from '../flows/repo.js';
+import type { FlowDoc } from '../flows/types.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { Capabilities } from '../api/capabilities.js';
 import type { CreatedTask } from '../tasks/create.js';
@@ -33,6 +37,23 @@ export interface SidecarDeps {
   capabilities: () => Capabilities;
   createRun: (params: CreateRunParams, onEvent: (e: RunEvent) => void) => Promise<CreateRunResult>;
   createTask: (params: CreateTaskParams) => Promise<CreatedTask>;
+  listFlows: (params: ListFlowsParams) => Promise<{ flows: RepoFlowInfo[] }>;
+  readFlow: (params: ReadFlowParams) => Promise<{ doc: FlowDoc; source: string }>;
+  writeFlow: (params: WriteFlowParams) => Promise<{ source: string }>;
+}
+
+/** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
+export interface ListFlowsParams {
+  repoPath: string;
+}
+export interface ReadFlowParams {
+  repoPath: string;
+  file: string;
+}
+export interface WriteFlowParams {
+  repoPath: string;
+  file: string;
+  doc: FlowDoc;
 }
 
 /**
@@ -101,8 +122,11 @@ export function validateCreateRun(params: unknown): void {
   if (p.transport !== undefined && !(TRANSPORTS as readonly unknown[]).includes(p.transport)) {
     throw new BadRequestError(`unknown transport "${String(p.transport)}" — choose one of: ${TRANSPORTS.join(', ')}`);
   }
-  if (p.flow !== undefined && (typeof p.flow !== 'string' || !Object.hasOwn(FLOWS, p.flow))) {
-    throw new BadRequestError(`unknown flow "${String(p.flow)}" — choose one of: ${Object.keys(FLOWS).join(', ')}`);
+  // Only the string shape is checked here: repo `.vanguard/flows/*.hcl` flows are legal values and
+  // this validator is synchronous. Resolvability is the createRun dep's first statement
+  // (assertFlowResolvable — before beginRun, before any sandbox cost), still kind `bad-request`.
+  if (p.flow !== undefined && (typeof p.flow !== 'string' || p.flow.trim() === '')) {
+    throw new BadRequestError(`flow must be a non-blank string, got ${String(p.flow)}`);
   }
   if (p.maxTurns !== undefined && (typeof p.maxTurns !== 'number' || !Number.isInteger(p.maxTurns) || p.maxTurns <= 0)) {
     throw new BadRequestError(`maxTurns must be a positive integer, got ${String(p.maxTurns)}`);
@@ -110,6 +134,60 @@ export function validateCreateRun(params: unknown): void {
   if (p.baseBranch !== undefined && (typeof p.baseBranch !== 'string' || p.baseBranch.trim() === '')) {
     throw new BadRequestError(`baseBranch must be a non-blank string, got ${String(p.baseBranch)}`);
   }
+}
+
+/**
+ * The flow-file methods read/write disk relative to repoPath, and the sidecar child inherits the
+ * APP's cwd (it is spawned with no project cwd) — a relative repoPath would silently target some
+ * other tree, so all three methods require an absolute one.
+ */
+function requireAbsoluteRepoPath(params: unknown): Record<string, unknown> {
+  const p = (params ?? {}) as Record<string, unknown>;
+  if (typeof p.repoPath !== 'string' || p.repoPath.trim() === '' || !isAbsolute(p.repoPath)) {
+    throw new BadRequestError('repoPath is required and must be an absolute path');
+  }
+  return p;
+}
+
+function requireFlowFile(p: Record<string, unknown>): void {
+  if (typeof p.file !== 'string' || !FLOW_FILE_RE.test(p.file)) {
+    throw new BadRequestError('file must be a lowercase [a-z0-9._-] basename ending in .hcl');
+  }
+}
+
+export function validateListFlows(params: unknown): void {
+  requireAbsoluteRepoPath(params);
+}
+
+export function validateReadFlow(params: unknown): void {
+  requireFlowFile(requireAbsoluteRepoPath(params));
+}
+
+/**
+ * Validate a writeFlow request and return the coerced doc. Everything pure happens here, before
+ * dispatch: shape + unknown-key rejection (the renderer sends a JS object, so parse's typo
+ * protection never ran — a silently dropped field would survive the re-parse guard), the semantic
+ * validity predicate, the canonical-filename rule, and the built-in collision. The
+ * sibling-duplicate check needs fs and lives in the dep.
+ */
+export function validateWriteFlow(params: unknown): FlowDoc {
+  const p = requireAbsoluteRepoPath(params);
+  requireFlowFile(p);
+  let doc: FlowDoc;
+  try {
+    doc = coerceFlowDoc(p.doc);
+  } catch (err) {
+    throw new BadRequestError(err instanceof Error ? err.message : String(err));
+  }
+  const problem = flowDocError(doc);
+  if (problem !== undefined) throw new BadRequestError(problem);
+  if (p.file !== `${doc.name}.hcl`) {
+    throw new BadRequestError(`file name doesn't match flow name "${doc.name}" — rename the file to ${doc.name}.hcl to edit it in the app`);
+  }
+  if (Object.hasOwn(FLOWS, doc.name)) {
+    throw new BadRequestError(`flow "${doc.name}" collides with a built-in flow — pick another name`);
+  }
+  return doc;
 }
 
 /**
@@ -144,11 +222,24 @@ export async function runSidecar(
         const params = req.params as CreateRunParams;
         const result = await deps.createRun(params, (e) => write(JSON.stringify({ id, event: e })));
         write(JSON.stringify({ id, result }));
+      } else if (req.method === 'listFlows') {
+        validateListFlows(req.params);
+        write(JSON.stringify({ id, result: await deps.listFlows(req.params as ListFlowsParams) }));
+      } else if (req.method === 'readFlow') {
+        validateReadFlow(req.params);
+        write(JSON.stringify({ id, result: await deps.readFlow(req.params as ReadFlowParams) }));
+      } else if (req.method === 'writeFlow') {
+        const doc = validateWriteFlow(req.params);
+        const params = req.params as WriteFlowParams;
+        // Pass the coerced doc, not the raw one — the clean rebuild is what gets emitted.
+        write(JSON.stringify({ id, result: await deps.writeFlow({ ...params, doc }) }));
       } else {
         write(JSON.stringify({ id, error: { message: `unknown method: ${String(req.method)}`, kind: 'bad-request' } }));
       }
     } catch (err) {
-      const kind = err instanceof BadRequestError ? 'bad-request' : 'internal';
+      // FlowError = a user-fixable flow-file problem (parse failure, duplicate, unknown flow) —
+      // caller-correctable, so bad-request. `internal` stays reserved for real faults (fs, runner).
+      const kind = err instanceof BadRequestError || err instanceof FlowError ? 'bad-request' : 'internal';
       const message = err instanceof Error ? err.message : String(err);
       write(JSON.stringify({ id, error: { message, kind } }));
     }

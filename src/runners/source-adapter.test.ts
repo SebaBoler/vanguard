@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
 import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
@@ -256,11 +257,41 @@ describe('runSourcedIssue', () => {
     expect(runStages).not.toHaveBeenCalled(); // rejected at assembly — no agent time burned
   });
 
-  it('an unknown flow key throws', async () => {
+  it('an unknown flow throws BEFORE the tracker fetch and any proxy/sandbox machinery (fail-fast)', async () => {
     const adapter = fakeAdapter([], STAGES);
     await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
-      /unknown flow "nope"/,
+      /unknown flow "nope" — choose one of: default, plan, flow-b/,
     );
+    // a typo must cost nothing: no issue fetched, no provider proxies, no sandbox
+    expect(adapter.prepare).not.toHaveBeenCalled();
+    expect(vi.mocked(startProviderProxies)).not.toHaveBeenCalled();
+  });
+
+  it('--flow <name> resolves a repo .vanguard/flows/*.hcl flow and runs its lowered stages (S5)', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-sa-flows-'));
+    try {
+      await mkdir(join(repo, '.vanguard', 'flows'), { recursive: true });
+      await writeFile(
+        join(repo, '.vanguard', 'flows', 'my-flow.hcl'),
+        'flow "my-flow" {\n  label = "Mine"\n\n  stage {\n    name = "implementer"\n    model = "special-model"\n  }\n}\n',
+        'utf8',
+      );
+      const events: RunEvent[] = [];
+      runStages.mockImplementation(async (_ctx: unknown, stages: PipelineStage[]) => stages.map((s) => stageOutcome(s.name)));
+      await runSourcedIssue(
+        'group/project#1',
+        { repoPath: repo, flow: 'my-flow', onEvent: (e) => events.push(e) },
+        fakeAdapter([], STAGES),
+      );
+      const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+      expect(assembled.map((s) => s.name)).toEqual(['implementer']);
+      expect(assembled[0]?.model).toBe('special-model'); // HCL override over the library record
+      expect((assembled[0]?.promptTemplate.length ?? 0) > 0).toBe(true); // identity from the library
+      const runStart = events.find((e) => e.type === 'run-start');
+      expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('my-flow');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
   it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {

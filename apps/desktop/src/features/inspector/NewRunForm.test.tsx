@@ -9,6 +9,7 @@ const caps: Capabilities = {
     { name: 'default', label: 'Default' },
     { name: 'plan', label: 'Plan' },
   ],
+  stages: ['planner', 'implementer'],
   transports: ['github', 'gitlab', 'linear'],
   defaults: { provider: 'claude', maxTurns: 30, maxCostUsd: 5, baseBranch: 'main' },
 };

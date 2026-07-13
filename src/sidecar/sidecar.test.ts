@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+import { assertFlowResolvable, FlowError } from '../flows/repo.js';
 import { runSidecar, type SidecarDeps } from './sidecar.js';
 import type { RunEvent } from '../pipeline/events.js';
 
@@ -12,12 +14,15 @@ function collect(): { write: (l: string) => void; out: string[] } {
 }
 
 const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
-  capabilities: () => ({ providers: ['claude'], flows: [{ name: 'default', label: 'D' }], transports: ['github', 'gitlab', 'linear'], defaults: { provider: 'claude', maxTurns: 30, maxCostUsd: 5, baseBranch: 'main' } }),
+  capabilities: () => ({ providers: ['claude'], flows: [{ name: 'default', label: 'D' }], stages: ['planner'], transports: ['github', 'gitlab', 'linear'], defaults: { provider: 'claude', maxTurns: 30, maxCostUsd: 5, baseBranch: 'main' } }),
   createRun: async (_params, onEvent): Promise<{ prUrl?: string }> => {
     onEvent({ type: 'stage-start', name: 'implementer', index: 0, of: 1 } as RunEvent);
     return { prUrl: 'https://example/pr/1' };
   },
   createTask: async () => ({ id: 'o/r#1', url: 'https://example/issues/1' }),
+  listFlows: async () => ({ flows: [] }),
+  readFlow: async () => ({ doc: { name: 'f', label: 'L', stages: [{ name: 'planner', overrides: {} }], loops: [] }, source: 'flow "f" {}' }),
+  writeFlow: async () => ({ source: 'flow "f" {}' }),
   ...over,
 });
 
@@ -67,8 +72,8 @@ describe('runSidecar', () => {
 
   it.each([
     ['unknown transport', { issueRef: 'gh-1', repoPath: '/repo', transport: 'gitub' }],
-    ['unknown flow', { issueRef: 'gh-1', repoPath: '/repo', flow: 'nope' }],
-    ['prototype-key flow', { issueRef: 'gh-1', repoPath: '/repo', flow: 'toString' }],
+    ['blank flow', { issueRef: 'gh-1', repoPath: '/repo', flow: '  ' }],
+    ['non-string flow', { issueRef: 'gh-1', repoPath: '/repo', flow: 7 }],
     ['non-numeric maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 'abc' }],
     ['non-positive maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: -5 }],
     ['fractional maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 2.5 }],
@@ -83,6 +88,113 @@ describe('runSidecar', () => {
     const { write, out } = collect();
     await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request' } });
+  });
+
+  // Flow validation moved out of the sync validator (repo .hcl flows are legal values it cannot
+  // see): resolvability is the dep's FIRST act, before any run machinery. Composed here exactly
+  // like productionDeps composes it, with tmpdir() as a real repo that has no flows.
+  it.each([
+    ['an unknown flow', 'nope'],
+    ['a prototype-key flow (Object.hasOwn regression)', 'toString'],
+  ])('createRun with %s is bad-request and never reaches the run body', async (_label, flow) => {
+    let reached = false;
+    const deps = stubDeps({
+      createRun: async (params): Promise<{ prUrl?: string }> => {
+        if (params.flow !== undefined) await assertFlowResolvable(params.flow, params.repoPath);
+        reached = true; // stands in for beginRun() + the sandbox — nothing below the assert may run
+        return {};
+      },
+    });
+    const { write, out } = collect();
+    await runSidecar(
+      lines(JSON.stringify({ id: 'ff', method: 'createRun', params: { issueRef: 'gh-1', repoPath: tmpdir(), flow } })),
+      write,
+      deps,
+    );
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'ff', error: { kind: 'bad-request' } });
+    expect(JSON.parse(out[0]!).error.message).toMatch(new RegExp(`unknown flow "${flow}"`));
+    expect(reached).toBe(false);
+  });
+});
+
+describe('flow-file methods over the protocol (S5)', () => {
+  const req = (method: string, params: Record<string, unknown>): string => JSON.stringify({ id: 'f', method, params });
+  const DOC = { name: 'my-flow', label: 'Mine', stages: [{ name: 'planner', overrides: {} }], loops: [] };
+
+  it('listFlows/readFlow/writeFlow answer with correlated results', async () => {
+    const { write, out } = collect();
+    await runSidecar(
+      lines(
+        req('listFlows', { repoPath: '/abs' }),
+        req('readFlow', { repoPath: '/abs', file: 'my-flow.hcl' }),
+        req('writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: DOC }),
+      ),
+      write,
+      stubDeps(),
+    );
+    expect(JSON.parse(out[0]!)).toEqual({ id: 'f', result: { flows: [] } });
+    expect(JSON.parse(out[1]!).result.doc.name).toBe('f');
+    expect(JSON.parse(out[2]!).result.source).toContain('flow');
+  });
+
+  it('passes the COERCED doc to the dep — the clean rebuild is what gets emitted', async () => {
+    let received: unknown;
+    const deps = stubDeps({
+      writeFlow: async ({ doc }): Promise<{ source: string }> => {
+        received = doc;
+        return { source: 's' };
+      },
+    });
+    const { write } = collect();
+    await runSidecar(lines(req('writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: DOC })), write, deps);
+    expect(received).toEqual(DOC);
+  });
+
+  it.each([
+    ['a relative repoPath', 'listFlows', { repoPath: 'repo' }],
+    ['a blank repoPath', 'listFlows', { repoPath: ' ' }],
+    ['a traversal filename', 'readFlow', { repoPath: '/abs', file: '../x.hcl' }],
+    ['an uppercase filename', 'readFlow', { repoPath: '/abs', file: 'My.hcl' }],
+    ['a non-hcl filename', 'readFlow', { repoPath: '/abs', file: 'x.md' }],
+    ['an unknown stage key (silent-drop class)', 'writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: { ...DOC, stages: [{ name: 'planner', overrides: {}, timeoutMs: 5 }] } }],
+    ['an unknown override key', 'writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: { ...DOC, stages: [{ name: 'planner', overrides: { foo: 1 } }] } }],
+    ['a zero-stage doc', 'writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: { ...DOC, stages: [] } }],
+    ['an unknown stage name', 'writeFlow', { repoPath: '/abs', file: 'my-flow.hcl', doc: { ...DOC, stages: [{ name: 'nope', overrides: {} }] } }],
+    ['a filename ≠ flow name', 'writeFlow', { repoPath: '/abs', file: 'other.hcl', doc: DOC }],
+    ['a built-in name collision', 'writeFlow', { repoPath: '/abs', file: 'plan.hcl', doc: { ...DOC, name: 'plan' } }],
+  ])('rejects %s as bad-request without invoking the dep', async (_label, method, params) => {
+    let called = false;
+    const deps = stubDeps({
+      listFlows: async (): Promise<{ flows: [] }> => ((called = true), { flows: [] }),
+      readFlow: async (): Promise<never> => {
+        called = true;
+        throw new Error('unreachable');
+      },
+      writeFlow: async (): Promise<never> => {
+        called = true;
+        throw new Error('unreachable');
+      },
+    });
+    const { write, out } = collect();
+    await runSidecar(lines(req(method, params)), write, deps);
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'f', error: { kind: 'bad-request' } });
+    expect(called).toBe(false);
+  });
+
+  it('classifies FlowError as bad-request and anything else as internal', async () => {
+    const { write, out } = collect();
+    await runSidecar(
+      lines(req('readFlow', { repoPath: '/abs', file: 'a.hcl' }), req('readFlow', { repoPath: '/abs', file: 'b.hcl' })),
+      write,
+      stubDeps({
+        readFlow: async ({ file }): Promise<never> => {
+          if (file === 'a.hcl') throw new FlowError('expected exactly one flow block, found none');
+          throw new Error('EACCES: permission denied');
+        },
+      }),
+    );
+    expect(JSON.parse(out[0]!).error).toEqual({ message: 'expected exactly one flow block, found none', kind: 'bad-request' });
+    expect(JSON.parse(out[1]!).error.kind).toBe('internal');
   });
 });
 

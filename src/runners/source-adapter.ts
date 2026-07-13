@@ -6,6 +6,7 @@ import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
+import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -220,12 +221,40 @@ export function conventionalCommitMessage(title: string, taskId: string): string
   return `${prefix}${clipped}${suffix}`;
 }
 
+/**
+ * Resolve a flow name to its base stage array. 'default' (and no flow at all) means "this
+ * adapter's own stages", NOT FLOWS.default.build. They are not the same: the Linear adapter's
+ * stages() swaps in an implementer that reads the issue via the linear-cli skill, while
+ * FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting 'default' by name —
+ * the natural thing for a name-driven UI — must not silently downgrade a Linear run to an
+ * implementer that never reads the issue. Non-built-in names resolve from the repo's
+ * `.vanguard/flows/*.hcl` (S5); unknown names throw listing both sets.
+ */
+async function resolveBaseStages(
+  flow: string | undefined,
+  repoPath: string,
+  adapter: SourceAdapter,
+): Promise<PipelineStage[]> {
+  if (flow === undefined || flow === 'default') return adapter.stages();
+  if (Object.hasOwn(FLOWS, flow)) return FLOWS[flow]!.build();
+  const stages = await resolveRepoFlow(flow, repoPath);
+  if (stages === undefined) throw await unknownFlowError(flow, repoPath);
+  return stages;
+}
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
   deps: RunIssueDeps,
   adapter: SourceAdapter,
 ): Promise<RunIssueResult> {
+  // Named-flow dispatch, resolved FIRST: a flow typo must fail before the tracker fetch, the
+  // provider proxies, and the sandbox spin-up (the CLI mirror of the sidecar fail-fast, S5 D6).
+  // `--flow <name>` selects a FLOWS builder or a repo `.vanguard/flows/*.hcl` flow; `--plan` is
+  // the back-compat alias for flow 'plan'.
+  const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
+  const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter);
+
   const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
   // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer
   // prompt ({{COMMENTS}}), triage, and the conformance manifest read it exactly like a posted spec,
@@ -281,18 +310,6 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      // Named-flow dispatch. `--flow <name>` selects a FLOWS builder; `--plan` is the back-compat
-      // alias for flow 'plan'.
-      //
-      // 'default' means "this adapter's own stages", NOT FLOWS.default.build. They are not the same:
-      // the Linear adapter's stages() swaps in an implementer that reads the issue via the linear-cli
-      // skill, while FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting
-      // 'default' by name — the natural thing for a name-driven UI — must not silently downgrade a
-      // Linear run to an implementer that never reads the issue.
-      const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
-      if (flow !== undefined && !Object.hasOwn(FLOWS, flow)) throw new Error(`unknown flow "${flow}"`);
-      const baseStages =
-        flow !== undefined && flow !== 'default' ? FLOWS[flow]!.build() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
