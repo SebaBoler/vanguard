@@ -348,8 +348,25 @@ fn emit_event(app: &AppHandle, state: &Sidecar, run_id: &str, event: serde_json:
 
 /// Mark a run finished: clear `active`, record it for eviction, drop the oldest beyond RETAINED_RUNS.
 fn finish_run(state: &Sidecar, run_id: &str) {
+    // Disarm cancel and open the gate under ONE `active` lock scope — the same discipline
+    // `api_create_run`'s check-and-set already uses, and for the same reason.
+    //
+    // The success path never cleared `child_pid` (only the error path did, via `request`), so a
+    // finished run's pid lingered. But clearing it as a separate step is a TOCTOU: `active` IS the
+    // single-in-flight gate, and Tauri runs commands on a thread pool, not serialized. Clear it after
+    // releasing `active` and you get:
+    //
+    //   A: finish_run releases `active`          (gate open; child_pid still A's)
+    //   B: api_create_run passes the gate, sets `active = B`, publishes child_pid = B
+    //   A: clear_run_pid()                       -> child_pid = None, wiping B's
+    //
+    // ...leaving B live with no pid, so api_cancel finds nothing and the kill silently no-ops — the
+    // exact "signal vanishes without a word" failure this change exists to prevent, moved to the
+    // handoff boundary. Holding `active` across both writes means no B can pass the gate in between,
+    // and the `run_id` guard means a finishing run can never disarm a successor that already took over.
     if let Ok(mut active) = state.active.lock() {
         if active.as_deref() == Some(run_id) {
+            clear_run_pid(state, Pipe::Run);
             *active = None;
         }
     }
@@ -359,11 +376,6 @@ fn finish_run(state: &Sidecar, run_id: &str) {
             *c = None;
         }
     }
-    // Disarm cancel. The error path already cleared it (`request` -> clear_run_pid), but the SUCCESS
-    // path never did, so a finished run's pid lingered. Harmless today only because api_cancel gates
-    // on `active` — which RunGuard clears here too. That is a coincidence, not a design: it leaves a
-    // loaded gun for the next caller who reads child_pid without also checking `active`.
-    clear_run_pid(state, Pipe::Run);
     let evict = {
         let mut order = match state.order.lock() {
             Ok(o) => o,
@@ -524,7 +536,7 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_run_pid, publish_run_pid, resolve_terminal, set_base_url, Pipe, RunGuard, Sidecar};
+    use super::{clear_run_pid, finish_run, publish_run_pid, resolve_terminal, set_base_url, Pipe, RunGuard, Sidecar};
     use serde_json::json;
 
     /// The bug the query pipe would have introduced, pinned.
@@ -571,6 +583,28 @@ mod tests {
         } // run ends normally
         assert_eq!(*state.child_pid.lock().unwrap(), None);
         assert_eq!(*state.active.lock().unwrap(), None);
+    }
+
+    /// A late `finish_run` from an OLD run must not disarm cancel for the run that succeeded it.
+    ///
+    /// `active` is the single-in-flight gate and Tauri runs commands on a thread pool, so a finishing
+    /// run's cleanup can land after a newer run has already claimed the gate and published its pid.
+    /// An unguarded `clear_run_pid` would blank it, leaving a LIVE run that cancel cannot signal.
+    /// finish_run therefore clears the pid only while `active` still names ITS OWN run, and does both
+    /// writes under one lock so no run can slip in between them.
+    #[test]
+    fn a_late_finish_cannot_disarm_the_run_that_replaced_it() {
+        let state = Sidecar::default();
+
+        // run-1 is live and armed (it already took over from run-0).
+        *state.active.lock().unwrap() = Some("run-1".to_string());
+        publish_run_pid(&state, Pipe::Run, 222);
+
+        // run-0's cleanup finally lands. It owns neither `active` nor the pid any more.
+        finish_run(&state, "run-0");
+
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(222), "run-1 must still be cancellable");
+        assert_eq!(*state.active.lock().unwrap(), Some("run-1".to_string()), "run-1 still holds the gate");
     }
 
     #[test]
