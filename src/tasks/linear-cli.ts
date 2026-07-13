@@ -94,9 +94,13 @@ async function postGraphql(token: string, body: { query: string; variables: Reco
   return res.json();
 }
 
+const PAGE_SIZE = 100;
+/** Backstop only — not a work-queue cap. Real teams are far under this; see the loop in list(). */
+const MAX_PAGES = 100;
+
 /** One page of the issue list. `state { type }` is what TaskFilter.state selects on. */
 const LIST_QUERY = `query($f: IssueFilter, $after: String) {
-  issues(first: 100, after: $after, filter: $f) {
+  issues(first: ${PAGE_SIZE}, after: $after, filter: $f) {
     pageInfo { hasNextPage endCursor }
     nodes { identifier title description state { name type } labels { nodes { name } } }
   }
@@ -130,11 +134,16 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     return toTask(issue);
   }
 
-  private get graphql(): LinearGraphql {
+  /**
+   * A sender with the credential already resolved. Called ONCE per list(), not per page: with
+   * LINEAR_API_KEY unset (the desktop path) `linearToken` shells `linear auth token`, so resolving
+   * inside the pagination loop would spawn one subprocess per page, on every watch poll.
+   */
+  private async sender(): Promise<LinearGraphql> {
     const injected = this.options.graphql;
     if (injected !== undefined) return injected;
-    const run = this.run;
-    return async (body) => postGraphql(await linearToken(run), body);
+    const token = await linearToken(this.run);
+    return (body) => postGraphql(token, body);
   }
 
   /**
@@ -155,23 +164,35 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     if (this.options.team !== undefined) issueFilter['team'] = { key: { eq: this.options.team } };
     if (filter?.state !== undefined) issueFilter['state'] = { type: { eq: filter.state } };
 
+    const send = await this.sender(); // credential resolved once, not per page
     const issues: LinearCliIssue[] = [];
     let after: string | undefined;
-    for (;;) {
-      const page = (await this.graphql({
+    for (let page = 0; ; page++) {
+      // "Exhaust the pages" still assumes a finite, well-behaved server. A `hasNextPage: true` with a
+      // cursor that never advances (server bug, proxy, hostile response) would spin here forever and
+      // grow `issues` without bound — a hung watcher is strictly worse than the crash this replaced,
+      // and removing the old --limit took away the accidental backstop. Fail loudly instead.
+      if (page >= MAX_PAGES) {
+        throw new VanguardError(`Linear list exceeded ${MAX_PAGES} pages (${MAX_PAGES * PAGE_SIZE}+ issues) — refusing to page further.`);
+      }
+      const response = (await send({
         query: LIST_QUERY,
         variables: { f: issueFilter, ...(after !== undefined ? { after } : {}) },
       })) as IssuePage;
       // A GraphQL error arrives with HTTP 200 and no `data`. Returning [] here would be indistinguishable
       // from "no work to do" — the watcher would idle forever against a broken query.
-      const errors = page.errors;
+      const errors = response.errors;
       if (errors !== undefined && errors.length > 0) {
         throw new VanguardError(`Linear API error: ${errors.map((e) => e.message ?? '').join('; ')}`);
       }
-      const connection = page.data?.issues;
+      const connection = response.data?.issues;
       issues.push(...(connection?.nodes ?? []));
       const next = connection?.pageInfo;
       if (next?.hasNextPage !== true || next.endCursor === null || next.endCursor === undefined) break;
+      // The cursor must ADVANCE. `hasNextPage: true` with a repeating cursor is the infinite loop.
+      if (next.endCursor === after) {
+        throw new VanguardError('Linear pagination cursor did not advance — refusing to loop forever.');
+      }
       after = next.endCursor;
     }
 

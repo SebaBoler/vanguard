@@ -141,6 +141,52 @@ describe('LinearCliTaskFetcher.list (GraphQL)', () => {
     expect((await fetcher.list({ labels: ['bug'] })).map((t) => t.id)).toEqual(['TES-1']);
   });
 
+  it('resolves the credential ONCE per list, not once per page', async () => {
+    // With LINEAR_API_KEY unset (the desktop path), resolving per page would spawn
+    // `linear auth token` once per page — on every watch poll, forever.
+    let tokenCalls = 0;
+    const linear: LinearCliRunner = async (args) => {
+      if (args[0] === 'auth' && args[1] === 'token') {
+        tokenCalls++;
+        return 'lin_fake';
+      }
+      throw new Error(`unexpected: linear ${args.join(' ')}`);
+    };
+    const pages = [
+      { hasNextPage: true, endCursor: 'c1' },
+      { hasNextPage: true, endCursor: 'c2' },
+      { hasNextPage: false, endCursor: null },
+    ];
+    let page = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: { issues: { pageInfo: pages[page++], nodes: [] } } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    const prevKey = process.env['LINEAR_API_KEY'];
+    delete process.env['LINEAR_API_KEY']; // force the CLI fallback — the expensive path
+    try {
+      await new LinearCliTaskFetcher({ linear }).list();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (prevKey !== undefined) process.env['LINEAR_API_KEY'] = prevKey;
+    }
+
+    expect(page).toBe(3); // it really did paginate...
+    expect(tokenCalls).toBe(1); // ...on a single credential resolution
+  });
+
+  it('stops instead of looping forever when the cursor does not advance', async () => {
+    // hasNextPage: true with a stuck cursor (server bug, proxy, hostile response) would spin forever
+    // and grow `issues` without bound — a hung watcher is strictly worse than the crash this replaced.
+    const graphql = async (): Promise<unknown> => ({
+      data: { issues: { pageInfo: { hasNextPage: true, endCursor: 'stuck' }, nodes: [node('TES-1')] } },
+    });
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(/cursor/i);
+  });
+
   it('surfaces a GraphQL error instead of returning an empty list', async () => {
     const graphql = async (): Promise<unknown> => ({ errors: [{ message: 'boom' }] });
     // Silently returning [] would look exactly like "no work to do" — the watcher would idle forever.
