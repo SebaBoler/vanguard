@@ -255,6 +255,7 @@ export type Command =
       out?: string;
     }
   | { kind: 'sidecar' }
+  | { kind: 'complete' }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -414,6 +415,9 @@ export function parseCli(argv: string[], cwd: string): Command {
   // Hidden desktop entrypoint: a persistent stdio JSON server (not a documented subcommand). Takes no
   // flags; parsed before provider validation so it never touches the run/watch surface.
   if (positionals[0] === '__sidecar') return { kind: 'sidecar' };
+  // Hidden one-shot doc-chat completion (Subsystem 3): reads one JSON request on stdin, writes one
+  // JSON line. A separate process per turn so it never queues behind the run sidecar's mutex.
+  if (positionals[0] === '__complete') return { kind: 'complete' };
 
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 

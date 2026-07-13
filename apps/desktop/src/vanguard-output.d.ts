@@ -70,6 +70,9 @@ export interface AppConfig {
   concurrency?: number;
   budgetUsd?: number;
   runCommand?: string;
+  /** Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; key is env-only. */
+  chatModel?: string;
+  chatBaseUrl?: string;
 }
 
 export interface RemoteRun {

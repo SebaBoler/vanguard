@@ -130,6 +130,7 @@ export default function App() {
     dashboard: 'Home',
     runs: 'Runs',
     board: 'Task board',
+    docs: 'Docs',
     fleet: 'Fleet',
     remote: 'Remote',
     workflow: 'Workflow',

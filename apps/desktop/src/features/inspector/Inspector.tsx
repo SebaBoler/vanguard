@@ -29,6 +29,7 @@ import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
 import { WorkflowEditor } from '../workflow/WorkflowEditor';
+import { DocsScreen } from '../docs/DocsScreen';
 import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
 import { reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
@@ -44,7 +45,7 @@ export function Inspector({
   onCrumb,
 }: {
   project: string;
-  screen: 'runs' | 'board' | 'fleet' | 'remote' | 'workflow' | 'settings';
+  screen: 'runs' | 'board' | 'docs' | 'fleet' | 'remote' | 'workflow' | 'settings';
   focusRunning: ActiveRun | null;
   clearNonce: number;
   onCrumb: (c: string | null) => void;
@@ -299,7 +300,12 @@ export function Inspector({
   return (
     // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
     // Centered + width-capped, except the board which needs full width for horizontal column scroll.
-    <div className={cn('mx-auto flex h-full w-full min-h-0 flex-col gap-4 p-6', screen !== 'board' && 'max-w-5xl')}>
+    <div
+      className={cn(
+        'mx-auto flex h-full w-full min-h-0 flex-col gap-4 p-6',
+        screen !== 'board' && screen !== 'docs' && 'max-w-5xl',
+      )}
+    >
       {screen === 'runs' && (
       <div className="flex shrink-0 items-center gap-3">
         {watching && (
@@ -435,6 +441,10 @@ export function Inspector({
       ) : screen === 'settings' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <Settings project={project} />
+        </div>
+      ) : screen === 'docs' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <DocsScreen project={project} />
         </div>
       ) : null}
     </div>

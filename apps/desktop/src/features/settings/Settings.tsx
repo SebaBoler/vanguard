@@ -164,6 +164,14 @@ export function Settings({ project }: { project: string }) {
             />
           </Field>
         </div>
+        <Field label="Doc chat model" hint="— the Docs editor chat (uses your Claude auth from the environment)">
+          <Input
+            value={cfg.chatModel ?? ''}
+            onChange={(e) => set('chatModel', e.target.value || undefined)}
+            className="w-full font-mono text-xs"
+            placeholder="claude-sonnet-5"
+          />
+        </Field>
         <div className="rounded-md border-l-4 border-sky-500/50 bg-sky-500/5 p-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400">
             Credentials

@@ -1,5 +1,6 @@
 mod active;
 mod appconfig;
+mod docs;
 mod projects;
 mod remote;
 mod runs;
@@ -73,6 +74,21 @@ async fn write_app_config(repo_path: String, config: appconfig::AppConfig) -> Re
 }
 
 #[tauri::command]
+async fn list_docs(repo_path: String) -> Result<Vec<String>, String> {
+    Ok(docs::list(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_doc(repo_path: String, name: String) -> Result<String, String> {
+    docs::read(Path::new(&repo_path), &name)
+}
+
+#[tauri::command]
+async fn write_doc(repo_path: String, name: String, content: String) -> Result<(), String> {
+    docs::write(Path::new(&repo_path), &name, &content)
+}
+
+#[tauri::command]
 async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
     remote::list_remote_runs(Path::new(&repo_path))
 }
@@ -138,6 +154,9 @@ pub fn run() {
             read_session,
             read_app_config,
             write_app_config,
+            list_docs,
+            read_doc,
+            write_doc,
             list_remote_runs,
             list_tasks,
             fetch_spec,
@@ -147,6 +166,7 @@ pub fn run() {
             watch_project,
             unwatch_project,
             sidecar::api_capabilities,
+            sidecar::api_complete,
             sidecar::api_create_run,
             sidecar::api_active_run,
             sidecar::api_run_backlog,

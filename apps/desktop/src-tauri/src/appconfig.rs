@@ -22,6 +22,10 @@ pub struct AppConfig {
     pub concurrency: Option<u32>,
     pub budget_usd: Option<f64>,
     pub run_command: Option<String>,
+    /// Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; the API key is never
+    /// stored here (env only). Optional Anthropic-compatible base URL for a self-hosted proxy.
+    pub chat_model: Option<String>,
+    pub chat_base_url: Option<String>,
 }
 
 fn config_path(repo: &Path) -> PathBuf {
