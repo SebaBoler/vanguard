@@ -42,7 +42,8 @@ export type FlowEditorAction =
   /** Empty string clears the ref (stage falls back to a library name). */
   | { type: 'setRef'; index: number; ref: string }
   | { type: 'setOverride'; index: number; key: keyof StageOverrides; value: StageOverrides[keyof StageOverrides] }
-  | { type: 'saveOk'; source: string }
+  /** `savedDoc` = the exact doc object the save shipped — dirty clears only if it is still current. */
+  | { type: 'saveOk'; source: string; savedDoc: FlowDoc }
   | { type: 'saveFailed'; error: string };
 
 export function flowEditorReducer(state: FlowEditorState, action: FlowEditorAction): FlowEditorState {
@@ -112,7 +113,12 @@ export function flowEditorReducer(state: FlowEditorState, action: FlowEditorActi
         return { ...s, overrides: action.value === undefined ? rest : { ...rest, [action.key]: action.value } };
       });
     case 'saveOk':
-      return { ...state, source: action.source, dirty: false, error: null };
+      // Reference-compare against the shipped snapshot: an edit made while the save was in flight
+      // lives in state.doc but NOT on disk — clearing dirty would disable Save and let the next
+      // flow switch discard it without a confirm. `source` still updates: it reflects what IS on
+      // disk now (the old snapshot's canonical form). Every reducer edit builds a new doc object,
+      // so identity is exactly "unchanged since save".
+      return { ...state, source: action.source, dirty: state.doc !== action.savedDoc, error: null };
     case 'saveFailed':
       // doc + dirty untouched: the edits must survive a rejection (S5 §19).
       return { ...state, error: action.error };

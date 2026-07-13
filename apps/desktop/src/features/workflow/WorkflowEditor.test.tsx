@@ -250,3 +250,44 @@ test('the source tab flags itself stale while there are unsaved edits (r3 findin
   expect(screen.getByText(/reflects the last save, not your unsaved edits/)).toBeInTheDocument();
   expect(screen.getByText('RAW SOURCE')).toBeInTheDocument(); // still shown, just labelled stale
 });
+
+test('clicking the already-open flow is a no-op — it must not reload over dirty edits (r4 finding 1)', async () => {
+  const confirmSpy = vi.spyOn(window, 'confirm');
+  try {
+    await openMyFlow();
+    fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
+    fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+
+    fireEvent.click(screen.getByText('my-flow')); // same entry
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(ipc.apiReadFlow)).toHaveBeenCalledTimes(1); // no re-read
+    expect(screen.getByText(/model=sonnet/)).toBeInTheDocument(); // edits intact
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+  } finally {
+    confirmSpy.mockRestore();
+  }
+});
+
+test('edits made during an in-flight save stay dirty (r4 finding 2)', async () => {
+  let releaseSave: (v: { source: string }) => void = () => {};
+  vi.mocked(ipc.apiWriteFlow).mockImplementationOnce(() => new Promise((res) => (releaseSave = res)));
+  await openMyFlow();
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i })); // hangs
+
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'haiku' } }); // mid-flight edit
+  releaseSave({ source: 'OLD CANONICAL' });
+
+  await waitFor(() => expect(screen.getByText(/model=haiku/)).toBeInTheDocument());
+  expect(screen.getByText('unsaved')).toBeInTheDocument(); // still dirty — haiku is not on disk
+  expect(screen.getByRole('button', { name: /^save$/i })).not.toBeDisabled();
+});
+
+test('create rejects a name whose FILE already exists even when unparseable (r4 finding 3)', async () => {
+  render(<WorkflowEditor project="/repo" />);
+  await screen.findByText('my-flow');
+  fireEvent.change(screen.getByPlaceholderText('new-flow-name'), { target: { value: 'broken' } }); // broken.hcl is unparseable
+  expect(screen.getByRole('button', { name: /create flow/i })).toBeDisabled();
+  expect(screen.getByText(/"broken" is taken/)).toBeInTheDocument();
+});

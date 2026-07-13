@@ -66,10 +66,13 @@ export function WorkflowEditor({ project }: { project: string }) {
   }, [project, refreshList]);
 
   const open = (file: string): void => {
+    // Re-clicking the open flow is a no-op — reloading would silently replace dirty edits with the
+    // on-disk content, the one discard path the confirm below wouldn't cover.
+    if (file === state.file) return;
     // Unsaved edits must never vanish on a stray rail click — the same discipline saveFailed
     // follows. (A project switch still resets without asking: navigation is owned by the shell;
     // the dirty chip is the guard there — recorded limitation.)
-    if (state.dirty && file !== state.file && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) {
+    if (state.dirty && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) {
       return;
     }
     // Bump, don't just read: opening a flow invalidates every in-flight read AND save for the one
@@ -93,10 +96,11 @@ export function WorkflowEditor({ project }: { project: string }) {
     if (saving.current || state.file === null || state.doc === null) return;
     saving.current = true;
     const issued = gen.current;
+    const savedDoc = state.doc; // the exact snapshot shipped — saveOk clears dirty only if still current
     try {
-      const { source } = await apiWriteFlow(project, state.file, state.doc);
+      const { source } = await apiWriteFlow(project, state.file, savedDoc);
       if (issued === gen.current) {
-        dispatch({ type: 'saveOk', source });
+        dispatch({ type: 'saveOk', source, savedDoc });
         void refreshList();
       }
     } catch (err) {
@@ -109,8 +113,14 @@ export function WorkflowEditor({ project }: { project: string }) {
   };
 
   // Built-ins are absent from listFlows, so the create-form must check capabilities too — a
-  // collision with "plan" would otherwise surface only at Save (S5 §19).
-  const takenNames = new Set([...(caps?.flows.map((f) => f.name) ?? []), ...(flows?.map((f) => f.name).filter((n): n is string => n !== undefined) ?? [])]);
+  // collision with "plan" would otherwise surface only at Save (S5 §19). FILE basenames are in the
+  // set as well as names: an unparseable file has no name, but `created` writes to <name>.hcl and
+  // would silently clobber it (review r4).
+  const takenNames = new Set([
+    ...(caps?.flows.map((f) => f.name) ?? []),
+    ...(flows?.map((f) => f.name).filter((n): n is string => n !== undefined) ?? []),
+    ...(flows?.map((f) => f.file.replace(/\.hcl$/, '')) ?? []),
+  ]);
   const newNameProblem =
     newName === ''
       ? null

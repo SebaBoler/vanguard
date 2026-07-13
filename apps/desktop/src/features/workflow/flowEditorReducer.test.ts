@@ -27,14 +27,14 @@ describe('flowEditorReducer', () => {
   });
 
   it('meta and loops pass through a full load→edit→save cycle VERBATIM', () => {
-    const s = apply(
+    const edited = apply(
       loaded(),
       { type: 'addStage', name: 'simplifier' },
       { type: 'moveStage', from: 3, to: 0 },
       { type: 'setOverride', index: 1, key: 'effort', value: 'high' },
       { type: 'removeStage', index: 0 },
-      { type: 'saveOk', source: 'canonical' },
     );
+    const s = flowEditorReducer(edited, { type: 'saveOk', source: 'canonical', savedDoc: edited.doc! });
     expect(s.doc?.meta).toEqual({ owner: 'pawel' });
     expect(s.doc?.loops).toEqual(DOC.loops);
     expect(s.doc?.stages.find((st) => st.name === 'reviewer')?.meta).toEqual({ note: 'kept' });
@@ -143,5 +143,22 @@ describe('moveStage selection remap (review #338 finding 1)', () => {
     const base = apply(loaded(), { type: 'addStage', name: 'simplifier' }); // 4 stages, selected 3
     const s = apply(base, { type: 'moveStage', from: 0, to: 1 });
     expect(s.doc?.stages[s.selected!]?.name).toBe('simplifier');
+  });
+});
+
+describe('saveOk with a stale snapshot (review #338 r4 finding 2)', () => {
+  it('keeps dirty when the doc changed while the save was in flight', () => {
+    const before = apply(loaded(), { type: 'addStage', name: 'simplifier' });
+    const sentDoc = before.doc!; // what save() shipped
+    const editedMidFlight = apply(before, { type: 'setOverride', index: 0, key: 'model', value: 'haiku' });
+    const after = flowEditorReducer(editedMidFlight, { type: 'saveOk', source: 'canonical', savedDoc: sentDoc });
+    expect(after.dirty).toBe(true); // the mid-flight edit is NOT on disk
+    expect(after.source).toBe('canonical'); // but source correctly reflects what IS on disk now
+  });
+
+  it('clears dirty when the doc is exactly what was saved', () => {
+    const before = apply(loaded(), { type: 'addStage', name: 'simplifier' });
+    const after = flowEditorReducer(before, { type: 'saveOk', source: 'canonical', savedDoc: before.doc! });
+    expect(after.dirty).toBe(false);
   });
 });
