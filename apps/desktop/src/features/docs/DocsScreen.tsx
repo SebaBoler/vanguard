@@ -4,7 +4,7 @@ import { apiComplete, apiCreateTask, listDocs, readDoc, writeDoc, readAppConfig 
 import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
 import { CreateTaskDialog } from './CreateTaskDialog.js';
-import { titleFromDoc } from './docTask.js';
+import { titleFromDoc, MAX_BODY_BYTES } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-5';
@@ -58,6 +58,10 @@ export function DocsScreen({ project }: { project: string }) {
     // doc's chat would be permanently unable to send. The abandoned turn's `.finally` sees a different
     // id and leaves the slot alone.
     inFlight.current = 0;
+    // A "Created <link>" line belongs to the doc it was created FROM. Left standing under a different
+    // document it reads as "this doc was created" — misleading, for the one action with no undo.
+    setCreated(null);
+    setConfirming(false);
     void readDoc(project, name)
       .then((content) => {
         // Same generation guard the completion path uses: on a fast B→C switch readDoc(C) can resolve
@@ -136,6 +140,8 @@ export function DocsScreen({ project }: { project: string }) {
   };
 
   const docTitle = titleFromDoc(doc);
+  const bodyBytes = new TextEncoder().encode(doc).length;
+  const tooBig = bodyBytes > MAX_BODY_BYTES;
 
   const createTask = (): void => {
     if (createInFlight.current || active === undefined || docTitle === undefined) return;
@@ -146,7 +152,14 @@ export function DocsScreen({ project }: { project: string }) {
         setCreated(task);
         setConfirming(false);
       })
-      .catch((err: unknown) => dispatch({ type: 'fail', message: `create task failed: ${String(err)}` }))
+      .catch((err: unknown) =>
+        // A failed WRITE is an ambiguous write: the request may have landed before the error. Saying only
+        // "failed" invites a blind retry, and a retry here creates a SECOND real, un-deletable issue.
+        dispatch({
+          type: 'fail',
+          message: `Create task failed: ${String(err)} — the issue may or may not have been created. Check ${source} before retrying.`,
+        }),
+      )
       .finally(() => {
         createInFlight.current = false;
         setCreating(false);
@@ -192,11 +205,18 @@ export function DocsScreen({ project }: { project: string }) {
         <div className="shrink-0">
           <Button
             onClick={() => setConfirming(true)}
-            disabled={active === undefined || docTitle === undefined || chat.pending !== undefined}
+            disabled={active === undefined || docTitle === undefined || tooBig || chat.pending !== undefined}
             className="w-full"
           >
             Create task
           </Button>
+          {tooBig && (
+            // Refuse BEFORE the irreversible click, not after: the sidecar would reject it anyway, but
+            // only once the user had already committed to creating something.
+            <p className="mt-1 text-xs text-destructive">
+              Too long to file ({bodyBytes} / {MAX_BODY_BYTES} bytes).
+            </p>
+          )}
           {active !== undefined && docTitle === undefined && (
             // Refuse rather than invent a title: a filename fallback would create a real, un-deletable
             // issue called `note-3.md`.
@@ -220,7 +240,7 @@ export function DocsScreen({ project }: { project: string }) {
         <CreateTaskDialog
           source={source}
           title={docTitle}
-          bodyBytes={new TextEncoder().encode(doc).length}
+          bodyBytes={bodyBytes}
           busy={creating}
           onConfirm={createTask}
           onCancel={() => setConfirming(false)}

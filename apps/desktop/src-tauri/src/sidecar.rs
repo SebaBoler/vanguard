@@ -83,9 +83,21 @@ fn ensure(proc: &mut Option<SidecarProc>) -> Result<(), String> {
 /// Write one request line, then read lines until the matching `result`/`error`. `on_event` fires per
 /// event line. Holds the proc lock for the whole exchange (single-in-flight); a closed child is
 /// dropped so the next call respawns.
+/// Whether a hung exchange may be killed. NOT a detail — killing a NON-IDEMPOTENT exchange is worse than
+/// letting it hang: the child dies, the caller reports failure, and the user retries something that may
+/// already have happened. For `createTask` that means a second real, un-deletable issue.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    /// Idempotent read — kill it if it hangs and respawn a clean child.
+    Timed,
+    /// Do not kill. Either the exchange IS the work (a run), or repeating it would duplicate a write.
+    Untimed,
+}
+
 fn request(
     state: &Sidecar,
     pipe: Pipe,
+    bound: Bound,
     req: serde_json::Value,
     mut on_event: impl FnMut(serde_json::Value),
 ) -> Result<serde_json::Value, String> {
@@ -98,7 +110,7 @@ fn request(
     let mut watchdog = None;
     if let Some(proc) = guard.as_ref() {
         publish_run_pid(state, pipe, proc.child.id());
-        if pipe == Pipe::Query {
+        if bound == Bound::Timed {
             watchdog = Some(Watchdog::arm(proc.child.id()));
         }
     }
@@ -207,6 +219,7 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
     let resp = request(
         &state,
         Pipe::Query, // never behind a live run
+        Bound::Timed, // pure read: safe to kill and retry
         serde_json::json!({ "id": "cap", "method": "capabilities" }),
         |_| {},
     )?;
@@ -478,7 +491,8 @@ pub fn api_create_run(
 
     let outcome = request(
         &state,
-        Pipe::Run, // holds the run pipe for the whole run
+        Pipe::Run,     // holds the run pipe for the whole run
+        Bound::Untimed, // the exchange IS the run; minutes are normal
         serde_json::json!({ "id": "run", "method": "createRun", "params": params }),
         |v| {
             // Sidecar events arrive as `{id, event}`; re-wrap as `{runId, event}` and buffer.
@@ -563,7 +577,8 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
 /// issue lands in. Same rule S3 established for `chatBaseUrl`, and it matters more here — a misdirected
 /// write creates real work in the wrong place, with no undo.
 ///
-/// Runs on the QUERY pipe, so it answers while a run is in flight (and is bounded by QUERY_TIMEOUT).
+/// Runs on the QUERY pipe, so it answers while a run is in flight — but UNTIMED (see Bound::Untimed at
+/// the call): a killed write is an ambiguous write, and ambiguity here means a duplicate issue.
 #[tauri::command(async)]
 pub fn api_create_task(
     state: State<'_, Sidecar>,
@@ -588,6 +603,13 @@ pub fn api_create_task(
     let resp = request(
         &state,
         Pipe::Query,
+        // UNTIMED, deliberately. createTask is a non-idempotent network write. Killing it on a timeout
+        // would not undo it: `gh issue create` may already have succeeded (its grandchild can outlive a
+        // SIGTERM'd parent, or the write can land exactly as the read is killed). The user would see
+        // "failed", retry, and create a SECOND real, un-deletable issue — the very failure this feature
+        // is built to prevent, just triggered by a clock instead of a double-click. A hang is
+        // recoverable; a duplicate issue is not.
+        Bound::Untimed,
         serde_json::json!({ "id": "task", "method": "createTask", "params": params }),
         |_| {},
     )?;

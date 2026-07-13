@@ -1,6 +1,7 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DocsScreen } from './DocsScreen.js';
+import { MAX_BODY_BYTES } from './docTask.js';
 import * as ipc from '../../ipc.js';
 
 vi.mock('../../ipc.js', () => ({
@@ -184,4 +185,28 @@ test('a doc with no # heading cannot be turned into a task', async () => {
   // Refuse rather than invent: a filename fallback would create a real issue called `note-3.md`.
   expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled();
   expect(screen.getByText(/add a .*heading/i)).toBeInTheDocument();
+});
+
+test('a failed create warns that the issue may exist, instead of inviting a blind retry', async () => {
+  vi.mocked(ipc.apiCreateTask).mockRejectedValueOnce(new Error('network down'));
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  fireEvent.click(screen.getByRole('button', { name: /^create task$/i }));
+  fireEvent.click(screen.getAllByRole('button', { name: /^create task$/i }).at(-1)!);
+
+  // A failed WRITE is an ambiguous write: it may have landed before the error. A bare "failed" would
+  // invite a retry, and a retry creates a SECOND real, un-deletable issue.
+  expect(await screen.findByText(/may or may not have been created/i)).toBeInTheDocument();
+});
+
+test('an over-long doc is refused BEFORE the irreversible click', async () => {
+  vi.mocked(ipc.readDoc).mockResolvedValueOnce(`# Big\n\n${'x'.repeat(MAX_BODY_BYTES)}`);
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled();
+  expect(screen.getByText(/too long to file/i)).toBeInTheDocument();
 });

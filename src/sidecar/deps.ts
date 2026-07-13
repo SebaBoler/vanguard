@@ -56,9 +56,13 @@ export function productionDeps(): SidecarDeps {
         ...(params.labels !== undefined && params.labels.length > 0 ? { labels: params.labels } : {}),
       };
       if (params.source === 'linear') {
-        // team is guaranteed by validateCreateTask — an issue in the wrong team is real work in the
-        // wrong place, with no undo.
-        return createLinearIssue(params.team as string, input);
+        // Labels are NOT applied on Linear: IssueCreateInput takes labelIds (uuids), not the names
+        // AppConfig holds, so honouring them needs a name->id resolution we do not do. Not passed at all
+        // rather than passed-and-ignored, so the omission is visible here instead of buried one layer down.
+        // team is guaranteed by validateCreateTask — an issue in the wrong team is real work in the wrong
+        // place, with no undo.
+        const { labels: _dropped, ...linearInput } = input;
+        return createLinearIssue(params.team as string, linearInput);
       }
       if (params.source === 'gitlab') return createGitlabIssue(params.repoPath, input);
       return createGithubIssue(params.repoPath, input);

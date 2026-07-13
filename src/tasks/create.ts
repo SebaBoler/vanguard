@@ -136,10 +136,10 @@ export async function createLinearIssue(
     throw new VanguardError(`No Linear team with key \`${team}\` — check the team key in Settings.`);
   }
 
-  // Labels are deliberately NOT applied on Linear: IssueCreateInput takes `labelIds` (uuids), not names,
-  // so honouring `input.labels` would mean another name->id resolution round-trip. GitHub/GitLab take
-  // label names directly and do apply them. Silently dropping them would be worse than not offering them,
-  // so the caller is told (see the sidecar's createTask) rather than left to assume.
+  // NOTE: `input.labels` is ignored here. IssueCreateInput takes `labelIds` (uuids), not the names
+  // GitHub/GitLab accept, so honouring them needs a name->id round-trip this does not do. The sidecar
+  // does not pass labels for Linear at all, so nothing is silently dropped on the way in — but if you
+  // ever pass them here, they will NOT be applied. Resolve them to ids first.
   const created = (await send({
     query: CREATE_MUTATION,
     variables: { i: { teamId, title: input.title, description: input.body } },

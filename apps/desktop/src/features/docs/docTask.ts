@@ -1,4 +1,14 @@
 /**
+ * Mirrors MAX_BODY_BYTES in `src/tasks/create.ts`. The desktop is a separate package with no import
+ * path into core (see typedRunReducer's RunEvent, same gap), so this is a copy — KEEP IN SYNC.
+ *
+ * It is only a UX guard: the sidecar enforces the real limit independently, so drifting out of sync
+ * degrades the message, not the safety. Refusing here means the user is told BEFORE committing to an
+ * irreversible click, rather than after.
+ */
+export const MAX_BODY_BYTES = 60_000;
+
+/**
  * The doc's title: its first `# ` heading.
  *
  * Returns undefined when there isn't one — the caller must REFUSE rather than invent a title (falling
