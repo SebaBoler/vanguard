@@ -80,9 +80,6 @@ fn ensure(proc: &mut Option<SidecarProc>) -> Result<(), String> {
     Ok(())
 }
 
-/// Write one request line, then read lines until the matching `result`/`error`. `on_event` fires per
-/// event line. Holds the proc lock for the whole exchange (single-in-flight); a closed child is
-/// dropped so the next call respawns.
 /// Whether a hung exchange may be killed. NOT a detail — killing a NON-IDEMPOTENT exchange is worse than
 /// letting it hang: the child dies, the caller reports failure, and the user retries something that may
 /// already have happened. For `createTask` that means a second real, un-deletable issue.
@@ -94,6 +91,9 @@ pub enum Bound {
     Untimed,
 }
 
+/// Write one request line, then read lines until the matching `result`/`error`. `on_event` fires per
+/// event line. Holds the selected pipe's lock for the whole exchange; a closed child is dropped so the
+/// next call respawns.
 fn request(
     state: &Sidecar,
     pipe: Pipe,
@@ -169,7 +169,19 @@ impl Watchdog {
     fn arm(pid: u32) -> Self {
         let (tx, rx) = mpsc::channel::<()>();
         thread::spawn(move || {
-            if rx.recv_timeout(QUERY_TIMEOUT) == Err(mpsc::RecvTimeoutError::Timeout) {
+            if rx.recv_timeout(QUERY_TIMEOUT) != Err(mpsc::RecvTimeoutError::Timeout) {
+                return; // exchange finished in time
+            }
+            // Confirm the pid is still OUR child before signalling it. The timer captured the pid 60s
+            // ago; if that child exited on its own right at the deadline and the OS recycled the number,
+            // an unchecked `kill` would hit an unrelated process. Narrow window, non-zero, and the cost
+            // of being wrong is someone else's process.
+            let still_ours = Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "command="])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("vanguard"))
+                .unwrap_or(false);
+            if still_ours {
                 let _ = Command::new("kill").arg(pid.to_string()).status();
             }
         });

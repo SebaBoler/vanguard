@@ -30,6 +30,14 @@ export interface CreatedTask {
 export const MAX_BODY_BYTES = 60_000;
 
 /**
+ * Title ceiling. The title crosses as an ARGV value on BOTH gh and glab, so an unbounded one hits
+ * ARG_MAX exactly like an unbounded body would — surfacing a raw E2BIG on the irreversible path, which
+ * is the failure the body cap exists to avoid. `titleFromDoc` returns a whole heading line, so a
+ * pathological `# ...` is a doc away.
+ */
+export const MAX_TITLE_BYTES = 500;
+
+/**
  * Runs `gh`/`glab` **in the repo directory**, optionally piping stdin.
  *
  * No `--repo`/`--project` flag: both CLIs infer the repository from the cwd's git remote (their
@@ -62,15 +70,26 @@ const defaultCli: CliRunner = async (bin, args, opts) =>
 
 function assertCreatable(input: CreateTaskInput): void {
   if (input.title.trim() === '') throw new VanguardError('A task needs a title.');
+  const titleBytes = Buffer.byteLength(input.title, 'utf8');
+  if (titleBytes > MAX_TITLE_BYTES) {
+    throw new VanguardError(`Task title is ${titleBytes} bytes; the limit is ${MAX_TITLE_BYTES}. Shorten the heading.`);
+  }
   const bytes = Buffer.byteLength(input.body, 'utf8');
   if (bytes > MAX_BODY_BYTES) {
     throw new VanguardError(`Task body is ${bytes} bytes; the limit is ${MAX_BODY_BYTES}. Shorten the document.`);
   }
 }
 
-/** The first URL in some CLI output. `gh`/`glab` print the new issue's URL, but not always alone. */
-function firstUrl(stdout: string, what: string): string {
-  const match = stdout.match(/https?:\/\/\S+/);
+/**
+ * The new issue's URL in some CLI output.
+ *
+ * Matches the ISSUE-shaped URL, not merely the first URL of any kind: `gh`/`glab` also emit project
+ * links, progress lines and warnings. Taking the first URL blindly would make a SUCCESSFUL create look
+ * like a failure ("returned a URL this does not understand") — and a reported failure invites the retry
+ * that files the issue a second time. Reading the wrong line must never manufacture a duplicate.
+ */
+function issueUrl(stdout: string, what: string): string {
+  const match = stdout.match(/https?:\/\/\S*\/issues\/\d+/);
   if (match === null) throw new VanguardError(`${what} did not print an issue URL: ${stdout.trim().slice(0, 200)}`);
   return match[0];
 }
@@ -96,7 +115,7 @@ export async function createGithubIssue(
   assertCreatable(input);
   const args = ['issue', 'create', '--title', input.title, '--body-file', '-'];
   for (const label of input.labels ?? []) args.push('--label', label);
-  const url = firstUrl(await run('gh', args, { cwd: repoPath, stdin: input.body }), 'gh issue create');
+  const url = issueUrl(await run('gh', args, { cwd: repoPath, stdin: input.body }), 'gh issue create');
   return { id: refFromIssueUrl(url, 'gh issue create'), url };
 }
 
@@ -114,7 +133,7 @@ export async function createGitlabIssue(
   const args = ['issue', 'create', '--title', input.title, '--description', input.body];
   const labels = input.labels ?? [];
   if (labels.length > 0) args.push('--label', labels.join(','));
-  const url = firstUrl(await run('glab', args, { cwd: repoPath }), 'glab issue create');
+  const url = issueUrl(await run('glab', args, { cwd: repoPath }), 'glab issue create');
   return { id: refFromIssueUrl(url, 'glab issue create'), url };
 }
 

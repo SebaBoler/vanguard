@@ -35,13 +35,16 @@ export function DocsScreen({ project }: { project: string }) {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [source, setSource] = useState('github');
+  // undefined = not read yet / read FAILED. Never defaulted to 'github': Rust picks the real target from
+  // app.json independently, so a renderer fallback would let the dialog promise "github" while the issue
+  // is filed on Linear. For the one action with no undo, an unknown target must BLOCK, not guess.
+  const [source, setSource] = useState<string | undefined>(undefined);
   const createInFlight = useRef(false);
 
   useEffect(() => {
     void readAppConfig(project)
-      .then((cfg) => setSource(cfg.source ?? 'github'))
-      .catch(() => setSource('github'));
+      .then((cfg) => setSource(cfg.source ?? 'github')) // absent source: Rust defaults to github too
+      .catch(() => setSource(undefined)); // could not read it — say so, do not guess
   }, [project]);
 
   const refresh = useCallback(
@@ -171,7 +174,7 @@ export function DocsScreen({ project }: { project: string }) {
         // Saying only "failed" invites a blind retry, and a retry here creates a SECOND real,
         // un-deletable issue.
         setCreateError(
-          `${String(err)} — the issue may or may not have been created. Check ${source} before retrying.`,
+          `${String(err)} — the issue may or may not have been created. Check ${source ?? 'the tracker'} before retrying.`,
         );
       })
       .finally(() => {
@@ -234,11 +237,22 @@ export function DocsScreen({ project }: { project: string }) {
         <div className="shrink-0">
           <Button
             onClick={() => setConfirming(true)}
-            disabled={active === undefined || docTitle === undefined || tooBig || chat.pending !== undefined}
+            disabled={
+              active === undefined ||
+              docTitle === undefined ||
+              tooBig ||
+              source === undefined ||
+              chat.pending !== undefined
+            }
             className="w-full"
           >
             Create task
           </Button>
+          {active !== undefined && source === undefined && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Can&apos;t read the task source from <code>app.json</code> — set it in Settings.
+            </p>
+          )}
           {tooBig && (
             // Refuse BEFORE the irreversible click, not after: the sidecar would reject it anyway, but
             // only once the user had already committed to creating something.
@@ -268,7 +282,7 @@ export function DocsScreen({ project }: { project: string }) {
         </div>
       </div>
 
-      {confirming && docTitle !== undefined && (
+      {confirming && docTitle !== undefined && source !== undefined && (
         <CreateTaskDialog
           source={source}
           title={docTitle}

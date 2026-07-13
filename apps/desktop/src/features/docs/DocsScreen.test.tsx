@@ -241,3 +241,16 @@ test('a create that lands AFTER a doc switch does not report itself under the ne
   expect(screen.getByRole('button', { name: /^create task$/i })).toBeEnabled();
 });
 
+
+test('an unreadable app.json blocks Create task instead of guessing "github"', async () => {
+  // Rust picks the real target from app.json independently. A renderer fallback would let the dialog
+  // promise "github" while the issue is filed on Linear — a false promise about the one action with no undo.
+  vi.mocked(ipc.readAppConfig).mockRejectedValueOnce(new Error('unreadable'));
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  await waitFor(() => expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled());
+  expect(screen.getByText(/can't read the task source/i)).toBeInTheDocument();
+  expect(ipc.apiCreateTask).not.toHaveBeenCalled();
+});

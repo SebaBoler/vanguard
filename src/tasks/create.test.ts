@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createGithubIssue, createGitlabIssue, createLinearIssue, MAX_BODY_BYTES } from './create.js';
+import { createGithubIssue, createGitlabIssue, createLinearIssue, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './create.js';
 import type { LinearGraphql } from './linear-cli.js';
 
 describe('createGithubIssue', () => {
@@ -109,5 +109,40 @@ describe('input guards', () => {
 
   it('rejects an empty title', async () => {
     await expect(createGithubIssue('/repo', { title: '  ', body: 'b' }, async () => 'x')).rejects.toThrow(/needs a title/);
+  });
+});
+
+describe('reading the issue URL out of CLI noise', () => {
+  it('picks the ISSUE url, not the first url the CLI happens to print', async () => {
+    // glab/gh emit project links, progress lines and warnings. Taking the first URL blindly would make a
+    // SUCCESSFUL create look like a failure — and a reported failure invites the retry that files the
+    // issue a SECOND time. Misreading a line must never manufacture a duplicate.
+    const noisy = [
+      'Warning: Multiple config files found.',
+      'Creating issue in https://gitlab.com/g/p',
+      '',
+      'https://gitlab.com/g/p/-/issues/7',
+    ].join('\n');
+    const task = await createGitlabIssue('/repo', { title: 'T', body: 'B' }, async () => noisy);
+    expect(task).toEqual({ id: 'g/p#7', url: 'https://gitlab.com/g/p/-/issues/7' });
+  });
+
+  it('still throws when no issue url is printed at all', async () => {
+    await expect(
+      createGithubIssue('/repo', { title: 't', body: 'b' }, async () => 'see https://github.com/o/r\n'),
+    ).rejects.toThrow(/did not print an issue URL/);
+  });
+});
+
+describe('title guard', () => {
+  it('rejects an over-long title BEFORE calling out — it crosses as argv on both CLIs', async () => {
+    let called = false;
+    await expect(
+      createGithubIssue('/repo', { title: 'x'.repeat(MAX_TITLE_BYTES + 1), body: 'b' }, async () => {
+        called = true;
+        return '';
+      }),
+    ).rejects.toThrow(/title is .* limit is/);
+    expect(called).toBe(false); // a raw E2BIG on the irreversible path tells the user nothing
   });
 });
