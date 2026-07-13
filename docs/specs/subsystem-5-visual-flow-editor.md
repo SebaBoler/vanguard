@@ -128,8 +128,11 @@ disagreed). `parseFlowHcl` alone stays purely syntactic, as in S2.
    (non-recursive; missing dir → `[]`) for entries matching the §14 filename rule; a `*.hcl` file
    *not* matching it becomes an `error` entry (never a healthy entry `readFlow` would then
    reject). Parse + `validateFlowDoc` each; failures become `error` entries. Duplicate flow names
-   across files → `error` on **all** involved files; a name shadowing a built-in `FLOWS` key →
-   `error` entry (authoring-time signal; dispatch precedence makes the file unreachable anyway).
+   **among semantically-valid declarations** → `error` on **all** involved files (valid-only is
+   the one duplicate rule, shared with resolution and write — an invalid twin surfaces its own
+   validity error and never turns the healthy file into a "duplicate" or blocks saving it; PR-A
+   review finding); a name shadowing a built-in `FLOWS` key → `error` entry (authoring-time
+   signal; dispatch precedence makes the file unreachable anyway).
    Exact wire type (hand-mirrored into `vanguard-output.d.ts`):
    ```ts
    interface RepoFlowInfo {

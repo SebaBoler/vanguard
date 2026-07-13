@@ -83,3 +83,9 @@ test('re-imports an edited ref module (mtime cache-bust) — the long-lived side
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+test('rejects a prototype-key stage name instead of lowering Object.prototype into a stage', async () => {
+  await expect(lowerFlow(doc([{ name: 'toString', overrides: {} }]), { repoPath: REPO })).rejects.toThrow(
+    /unknown stage "toString"/,
+  );
+});

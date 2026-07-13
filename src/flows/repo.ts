@@ -41,7 +41,9 @@ export function flowDocError(doc: FlowDoc): string | undefined {
   if (!FLOW_NAME_RE.test(doc.name)) return `flow name "${doc.name}" must be lowercase [a-z0-9._-] starting with a letter or digit`;
   if (doc.stages.length === 0) return 'a flow needs at least one stage';
   for (const stage of doc.stages) {
-    if (stage.ref === undefined && STAGE_LIBRARY[stage.name] === undefined) {
+    // Object.hasOwn, same as the FLOWS checks: STAGE_LIBRARY inherits Object.prototype, so a plain
+    // lookup would accept a stage named "toString" here and lower it into a corrupt record later.
+    if (stage.ref === undefined && !Object.hasOwn(STAGE_LIBRARY, stage.name)) {
       return `unknown stage "${stage.name}": not in the stage library and no ref given`;
     }
   }
@@ -82,9 +84,14 @@ async function scanFlows(repoPath: string): Promise<ScanEntry[]> {
 /** Discovery for the editor rail + run-builder dropdown (sidecar `listFlows`). */
 export async function listRepoFlows(repoPath: string): Promise<RepoFlowInfo[]> {
   const entries = await scanFlows(repoPath);
+  // Duplicate detection counts VALID declarations only — the same rule findDeclaring and
+  // writeRepoFlow apply, so a broken twin surfaces its own validity error instead of turning the
+  // healthy file into a "duplicate".
   const declared = new Map<string, number>();
   for (const e of entries) {
-    if (e.doc !== undefined) declared.set(e.doc.name, (declared.get(e.doc.name) ?? 0) + 1);
+    if (e.doc !== undefined && flowDocError(e.doc) === undefined) {
+      declared.set(e.doc.name, (declared.get(e.doc.name) ?? 0) + 1);
+    }
   }
   return entries.map((e) => {
     if (e.doc === undefined) return { file: e.file, error: e.error ?? 'unreadable' };
@@ -173,8 +180,12 @@ export async function readRepoFlow(repoPath: string, file: string): Promise<{ do
  * truncate-on-retry; best-effort unlink on error).
  */
 export async function writeRepoFlow(repoPath: string, file: string, doc: FlowDoc): Promise<{ source: string }> {
+  // Valid declarations only, matching findDeclaring: an invalid scratch file that happens to claim
+  // the name must not block saving a valid flow (broken siblings never brick, in either direction).
   const entries = await scanFlows(repoPath);
-  const other = entries.find((e) => e.file !== file && e.doc !== undefined && e.doc.name === doc.name);
+  const other = entries.find(
+    (e) => e.file !== file && e.doc !== undefined && e.doc.name === doc.name && flowDocError(e.doc) === undefined,
+  );
   if (other !== undefined) throw new FlowError(`flow "${doc.name}" is already declared in ${other.file}`);
   let source: string;
   try {

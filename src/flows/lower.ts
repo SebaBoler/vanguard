@@ -23,7 +23,9 @@ export async function lowerFlow(doc: FlowDoc, opts: { repoPath: string }): Promi
 
 async function resolveBase(decl: StageDecl, repoPath: string): Promise<PipelineStage> {
   if (decl.ref !== undefined) return resolveRef(decl.ref, repoPath);
-  const record = STAGE_LIBRARY[decl.name];
+  // Object.hasOwn: STAGE_LIBRARY inherits Object.prototype, so a plain lookup on a stage named
+  // "toString" would return the inherited function and spread it into a corrupt PipelineStage.
+  const record = Object.hasOwn(STAGE_LIBRARY, decl.name) ? STAGE_LIBRARY[decl.name] : undefined;
   if (record === undefined) {
     throw new Error(`unknown stage "${decl.name}": not in the stage library and no ref given`);
   }

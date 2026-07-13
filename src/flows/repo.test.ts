@@ -245,3 +245,43 @@ describe('coerceFlowDoc (write-path shape check — never a silent drop)', () =>
     expect(() => coerceFlowDoc(input)).toThrow(FlowError);
   });
 });
+
+describe('prototype-key stage names (review #336 finding 1)', () => {
+  const protoDoc = (stage: string): FlowDoc => ({
+    name: 'f',
+    label: 'L',
+    stages: [{ name: stage, overrides: {} }],
+    loops: [],
+  });
+
+  it.each(['toString', 'valueOf', 'constructor', 'hasOwnProperty'])(
+    'flowDocError rejects a stage named %s — STAGE_LIBRARY inherits Object.prototype',
+    (stage) => {
+      expect(flowDocError(protoDoc(stage))).toMatch(new RegExp(`unknown stage "${stage}"`));
+    },
+  );
+});
+
+describe('duplicate semantics are valid-only everywhere (review #336 finding 2)', () => {
+  const INVALID_SAME_NAME = 'flow "my-flow" {\n  label = "Broken twin"\n\n  stage {\n    name = "not-a-stage"\n  }\n}\n';
+
+  it('an invalid sibling declaring the name does not mark the valid file as a duplicate', async () => {
+    await seed('my-flow.hcl', HEALTHY);
+    await seed('twin.hcl', INVALID_SAME_NAME);
+    const entries = await listRepoFlows(repo);
+    expect(entries.find((e) => e.file === 'my-flow.hcl')?.error).toBeUndefined();
+    expect(entries.find((e) => e.file === 'twin.hcl')?.error).toMatch(/unknown stage/);
+  });
+
+  it('an invalid sibling declaring the name does not block writing the valid flow', async () => {
+    await seed('twin.hcl', INVALID_SAME_NAME);
+    await expect(
+      writeRepoFlow(repo, 'my-flow.hcl', {
+        name: 'my-flow',
+        label: 'Mine',
+        stages: [{ name: 'implementer', overrides: {} }],
+        loops: [],
+      }),
+    ).resolves.toBeTruthy();
+  });
+});
