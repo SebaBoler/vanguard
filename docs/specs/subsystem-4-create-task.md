@@ -176,6 +176,18 @@ child got the signal. Without this test the split ships a broken kill button.
 
 **Non-goal:** concurrent queries. One query pipe, one mutex; queries are milliseconds. No pool.
 
+### Carried into 4.3: the query pipe has no read timeout
+
+`request()` blocks on `read_line` with no deadline. That is correct for the **run** pipe (a run legitimately
+takes minutes) but wrong for the **query** pipe: a query child that hangs mid-response blocks the caller
+forever. It is pre-existing (capabilities ran over the same untimed pipe before the split) and `capabilities`
+is cached and called once, so it is not urgent today.
+
+**4.3 makes it urgent.** `createTask` is user-triggered, irreversible, and the user is staring at the button.
+A hang there is the same silent-failure class as the Linear watcher hang and the doc-chat hang, both already
+fixed with a bounded read. **4.3 must give the query pipe a bounded read** (the `complete_exchange` pattern:
+read on a helper thread, `recv_timeout`, kill the child). Do not route `createTask` over an untimed pipe.
+
 ---
 
 ## PR 4.3 — `createTask` + the docs-screen button

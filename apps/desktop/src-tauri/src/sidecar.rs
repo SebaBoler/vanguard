@@ -7,12 +7,27 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-/// Sidecar state. `proc` (the run pipe) is held for a whole run; `buffer`/`active`/`child_pid`/
-/// `cancelled` use SEPARATE locks so re-attach (api_run_backlog / api_active_run) and cancel read
-/// them WHILE a run holds `proc`. See docs/specs/subsystem-0.5-sidecar-hardening.md §Concurrency.
+/// Which child a request talks to. `request()` holds that pipe's lock for the whole exchange, and for
+/// a run the exchange IS the run — so short calls need their own pipe or they queue for minutes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pipe {
+    /// Held for the entire duration of a run.
+    Run,
+    /// Short request/response: capabilities, and (S4.3) createTask. Answers while a run is in flight.
+    Query,
+}
+
+/// Sidecar state. TWO children: `proc` (the run pipe) is held for a whole run, `query_proc` serves
+/// short calls so they never queue behind one. `buffer`/`active`/`child_pid`/`cancelled` use SEPARATE
+/// locks so re-attach (api_run_backlog / api_active_run) and cancel read them WHILE a run holds `proc`.
+/// `child_pid` is the RUN child's only — see `publish_run_pid`.
+/// See docs/specs/subsystem-0.5-sidecar-hardening.md §Concurrency.
 #[derive(Default)]
 pub struct Sidecar {
     proc: Mutex<Option<SidecarProc>>,
+    /// Second child for short calls, so they never wait on the run pipe. Same `vanguard __sidecar`
+    /// binary — no protocol change, no multiplexing, no async reader. Just a pipe that isn't busy.
+    query_proc: Mutex<Option<SidecarProc>>,
     /// Per-run event backlog for re-attach. Keyed by runId; last few completed runs retained.
     buffer: Mutex<HashMap<String, Vec<serde_json::Value>>>,
     /// Completed-run ids in finish order, for bounded eviction.
@@ -70,14 +85,18 @@ fn ensure(proc: &mut Option<SidecarProc>) -> Result<(), String> {
 /// dropped so the next call respawns.
 fn request(
     state: &Sidecar,
+    pipe: Pipe,
     req: serde_json::Value,
     mut on_event: impl FnMut(serde_json::Value),
 ) -> Result<serde_json::Value, String> {
-    let mut guard = state.proc.lock().map_err(|e| e.to_string())?;
+    let lock = match pipe {
+        Pipe::Run => &state.proc,
+        Pipe::Query => &state.query_proc,
+    };
+    let mut guard = lock.lock().map_err(|e| e.to_string())?;
     ensure(&mut guard)?;
-    // Publish the child PID (separate lock) so api_cancel can signal it WITHOUT the proc lock a run holds.
-    if let (Ok(mut pid), Some(proc)) = (state.child_pid.lock(), guard.as_ref()) {
-        *pid = Some(proc.child.id());
+    if let Some(proc) = guard.as_ref() {
+        publish_run_pid(state, pipe, proc.child.id());
     }
     let outcome = {
         let proc = guard.as_mut().ok_or("sidecar down")?;
@@ -109,11 +128,36 @@ fn request(
     };
     if outcome.is_err() {
         *guard = None;
-        if let Ok(mut pid) = state.child_pid.lock() {
-            *pid = None;
-        }
+        clear_run_pid(state, pipe);
     }
     outcome
+}
+
+/// `child_pid` is what `api_cancel` SIGUSR2s, so it must ALWAYS be the run child — never the query one.
+///
+/// Before the query pipe existed this lived inline in `request()` and published unconditionally. With
+/// two pipes that is a silent, happy-path bug: a board/`createTask` query during a run would overwrite
+/// `child_pid` with the *query* child's pid, and cancel would then signal the wrong process. The run
+/// would not stop (the query child's `cancelCurrent()` is a no-op when idle, so the signal vanishes
+/// without a word), and because `api_cancel` sets the `cancelled` flag *before* signalling, the run's
+/// eventual terminal would be mislabelled `run-cancelled` for a run nobody cancelled.
+fn publish_run_pid(state: &Sidecar, pipe: Pipe, pid: u32) {
+    if pipe != Pipe::Run {
+        return;
+    }
+    if let Ok(mut slot) = state.child_pid.lock() {
+        *slot = Some(pid);
+    }
+}
+
+/// Same rule in reverse: a dying QUERY child must not disarm cancel for a live run.
+fn clear_run_pid(state: &Sidecar, pipe: Pipe) {
+    if pipe != Pipe::Run {
+        return;
+    }
+    if let Ok(mut slot) = state.child_pid.lock() {
+        *slot = None;
+    }
 }
 
 /// The pure capability surface (providers/flows/transports/defaults). No stdout scraping.
@@ -128,6 +172,7 @@ fn request(
 pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, String> {
     let resp = request(
         &state,
+        Pipe::Query, // never behind a live run
         serde_json::json!({ "id": "cap", "method": "capabilities" }),
         |_| {},
     )?;
@@ -305,8 +350,25 @@ fn emit_event(app: &AppHandle, state: &Sidecar, run_id: &str, event: serde_json:
 
 /// Mark a run finished: clear `active`, record it for eviction, drop the oldest beyond RETAINED_RUNS.
 fn finish_run(state: &Sidecar, run_id: &str) {
+    // Disarm cancel and open the gate under ONE `active` lock scope — the same discipline
+    // `api_create_run`'s check-and-set already uses, and for the same reason.
+    //
+    // The success path never cleared `child_pid` (only the error path did, via `request`), so a
+    // finished run's pid lingered. But clearing it as a separate step is a TOCTOU: `active` IS the
+    // single-in-flight gate, and Tauri runs commands on a thread pool, not serialized. Clear it after
+    // releasing `active` and you get:
+    //
+    //   A: finish_run releases `active`          (gate open; child_pid still A's)
+    //   B: api_create_run passes the gate, sets `active = B`, publishes child_pid = B
+    //   A: clear_run_pid()                       -> child_pid = None, wiping B's
+    //
+    // ...leaving B live with no pid, so api_cancel finds nothing and the kill silently no-ops — the
+    // exact "signal vanishes without a word" failure this change exists to prevent, moved to the
+    // handoff boundary. Holding `active` across both writes means no B can pass the gate in between,
+    // and the `run_id` guard means a finishing run can never disarm a successor that already took over.
     if let Ok(mut active) = state.active.lock() {
         if active.as_deref() == Some(run_id) {
+            clear_run_pid(state, Pipe::Run);
             *active = None;
         }
     }
@@ -382,6 +444,7 @@ pub fn api_create_run(
 
     let outcome = request(
         &state,
+        Pipe::Run, // holds the run pipe for the whole run
         serde_json::json!({ "id": "run", "method": "createRun", "params": params }),
         |v| {
             // Sidecar events arrive as `{id, event}`; re-wrap as `{runId, event}` and buffer.
@@ -434,9 +497,12 @@ pub fn api_run_backlog(state: State<'_, Sidecar>, run_id: String) -> Vec<serde_j
         .unwrap_or_default()
 }
 
-/// Cancel the in-flight run out-of-band: SIGUSR2 to the sidecar child (an in-band stdio message would
+/// Cancel the in-flight run out-of-band: SIGUSR2 to the RUN child (an in-band stdio message would
 /// queue behind the run it must cancel). Reads `child_pid`/`active` only — never the run-held `proc`
 /// lock. The sidecar's handler aborts the run's AbortController without exiting.
+///
+/// `child_pid` is the run child's, and only the run child's — see `publish_run_pid`. Signalling the
+/// query child instead would be silent: it is idle, so `cancelCurrent()` is a no-op there.
 #[tauri::command]
 pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
     let active = state.active.lock().map_err(|e| e.to_string())?.clone();
@@ -472,8 +538,76 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_terminal, set_base_url, RunGuard, Sidecar};
+    use super::{clear_run_pid, finish_run, publish_run_pid, resolve_terminal, set_base_url, Pipe, RunGuard, Sidecar};
     use serde_json::json;
+
+    /// The bug the query pipe would have introduced, pinned.
+    ///
+    /// `child_pid` is what api_cancel SIGUSR2s. It must always be the RUN child. When pid publication
+    /// lived inline in `request()` it fired for whichever pipe was talking — so a query during a run
+    /// (the entire point of the second pipe) would repoint cancel at the query child. Cancel would then
+    /// signal a process that ignores it, the run would keep going, and its terminal would come back
+    /// mislabelled `run-cancelled` because api_cancel sets that flag before signalling.
+    #[test]
+    fn a_query_never_repoints_cancel_away_from_the_run_child() {
+        let state = Sidecar::default();
+
+        // A query while idle must not arm cancel at all.
+        publish_run_pid(&state, Pipe::Query, 999);
+        assert_eq!(*state.child_pid.lock().unwrap(), None);
+
+        // A run arms it.
+        publish_run_pid(&state, Pipe::Run, 123);
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(123));
+
+        // A query DURING that run must not steal it — this is the happy path, not an edge case.
+        publish_run_pid(&state, Pipe::Query, 999);
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(123));
+
+        // And a dying query child must not disarm cancel for the live run.
+        clear_run_pid(&state, Pipe::Query);
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(123));
+
+        // Only the run pipe may clear it.
+        clear_run_pid(&state, Pipe::Run);
+        assert_eq!(*state.child_pid.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn a_finished_run_disarms_cancel() {
+        // The success path never cleared child_pid, so a completed run's pid lingered. Only `active`
+        // (also cleared by RunGuard) stopped it being signalled — a coincidence, not a design.
+        let state = Sidecar::default();
+        *state.active.lock().unwrap() = Some("run-0".to_string());
+        publish_run_pid(&state, Pipe::Run, 123);
+        {
+            let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
+        } // run ends normally
+        assert_eq!(*state.child_pid.lock().unwrap(), None);
+        assert_eq!(*state.active.lock().unwrap(), None);
+    }
+
+    /// A late `finish_run` from an OLD run must not disarm cancel for the run that succeeded it.
+    ///
+    /// `active` is the single-in-flight gate and Tauri runs commands on a thread pool, so a finishing
+    /// run's cleanup can land after a newer run has already claimed the gate and published its pid.
+    /// An unguarded `clear_run_pid` would blank it, leaving a LIVE run that cancel cannot signal.
+    /// finish_run therefore clears the pid only while `active` still names ITS OWN run, and does both
+    /// writes under one lock so no run can slip in between them.
+    #[test]
+    fn a_late_finish_cannot_disarm_the_run_that_replaced_it() {
+        let state = Sidecar::default();
+
+        // run-1 is live and armed (it already took over from run-0).
+        *state.active.lock().unwrap() = Some("run-1".to_string());
+        publish_run_pid(&state, Pipe::Run, 222);
+
+        // run-0's cleanup finally lands. It owns neither `active` nor the pid any more.
+        finish_run(&state, "run-0");
+
+        assert_eq!(*state.child_pid.lock().unwrap(), Some(222), "run-1 must still be cancellable");
+        assert_eq!(*state.active.lock().unwrap(), Some("run-1".to_string()), "run-1 still holds the gate");
+    }
 
     #[test]
     fn run_guard_releases_active_even_on_panic() {

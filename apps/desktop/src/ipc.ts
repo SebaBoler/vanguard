@@ -112,8 +112,11 @@ export function apiCapabilities(): Promise<Capabilities> {
   return invoke<Capabilities>('api_capabilities');
 }
 
-// capabilities() is pure and never changes in a session — cache it once so a live run's held proc
-// mutex (api_create_run) never blocks the New Run form's populate call.
+// capabilities() is pure and never changes in a session, so cache it — one fewer IPC round-trip on
+// every mount. It is NO LONGER a workaround for the run mutex: capabilities now goes over the sidecar's
+// query pipe, which answers while a run holds the run pipe. (It used to be exactly that workaround, and
+// the comment said so — leaving that claim here would have someone "simplify" the cache away on the
+// belief that the block it dodged still exists, or keep it for a reason that is no longer true.)
 let capsCache: Promise<Capabilities> | undefined;
 export function apiCapabilitiesCached(): Promise<Capabilities> {
   capsCache ??= apiCapabilities();
