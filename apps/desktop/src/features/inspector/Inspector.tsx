@@ -68,6 +68,7 @@ export function Inspector({
   const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
   const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
   const dismissedRunId = useRef<string | null>(null); // a run the user closed — ignore its late events
+  const runGen = useRef(0); // bumped per launch; a settled apiCreateRun from an older run is dropped
   const [repoOk, setRepoOk] = useState(true); // cached: is `project` a git work tree? (fails a run at click)
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
@@ -237,6 +238,9 @@ export function Inspector({
     // from the previous run would otherwise be ADOPTED as this run's identity (`state.runId ?? payload.runId`)
     // and the new run's own run-accepted then dropped as foreign.
     dismissedRunId.current = typedRunRef.current?.runId ?? null;
+    // Tie both continuations below to THIS launch. Without it they read current state: run A settling
+    // after run B started would let A's catch wipe B's strip, or A's terminal land on B.
+    const gen = ++runGen.current;
     const started = initialTypedRun();
     typedRunRef.current = started; // sync in-flight marker (the effect-synced ref lags a render)
     setTypedRun(started); // "starting…" — "run live" derives from this
@@ -245,8 +249,13 @@ export function Inspector({
     setFocusedSpawn(null);
     void apiCreateRun(params)
       .then((res) => {
+        if (runGen.current !== gen) return; // a newer run owns the strip
         // The event stream owns the terminal; this is a backstop only if the terminal event was lost —
         // write it ONLY when still non-terminal. Precedence matches the reducer (prUrl → secretBlocked).
+        // NOTE: the spec (Part 3, G6) says the reducer alone owns terminal and the promise must never
+        // write it. This is a deliberate deviation: the `terminal === undefined` guard neutralizes the
+        // double-badge race the spec warned about, and without the backstop a lost run-end would spin
+        // the strip forever.
         setTypedRun((prev) =>
           prev !== null && prev.terminal === undefined
             ? { ...prev, terminal: res.prUrl !== undefined ? { kind: 'success', prUrl: res.prUrl } : res.secretBlocked === true ? { kind: 'secret-blocked' } : { kind: 'no-changes' } }
@@ -254,11 +263,16 @@ export function Inspector({
         );
       })
       .catch((e) => {
+        if (runGen.current !== gen) return; // a newer run owns the strip
         // apiCreateRun rejects on BOTH a pre-start rejection (the Rust single-in-flight guard, which
         // returns Err before any run-accepted event) AND a run that started then errored/cancelled
         // (resolve_terminal returns Err for those). Only the former needs clearing + a banner — it never
         // adopted a runId. A real error/cancel already folded run-accepted, so its runId is set and the
         // terminal EVENT renders it in the strip; don't wipe it or double-report.
+        //
+        // Asymmetry with .then above, on purpose: this path does NOT synthesize a terminal backstop. A
+        // lost run-error/run-cancelled would spin the strip forever, and we lean on the S0.5 guarantee
+        // that Rust buffers a terminal on every in-session path rather than guessing one here.
         if (typedRunRef.current?.runId === undefined) {
           setError(String(e));
           setTypedRun(null);
@@ -281,10 +295,6 @@ export function Inspector({
 
   // The launch whose live log is open (may be running or just-exited until dismissed).
   const focusedSpawnEntry = focusedSpawn !== null ? spawns.find((s) => s.pid === focusedSpawn) : undefined;
-
-  // Suppress the session-based `active` row for the typed run in flight (join key is taskId).
-  const liveTaskId = typedRun?.taskId;
-  const activeShown = liveTaskId !== undefined ? active.filter((a) => a.taskId !== liveTaskId) : active;
 
   return (
     // Fixed-height frame: chrome (toolbar / banners) is shrink-0; the content region below owns scroll.
@@ -398,7 +408,7 @@ export function Inspector({
         <div className="flex min-h-0 flex-1 flex-col">
           <RunList
             runs={runs}
-            active={activeShown}
+            active={active}
             spawns={spawns}
             onSelect={open}
             onOpenActive={(a) => {
