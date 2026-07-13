@@ -6,10 +6,10 @@ function runner(payload: unknown): LinearCliRunner {
   return async (): Promise<string> => JSON.stringify(payload);
 }
 
-// Real linear-cli 2.0 shapes: `issue view` returns one object with description,
-// children.nodes (sub-issues) and comments (by default) but no labels; `issue query` returns
-// { nodes: [...] } with labels.nodes (no description/children). The comments field shape varies
-// (array vs { nodes: [...] }), so it is parsed defensively.
+// `issue view <id> --json` returns one object with description, children.nodes (sub-issues) and
+// comments (by default) but no labels — the shape fetch() parses. The comments field varies (array vs
+// { nodes: [...] }), so it is parsed defensively. list() no longer uses the CLI at all; its GraphQL
+// node shape is exercised in the "list (GraphQL)" block below.
 const viewIssue = {
   identifier: 'TES-1',
   title: 'Test task',
@@ -17,7 +17,6 @@ const viewIssue = {
   state: { name: 'Todo' },
   children: { nodes: [{ identifier: 'TES-2', title: 'Sub one' }] },
 };
-const queryIssue = { identifier: 'TES-1', title: 'Test task', labels: { nodes: [{ name: 'bug' }, { name: 'p1' }] } };
 
 describe('LinearCliTaskFetcher', () => {
   it('fetches via issue view, mapping identifier/title/description and children', async () => {
