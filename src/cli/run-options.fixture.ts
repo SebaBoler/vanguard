@@ -15,6 +15,9 @@ export const RUN_OPTIONS = {
   conformanceModel: 'opus',
   commitAuthor: { name: 'Sebastian Pietrzak', email: 'spietrza@gmail.com' },
   plan: true,
+  // Coexists with `plan` on purpose: pickRunOptions does no conflict validation (that lives in args.ts),
+  // and this fixture's whole job is to catch a field dropped from the spread.
+  flow: 'flow-b',
   baseBranch: 'dev',
   maxTurns: 80,
   maxRepairIterations: 5,
