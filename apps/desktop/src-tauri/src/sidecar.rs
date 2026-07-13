@@ -359,6 +359,11 @@ fn finish_run(state: &Sidecar, run_id: &str) {
             *c = None;
         }
     }
+    // Disarm cancel. The error path already cleared it (`request` -> clear_run_pid), but the SUCCESS
+    // path never did, so a finished run's pid lingered. Harmless today only because api_cancel gates
+    // on `active` — which RunGuard clears here too. That is a coincidence, not a design: it leaves a
+    // loaded gun for the next caller who reads child_pid without also checking `active`.
+    clear_run_pid(state, Pipe::Run);
     let evict = {
         let mut order = match state.order.lock() {
             Ok(o) => o,
@@ -552,6 +557,20 @@ mod tests {
         // Only the run pipe may clear it.
         clear_run_pid(&state, Pipe::Run);
         assert_eq!(*state.child_pid.lock().unwrap(), None);
+    }
+
+    #[test]
+    fn a_finished_run_disarms_cancel() {
+        // The success path never cleared child_pid, so a completed run's pid lingered. Only `active`
+        // (also cleared by RunGuard) stopped it being signalled — a coincidence, not a design.
+        let state = Sidecar::default();
+        *state.active.lock().unwrap() = Some("run-0".to_string());
+        publish_run_pid(&state, Pipe::Run, 123);
+        {
+            let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
+        } // run ends normally
+        assert_eq!(*state.child_pid.lock().unwrap(), None);
+        assert_eq!(*state.active.lock().unwrap(), None);
     }
 
     #[test]
