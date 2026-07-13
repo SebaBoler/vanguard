@@ -87,7 +87,16 @@ export function flowEditorReducer(state: FlowEditorState, action: FlowEditorActi
       const stages = [...state.doc.stages];
       const [moved] = stages.splice(from, 1);
       stages.splice(to, 0, moved!);
-      const selected = state.selected === from ? to : state.selected;
+      // Remap so the selection keeps aiming at the SAME stage: any block can be reordered while
+      // another is selected (◀/▶ live on every block) — without the crossing shifts the inspector
+      // would silently edit whichever stage slid into the old index.
+      const sel = state.selected;
+      const selected =
+        sel === null ? null
+        : sel === from ? to
+        : from < sel && to >= sel ? sel - 1
+        : from > sel && to <= sel ? sel + 1
+        : sel;
       return { ...state, doc: { ...state.doc, stages }, dirty: true, selected, error: null };
     }
     case 'setStageName':

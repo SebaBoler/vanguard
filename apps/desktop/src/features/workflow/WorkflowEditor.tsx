@@ -55,7 +55,10 @@ export function WorkflowEditor({ project }: { project: string }) {
   }, [project, refreshList]);
 
   const open = (file: string): void => {
-    const issued = gen.current;
+    // Bump, don't just read: opening a flow invalidates every in-flight read AND save for the one
+    // we're leaving — a slower earlier read must not clobber this selection, and a late saveOk
+    // must not overwrite this flow's source/dirty (saveOk is not file-keyed).
+    const issued = ++gen.current;
     apiReadFlow(project, file)
       .then(({ doc, source }) => {
         if (issued === gen.current) dispatch({ type: 'loaded', file, doc, source });
@@ -180,6 +183,7 @@ export function WorkflowEditor({ project }: { project: string }) {
                     aria-label="create flow"
                     disabled={newName === '' || newNameProblem !== null}
                     onClick={() => {
+                      gen.current += 1; // same invalidation as open(): a late read/save must not land on the new doc
                       dispatch({ type: 'created', name: newName });
                       setNewName('');
                     }}

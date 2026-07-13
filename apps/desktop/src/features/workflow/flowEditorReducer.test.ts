@@ -125,3 +125,23 @@ test('FLOW_NAME_RE mirrors the core grammar', () => {
   for (const good of ['my-flow', 'a', '0x', 'a.b_c-d']) expect(FLOW_NAME_RE.test(good)).toBe(true);
   for (const bad of ['My-Flow', 'a b', '-lead', '', 'a/b']) expect(FLOW_NAME_RE.test(bad)).toBe(false);
 });
+
+describe('moveStage selection remap (review #338 finding 1)', () => {
+  it('keeps the selection aimed at the SAME stage when another stage crosses it', () => {
+    // [planner, implementer, reviewer], select implementer (1), move planner right (0→1)
+    let s = apply(loaded(), { type: 'select', index: 1 }, { type: 'moveStage', from: 0, to: 1 });
+    expect(s.doc?.stages.map((st) => st.name)).toEqual(['implementer', 'planner', 'reviewer']);
+    expect(s.doc?.stages[s.selected!]?.name).toBe('implementer'); // NOT planner
+
+    // and crossing from the right: select planner (now 1), move reviewer (2) left over it
+    s = apply(s, { type: 'select', index: 1 }, { type: 'moveStage', from: 2, to: 1 });
+    expect(s.doc?.stages.map((st) => st.name)).toEqual(['implementer', 'reviewer', 'planner']);
+    expect(s.doc?.stages[s.selected!]?.name).toBe('planner');
+  });
+
+  it('leaves the selection alone when the move happens entirely on one side', () => {
+    const base = apply(loaded(), { type: 'addStage', name: 'simplifier' }); // 4 stages, selected 3
+    const s = apply(base, { type: 'moveStage', from: 0, to: 1 });
+    expect(s.doc?.stages[s.selected!]?.name).toBe('simplifier');
+  });
+});

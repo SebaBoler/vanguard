@@ -136,3 +136,46 @@ test('listFlows failure shows the message but the screen stays usable', async ()
   expect(await screen.findByText(/sidecar dead/)).toBeInTheDocument();
   expect(screen.getByPlaceholderText('new-flow-name')).toBeInTheDocument();
 });
+
+test('a slower earlier read cannot clobber a later selection (open race, review #338 finding 2)', async () => {
+  const slowA = { name: 'my-flow', label: 'A', stages: [{ name: 'planner', overrides: {} }], loops: [] };
+  const fastB = { name: 'odd', label: 'B', stages: [{ name: 'implementer', overrides: {} }], loops: [] };
+  let releaseA: (v: { doc: FlowDoc; source: string }) => void = () => {};
+  vi.mocked(ipc.apiReadFlow)
+    .mockImplementationOnce(() => new Promise((res) => (releaseA = res))) // my-flow: hangs
+    .mockImplementationOnce(async () => ({ doc: fastB, source: 'B SOURCE' })); // odd: instant
+
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByText('my-flow'));
+  fireEvent.click(screen.getByText('odd'));
+  await screen.findByTestId('stage-block-0');
+  expect(screen.getByTestId('stage-block-0')).toHaveTextContent('implementer'); // B is open
+
+  releaseA({ doc: slowA, source: 'A SOURCE' }); // the stale read lands late…
+  await waitFor(() => expect(screen.getByTestId('stage-block-0')).toHaveTextContent('implementer')); // …and is dropped
+  expect(screen.queryByTestId('stage-block-1')).toBeNull(); // still B's single stage, not A's doc
+});
+
+test('a save completing after switching flows cannot clobber the newly opened flow (same race, save side)', async () => {
+  const flowB = { name: 'odd', label: 'B', stages: [{ name: 'implementer', overrides: {} }], loops: [] };
+  let releaseSave: (v: { source: string }) => void = () => {};
+  vi.mocked(ipc.apiWriteFlow).mockImplementationOnce(() => new Promise((res) => (releaseSave = res)));
+  vi.mocked(ipc.apiReadFlow)
+    .mockImplementationOnce(async () => ({ doc: DOC, source: 'A RAW' }))
+    .mockImplementationOnce(async () => ({ doc: flowB, source: 'B RAW' }));
+
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByText('my-flow'));
+  await screen.findByTestId('stage-block-0');
+  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i })); // save of my-flow hangs
+
+  fireEvent.click(screen.getByText('odd')); // switch while the save is in flight
+  await waitFor(() => expect(screen.getByTestId('stage-block-0')).toHaveTextContent('implementer'));
+
+  releaseSave({ source: 'A CANONICAL' }); // the old save lands late…
+  fireEvent.click(screen.getByRole('button', { name: /source/i }));
+  await waitFor(() => expect(screen.getByText('B RAW')).toBeInTheDocument()); // …and must not replace B's source
+  expect(screen.queryByText('A CANONICAL')).toBeNull();
+});
