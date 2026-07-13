@@ -195,12 +195,25 @@ export function Inspector({
   // current state (not replace) so events that arrived on the channel during the await aren't dropped;
   // the reducer's last-wins keys + idempotence make the merge safe.
   useEffect(() => {
-    void apiActiveRun().then(async (id) => {
-      setCheckedIdle(true);
-      if (id === null) return;
-      const backlog = (await apiRunBacklog(id)) as { runId: string; event: RunEvent }[];
-      setTypedRun((prev) => backlog.reduce((s, p) => reduceTypedRun(s, p), prev ?? initialTypedRun()));
-    });
+    const attach = async (): Promise<void> => {
+      try {
+        const id = await apiActiveRun();
+        if (id === null) return;
+        const backlog = (await apiRunBacklog(id)) as { runId: string; event: RunEvent }[];
+        // Fold BEFORE flipping checkedIdle: between the two the button's guard would see
+        // checkedIdle && typedRun === null and enable New run while a run is genuinely live.
+        setTypedRun((prev) =>
+          backlog.reduce((s, p) => reduceTypedRun(s, p), prev ?? initialTypedRun()),
+        );
+      } catch {
+        // Treat an unverifiable idle-check as idle: a rejected apiActiveRun (sidecar not up yet, IPC
+        // error) must not leave the New-run button disabled forever. The Rust busy guard still
+        // rejects a second concurrent run, so the worst case is a confusing error, not corruption.
+      } finally {
+        setCheckedIdle(true);
+      }
+    };
+    void attach();
   }, []);
 
   const startTypedRun = (params: CreateRunParams): void => {

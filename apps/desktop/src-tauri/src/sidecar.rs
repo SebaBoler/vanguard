@@ -239,14 +239,16 @@ pub fn api_create_run(
     // would orphan the first run's re-attach). Check-and-set under ONE lock scope so two concurrent
     // api_create_run calls (Tauri runs commands on a thread pool, not serialized) can't both pass the
     // check before either sets — a check-then-release-then-set would be a TOCTOU race.
-    let run_id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
-    {
+    let run_id = {
         let mut active = state.active.lock().map_err(|e| e.to_string())?;
         if active.is_some() {
             return Err("a run is already in flight (single-in-flight)".to_string());
         }
-        *active = Some(run_id.clone());
-    }
+        // Mint the id inside the lock, after the early-return, so a rejected call doesn't burn one.
+        let id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
+        *active = Some(id.clone());
+        id
+    };
     emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted" }));
 
     let outcome = request(
