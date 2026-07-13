@@ -159,6 +159,10 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 /// LONG-LIVED pipe — a late reply would desync every future request on it. Killing is what makes the
 /// abandonment safe: stdout closes, the blocked `read_line` returns 0, `request` drops the pipe, and the
 /// next call respawns a clean child. Cancelled by Drop on the happy path.
+///
+/// Single-shot SIGTERM, no SIGKILL escalation. That is sufficient only because the Node sidecar does not
+/// trap SIGTERM — if it ever installs a handler, this must escalate, or `request` stays blocked forever
+/// with no second attempt. Applies to Bound::Timed reads only; a write is never killed (see Bound).
 struct Watchdog(Option<mpsc::Sender<()>>);
 
 impl Watchdog {

@@ -25,10 +25,16 @@ export function titleFromDoc(doc: string): string | undefined {
       continue;
     }
     if (fenced) continue;
-    // Closed-ATX headings (`# Title #`) carry trailing hashes that are syntax, not title.
-    const m = line.match(/^#\s+(.*?)\s*#*\s*$/);
-    const title = m?.[1];
-    if (title !== undefined && title !== '') return title;
+    const m = line.match(/^#[ \t]+(.+)$/);
+    if (m?.[1] === undefined) continue;
+    // Closed-ATX headings (`# Title #`) carry trailing hashes that are syntax, not title. Trimmed with
+    // plain string ops, NOT a regex: `/^#\s+(.*?)\s*#*\s*$/` mixes a lazy group with three more
+    // space-matching parts, so a line of `#` + 60KB of spaces backtracks quadratically — and this runs
+    // on every render, before the size gate. Linear beats clever.
+    let title = m[1].trim();
+    while (title.endsWith('#')) title = title.slice(0, -1);
+    title = title.trim();
+    if (title !== '') return title;
   }
   return undefined;
 }

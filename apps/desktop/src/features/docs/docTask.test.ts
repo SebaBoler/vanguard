@@ -28,3 +28,12 @@ test('strips the trailing hashes of a closed-ATX heading', () => {
   expect(titleFromDoc('# Title #\n')).toBe('Title');
   expect(titleFromDoc('# Title ###\n')).toBe('Title');
 });
+
+test('a pathological heading does not stall the renderer', () => {
+  // The old regex mixed a lazy group with three space-matching parts and backtracked quadratically on
+  // this. titleFromDoc runs on EVERY render, before the size gate, so that froze the UI.
+  const evil = `# ${' '.repeat(60_000)}x\n`;
+  const started = performance.now();
+  expect(titleFromDoc(evil)).toBe('x');
+  expect(performance.now() - started).toBeLessThan(100); // was seconds
+});
