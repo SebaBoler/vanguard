@@ -17,6 +17,7 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
     onEvent({ type: 'stage-start', name: 'implementer', index: 0, of: 1 } as RunEvent);
     return { prUrl: 'https://example/pr/1' };
   },
+  createTask: async () => ({ id: 'o/r#1', url: 'https://example/issues/1' }),
   ...over,
 });
 
@@ -82,5 +83,37 @@ describe('runSidecar', () => {
     const { write, out } = collect();
     await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request' } });
+  });
+});
+
+describe('createTask over the protocol', () => {
+  const req = (params: Record<string, unknown>): string => JSON.stringify({ id: 't', method: 'createTask', params });
+
+  it('creates and returns the ref + url', async () => {
+    const { write, out } = collect();
+    await runSidecar(lines(req({ source: 'github', repoPath: '/repo', title: 'T', body: 'B' })), write, stubDeps());
+    expect(JSON.parse(out[0] as string)).toEqual({ id: 't', result: { id: 'o/r#1', url: 'https://example/issues/1' } });
+  });
+
+  it('rejects a bad request WITHOUT creating anything — this write cannot be undone', async () => {
+    let created = 0;
+    const deps = stubDeps({
+      createTask: async () => {
+        created++;
+        return { id: 'x', url: 'y' };
+      },
+    });
+    const { write, out } = collect();
+    await runSidecar(
+      lines(
+        req({ source: 'nope', repoPath: '/r', title: 'T', body: 'B' }), // unknown transport
+        req({ source: 'github', repoPath: '/r', title: '  ', body: 'B' }), // blank title
+        req({ source: 'linear', repoPath: '/r', title: 'T', body: 'B' }), // linear with no team
+      ),
+      write,
+      deps,
+    );
+    for (const line of out) expect(JSON.parse(line).error.kind).toBe('bad-request');
+    expect(created).toBe(0); // nothing reached the transport
   });
 });

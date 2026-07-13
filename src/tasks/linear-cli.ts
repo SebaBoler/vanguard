@@ -124,6 +124,15 @@ interface IssuePage {
   errors?: { message?: string }[];
 }
 
+/**
+ * A GraphQL sender with the credential already resolved. One place resolves the Linear token, so
+ * `create.ts` cannot drift into a second credential path.
+ */
+export async function linearGraphql(runner?: LinearCliRunner): Promise<LinearGraphql> {
+  const token = await linearToken(runner ?? defaultRunner);
+  return (body) => postGraphql(token, body);
+}
+
 export interface LinearCliOptions {
   team?: string;
   linear?: LinearCliRunner;
@@ -153,10 +162,7 @@ export class LinearCliTaskFetcher implements TaskFetcher {
    * inside the pagination loop would spawn one subprocess per page, on every watch poll.
    */
   private async sender(): Promise<LinearGraphql> {
-    const injected = this.options.graphql;
-    if (injected !== undefined) return injected;
-    const token = await linearToken(this.run);
-    return (body) => postGraphql(token, body);
+    return this.options.graphql ?? (await linearGraphql(this.options.linear));
   }
 
   /**

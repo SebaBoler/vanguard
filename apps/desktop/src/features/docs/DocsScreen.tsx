@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Button } from '@/ui';
-import { apiComplete, listDocs, readDoc, writeDoc, readAppConfig } from '../../ipc.js';
+import { apiComplete, apiCreateTask, listDocs, readDoc, writeDoc, readAppConfig } from '../../ipc.js';
 import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
+import { CreateTaskDialog } from './CreateTaskDialog.js';
+import { titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-5';
@@ -26,6 +28,26 @@ export function DocsScreen({ project }: { project: string }) {
   // synchronously within one tick — see `send`. `turnSeq` only mints the ids.
   const inFlight = useRef(0);
   const turnSeq = useRef(0);
+  // Create-task: the confirm dialog, the result, and a ref guard. A ref, not state, because a double
+  // click before the next render would create TWO REAL ISSUES — S3's double-send bug, except this one
+  // cannot be undone. `creating` is only for the spinner.
+  const [confirming, setConfirming] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  // undefined = not read yet / read FAILED. Never defaulted to 'github': Rust picks the real target from
+  // app.json independently, so a renderer fallback would let the dialog promise "github" while the issue
+  // is filed on Linear. For the one action with no undo, an unknown target must BLOCK, not guess.
+  const [source, setSource] = useState<string | undefined>(undefined);
+  const createInFlight = useRef(false);
+
+  useEffect(() => {
+    void readAppConfig(project)
+      // Only a transport the sidecar will actually accept. `?? 'github'` matches Rust's default for an
+      // ABSENT source, but an unknown or empty one must not be promised to the user — see isTransport.
+      .then((cfg) => setSource(isTransport(cfg.source ?? 'github') ? (cfg.source ?? 'github') : undefined))
+      .catch(() => setSource(undefined)); // could not read it — say so, do not guess
+  }, [project]);
 
   const refresh = useCallback(
     () => void listDocs(project).then(setNames).catch(() => setNames([])),
@@ -42,6 +64,15 @@ export function DocsScreen({ project }: { project: string }) {
     // doc's chat would be permanently unable to send. The abandoned turn's `.finally` sees a different
     // id and leaves the slot alone.
     inFlight.current = 0;
+    // A "Created <link>" line belongs to the doc it was created FROM. Left standing under a different
+    // document it reads as "this doc was created" — misleading, for the one action with no undo.
+    setCreated(null);
+    setCreateError(null);
+    setConfirming(false);
+    setCreating(false);
+    // Release the create slot too, or the NEW doc's Create button silently no-ops until the old create's
+    // .finally happens to fire. Its result is dropped by the generation guard, so nothing is lost.
+    createInFlight.current = false;
     void readDoc(project, name)
       .then((content) => {
         // Same generation guard the completion path uses: on a fast B→C switch readDoc(C) can resolve
@@ -119,6 +150,59 @@ export function DocsScreen({ project }: { project: string }) {
       });
   };
 
+  const docTitle = titleFromDoc(doc);
+  const bodyBytes = new TextEncoder().encode(doc).length;
+  const tooBig = bodyBytes > MAX_BODY_BYTES;
+  // The title crosses as an argv value on gh/glab, so it is capped too — and refused BEFORE the click,
+  // like the body. Half-applying "refuse before the irreversible action" is not applying it.
+  const titleTooLong = docTitle !== undefined && new TextEncoder().encode(docTitle).length > MAX_TITLE_BYTES;
+
+  const createTask = (): void => {
+    if (createInFlight.current || active === undefined || docTitle === undefined) return;
+    createInFlight.current = true;
+    // The doc this create was issued FOR. Creating takes seconds, and the user can switch docs in that
+    // window — the same generation guard `send` and `open` already use. Without it the result lands on
+    // whatever doc is now open: "Created DEV-9" renders under a document that did not produce it, which
+    // MISREPORTS the one action the app cannot undo. (The write itself is fine; the story told about it
+    // is not, and that is what the user acts on.)
+    const issued = gen.current;
+    setCreating(true);
+    setCreateError(null);
+    void apiCreateTask(project, docTitle, doc)
+      .then((task) => {
+        if (issued !== gen.current) return;
+        setCreated(task);
+      })
+      .catch((err: unknown) => {
+        if (issued !== gen.current) return;
+        // A failed WRITE is an ambiguous write: the request may have landed before the error reached us.
+        // Saying only "failed" invites a blind retry, and a retry here creates a SECOND real,
+        // un-deletable issue.
+        setCreateError(
+          `${String(err)} — the issue may or may not have been created. Check ${source ?? 'the tracker'} before retrying.`,
+        );
+      })
+      .finally(() => {
+        // Only the create that still owns the slot may release it — the same rule `send` follows, and for
+        // the same reason. Releasing unconditionally looked safe ("`open` already cleared it on switch"),
+        // but that ignores the case where the NEW doc has since started its own create: doc A settling
+        // would then clear doc B's LIVE guard. The ref is the documented last line of defence against
+        // filing the same issue twice, so a stale create must never disarm a live one.
+        //
+        // No test pins this, deliberately: `creating` ALSO gates the confirm button, and in the broken
+        // version A's finally bailed before clearing it — so B's button stayed disabled and no duplicate
+        // was reachable. The invariant was still broken (one of two guards silently gone), and defence in
+        // depth only works while both layers hold. Fixing it without claiming a test proves it.
+        if (issued !== gen.current) return;
+        createInFlight.current = false;
+        setCreating(false);
+        // ALWAYS close the dialog, including on failure. Leaving it open would put a live "Create task"
+        // button back under the user's cursor with the warning rendered BEHIND the modal — one more click
+        // and they have filed the same issue twice. A retry must mean deliberately reopening this.
+        setConfirming(false);
+      });
+  };
+
   const accept = (): void => {
     if (chat.pending === undefined) return;
     const next = chat.pending;
@@ -154,9 +238,69 @@ export function DocsScreen({ project }: { project: string }) {
           <p className="p-4 text-sm text-muted-foreground">Select or create a doc.</p>
         )}
       </div>
-      <div className="w-80 shrink-0 border-l border-border pl-3">
-        <ChatPane state={chat} onSend={send} onAccept={accept} onReject={() => dispatch({ type: 'reject' })} />
+      <div className="flex w-80 shrink-0 flex-col gap-2 border-l border-border pl-3">
+        <div className="shrink-0">
+          <Button
+            onClick={() => setConfirming(true)}
+            disabled={
+              active === undefined ||
+              docTitle === undefined ||
+              tooBig ||
+              titleTooLong ||
+              source === undefined ||
+              chat.pending !== undefined
+            }
+            className="w-full"
+          >
+            Create task
+          </Button>
+          {active !== undefined && source === undefined && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Can&apos;t read the task source from <code>app.json</code> — set it in Settings.
+            </p>
+          )}
+          {titleTooLong && (
+            <p className="mt-1 text-xs text-destructive">Heading is too long to use as a title (max {MAX_TITLE_BYTES} bytes).</p>
+          )}
+          {tooBig && (
+            // Refuse BEFORE the irreversible click, not after: the sidecar would reject it anyway, but
+            // only once the user had already committed to creating something.
+            <p className="mt-1 text-xs text-destructive">
+              Too long to file ({bodyBytes} / {MAX_BODY_BYTES} bytes).
+            </p>
+          )}
+          {active !== undefined && docTitle === undefined && (
+            // Refuse rather than invent a title: a filename fallback would create a real, un-deletable
+            // issue called `note-3.md`.
+            <p className="mt-1 text-xs text-muted-foreground">Add a `# heading` to name the task.</p>
+          )}
+          {createError !== null && (
+            <p className="mt-1 text-xs text-destructive">{createError}</p>
+          )}
+          {created !== null && (
+            <p className="mt-1 truncate text-xs">
+              Created{' '}
+              <a href={created.url} target="_blank" rel="noreferrer" className="underline">
+                {created.id}
+              </a>
+            </p>
+          )}
+        </div>
+        <div className="min-h-0 flex-1">
+          <ChatPane state={chat} onSend={send} onAccept={accept} onReject={() => dispatch({ type: 'reject' })} />
+        </div>
       </div>
+
+      {confirming && docTitle !== undefined && source !== undefined && !titleTooLong && !tooBig && (
+        <CreateTaskDialog
+          source={source}
+          title={docTitle}
+          bodyBytes={bodyBytes}
+          busy={creating}
+          onConfirm={createTask}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }

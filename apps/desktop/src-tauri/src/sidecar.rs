@@ -80,12 +80,24 @@ fn ensure(proc: &mut Option<SidecarProc>) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a hung exchange may be killed. NOT a detail — killing a NON-IDEMPOTENT exchange is worse than
+/// letting it hang: the child dies, the caller reports failure, and the user retries something that may
+/// already have happened. For `createTask` that means a second real, un-deletable issue.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    /// Idempotent read — kill it if it hangs and respawn a clean child.
+    Timed,
+    /// Do not kill. Either the exchange IS the work (a run), or repeating it would duplicate a write.
+    Untimed,
+}
+
 /// Write one request line, then read lines until the matching `result`/`error`. `on_event` fires per
-/// event line. Holds the proc lock for the whole exchange (single-in-flight); a closed child is
-/// dropped so the next call respawns.
+/// event line. Holds the selected pipe's lock for the whole exchange; a closed child is dropped so the
+/// next call respawns.
 fn request(
     state: &Sidecar,
     pipe: Pipe,
+    bound: Bound,
     req: serde_json::Value,
     mut on_event: impl FnMut(serde_json::Value),
 ) -> Result<serde_json::Value, String> {
@@ -95,8 +107,12 @@ fn request(
     };
     let mut guard = lock.lock().map_err(|e| e.to_string())?;
     ensure(&mut guard)?;
+    let mut watchdog = None;
     if let Some(proc) = guard.as_ref() {
         publish_run_pid(state, pipe, proc.child.id());
+        if bound == Bound::Timed {
+            watchdog = Some(Watchdog::arm(proc.child.id()));
+        }
     }
     let outcome = {
         let proc = guard.as_mut().ok_or("sidecar down")?;
@@ -126,11 +142,62 @@ fn request(
             }
         }
     };
+    drop(watchdog); // exchange finished in time — cancel the kill
     if outcome.is_err() {
         *guard = None;
         clear_run_pid(state, pipe);
     }
     outcome
+}
+
+/// Wall clock for a QUERY exchange. Not applied to the run pipe, where the exchange IS the run and
+/// minutes are normal. A query child that hangs mid-response would otherwise block its caller forever —
+/// the same silent-failure class as the Linear watcher hang and the doc-chat hang.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Kills the child if the exchange outlives QUERY_TIMEOUT. We cannot simply abandon a blocking read on a
+/// LONG-LIVED pipe — a late reply would desync every future request on it. Killing is what makes the
+/// abandonment safe: stdout closes, the blocked `read_line` returns 0, `request` drops the pipe, and the
+/// next call respawns a clean child. Cancelled by Drop on the happy path.
+///
+/// Single-shot SIGTERM, no SIGKILL escalation. That is sufficient only because the Node sidecar does not
+/// trap SIGTERM — if it ever installs a handler, this must escalate, or `request` stays blocked forever
+/// with no second attempt. Applies to Bound::Timed reads only; a write is never killed (see Bound).
+struct Watchdog(Option<mpsc::Sender<()>>);
+
+impl Watchdog {
+    fn arm(pid: u32) -> Self {
+        let (tx, rx) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            if rx.recv_timeout(QUERY_TIMEOUT) != Err(mpsc::RecvTimeoutError::Timeout) {
+                return; // exchange finished in time
+            }
+            // Confirm the pid is still OUR child before signalling it. The timer captured the pid 60s
+            // ago; if that child exited on its own right at the deadline and the OS recycled the number,
+            // an unchecked `kill` would hit an unrelated process.
+            //
+            // Keyed on the `__sidecar` ARGUMENT, not the product name. `ensure` spawns
+            // `exec vanguard __sidecar`, so that token is in the child's argv by construction, wherever
+            // the binary lives. Matching "vanguard" instead only worked here by accident — the repo path
+            // contains it — and would have silently turned QUERY_TIMEOUT into "never" on any machine
+            // where it does not, which is a WORSE failure than the pid reuse it guards against.
+            let still_ours = Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "command="])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("__sidecar"))
+                .unwrap_or(false);
+            if still_ours {
+                let _ = Command::new("kill").arg(pid.to_string()).status();
+            }
+        });
+        Self(Some(tx))
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        drop(self.0.take()); // closing the channel cancels the kill
+    }
 }
 
 /// `child_pid` is what `api_cancel` SIGUSR2s, so it must ALWAYS be the run child — never the query one.
@@ -173,6 +240,7 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
     let resp = request(
         &state,
         Pipe::Query, // never behind a live run
+        Bound::Timed, // pure read: safe to kill and retry
         serde_json::json!({ "id": "cap", "method": "capabilities" }),
         |_| {},
     )?;
@@ -444,7 +512,8 @@ pub fn api_create_run(
 
     let outcome = request(
         &state,
-        Pipe::Run, // holds the run pipe for the whole run
+        Pipe::Run,     // holds the run pipe for the whole run
+        Bound::Untimed, // the exchange IS the run; minutes are normal
         serde_json::json!({ "id": "run", "method": "createRun", "params": params }),
         |v| {
             // Sidecar events arrive as `{id, event}`; re-wrap as `{runId, event}` and buffer.
@@ -519,6 +588,60 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
         let _ = Command::new("kill").arg("-USR2").arg(pid.to_string()).status();
     }
     Ok(())
+}
+
+/// Create a task on the configured transport. THE FIRST WRITE TO AN EXTERNAL SYSTEM FROM THE APP, and
+/// it cannot be undone from inside it — so the UI confirms first, and this never runs as a side effect.
+///
+/// `source`/`team`/`label` come from `app.json`, read HERE on the trusted side. The renderer supplies
+/// only the title and body: it does not get to choose which tracker gets written to, or which team an
+/// issue lands in. Same rule S3 established for `chatBaseUrl`, and it matters more here — a misdirected
+/// write creates real work in the wrong place, with no undo.
+///
+/// Runs on the QUERY pipe, so it answers while a run is in flight — but UNTIMED (see Bound::Untimed at
+/// the call): a killed write is an ambiguous write, and ambiguity here means a duplicate issue.
+#[tauri::command(async)]
+pub fn api_create_task(
+    state: State<'_, Sidecar>,
+    repo_path: String,
+    title: String,
+    body: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = crate::appconfig::read(std::path::Path::new(&repo_path));
+    let source = cfg.source.unwrap_or_else(|| "github".to_string());
+    let mut params = serde_json::json!({
+        "source": source,
+        "repoPath": repo_path,
+        "title": title,
+        "body": body,
+    });
+    if let Some(team) = cfg.team {
+        params["team"] = serde_json::Value::String(team);
+    }
+    if let Some(label) = cfg.label {
+        params["labels"] = serde_json::json!([label]);
+    }
+    let resp = request(
+        &state,
+        Pipe::Query,
+        // UNTIMED, deliberately. createTask is a non-idempotent network write. Killing it on a timeout
+        // would not undo it: `gh issue create` may already have succeeded (its grandchild can outlive a
+        // SIGTERM'd parent, or the write can land exactly as the read is killed). The user would see
+        // "failed", retry, and create a SECOND real, un-deletable issue — the very failure this feature
+        // is built to prevent, just triggered by a clock instead of a double-click. A hang is
+        // recoverable; a duplicate issue is not.
+        Bound::Untimed,
+        serde_json::json!({ "id": "task", "method": "createTask", "params": params }),
+        |_| {},
+    )?;
+    // The sidecar reports a caller mistake as an in-band {id, error} envelope, which `request` returns as
+    // Ok(non-result). Surfacing "no result" here would bury an actionable message ("set a Linear team
+    // key") under a meaningless one — on the one action the user cannot undo.
+    if let Some(err) = resp.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("createTask failed");
+        return Err(msg.to_string());
+    }
+    resp.get("result").cloned().ok_or_else(|| "createTask returned no result".to_string())
 }
 
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project

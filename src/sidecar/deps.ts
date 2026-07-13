@@ -1,4 +1,5 @@
 import { capabilities } from '../api/capabilities.js';
+import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
 import { beginRun, endRun } from './cancel.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { githubDepsFromEnv, runGithubIssue } from '../runners/github.js';
@@ -46,6 +47,26 @@ function linearExtras(
 export function productionDeps(): SidecarDeps {
   return {
     capabilities,
+    // The first WRITE to an external system from the app, and it cannot be undone from inside it.
+    // Params are validated at the protocol boundary (validateCreateTask) before we get here.
+    createTask: async (params) => {
+      const input = {
+        title: params.title,
+        body: params.body,
+        ...(params.labels !== undefined && params.labels.length > 0 ? { labels: params.labels } : {}),
+      };
+      if (params.source === 'linear') {
+        // Labels are NOT applied on Linear: IssueCreateInput takes labelIds (uuids), not the names
+        // AppConfig holds, so honouring them needs a name->id resolution we do not do. Not passed at all
+        // rather than passed-and-ignored, so the omission is visible here instead of buried one layer down.
+        // team is guaranteed by validateCreateTask — an issue in the wrong team is real work in the wrong
+        // place, with no undo.
+        const { labels: _dropped, ...linearInput } = input;
+        return createLinearIssue(params.team as string, linearInput);
+      }
+      if (params.source === 'gitlab') return createGitlabIssue(params.repoPath, input);
+      return createGithubIssue(params.repoPath, input);
+    },
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       const transport = params.transport ?? 'github';
       const provider = toProvider(params.provider);
