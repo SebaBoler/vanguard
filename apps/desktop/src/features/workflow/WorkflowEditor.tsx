@@ -19,6 +19,7 @@ export function WorkflowEditor({ project }: { project: string }) {
   const [flows, setFlows] = useState<RepoFlowInfo[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [capsError, setCapsError] = useState<string | null>(null);
   const [tab, setTab] = useState<'canvas' | 'source'>('canvas');
   const [newName, setNewName] = useState('');
   const [state, dispatch] = useReducer(flowEditorReducer, initialFlowEditor);
@@ -49,9 +50,14 @@ export function WorkflowEditor({ project }: { project: string }) {
     setFlows(null);
     setListError(null);
     void refreshList();
+    // A swallowed failure here would silently disable the built-in collision guard AND empty the
+    // palette (review #338 r2) — surface it, and gate create on caps being loaded.
     apiCapabilitiesCached()
-      .then(setCaps)
-      .catch(() => {});
+      .then((c) => {
+        setCaps(c);
+        setCapsError(null);
+      })
+      .catch((err) => setCapsError(String(err)));
   }, [project, refreshList]);
 
   const open = (file: string): void => {
@@ -59,6 +65,9 @@ export function WorkflowEditor({ project }: { project: string }) {
     // we're leaving — a slower earlier read must not clobber this selection, and a late saveOk
     // must not overwrite this flow's source/dirty (saveOk is not file-keyed).
     const issued = ++gen.current;
+    // The old save's result is gen-guarded now, so release its lock too — a hung save on the flow
+    // we're leaving must not silently block saving this one (review #338 r2).
+    saving.current = false;
     apiReadFlow(project, file)
       .then(({ doc, source }) => {
         if (issued === gen.current) dispatch({ type: 'loaded', file, doc, source });
@@ -82,7 +91,9 @@ export function WorkflowEditor({ project }: { project: string }) {
     } catch (err) {
       if (issued === gen.current) dispatch({ type: 'saveFailed', error: String(err) });
     } finally {
-      saving.current = false;
+      // Only release the CURRENT flow's lock: after a switch, open() already released it for the
+      // new flow, and a save may be in flight there — this stale finally must not unlock it.
+      if (issued === gen.current) saving.current = false;
     }
   };
 
@@ -134,6 +145,12 @@ export function WorkflowEditor({ project }: { project: string }) {
           {state.error}
         </div>
       )}
+      {capsError !== null && (
+        <div className="flex shrink-0 items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+          stage palette unavailable — {capsError}. Creating flows and adding library stages need it.
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'source' ? (
@@ -181,9 +198,12 @@ export function WorkflowEditor({ project }: { project: string }) {
                   />
                   <Button
                     aria-label="create flow"
-                    disabled={newName === '' || newNameProblem !== null}
+                    // caps gate: without the built-in flow names the collision check can't run, and a
+                    // "plan" collision would surface first at Save — exactly what the form exists to prevent
+                    disabled={newName === '' || newNameProblem !== null || caps === null}
                     onClick={() => {
                       gen.current += 1; // same invalidation as open(): a late read/save must not land on the new doc
+                      saving.current = false;
                       dispatch({ type: 'created', name: newName });
                       setNewName('');
                     }}

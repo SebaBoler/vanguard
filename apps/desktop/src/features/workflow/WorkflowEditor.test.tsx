@@ -179,3 +179,42 @@ test('a save completing after switching flows cannot clobber the newly opened fl
   await waitFor(() => expect(screen.getByText('B RAW')).toBeInTheDocument()); // …and must not replace B's source
   expect(screen.queryByText('A CANONICAL')).toBeNull();
 });
+
+test('a hung save on one flow must not block saving another (review #338 r2 finding 1)', async () => {
+  const flowB = { name: 'odd', label: 'B', stages: [{ name: 'implementer', overrides: {} }], loops: [] };
+  vi.mocked(ipc.apiWriteFlow)
+    .mockImplementationOnce(() => new Promise(() => {})) // flow A's save: hangs forever
+    .mockImplementationOnce(async () => ({ source: 'B CANONICAL' }));
+  vi.mocked(ipc.apiReadFlow)
+    .mockImplementationOnce(async () => ({ doc: DOC, source: 'A RAW' }))
+    .mockImplementationOnce(async () => ({ doc: flowB, source: 'B RAW' }));
+
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByText('my-flow'));
+  await screen.findByTestId('stage-block-0');
+  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i })); // hangs
+
+  fireEvent.click(screen.getByText('odd'));
+  await waitFor(() => expect(screen.getByTestId('stage-block-0')).toHaveTextContent('implementer'));
+  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'haiku' } });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(vi.mocked(ipc.apiWriteFlow)).toHaveBeenCalledWith('/repo', 'odd.hcl', {
+      ...flowB,
+      stages: [{ name: 'implementer', overrides: { model: 'haiku' } }],
+    }),
+  );
+});
+
+test('capabilities failure surfaces a notice and disables create — the built-in collision guard must not silently vanish (r2 finding 2)', async () => {
+  vi.mocked(ipc.apiCapabilitiesCached).mockRejectedValueOnce('caps dead');
+  render(<WorkflowEditor project="/repo" />);
+  await screen.findByText('my-flow');
+  expect(await screen.findByText(/stage palette unavailable/)).toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText('new-flow-name'), { target: { value: 'fresh' } });
+  expect(screen.getByRole('button', { name: /create flow/i })).toBeDisabled();
+});

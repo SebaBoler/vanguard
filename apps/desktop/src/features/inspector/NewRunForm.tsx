@@ -10,11 +10,15 @@ export function flowOptionsFrom(
   capabilities: Capabilities,
   repoFlows: RepoFlowInfo[] | 'error' | null,
 ): { value: string; label: string }[] {
+  // Shadowing repo flows arrive error-flagged from listFlows (the primary guard, pinned in
+  // repo.test.ts); the built-in-wins dedupe below is defense in depth so this dropdown's
+  // uniqueness never depends on a cross-module invariant.
+  const builtIn = new Set(capabilities.flows.map((f) => f.name));
   return [
     ...capabilities.flows.map((f) => ({ value: f.name, label: f.label })),
     ...(Array.isArray(repoFlows)
       ? repoFlows
-          .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined)
+          .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined && !builtIn.has(f.name))
           .map((f) => ({ value: f.name, label: f.label ?? f.name }))
       : []),
   ];
