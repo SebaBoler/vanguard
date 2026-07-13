@@ -7,10 +7,15 @@ fn docs_dir(repo: &Path) -> PathBuf {
     repo.join(".vanguard").join("docs")
 }
 
-/// Reject path-traversal / nesting; docs are flat files directly under `.vanguard/docs/`.
+/// Reject path-traversal / nesting; docs are flat `*.md` files directly under `.vanguard/docs/`.
+/// The `.md` rule lives here, not just in `write`, so `read` can't hand back some other file that
+/// happens to sit in the docs dir — `list` only ever offers `*.md`, and read/write now agree with it.
 fn safe_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(format!("invalid doc name: {name}"));
+    }
+    if !name.ends_with(".md") {
+        return Err("doc name must end with .md".into());
     }
     Ok(())
 }
@@ -36,9 +41,6 @@ pub fn read(repo: &Path, name: &str) -> Result<String, String> {
 
 pub fn write(repo: &Path, name: &str, content: &str) -> Result<(), String> {
     safe_name(name)?;
-    if !name.ends_with(".md") {
-        return Err("doc name must end with .md".into());
-    }
     let dir = docs_dir(repo);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     fs::write(dir.join(name), content).map_err(|e| e.to_string())
@@ -81,5 +83,9 @@ mod tests {
     fn rejects_non_md() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(write(tmp.path(), "plan.txt", "x").is_err());
+        // read enforces it too: a non-.md file sitting in the docs dir is not readable through this seam.
+        fs::create_dir_all(docs_dir(tmp.path())).unwrap();
+        fs::write(docs_dir(tmp.path()).join("secrets.env"), "TOKEN=x").unwrap();
+        assert!(read(tmp.path(), "secrets.env").is_err());
     }
 }

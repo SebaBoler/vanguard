@@ -140,12 +140,23 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
 /// is read from the inherited env inside the child; it never touches the webview or app.json.
 ///
 /// `baseUrl` is NOT taken from the request. `__complete` points the SDK's `ANTHROPIC_BASE_URL` at it
-/// while passing the inherited credential, so a renderer-supplied value would let anything executing
-/// in the webview (the chat renders untrusted model output, and the board renders remote task data)
-/// redirect the OAuth token to a host of its choosing. The credential is never IN the webview, but
-/// that is worth little if the webview picks its destination. It is read from `app.json` here, on the
-/// trusted side, and overwrites whatever the caller sent.
-#[tauri::command]
+/// while passing the inherited credential, so a per-request value would make the destination of the
+/// OAuth token a parameter of an IPC call. It is read from `app.json` here instead, so config — not
+/// the caller — decides where the credential goes, and there is one source of truth for it.
+///
+/// Scope of that, stated honestly: it is hygiene, not a security boundary. `write_app_config` accepts
+/// a whole AppConfig from the renderer, so a caller can persist a `chatBaseUrl` and then complete. And
+/// `spawn_run` hands the renderer arbitrary `sh -c` anyway — the webview is a TRUSTED surface in this
+/// app, and anything able to execute JS in it already has the machine. What that trust rests on is
+/// that nothing rendered can *become* JS: `Markdown` is react-markdown with no `rehype-raw`, so HTML in
+/// model output and task data is escaped, not executed. Keep it that way; adding `rehype-raw` to that
+/// component would turn every one of these IPC commands into an exploit primitive.
+///
+/// `#[tauri::command(async)]`, not a plain command: a sync handler runs on the MAIN thread (tauri-macros
+/// `ExecutionContext::Blocking`), and this one blocks on the child for up to COMPLETE_TIMEOUT. On the
+/// main thread that freezes the whole webview for the entire wait. `(async)` on a sync fn dispatches it
+/// to the blocking threadpool instead.
+#[tauri::command(async)]
 pub fn api_complete(repo_path: String, req: serde_json::Value) -> Result<serde_json::Value, String> {
     let mut req = req;
     let trusted = crate::appconfig::read(std::path::Path::new(&repo_path)).chat_base_url;
@@ -179,8 +190,8 @@ fn set_base_url(req: &mut serde_json::Value, trusted: Option<String>) -> Result<
 }
 
 /// Wall-clock cap on one doc-chat turn. Without it a stalled Anthropic call (network hang, rate-limit
-/// stall) pins a Tauri worker thread on a blocking read forever, the `invoke` promise never settles,
-/// and the chat is stuck on "thinking…" with no way back. Generous — a long reply is normal.
+/// stall) blocks the read forever, the `invoke` promise never settles, and the chat is stuck on
+/// "thinking…" with no way back. Generous — a long reply is normal.
 const COMPLETE_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn complete_exchange(child: &mut Child, req: &serde_json::Value) -> Result<serde_json::Value, String> {
