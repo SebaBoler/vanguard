@@ -75,7 +75,9 @@ const LINEAR_API = 'https://api.linear.app/graphql';
  * desktop, which inherits a login rather than an env var.
  */
 async function linearToken(run: LinearCliRunner): Promise<string> {
-  const fromEnv = process.env['LINEAR_API_KEY'];
+  // Trim, like the CLI-fallback path below: a whitespace-only key would otherwise be sent as the
+  // Authorization value and fail at Linear with an opaque 401 instead of the actionable message here.
+  const fromEnv = process.env['LINEAR_API_KEY']?.trim();
   if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
   const token = (await run(['auth', 'token'])).trim();
   if (token === '') throw new VanguardError('No Linear credential — set LINEAR_API_KEY or run `linear auth login`.');
@@ -85,10 +87,14 @@ async function linearToken(run: LinearCliRunner): Promise<string> {
 /** POST one query. The token is sent BARE, not as `Bearer` — `linear auth login` mints a personal API
  *  key, which Linear authorizes unprefixed. (If the CLI ever moves to OAuth, this becomes `Bearer`.) */
 async function postGraphql(token: string, body: { query: string; variables: Record<string, unknown> }): Promise<unknown> {
+  // Node's global fetch has NO default timeout: a stalled connection (proxy black-hole, TCP drop with
+  // no RST) would hang a watch poll forever. That is the same "a hung watcher is worse than a crash"
+  // failure the cursor and page-count guards exist to prevent — and it is the likeliest of the three.
   const res = await fetch(LINEAR_API, {
     method: 'POST',
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     // Linear puts the actionable reason (bad key, missing scope) in the BODY. Throwing on the status
@@ -99,6 +105,8 @@ async function postGraphql(token: string, body: { query: string; variables: Reco
   return res.json();
 }
 
+/** Per-request wall clock. Generous — this is a hang guard, not a latency budget. */
+const REQUEST_TIMEOUT_MS = 30_000;
 const PAGE_SIZE = 100;
 /** Backstop only — not a work-queue cap. Real teams are far under this; see the loop in list(). */
 const MAX_PAGES = 100;
