@@ -65,9 +65,13 @@ async function scanFlows(repoPath: string): Promise<ScanEntry[]> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
+  const hcl = files.filter((f) => f.endsWith('.hcl')).sort();
+  if (hcl.length === 0) return [];
+  // Import the parser only once there is something to parse — an empty/flow-less dir must not
+  // pay the WASM instantiation (review #336 round 2).
   const { parseFlowHcl } = await import('./parse.js');
   const out: ScanEntry[] = [];
-  for (const file of files.filter((f) => f.endsWith('.hcl')).sort()) {
+  for (const file of hcl) {
     if (!FLOW_FILE_RE.test(file)) {
       out.push({ file, error: 'file name must be lowercase [a-z0-9._-] ending in .hcl' });
       continue;
