@@ -86,7 +86,7 @@ test('listFlows failure degrades to built-ins with a notice — the form never d
   expect(screen.getByRole('button', { name: /^run$/i })).toBeInTheDocument();
 });
 
-test('flowOptionsFrom dedupes by value even if a shadowing entry ever slipped past the error flag', () => {
+test('flowOptionsFrom drops a built-in-colliding repo entry even if it slipped past the error flag', () => {
   const merged = flowOptionsFrom(caps, [{ file: 'plan.hcl', name: 'plan', label: 'Shadow' }]);
   expect(merged.filter((o) => o.value === 'plan')).toEqual([{ value: 'plan', label: 'Plan' }]); // built-in wins, once
 });

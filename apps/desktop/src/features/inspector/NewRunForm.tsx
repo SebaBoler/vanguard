@@ -11,8 +11,8 @@ export function flowOptionsFrom(
   repoFlows: RepoFlowInfo[] | 'error' | null,
 ): { value: string; label: string }[] {
   // Shadowing repo flows arrive error-flagged from listFlows (the primary guard, pinned in
-  // repo.test.ts); the built-in-wins dedupe below is defense in depth so this dropdown's
-  // uniqueness never depends on a cross-module invariant.
+  // repo.test.ts); dropping built-in-colliding entries below is defense in depth so this
+  // dropdown's uniqueness never depends on a cross-module invariant.
   const builtIn = new Set(capabilities.flows.map((f) => f.name));
   return [
     ...capabilities.flows.map((f) => ({ value: f.name, label: f.label })),
