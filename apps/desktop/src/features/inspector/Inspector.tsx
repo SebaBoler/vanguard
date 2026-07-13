@@ -6,12 +6,19 @@ import {
   listRuns,
   listActive,
   readRun,
-  spawnRun,
   killRun,
   watchProject,
   unwatchProject,
+  apiCapabilitiesCached,
+  apiCreateRun,
+  apiActiveRun,
+  apiRunBacklog,
+  apiCancel,
+  apiRepoOk,
   SPAWN_OUTPUT_EVENT,
   SPAWN_EXIT_EVENT,
+  type Capabilities,
+  type CreateRunParams,
 } from '../../ipc';
 import { RunList } from './RunList';
 import { RunDetail } from './RunDetail';
@@ -23,9 +30,10 @@ import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
 import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { NewRunForm } from './NewRunForm';
+import { RunStrip } from './RunStrip';
+import { reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
 import { LaunchPanel, type Spawn } from './LaunchPanel';
 import { useAppConfig } from '../../hooks';
-import { runCommand, runPresets } from '../../command';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
 export function Inspector({
@@ -54,6 +62,14 @@ export function Inspector({
   const [focusedSpawn, setFocusedSpawn] = useState<number | null>(null);
   const [showNewRun, setShowNewRun] = useState(false);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
+  // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
+  const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
+  const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
+  const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
+  const dismissedRunId = useRef<string | null>(null); // a run the user closed — ignore its late events
+  const runGen = useRef(0); // bumped per launch; a settled apiCreateRun from an older run is dropped
+  const [repoOk, setRepoOk] = useState(true); // cached: is `project` a git work tree? (fails a run at click)
 
   const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
@@ -148,20 +164,120 @@ export function Inspector({
     };
   }, []);
 
-  const startRun = async (command: string): Promise<void> => {
-    localStorage.setItem(`vg-runcmd:${project}`, command);
+  // Load the capability surface once (cached; pure — never blocks on a live run).
+  useEffect(() => {
+    void apiCapabilitiesCached().then(setCaps).catch(() => setCaps(null));
+  }, []);
+
+  // Cached repo pre-flight per project (Inspector is key={project}, so this runs once per project).
+  useEffect(() => {
+    void apiRepoOk(project).then(setRepoOk).catch(() => setRepoOk(true)); // couldn't verify → don't block
+  }, [project]);
+
+  // Mirror typedRun into a ref so async callbacks (the apiCreateRun catch) can read the latest value.
+  useEffect(() => {
+    typedRunRef.current = typedRun;
+  }, [typedRun]);
+
+  // Subscribe to the typed-run event stream and fold into `typedRun` (reducer drops foreign runIds).
+  // Ignore events for a run the user has dismissed, so a late event can't resurrect a closed strip.
+  useEffect(() => {
+    const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
+      if (e.payload.runId === dismissedRunId.current) return;
+      setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload));
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
+
+  // On mount, learn whether a typed run is already in flight and re-attach its strip by replaying the
+  // buffered backlog. Runs after the listen effect so the live tail isn't lost. Fold the backlog INTO
+  // current state (not replace) so events that arrived on the channel during the await aren't dropped;
+  // the reducer's last-wins keys + idempotence make the merge safe.
+  useEffect(() => {
+    const attach = async (): Promise<void> => {
+      try {
+        const id = await apiActiveRun();
+        if (id === null) return;
+        const backlog = (await apiRunBacklog(id)) as { runId: string; event: RunEvent }[];
+        // Fold BEFORE flipping checkedIdle: between the two the button's guard would see
+        // checkedIdle && typedRun === null and enable New run while a run is genuinely live.
+        setTypedRun((prev) =>
+          backlog.reduce((s, p) => reduceTypedRun(s, p), prev ?? initialTypedRun()),
+        );
+      } catch {
+        // Treat an unverifiable idle-check as idle: a rejected apiActiveRun (sidecar not up yet, IPC
+        // error) must not leave the New-run button disabled forever. The Rust busy guard still
+        // rejects a second concurrent run, so the worst case is a confusing error, not corruption.
+      } finally {
+        setCheckedIdle(true);
+      }
+    };
+    void attach();
+  }, []);
+
+  const startTypedRun = (params: CreateRunParams): void => {
+    // Guard the launch itself, not just the toolbar button — the form has a second entry point
+    // (board → TaskDetail → New Run) that isn't screen-gated, so a click there could clobber the
+    // in-flight run's client state. The ref is synced for a run that's been live a moment.
+    //
+    // checkedIdle is part of the guard, not just the button's disabled state: during mount re-attach
+    // a run can be live in the sidecar while typedRunRef is still null, and a board-path launch in
+    // that window would set a fresh strip, get rejected by the Rust busy guard, and wipe the strip
+    // the re-attach effect is concurrently folding the backlog into.
+    if (!checkedIdle) return;
+    if (typedRunRef.current !== null && typedRunRef.current.terminal === undefined) return;
+    if (!repoOk) {
+      setError(`${project} is not a git work tree — cannot run here.`);
+      return;
+    }
     setShowNewRun(false);
     setError(null);
-    try {
-      const pid = await spawnRun(project, command);
-      setSpawns((prev) => [...prev, { pid, command, lines: [] }]);
-      // Drop back to the run list so the new launch shows as an "in progress" row.
-      setDetail(null);
-      setLiveRun(null);
-      setFocusedSpawn(null);
-    } catch (e) {
-      setError(String(e));
-    }
+    // Dismiss the outgoing terminal run: the fresh state has no runId yet, so a late buffered event
+    // from the previous run would otherwise be ADOPTED as this run's identity (`state.runId ?? payload.runId`)
+    // and the new run's own run-accepted then dropped as foreign.
+    dismissedRunId.current = typedRunRef.current?.runId ?? null;
+    // Tie both continuations below to THIS launch. Without it they read current state: run A settling
+    // after run B started would let A's catch wipe B's strip, or A's terminal land on B.
+    const gen = ++runGen.current;
+    const started = initialTypedRun();
+    typedRunRef.current = started; // sync in-flight marker (the effect-synced ref lags a render)
+    setTypedRun(started); // "starting…" — "run live" derives from this
+    setDetail(null);
+    setLiveRun(null);
+    setFocusedSpawn(null);
+    void apiCreateRun(params)
+      .then((res) => {
+        if (runGen.current !== gen) return; // a newer run owns the strip
+        // The event stream owns the terminal; this is a backstop only if the terminal event was lost —
+        // write it ONLY when still non-terminal. Precedence matches the reducer (prUrl → secretBlocked).
+        // NOTE: the spec (Part 3, G6) says the reducer alone owns terminal and the promise must never
+        // write it. This is a deliberate deviation: the `terminal === undefined` guard neutralizes the
+        // double-badge race the spec warned about, and without the backstop a lost run-end would spin
+        // the strip forever.
+        setTypedRun((prev) =>
+          prev !== null && prev.terminal === undefined
+            ? { ...prev, terminal: res.prUrl !== undefined ? { kind: 'success', prUrl: res.prUrl } : res.secretBlocked === true ? { kind: 'secret-blocked' } : { kind: 'no-changes' } }
+            : prev,
+        );
+      })
+      .catch((e) => {
+        if (runGen.current !== gen) return; // a newer run owns the strip
+        // apiCreateRun rejects on BOTH a pre-start rejection (the Rust single-in-flight guard, which
+        // returns Err before any run-accepted event) AND a run that started then errored/cancelled
+        // (resolve_terminal returns Err for those). Only the former needs clearing + a banner — it never
+        // adopted a runId. A real error/cancel already folded run-accepted, so its runId is set and the
+        // terminal EVENT renders it in the strip; don't wipe it or double-report.
+        //
+        // Asymmetry with .then above, on purpose: this path does NOT synthesize a terminal backstop. A
+        // lost run-error/run-cancelled would spin the strip forever, and we lean on the S0.5 guarantee
+        // that Rust buffers a terminal on every in-session path rather than guessing one here.
+        if (typedRunRef.current?.runId === undefined) {
+          setError(String(e));
+          setTypedRun(null);
+        }
+      });
   };
 
   const open = async (r: RunSummary): Promise<void> => {
@@ -202,6 +318,10 @@ export function Inspector({
             color="secondary"
             onClick={() => setShowNewRun((v) => !v)}
             startIcon={<Play className="size-4" />}
+            // Single-in-flight: disabled until the mount idle-check resolves, and while a typed run is
+            // live (in-flight derives from typedRun.terminal — the listener updates it, so re-attach and
+            // run-end both clear the guard). No write-once busy latch.
+            disabled={!checkedIdle || (typedRun !== null && typedRun.terminal === undefined)}
           >
             New run
           </Button>
@@ -218,18 +338,30 @@ export function Inspector({
         </div>
       )}
 
-      {showNewRun && (
+      {showNewRun && caps !== null && (
         <div className="shrink-0">
-          <NewRunForm
-            defaultCommand={localStorage.getItem(`vg-runcmd:${project}`) ?? runCommand(cfg)}
-            presets={runPresets(cfg)}
-            onRun={startRun}
-            onCancel={() => setShowNewRun(false)}
-          />
+          <NewRunForm capabilities={caps} project={project} onRun={startTypedRun} onCancel={() => setShowNewRun(false)} />
         </div>
       )}
 
-      {detail ? (
+      {typedRun !== null && screen === 'runs' ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          {typedRun.terminal !== undefined && (
+            <button
+              onClick={() => {
+                // Record the runId as dismissed so a late event can't resurrect the closed strip.
+                if (typedRun.runId !== undefined) dismissedRunId.current = typedRun.runId;
+                setTypedRun(null);
+              }}
+              className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="size-3.5" />
+              Back to runs
+            </button>
+          )}
+          <RunStrip state={typedRun} onCancel={() => void apiCancel()} />
+        </div>
+      ) : detail ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <RunDetail detail={detail} project={project} />
         </div>

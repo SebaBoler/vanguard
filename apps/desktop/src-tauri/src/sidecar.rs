@@ -116,10 +116,13 @@ fn request(
 
 /// The pure capability surface (providers/flows/transports/defaults). No stdout scraping.
 ///
-/// Sync (not `async`) on purpose: `request` holds a std Mutex across a blocking `read_line`, which
-/// would stall the shared async runtime. As a plain command Tauri runs it on its own thread pool
-/// thread, so a long-running exchange never blocks other IPC.
-#[tauri::command]
+/// The body stays sync — `request` holds a std Mutex across a blocking `read_line`, which would stall
+/// the shared async runtime if this were an `async fn`. But it must NOT be a plain `#[tauri::command]`:
+/// tauri-macros compiles a sync body with no attribute as `ExecutionContext::Blocking`, i.e. it runs on
+/// the MAIN thread, where a blocking read freezes the webview. `(async)` on a sync fn is the third
+/// option — tauri dispatches it to the blocking threadpool ("sync_threadpool"), which is what the
+/// comment here previously (wrongly) claimed a plain command already did.
+#[tauri::command(async)]
 pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, String> {
     let resp = request(
         &state,
@@ -226,19 +229,49 @@ fn finish_run(state: &Sidecar, run_id: &str) {
     }
 }
 
+/// RAII: runs `finish_run` when the run's scope ends, however it ends. `api_create_run`'s busy guard
+/// *returns* on `active.is_some()`, so a leaked `active` would reject every later run forever — a
+/// permanent brick. A guard makes the release unconditional, including on an unwinding panic.
+struct RunGuard<'a> {
+    state: &'a Sidecar,
+    run_id: String,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        finish_run(self.state, &self.run_id);
+    }
+}
+
 /// Start a run. Mints a runId, emits `run-accepted` + every event as `{runId, event}` (buffered for
 /// re-attach), and guarantees exactly one terminal event (run-end from the stream on success, else a
 /// synthesized run-error / run-cancelled). Returns the run's result, or an error string.
-#[tauri::command]
+///
+/// `(async)` for the same reason as `api_capabilities`, and far more urgently: this call blocks for the
+/// WHOLE run (minutes). As a plain sync command that is the main thread, so the webview would be frozen
+/// for the entire run — the live event strip this powers could never paint a single frame.
+#[tauri::command(async)]
 pub fn api_create_run(
     app: AppHandle,
     state: State<'_, Sidecar>,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let run_id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
-    if let Ok(mut active) = state.active.lock() {
-        *active = Some(run_id.clone());
-    }
+    // Single-in-flight guard: reject a second concurrent run instead of overwriting `active` (which
+    // would orphan the first run's re-attach). Check-and-set under ONE lock scope so two concurrent
+    // api_create_run calls (Tauri runs commands on a thread pool, not serialized) can't both pass the
+    // check before either sets — a check-then-release-then-set would be a TOCTOU race.
+    let run_id = {
+        let mut active = state.active.lock().map_err(|e| e.to_string())?;
+        if active.is_some() {
+            return Err("a run is already in flight (single-in-flight)".to_string());
+        }
+        // Mint the id inside the lock, after the early-return, so a rejected call doesn't burn one.
+        let id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
+        *active = Some(id.clone());
+        id
+    };
+    // From here on, every exit path releases `active` via RunGuard's Drop.
+    let _guard = RunGuard { state: &state, run_id: run_id.clone() };
     emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted" }));
 
     let outcome = request(
@@ -275,7 +308,6 @@ pub fn api_create_run(
             emit_event(&app, &state, &run_id, terminal);
         }
     }
-    finish_run(&state, &run_id);
     result
 }
 
@@ -318,8 +350,9 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
 }
 
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project
-/// at click instead of minutes into a run.
-#[tauri::command]
+/// at click instead of minutes into a run. `(async)` — it shells out to git, and process spawns do not
+/// belong on the main thread even when they're fast.
+#[tauri::command(async)]
 pub fn api_repo_ok(repo_path: String) -> bool {
     Command::new("git")
         .arg("-C")
@@ -333,8 +366,21 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_terminal;
+    use super::{resolve_terminal, RunGuard, Sidecar};
     use serde_json::json;
+
+    #[test]
+    fn run_guard_releases_active_even_on_panic() {
+        let state = Sidecar::default();
+        *state.active.lock().unwrap() = Some("run-0".to_string());
+        let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
+            panic!("run blew up");
+        }));
+        assert!(hit.is_err());
+        // A leaked `active` would make the busy guard reject every subsequent run forever.
+        assert_eq!(*state.active.lock().unwrap(), None);
+    }
 
     #[test]
     fn success_result_needs_no_terminal() {
