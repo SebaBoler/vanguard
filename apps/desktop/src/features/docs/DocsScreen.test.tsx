@@ -1,7 +1,7 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DocsScreen } from './DocsScreen.js';
-import { MAX_BODY_BYTES } from './docTask.js';
+import { MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
 import * as ipc from '../../ipc.js';
 
 vi.mock('../../ipc.js', () => ({
@@ -253,4 +253,27 @@ test('an unreadable app.json blocks Create task instead of guessing "github"', a
   await waitFor(() => expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled());
   expect(screen.getByText(/can't read the task source/i)).toBeInTheDocument();
   expect(ipc.apiCreateTask).not.toHaveBeenCalled();
+});
+
+test('an unknown transport in app.json blocks Create task rather than promising it', async () => {
+  // Otherwise the dialog says "Create a task on jira?", the user confirms the irreversible action, and
+  // the sidecar rejects it after the click. Fails safe, but the dialog promised a target it can't keep.
+  vi.mocked(ipc.readAppConfig).mockResolvedValueOnce({ source: 'jira' } as never);
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  await waitFor(() => expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled());
+  expect(screen.queryByText(/jira/i)).toBeNull();
+  expect(ipc.apiCreateTask).not.toHaveBeenCalled();
+});
+
+test('an over-long heading is refused before the click, like an over-long body', async () => {
+  vi.mocked(ipc.readDoc).mockResolvedValueOnce(`# ${'x'.repeat(MAX_TITLE_BYTES + 1)}\n\nbody`);
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled();
+  expect(screen.getByText(/heading is too long/i)).toBeInTheDocument();
 });

@@ -174,12 +174,17 @@ impl Watchdog {
             }
             // Confirm the pid is still OUR child before signalling it. The timer captured the pid 60s
             // ago; if that child exited on its own right at the deadline and the OS recycled the number,
-            // an unchecked `kill` would hit an unrelated process. Narrow window, non-zero, and the cost
-            // of being wrong is someone else's process.
+            // an unchecked `kill` would hit an unrelated process.
+            //
+            // Keyed on the `__sidecar` ARGUMENT, not the product name. `ensure` spawns
+            // `exec vanguard __sidecar`, so that token is in the child's argv by construction, wherever
+            // the binary lives. Matching "vanguard" instead only worked here by accident — the repo path
+            // contains it — and would have silently turned QUERY_TIMEOUT into "never" on any machine
+            // where it does not, which is a WORSE failure than the pid reuse it guards against.
             let still_ours = Command::new("ps")
                 .args(["-p", &pid.to_string(), "-o", "command="])
                 .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).contains("vanguard"))
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("__sidecar"))
                 .unwrap_or(false);
             if still_ours {
                 let _ = Command::new("kill").arg(pid.to_string()).status();

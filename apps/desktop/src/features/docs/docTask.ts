@@ -8,6 +8,23 @@
  */
 export const MAX_BODY_BYTES = 60_000;
 
+/** Mirrors MAX_TITLE_BYTES in `src/tasks/create.ts` — same copy, same reason. KEEP IN SYNC. */
+export const MAX_TITLE_BYTES = 500;
+
+/**
+ * The transports the sidecar will actually accept (`TRANSPORTS` in `src/api/capabilities.ts`).
+ *
+ * The dialog promises "Create a task on <source>". Without this, an app.json carrying `jira` or `''`
+ * renders "Create a task on jira?" / "Create a task on ?", the user confirms the one irreversible
+ * action, and it fails as bad-request AFTER the click. Fails safe — nothing is written — but the dialog
+ * made a promise about the target it could not keep.
+ */
+export const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
+
+export function isTransport(s: string | undefined): boolean {
+  return s !== undefined && (TRANSPORTS as readonly string[]).includes(s);
+}
+
 /**
  * The doc's title: its first `# ` heading.
  *

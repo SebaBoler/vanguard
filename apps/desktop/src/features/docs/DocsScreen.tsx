@@ -4,7 +4,7 @@ import { apiComplete, apiCreateTask, listDocs, readDoc, writeDoc, readAppConfig 
 import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
 import { CreateTaskDialog } from './CreateTaskDialog.js';
-import { titleFromDoc, MAX_BODY_BYTES } from './docTask.js';
+import { titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-5';
@@ -43,7 +43,9 @@ export function DocsScreen({ project }: { project: string }) {
 
   useEffect(() => {
     void readAppConfig(project)
-      .then((cfg) => setSource(cfg.source ?? 'github')) // absent source: Rust defaults to github too
+      // Only a transport the sidecar will actually accept. `?? 'github'` matches Rust's default for an
+      // ABSENT source, but an unknown or empty one must not be promised to the user — see isTransport.
+      .then((cfg) => setSource(isTransport(cfg.source ?? 'github') ? (cfg.source ?? 'github') : undefined))
       .catch(() => setSource(undefined)); // could not read it — say so, do not guess
   }, [project]);
 
@@ -151,6 +153,9 @@ export function DocsScreen({ project }: { project: string }) {
   const docTitle = titleFromDoc(doc);
   const bodyBytes = new TextEncoder().encode(doc).length;
   const tooBig = bodyBytes > MAX_BODY_BYTES;
+  // The title crosses as an argv value on gh/glab, so it is capped too — and refused BEFORE the click,
+  // like the body. Half-applying "refuse before the irreversible action" is not applying it.
+  const titleTooLong = docTitle !== undefined && new TextEncoder().encode(docTitle).length > MAX_TITLE_BYTES;
 
   const createTask = (): void => {
     if (createInFlight.current || active === undefined || docTitle === undefined) return;
@@ -241,6 +246,7 @@ export function DocsScreen({ project }: { project: string }) {
               active === undefined ||
               docTitle === undefined ||
               tooBig ||
+              titleTooLong ||
               source === undefined ||
               chat.pending !== undefined
             }
@@ -252,6 +258,9 @@ export function DocsScreen({ project }: { project: string }) {
             <p className="mt-1 text-xs text-muted-foreground">
               Can&apos;t read the task source from <code>app.json</code> — set it in Settings.
             </p>
+          )}
+          {titleTooLong && (
+            <p className="mt-1 text-xs text-destructive">Heading is too long to use as a title (max {MAX_TITLE_BYTES} bytes).</p>
           )}
           {tooBig && (
             // Refuse BEFORE the irreversible click, not after: the sidecar would reject it anyway, but
@@ -282,7 +291,7 @@ export function DocsScreen({ project }: { project: string }) {
         </div>
       </div>
 
-      {confirming && docTitle !== undefined && source !== undefined && (
+      {confirming && docTitle !== undefined && source !== undefined && !titleTooLong && !tooBig && (
         <CreateTaskDialog
           source={source}
           title={docTitle}
