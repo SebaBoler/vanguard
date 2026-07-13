@@ -62,7 +62,7 @@ test('selecting a flow loads it: stages on the canvas, loop chip read-only, unkn
 test('save sends the edited doc (meta + loops verbatim) and swaps the source tab to canonical HCL', async () => {
   await openMyFlow();
   // edit: select the planner, change its model
-  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
   const model = screen.getByLabelText(/model/);
   fireEvent.change(model, { target: { value: 'sonnet' } });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
@@ -80,7 +80,7 @@ test('save sends the edited doc (meta + loops verbatim) and swaps the source tab
 test('a rejected save keeps the edits + dirty flag and shows the message inline', async () => {
   vi.mocked(ipc.apiWriteFlow).mockRejectedValueOnce('flow "my-flow" is already declared in other.hcl');
   await openMyFlow();
-  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
   fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -157,6 +157,7 @@ test('a slower earlier read cannot clobber a later selection (open race, review 
 });
 
 test('a save completing after switching flows cannot clobber the newly opened flow (same race, save side)', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true); // the switch discards intentionally here
   const flowB = { name: 'odd', label: 'B', stages: [{ name: 'implementer', overrides: {} }], loops: [] };
   let releaseSave: (v: { source: string }) => void = () => {};
   vi.mocked(ipc.apiWriteFlow).mockImplementationOnce(() => new Promise((res) => (releaseSave = res)));
@@ -167,7 +168,7 @@ test('a save completing after switching flows cannot clobber the newly opened fl
   render(<WorkflowEditor project="/repo" />);
   fireEvent.click(await screen.findByText('my-flow'));
   await screen.findByTestId('stage-block-0');
-  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
   fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i })); // save of my-flow hangs
 
@@ -181,6 +182,7 @@ test('a save completing after switching flows cannot clobber the newly opened fl
 });
 
 test('a hung save on one flow must not block saving another (review #338 r2 finding 1)', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true); // the switch discards intentionally here
   const flowB = { name: 'odd', label: 'B', stages: [{ name: 'implementer', overrides: {} }], loops: [] };
   vi.mocked(ipc.apiWriteFlow)
     .mockImplementationOnce(() => new Promise(() => {})) // flow A's save: hangs forever
@@ -192,13 +194,13 @@ test('a hung save on one flow must not block saving another (review #338 r2 find
   render(<WorkflowEditor project="/repo" />);
   fireEvent.click(await screen.findByText('my-flow'));
   await screen.findByTestId('stage-block-0');
-  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
   fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i })); // hangs
 
   fireEvent.click(screen.getByText('odd'));
   await waitFor(() => expect(screen.getByTestId('stage-block-0')).toHaveTextContent('implementer'));
-  fireEvent.click(screen.getByTestId('stage-block-0'));
+  fireEvent.click(screen.getByRole('button', { name: 'select implementer' }));
   fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'haiku' } });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -217,4 +219,34 @@ test('capabilities failure surfaces a notice and disables create — the built-i
   expect(await screen.findByText(/stage palette unavailable/)).toBeInTheDocument();
   fireEvent.change(screen.getByPlaceholderText('new-flow-name'), { target: { value: 'fresh' } });
   expect(screen.getByRole('button', { name: /create flow/i })).toBeDisabled();
+});
+
+test('dirty edits are not silently discarded by a rail click (review #338 r3 finding 1)', async () => {
+  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  try {
+    await openMyFlow();
+    fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
+    fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+    expect(screen.getByText('unsaved')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('odd')); // decline the discard
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/discard unsaved changes/i));
+    expect(vi.mocked(ipc.apiReadFlow)).toHaveBeenCalledTimes(1); // no second read — still on my-flow
+    expect(screen.getByText(/model=sonnet/)).toBeInTheDocument(); // the edit survived
+
+    confirmSpy.mockReturnValue(true); // accept the discard
+    fireEvent.click(screen.getByText('odd'));
+    await waitFor(() => expect(vi.mocked(ipc.apiReadFlow)).toHaveBeenCalledTimes(2));
+  } finally {
+    confirmSpy.mockRestore();
+  }
+});
+
+test('the source tab flags itself stale while there are unsaved edits (r3 finding 2)', async () => {
+  await openMyFlow();
+  fireEvent.click(screen.getByRole('button', { name: 'select planner' }));
+  fireEvent.change(screen.getByLabelText(/model/), { target: { value: 'sonnet' } });
+  fireEvent.click(screen.getByRole('button', { name: /source/i }));
+  expect(screen.getByText(/reflects the last save, not your unsaved edits/)).toBeInTheDocument();
+  expect(screen.getByText('RAW SOURCE')).toBeInTheDocument(); // still shown, just labelled stale
 });

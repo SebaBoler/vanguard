@@ -71,16 +71,12 @@ export function FlowCanvas({
                   }}
                   className={dragOver === i ? 'rounded-md ring-2 ring-primary/40' : undefined}
                 >
-                  {/* div, not button: the move controls inside are real buttons and buttons cannot nest */}
+                  {/* the block frame is NOT interactive itself — the selectable area and the move
+                      controls are sibling buttons inside it, so no interactive element nests
+                      inside another (a11y: nested role=button confuses AT) */}
                   <div
                     data-testid={`stage-block-${i}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSelect(i)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') onSelect(i);
-                    }}
-                    className={`w-44 cursor-grab rounded-md border bg-background p-3 text-left transition-colors ${
+                    className={`w-44 cursor-grab rounded-md border bg-background p-3 transition-colors ${
                       selected === i
                         ? 'border-primary ring-1 ring-primary/40'
                         : unknown
@@ -88,26 +84,29 @@ export function FlowCanvas({
                           : 'border-border hover:border-primary/40'
                     }`}
                   >
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <span className={`size-2 rounded-full ${unknown ? 'bg-amber-500' : 'bg-primary/70'}`} />
-                      <span className="truncate">{stage.name}</span>
-                      {stage.ref !== undefined && (
-                        <span className="ml-auto inline-flex items-center gap-1 rounded bg-violet-500/15 px-1 py-0.5 text-[10px] text-violet-600 dark:text-violet-400">
-                          <FileCode2 className="size-3" aria-hidden /> ref
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                      {unknown ? 'not in library — pick a name or add a ref' : overrides.length > 0 ? overrides.join(' ') : 'library defaults'}
-                    </div>
+                    <button
+                      onClick={() => onSelect(i)}
+                      className="block w-full text-left"
+                      aria-label={`select ${stage.name}`}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <span className={`size-2 rounded-full ${unknown ? 'bg-amber-500' : 'bg-primary/70'}`} />
+                        <span className="truncate">{stage.name}</span>
+                        {stage.ref !== undefined && (
+                          <span className="ml-auto inline-flex items-center gap-1 rounded bg-violet-500/15 px-1 py-0.5 text-[10px] text-violet-600 dark:text-violet-400">
+                            <FileCode2 className="size-3" aria-hidden /> ref
+                          </span>
+                        )}
+                      </span>
+                      <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                        {unknown ? 'not in library — pick a name or add a ref' : overrides.length > 0 ? overrides.join(' ') : 'library defaults'}
+                      </span>
+                    </button>
                     <div className="mt-2 flex gap-1">
                       <button
                         aria-label={`move ${stage.name} left`}
                         disabled={i === 0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onMove(i, i - 1);
-                        }}
+                        onClick={() => onMove(i, i - 1)}
                         className="rounded border border-border p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
                       >
                         <ArrowLeft className="size-3" aria-hidden />
@@ -115,10 +114,7 @@ export function FlowCanvas({
                       <button
                         aria-label={`move ${stage.name} right`}
                         disabled={i === doc.stages.length - 1}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onMove(i, i + 1);
-                        }}
+                        onClick={() => onMove(i, i + 1)}
                         className="rounded border border-border p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30"
                       >
                         <ArrowRight className="size-3" aria-hidden />

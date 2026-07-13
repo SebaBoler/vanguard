@@ -52,6 +52,11 @@ export function WorkflowEditor({ project }: { project: string }) {
     void refreshList();
     // A swallowed failure here would silently disable the built-in collision guard AND empty the
     // palette (review #338 r2) — surface it, and gate create on caps being loaded.
+    // Deliberately NOT gen-guarded (unlike every other async path here): caps are session-cached
+    // and context-FREE — and gen also bumps on every flow open, so a guard would drop the caps of
+    // anyone who clicks a flow before they resolve, leaving the palette empty for the session.
+    // Guard only what is scoped to a context; caps aren't. (Review r3 asked for the guard; this is
+    // the reasoned refusal.)
     apiCapabilitiesCached()
       .then((c) => {
         setCaps(c);
@@ -61,6 +66,12 @@ export function WorkflowEditor({ project }: { project: string }) {
   }, [project, refreshList]);
 
   const open = (file: string): void => {
+    // Unsaved edits must never vanish on a stray rail click — the same discipline saveFailed
+    // follows. (A project switch still resets without asking: navigation is owned by the shell;
+    // the dirty chip is the guard there — recorded limitation.)
+    if (state.dirty && file !== state.file && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) {
+      return;
+    }
     // Bump, don't just read: opening a flow invalidates every in-flight read AND save for the one
     // we're leaving — a slower earlier read must not clobber this selection, and a late saveOk
     // must not overwrite this flow's source/dirty (saveOk is not file-keyed).
@@ -155,7 +166,14 @@ export function WorkflowEditor({ project }: { project: string }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'source' ? (
           state.source !== null ? (
-            <CodeBlock code={state.source} lang="hcl" />
+            <div>
+              {state.dirty && (
+                <div className="mb-2 text-xs text-muted-foreground">
+                  stale — reflects the last save, not your unsaved edits (Save regenerates it)
+                </div>
+              )}
+              <CodeBlock code={state.source} lang="hcl" />
+            </div>
           ) : (
             <div className="p-4 text-sm text-muted-foreground">
               {state.doc !== null ? 'Not saved yet — the canonical HCL appears after the first save.' : 'Select a flow.'}
@@ -202,6 +220,7 @@ export function WorkflowEditor({ project }: { project: string }) {
                     // "plan" collision would surface first at Save — exactly what the form exists to prevent
                     disabled={newName === '' || newNameProblem !== null || caps === null}
                     onClick={() => {
+                      if (state.dirty && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) return;
                       gen.current += 1; // same invalidation as open(): a late read/save must not land on the new doc
                       saving.current = false;
                       dispatch({ type: 'created', name: newName });

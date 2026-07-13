@@ -47,6 +47,6 @@ test('◀/▶ buttons and native drag both reorder through onMove (the reducer o
 test('clicking a block selects it', () => {
   const onSelect = vi.fn();
   render(<FlowCanvas doc={DOC} palette={PALETTE} selected={null} onSelect={onSelect} onMove={vi.fn()} />);
-  fireEvent.click(screen.getByTestId('stage-block-1'));
+  fireEvent.click(screen.getByRole('button', { name: 'select implementer' }));
   expect(onSelect).toHaveBeenCalledWith(1);
 });
