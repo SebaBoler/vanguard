@@ -220,6 +220,12 @@ export function Inspector({
     // Guard the launch itself, not just the toolbar button — the form has a second entry point
     // (board → TaskDetail → New Run) that isn't screen-gated, so a click there could clobber the
     // in-flight run's client state. The ref is synced for a run that's been live a moment.
+    //
+    // checkedIdle is part of the guard, not just the button's disabled state: during mount re-attach
+    // a run can be live in the sidecar while typedRunRef is still null, and a board-path launch in
+    // that window would set a fresh strip, get rejected by the Rust busy guard, and wipe the strip
+    // the re-attach effect is concurrently folding the backlog into.
+    if (!checkedIdle) return;
     if (typedRunRef.current !== null && typedRunRef.current.terminal === undefined) return;
     if (!repoOk) {
       setError(`${project} is not a git work tree — cannot run here.`);
@@ -227,6 +233,10 @@ export function Inspector({
     }
     setShowNewRun(false);
     setError(null);
+    // Dismiss the outgoing terminal run: the fresh state has no runId yet, so a late buffered event
+    // from the previous run would otherwise be ADOPTED as this run's identity (`state.runId ?? payload.runId`)
+    // and the new run's own run-accepted then dropped as foreign.
+    dismissedRunId.current = typedRunRef.current?.runId ?? null;
     const started = initialTypedRun();
     typedRunRef.current = started; // sync in-flight marker (the effect-synced ref lags a render)
     setTypedRun(started); // "starting…" — "run live" derives from this

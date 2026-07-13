@@ -226,6 +226,20 @@ fn finish_run(state: &Sidecar, run_id: &str) {
     }
 }
 
+/// RAII: runs `finish_run` when the run's scope ends, however it ends. `api_create_run`'s busy guard
+/// *returns* on `active.is_some()`, so a leaked `active` would reject every later run forever — a
+/// permanent brick. A guard makes the release unconditional, including on an unwinding panic.
+struct RunGuard<'a> {
+    state: &'a Sidecar,
+    run_id: String,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        finish_run(self.state, &self.run_id);
+    }
+}
+
 /// Start a run. Mints a runId, emits `run-accepted` + every event as `{runId, event}` (buffered for
 /// re-attach), and guarantees exactly one terminal event (run-end from the stream on success, else a
 /// synthesized run-error / run-cancelled). Returns the run's result, or an error string.
@@ -249,6 +263,8 @@ pub fn api_create_run(
         *active = Some(id.clone());
         id
     };
+    // From here on, every exit path releases `active` via RunGuard's Drop.
+    let _guard = RunGuard { state: &state, run_id: run_id.clone() };
     emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted" }));
 
     let outcome = request(
@@ -285,7 +301,6 @@ pub fn api_create_run(
             emit_event(&app, &state, &run_id, terminal);
         }
     }
-    finish_run(&state, &run_id);
     result
 }
 
@@ -343,8 +358,21 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_terminal;
+    use super::{resolve_terminal, RunGuard, Sidecar};
     use serde_json::json;
+
+    #[test]
+    fn run_guard_releases_active_even_on_panic() {
+        let state = Sidecar::default();
+        *state.active.lock().unwrap() = Some("run-0".to_string());
+        let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
+            panic!("run blew up");
+        }));
+        assert!(hit.is_err());
+        // A leaked `active` would make the busy guard reject every subsequent run forever.
+        assert_eq!(*state.active.lock().unwrap(), None);
+    }
 
     #[test]
     fn success_result_needs_no_terminal() {
