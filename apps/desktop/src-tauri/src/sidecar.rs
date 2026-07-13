@@ -17,9 +17,11 @@ pub enum Pipe {
     Query,
 }
 
-/// Sidecar state. `proc` (the run pipe) is held for a whole run; `buffer`/`active`/`child_pid`/
-/// `cancelled` use SEPARATE locks so re-attach (api_run_backlog / api_active_run) and cancel read
-/// them WHILE a run holds `proc`. See docs/specs/subsystem-0.5-sidecar-hardening.md §Concurrency.
+/// Sidecar state. TWO children: `proc` (the run pipe) is held for a whole run, `query_proc` serves
+/// short calls so they never queue behind one. `buffer`/`active`/`child_pid`/`cancelled` use SEPARATE
+/// locks so re-attach (api_run_backlog / api_active_run) and cancel read them WHILE a run holds `proc`.
+/// `child_pid` is the RUN child's only — see `publish_run_pid`.
+/// See docs/specs/subsystem-0.5-sidecar-hardening.md §Concurrency.
 #[derive(Default)]
 pub struct Sidecar {
     proc: Mutex<Option<SidecarProc>>,
