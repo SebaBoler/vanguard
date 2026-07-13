@@ -37,3 +37,21 @@ test('a pathological heading does not stall the renderer', () => {
   expect(titleFromDoc(evil)).toBe('x');
   expect(performance.now() - started).toBeLessThan(100); // was seconds
 });
+
+test('keeps a # that is part of the title, not a closing sequence', () => {
+  // A closed-ATX closer is a #-run preceded by whitespace. `C#` is content — filing "Support C" would
+  // corrupt the title of a real, un-deletable issue.
+  expect(titleFromDoc('# Support C#\n')).toBe('Support C#');
+  expect(titleFromDoc('# Add C# support\n')).toBe('Add C# support');
+  expect(titleFromDoc('# Issue#\n')).toBe('Issue#');
+  // ...while a genuine closing sequence is still removed.
+  expect(titleFromDoc('# Title #\n')).toBe('Title');
+  expect(titleFromDoc('# Title ###\n')).toBe('Title');
+});
+
+test('reads a heading in a CRLF document', () => {
+  // `.` does not match `\r`, so splitting on '\n' alone left "# Title\r" unmatchable — every heading
+  // missed and Create task silently disabled on a doc that plainly has one.
+  expect(titleFromDoc('# Title\r\n\r\nbody\r\n')).toBe('Title');
+  expect(titleFromDoc('```\r\n# in code\r\n```\r\n# Real\r\n')).toBe('Real');
+});

@@ -34,7 +34,10 @@ export function isTransport(s: string | undefined): boolean {
  */
 export function titleFromDoc(doc: string): string | undefined {
   let fenced = false;
-  for (const line of doc.split('\n')) {
+  // Split on CRLF too. `doc.split('\n')` leaves a trailing `\r`, and `.` does not match `\r`, so
+  // `(.+)$` below would never match on a CRLF document — every heading missed, Create task silently
+  // disabled on a doc that plainly has one.
+  for (const line of doc.split(/\r?\n/)) {
     // A ``` fence toggles code. `# install deps` inside a shell snippet is a comment, not the doc's
     // heading — taking it would file a real, un-deletable issue under a name the user never wrote.
     if (/^\s*(```|~~~)/.test(line)) {
@@ -44,13 +47,13 @@ export function titleFromDoc(doc: string): string | undefined {
     if (fenced) continue;
     const m = line.match(/^#[ \t]+(.+)$/);
     if (m?.[1] === undefined) continue;
-    // Closed-ATX headings (`# Title #`) carry trailing hashes that are syntax, not title. Trimmed with
-    // plain string ops, NOT a regex: `/^#\s+(.*?)\s*#*\s*$/` mixes a lazy group with three more
-    // space-matching parts, so a line of `#` + 60KB of spaces backtracks quadratically — and this runs
-    // on every render, before the size gate. Linear beats clever.
-    let title = m[1].trim();
-    while (title.endsWith('#')) title = title.slice(0, -1);
-    title = title.trim();
+    // A closed-ATX heading's closer is a `#`-run PRECEDED BY WHITESPACE (`# Title #`). A `#` that is not
+    // space-separated is content: `# Support C#` is about C#, and stripping every trailing hash filed the
+    // issue as "Support C" — corrupting the one thing the user cannot undo. Strip the closer only.
+    //
+    // One anchored `\s#+$` replace, not a lazy-group regex: `/^#\s+(.*?)\s*#*\s*$/` backtracks
+    // quadratically on `#` + 60KB of spaces, and this runs on every render, before the size gate.
+    const title = m[1].trim().replace(/\s#+$/, '').trim();
     if (title !== '') return title;
   }
   return undefined;
