@@ -1,6 +1,5 @@
 import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
-import { FLOWS } from '../api/capabilities.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { RunOptions } from '../runners/source-adapter.js';
 
@@ -433,13 +432,13 @@ export function parseCli(argv: string[], cwd: string): Command {
   const provider: ProviderName | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
 
-  // Named flow (run + watch). --flow selects a FLOWS entry; --plan stays the alias for flow 'plan'.
+  // Named flow (run + watch). --flow selects a FLOWS entry or a repo `.vanguard/flows/*.hcl` flow
+  // (S5); --plan stays the alias for flow 'plan'. No name check here: this parser is synchronous
+  // and cannot see the repo's flow files — an unknown name fails in the async dispatch, which
+  // lists built-ins + discovered repo flows.
   const flowRaw = typeof values.flow === 'string' ? values.flow : undefined;
   if (flowRaw !== undefined && values.plan === true) {
     return fail('Use either --plan or --flow <name>, not both — --plan is the alias for --flow plan.');
-  }
-  if (flowRaw !== undefined && !Object.hasOwn(FLOWS, flowRaw)) {
-    return fail(`Unknown flow "${flowRaw}". Choose one of: ${Object.keys(FLOWS).join(', ')}.`);
   }
 
   let commitAuthor: { name: string; email: string } | undefined;

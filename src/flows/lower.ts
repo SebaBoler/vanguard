@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isProviderName, makeProvider } from '../agents/registry.js';
@@ -22,7 +23,9 @@ export async function lowerFlow(doc: FlowDoc, opts: { repoPath: string }): Promi
 
 async function resolveBase(decl: StageDecl, repoPath: string): Promise<PipelineStage> {
   if (decl.ref !== undefined) return resolveRef(decl.ref, repoPath);
-  const record = STAGE_LIBRARY[decl.name];
+  // Object.hasOwn: STAGE_LIBRARY inherits Object.prototype, so a plain lookup on a stage named
+  // "toString" would return the inherited function and spread it into a corrupt PipelineStage.
+  const record = Object.hasOwn(STAGE_LIBRARY, decl.name) ? STAGE_LIBRARY[decl.name] : undefined;
   if (record === undefined) {
     throw new Error(`unknown stage "${decl.name}": not in the stage library and no ref given`);
   }
@@ -42,7 +45,17 @@ async function resolveRef(ref: string, repoPath: string): Promise<PipelineStage>
   if (abs !== root && !abs.startsWith(root + sep)) {
     throw new Error(`ref "${ref}" resolves outside ${join(repoPath, '.vanguard')} — refs must stay inside .vanguard/`);
   }
-  const mod = (await import(pathToFileURL(abs).href)) as Record<string, unknown>;
+  // Cache-bust by mtime (integer — a fractional query breaks vite's transform in tests): the
+  // sidecar child is long-lived and ESM caches by URL, so without this an edited ref TS silently
+  // runs its stale cached version on the next app run. Also turns a missing file into a clear
+  // error instead of ERR_MODULE_NOT_FOUND.
+  let version: number;
+  try {
+    version = Math.trunc((await stat(abs)).mtimeMs);
+  } catch {
+    throw new Error(`ref "${ref}": no file at ${abs}`);
+  }
+  const mod = (await import(`${pathToFileURL(abs).href}?v=${version}`)) as Record<string, unknown>;
   const value = mod[exportName];
   if (value === undefined) throw new Error(`ref "${ref}": export "${exportName}" not found`);
   const record = typeof value === 'function' ? (value as () => PipelineStage)() : (value as PipelineStage);

@@ -11,6 +11,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.201
         version: 0.3.201(@anthropic-ai/sdk@0.100.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@cdktf/hcl2json':
+        specifier: 0.21.0
+        version: 0.21.0
       execa:
         specifier: ^9.6.1
         version: 9.6.1
@@ -21,9 +24,6 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@cdktf/hcl2json':
-        specifier: 0.21.0
-        version: 0.21.0
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1

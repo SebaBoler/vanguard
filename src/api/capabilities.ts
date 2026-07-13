@@ -1,4 +1,5 @@
 import { PROVIDER_NAMES } from '../agents/registry.js';
+import { STAGE_LIBRARY } from '../flows/library.js';
 import {
   implementReviewSimplifyStages,
   planImplementReviewStages,
@@ -12,10 +13,12 @@ export interface FlowInfo {
   label: string;
 }
 
-/** What the run builder renders from — providers, flows, transports, and initial field defaults. */
+/** What the run builder + flow editor render from — providers, flows, the stage palette, transports, defaults. */
 export interface Capabilities {
   providers: string[];
   flows: FlowInfo[];
+  /** STAGE_LIBRARY keys — the flow editor's stage palette. Static, so it belongs here, not on the repo-scoped listFlows. */
+  stages: string[];
   transports: string[];
   defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
 }
@@ -38,6 +41,7 @@ export function capabilities(): Capabilities {
   return {
     providers: [...PROVIDER_NAMES],
     flows: Object.entries(FLOWS).map(([name, f]) => ({ name, label: f.label })),
+    stages: Object.keys(STAGE_LIBRARY),
     transports: [...TRANSPORTS],
     defaults: { provider: 'claude', maxTurns: 30, maxCostUsd: 5, baseBranch: 'main' },
   };

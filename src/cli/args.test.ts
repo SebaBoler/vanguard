@@ -639,10 +639,12 @@ describe('parseCli', () => {
     expect(noFlow.kind === 'run' && 'flow' in noFlow).toBe(false);
   });
 
-  it('rejects an unknown --flow', () => {
-    const cmd = parseCli(['run', '--github', 'o/r#1', '--flow', 'bogus'], '/work');
-    expect(cmd.kind).toBe('error');
-    expect(cmd.kind === 'error' && cmd.message).toMatch(/Unknown flow "bogus".*default, plan, flow-b/);
+  it('lets an unknown --flow through as a string — repo .vanguard/flows flows resolve in the async dispatch (S5)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'my-custom'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('my-custom');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'my-custom'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('my-custom');
   });
 
   it('rejects --plan and --flow together', () => {

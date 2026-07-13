@@ -1,4 +1,5 @@
 import { capabilities } from '../api/capabilities.js';
+import { assertFlowResolvable, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
 import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
 import { beginRun, endRun } from './cancel.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
@@ -67,7 +68,16 @@ export function productionDeps(): SidecarDeps {
       if (params.source === 'gitlab') return createGitlabIssue(params.repoPath, input);
       return createGithubIssue(params.repoPath, input);
     },
+    // Flow-file methods (S5): thin pass-throughs to core. FlowError → bad-request in the loop's catch.
+    listFlows: async ({ repoPath }) => ({ flows: await listRepoFlows(repoPath) }),
+    readFlow: ({ repoPath, file }) => readRepoFlow(repoPath, file),
+    writeFlow: ({ repoPath, file, doc }) => writeRepoFlow(repoPath, file, doc),
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
+      // FIRST statement, before beginRun() and the sandbox: an unresolvable flow (typo, broken or
+      // duplicate .hcl) must cost nothing and classify bad-request — and must not leave an armed
+      // AbortController behind (endRun's finally only wraps the post-sandbox region). Pure check:
+      // no lowering, no ref import — repo TS must not execute on the untimed run pipe (S5 D6).
+      if (params.flow !== undefined) await assertFlowResolvable(params.flow, params.repoPath);
       const transport = params.transport ?? 'github';
       const provider = toProvider(params.provider);
       const repoPath = params.repoPath;
