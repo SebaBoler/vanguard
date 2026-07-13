@@ -7,11 +7,13 @@ describe('createGithubIssue', () => {
     let seen: string[] = [];
     let stdin: string | undefined;
     const task = await createGithubIssue(
-      'o/r',
+      '/repo',
       { title: 'Add a thing', body: '# Add a thing\n\nbody', labels: ['vanguard'] },
-      async (args, input) => {
+      async (bin, args, opts) => {
+        expect(bin).toBe('gh');
+        expect(opts.cwd).toBe('/repo'); // no --repo flag: gh infers from the cwd's remote
         seen = args;
-        stdin = input;
+        stdin = opts.stdin;
         return 'https://github.com/o/r/issues/42\n';
       },
     );
@@ -26,7 +28,7 @@ describe('createGithubIssue', () => {
 
   it('throws when gh prints no URL rather than reporting a success it cannot prove', async () => {
     await expect(
-      createGithubIssue('o/r', { title: 't', body: 'b' }, async () => 'Creating issue...\n'),
+      createGithubIssue('/repo', { title: 't', body: 'b' }, async () => 'Creating issue...\n'),
     ).rejects.toThrow(/did not print an issue URL/);
   });
 });
@@ -35,13 +37,16 @@ describe('createGitlabIssue', () => {
   it('passes the description as argv (glab has no --body-file) and returns a ref + url', async () => {
     let seen: string[] = [];
     const task = await createGitlabIssue(
-      'g/p',
+      '/repo',
       { title: 'T', body: 'B', labels: ['a', 'b'] },
-      async (args) => {
+      async (bin, args, opts) => {
+        expect(bin).toBe('glab');
+        expect(opts.cwd).toBe('/repo');
         seen = args;
         return 'https://gitlab.com/g/p/-/issues/7';
       },
     );
+    expect(seen).not.toContain('--repo'); // inferred from cwd, not configured
     expect(seen).toEqual(expect.arrayContaining(['--description', 'B']));
     expect(seen).toEqual(expect.arrayContaining(['--label', 'a,b']));
     expect(task).toEqual({ id: 'g/p#7', url: 'https://gitlab.com/g/p/-/issues/7' });
@@ -94,7 +99,7 @@ describe('input guards', () => {
     const body = 'x'.repeat(MAX_BODY_BYTES + 1);
     let called = false;
     await expect(
-      createGitlabIssue('g/p', { title: 't', body }, async () => {
+      createGitlabIssue('/repo', { title: 't', body }, async () => {
         called = true;
         return '';
       }),
@@ -103,6 +108,6 @@ describe('input guards', () => {
   });
 
   it('rejects an empty title', async () => {
-    await expect(createGithubIssue('o/r', { title: '  ', body: 'b' }, async () => 'x')).rejects.toThrow(/needs a title/);
+    await expect(createGithubIssue('/repo', { title: '  ', body: 'b' }, async () => 'x')).rejects.toThrow(/needs a title/);
   });
 });

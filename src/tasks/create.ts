@@ -29,14 +29,18 @@ export interface CreatedTask {
  */
 export const MAX_BODY_BYTES = 60_000;
 
-/** Runs `gh`, optionally piping stdin (for `--body-file -`). Injected so tests never call real gh. */
-export type GhCreateRunner = (args: string[], stdin?: string) => Promise<string>;
-const defaultGhCreate: GhCreateRunner = async (args, stdin) =>
-  (await execa('gh', args, stdin === undefined ? {} : { input: stdin })).stdout;
-
-/** Runs `glab`. Injected so tests never call real glab. */
-export type GlabCreateRunner = (args: string[]) => Promise<string>;
-const defaultGlabCreate: GlabCreateRunner = async (args) => (await execa('glab', args)).stdout;
+/**
+ * Runs `gh`/`glab` **in the repo directory**, optionally piping stdin.
+ *
+ * No `--repo`/`--project` flag: both CLIs infer the repository from the cwd's git remote (their
+ * `--repo` flag exists to select *another* one). That is how the desktop board already shells them, and
+ * it means neither transport needs a slug from config — which matters, because `AppConfig` has no
+ * project field and there is no GitLab slug detector anywhere in core. Inferring is not a shortcut here;
+ * it is the only option that works for both.
+ */
+export type CliRunner = (bin: 'gh' | 'glab', args: string[], opts: { cwd: string; stdin?: string }) => Promise<string>;
+const defaultCli: CliRunner = async (bin, args, opts) =>
+  (await execa(bin, args, { cwd: opts.cwd, ...(opts.stdin === undefined ? {} : { input: opts.stdin }) })).stdout;
 
 function assertCreatable(input: CreateTaskInput): void {
   if (input.title.trim() === '') throw new VanguardError('A task needs a title.');
@@ -53,22 +57,29 @@ function firstUrl(stdout: string, what: string): string {
   return match[0];
 }
 
+/** `https://github.com/o/r/issues/42` -> `o/r#42`; `https://gitlab.com/g/p/-/issues/7` -> `g/p#7`. */
+function refFromIssueUrl(url: string, what: string): string {
+  const m = url.match(/^https?:\/\/[^/]+\/(.+?)(?:\/-)?\/issues\/(\d+)/);
+  if (m?.[1] === undefined || m[2] === undefined) {
+    throw new VanguardError(`${what} returned a URL this does not understand: ${url}`);
+  }
+  return `${m[1]}#${m[2]}`;
+}
+
 /**
  * Create a GitHub issue. The body goes over **stdin** (`--body-file -`), not argv: a doc-sized markdown
  * body on the command line is an ARG_MAX gamble, and `gh` gives us a clean way not to take it.
  */
 export async function createGithubIssue(
-  repo: string,
+  repoPath: string,
   input: CreateTaskInput,
-  gh: GhCreateRunner = defaultGhCreate,
+  run: CliRunner = defaultCli,
 ): Promise<CreatedTask> {
   assertCreatable(input);
-  const args = ['issue', 'create', '--repo', repo, '--title', input.title, '--body-file', '-'];
+  const args = ['issue', 'create', '--title', input.title, '--body-file', '-'];
   for (const label of input.labels ?? []) args.push('--label', label);
-  const url = firstUrl(await gh(args, input.body), 'gh issue create');
-  const number = url.match(/\/issues\/(\d+)/)?.[1];
-  if (number === undefined) throw new VanguardError(`Could not read an issue number from ${url}`);
-  return { id: `${repo}#${number}`, url };
+  const url = firstUrl(await run('gh', args, { cwd: repoPath, stdin: input.body }), 'gh issue create');
+  return { id: refFromIssueUrl(url, 'gh issue create'), url };
 }
 
 /**
@@ -77,18 +88,16 @@ export async function createGithubIssue(
  * MAX_BODY_BYTES exists.
  */
 export async function createGitlabIssue(
-  project: string,
+  repoPath: string,
   input: CreateTaskInput,
-  glab: GlabCreateRunner = defaultGlabCreate,
+  run: CliRunner = defaultCli,
 ): Promise<CreatedTask> {
   assertCreatable(input);
-  const args = ['issue', 'create', '--repo', project, '--title', input.title, '--description', input.body];
+  const args = ['issue', 'create', '--title', input.title, '--description', input.body];
   const labels = input.labels ?? [];
   if (labels.length > 0) args.push('--label', labels.join(','));
-  const url = firstUrl(await glab(args), 'glab issue create');
-  const iid = url.match(/\/issues\/(\d+)/)?.[1];
-  if (iid === undefined) throw new VanguardError(`Could not read an issue iid from ${url}`);
-  return { id: `${project}#${iid}`, url };
+  const url = firstUrl(await run('glab', args, { cwd: repoPath }), 'glab issue create');
+  return { id: refFromIssueUrl(url, 'glab issue create'), url };
 }
 
 const CREATE_MUTATION = `mutation($i: IssueCreateInput!) {
