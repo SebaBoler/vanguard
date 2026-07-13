@@ -1,8 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Collapsible, Input } from '@/ui';
 import { Play } from 'lucide-react';
 import { EnumSelect } from './EnumSelect';
-import type { Capabilities, CreateRunParams } from '../../ipc';
+import { apiListFlows } from '../../ipc';
+import type { Capabilities, CreateRunParams, RepoFlowInfo } from '../../ipc';
+
+/** Built-ins ∪ healthy repo flows. Entries with an error (or no name) are never offered — they cannot run. */
+export function flowOptionsFrom(
+  capabilities: Capabilities,
+  repoFlows: RepoFlowInfo[] | 'error' | null,
+): { value: string; label: string }[] {
+  // Shadowing and duplicate repo flows arrive error-flagged from listFlows (the primary guard,
+  // pinned in repo.test.ts); the first-wins seen-set below is defense in depth so this dropdown's
+  // uniqueness (unique option values, unique React keys) never depends on that cross-module
+  // invariant — built-in vs repo AND repo vs repo.
+  const seen = new Set<string>();
+  const unique = (name: string): boolean => !seen.has(name) && (seen.add(name), true);
+  return [
+    ...capabilities.flows.filter((f) => unique(f.name)).map((f) => ({ value: f.name, label: f.label })),
+    ...(Array.isArray(repoFlows)
+      ? repoFlows
+          .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined && unique(f.name))
+          .map((f) => ({ value: f.name, label: f.label ?? f.name }))
+      : []),
+  ];
+}
 
 export function NewRunForm({
   capabilities,
@@ -21,6 +43,25 @@ export function NewRunForm({
   const [flow, setFlow] = useState(capabilities.flows[0]?.name ?? 'default');
   const [maxTurns, setMaxTurns] = useState(String(capabilities.defaults.maxTurns));
   const [baseBranch, setBaseBranch] = useState(capabilities.defaults.baseBranch);
+  // Repo .vanguard/flows/*.hcl flows (S5 §21). Fetched fresh on every form open — deliberately NOT
+  // session-cached like capabilities: repo flows are mutable state, and a flow saved in the
+  // Workflow screen must be runnable here immediately. 'error' = degraded: built-ins still work,
+  // the form must never disappear the way the caps-failure path hides it.
+  const [repoFlows, setRepoFlows] = useState<RepoFlowInfo[] | 'error' | null>(null);
+  useEffect(() => {
+    let live = true;
+    apiListFlows(project)
+      .then(({ flows }) => {
+        if (live) setRepoFlows(flows);
+      })
+      .catch(() => {
+        if (live) setRepoFlows('error');
+      });
+    return () => {
+      live = false;
+    };
+  }, [project]);
+  const flowOptions = flowOptionsFrom(capabilities, repoFlows);
 
   const maxTurnsNum = Number(maxTurns);
   // Mirrors validateCreateRun (sidecar): non-blank issueRef, positive-integer maxTurns, non-blank base.
@@ -43,7 +84,10 @@ export function NewRunForm({
         <Input value={issueRef} onChange={(e) => setIssueRef(e.target.value)} placeholder="issue ref (e.g. 322)" className="w-40" />
         <EnumSelect value={transport} onValueChange={setTransport} options={capabilities.transports.map((t) => ({ value: t, label: t }))} />
         <EnumSelect value={provider} onValueChange={setProvider} options={capabilities.providers.map((p) => ({ value: p, label: p }))} />
-        <EnumSelect value={flow} onValueChange={setFlow} options={capabilities.flows.map((f) => ({ value: f.name, label: f.label }))} />
+        <EnumSelect value={flow} onValueChange={setFlow} options={flowOptions} />
+        {repoFlows === 'error' && (
+          <span className="text-[11px] text-muted-foreground">repo flows unavailable — built-in flows only</span>
+        )}
       </div>
 
       <Collapsible.Root>

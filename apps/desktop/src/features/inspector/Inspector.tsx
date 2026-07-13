@@ -380,7 +380,7 @@ export function Inspector({
         </div>
       ) : screen === 'workflow' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <WorkflowEditor project={project} name={project.split('/').filter(Boolean).pop() ?? project} />
+          <WorkflowEditor project={project} />
         </div>
       ) : screen === 'settings' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">

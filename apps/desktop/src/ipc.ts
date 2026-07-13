@@ -121,7 +121,13 @@ export function apiCapabilities(): Promise<Capabilities> {
 // belief that the block it dodged still exists, or keep it for a reason that is no longer true.)
 let capsCache: Promise<Capabilities> | undefined;
 export function apiCapabilitiesCached(): Promise<Capabilities> {
-  capsCache ??= apiCapabilities();
+  // Cache successes only: `??=` would pin a REJECTED promise for the whole session (a sidecar
+  // that was briefly unavailable at startup would permanently disable everything caps-gated —
+  // the flow editor's create form, the palette — with no recovery short of an app restart).
+  capsCache ??= apiCapabilities().catch((err: unknown) => {
+    capsCache = undefined;
+    throw err;
+  });
   return capsCache;
 }
 
