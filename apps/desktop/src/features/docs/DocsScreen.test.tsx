@@ -215,3 +215,28 @@ test('an over-long doc is refused BEFORE the irreversible click', async () => {
   expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled();
   expect(screen.getByText(/too long to file/i)).toBeInTheDocument();
 });
+
+test('a create that lands AFTER a doc switch does not report itself under the new doc', async () => {
+  vi.mocked(ipc.listDocs).mockResolvedValueOnce(['a.md', 'b.md']);
+  let resolveCreate: (v: { id: string; url: string }) => void = () => {};
+  vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('a.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'a.md'));
+
+  fireEvent.click(screen.getByRole('button', { name: /^create task$/i })); // open dialog
+  fireEvent.click(screen.getAllByRole('button', { name: /^create task$/i }).at(-1)!); // confirm
+  await waitFor(() => expect(ipc.apiCreateTask).toHaveBeenCalled());
+
+  fireEvent.click(screen.getByText('b.md')); // switch docs while the create is in flight
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalledWith('/repo', 'b.md'));
+
+  resolveCreate({ id: 'a-doc#1', url: 'https://example/issues/1' }); // a.md's create lands now
+  await waitFor(() => expect(screen.queryByRole('button', { name: /cancel/i })).toBeNull());
+
+  // "Created <link>" under b.md would say b.md produced an issue it did not — misreporting the one
+  // action the app cannot undo.
+  expect(screen.queryByText('a-doc#1')).toBeNull();
+  // ...and b.md's Create button must still work (the slot was released on switch).
+  expect(screen.getByRole('button', { name: /^create task$/i })).toBeEnabled();
+});

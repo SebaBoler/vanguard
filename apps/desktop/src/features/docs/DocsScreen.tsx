@@ -64,6 +64,10 @@ export function DocsScreen({ project }: { project: string }) {
     setCreated(null);
     setCreateError(null);
     setConfirming(false);
+    setCreating(false);
+    // Release the create slot too, or the NEW doc's Create button silently no-ops until the old create's
+    // .finally happens to fire. Its result is dropped by the generation guard, so nothing is lost.
+    createInFlight.current = false;
     void readDoc(project, name)
       .then((content) => {
         // Same generation guard the completion path uses: on a fast B→C switch readDoc(C) can resolve
@@ -148,20 +152,33 @@ export function DocsScreen({ project }: { project: string }) {
   const createTask = (): void => {
     if (createInFlight.current || active === undefined || docTitle === undefined) return;
     createInFlight.current = true;
+    // The doc this create was issued FOR. Creating takes seconds, and the user can switch docs in that
+    // window — the same generation guard `send` and `open` already use. Without it the result lands on
+    // whatever doc is now open: "Created DEV-9" renders under a document that did not produce it, which
+    // MISREPORTS the one action the app cannot undo. (The write itself is fine; the story told about it
+    // is not, and that is what the user acts on.)
+    const issued = gen.current;
     setCreating(true);
     setCreateError(null);
     void apiCreateTask(project, docTitle, doc)
-      .then((task) => setCreated(task))
-      .catch((err: unknown) =>
+      .then((task) => {
+        if (issued !== gen.current) return;
+        setCreated(task);
+      })
+      .catch((err: unknown) => {
+        if (issued !== gen.current) return;
         // A failed WRITE is an ambiguous write: the request may have landed before the error reached us.
         // Saying only "failed" invites a blind retry, and a retry here creates a SECOND real,
         // un-deletable issue.
         setCreateError(
           `${String(err)} — the issue may or may not have been created. Check ${source} before retrying.`,
-        ),
-      )
+        );
+      })
       .finally(() => {
+        // The slot is released unconditionally: `open` already cleared it for the new doc, and leaving it
+        // set would wedge the create button. But the UI state below belongs to the issuing doc only.
         createInFlight.current = false;
+        if (issued !== gen.current) return;
         setCreating(false);
         // ALWAYS close the dialog, including on failure. Leaving it open would put a live "Create task"
         // button back under the user's cursor with the warning rendered BEHIND the modal — one more click
