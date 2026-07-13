@@ -86,7 +86,13 @@ test('listFlows failure degrades to built-ins with a notice — the form never d
   expect(screen.getByRole('button', { name: /^run$/i })).toBeInTheDocument();
 });
 
-test('flowOptionsFrom drops a built-in-colliding repo entry even if it slipped past the error flag', () => {
-  const merged = flowOptionsFrom(caps, [{ file: 'plan.hcl', name: 'plan', label: 'Shadow' }]);
+test('flowOptionsFrom keeps option values unique even if colliding entries slip past the error flag', () => {
+  const merged = flowOptionsFrom(caps, [
+    { file: 'plan.hcl', name: 'plan', label: 'Shadow' }, // built-in collision
+    { file: 'a.hcl', name: 'twin', label: 'First' }, // repo-vs-repo collision
+    { file: 'b.hcl', name: 'twin', label: 'Second' },
+  ]);
   expect(merged.filter((o) => o.value === 'plan')).toEqual([{ value: 'plan', label: 'Plan' }]); // built-in wins, once
+  expect(merged.filter((o) => o.value === 'twin')).toEqual([{ value: 'twin', label: 'First' }]); // first wins, once
+  expect(new Set(merged.map((o) => o.value)).size).toBe(merged.length); // globally unique
 });

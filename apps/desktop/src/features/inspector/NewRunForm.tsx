@@ -10,15 +10,17 @@ export function flowOptionsFrom(
   capabilities: Capabilities,
   repoFlows: RepoFlowInfo[] | 'error' | null,
 ): { value: string; label: string }[] {
-  // Shadowing repo flows arrive error-flagged from listFlows (the primary guard, pinned in
-  // repo.test.ts); dropping built-in-colliding entries below is defense in depth so this
-  // dropdown's uniqueness never depends on a cross-module invariant.
-  const builtIn = new Set(capabilities.flows.map((f) => f.name));
+  // Shadowing and duplicate repo flows arrive error-flagged from listFlows (the primary guard,
+  // pinned in repo.test.ts); the first-wins seen-set below is defense in depth so this dropdown's
+  // uniqueness (unique option values, unique React keys) never depends on that cross-module
+  // invariant — built-in vs repo AND repo vs repo.
+  const seen = new Set<string>();
+  const unique = (name: string): boolean => !seen.has(name) && (seen.add(name), true);
   return [
-    ...capabilities.flows.map((f) => ({ value: f.name, label: f.label })),
+    ...capabilities.flows.filter((f) => unique(f.name)).map((f) => ({ value: f.name, label: f.label })),
     ...(Array.isArray(repoFlows)
       ? repoFlows
-          .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined && !builtIn.has(f.name))
+          .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined && unique(f.name))
           .map((f) => ({ value: f.name, label: f.label ?? f.name }))
       : []),
   ];
