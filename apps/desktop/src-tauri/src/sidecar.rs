@@ -95,8 +95,12 @@ fn request(
     };
     let mut guard = lock.lock().map_err(|e| e.to_string())?;
     ensure(&mut guard)?;
+    let mut watchdog = None;
     if let Some(proc) = guard.as_ref() {
         publish_run_pid(state, pipe, proc.child.id());
+        if pipe == Pipe::Query {
+            watchdog = Some(Watchdog::arm(proc.child.id()));
+        }
     }
     let outcome = {
         let proc = guard.as_mut().ok_or("sidecar down")?;
@@ -126,11 +130,41 @@ fn request(
             }
         }
     };
+    drop(watchdog); // exchange finished in time — cancel the kill
     if outcome.is_err() {
         *guard = None;
         clear_run_pid(state, pipe);
     }
     outcome
+}
+
+/// Wall clock for a QUERY exchange. Not applied to the run pipe, where the exchange IS the run and
+/// minutes are normal. A query child that hangs mid-response would otherwise block its caller forever —
+/// the same silent-failure class as the Linear watcher hang and the doc-chat hang.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Kills the child if the exchange outlives QUERY_TIMEOUT. We cannot simply abandon a blocking read on a
+/// LONG-LIVED pipe — a late reply would desync every future request on it. Killing is what makes the
+/// abandonment safe: stdout closes, the blocked `read_line` returns 0, `request` drops the pipe, and the
+/// next call respawns a clean child. Cancelled by Drop on the happy path.
+struct Watchdog(Option<mpsc::Sender<()>>);
+
+impl Watchdog {
+    fn arm(pid: u32) -> Self {
+        let (tx, rx) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            if rx.recv_timeout(QUERY_TIMEOUT) == Err(mpsc::RecvTimeoutError::Timeout) {
+                let _ = Command::new("kill").arg(pid.to_string()).status();
+            }
+        });
+        Self(Some(tx))
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        drop(self.0.take()); // closing the channel cancels the kill
+    }
 }
 
 /// `child_pid` is what `api_cancel` SIGUSR2s, so it must ALWAYS be the run child — never the query one.
@@ -519,6 +553,52 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
         let _ = Command::new("kill").arg("-USR2").arg(pid.to_string()).status();
     }
     Ok(())
+}
+
+/// Create a task on the configured transport. THE FIRST WRITE TO AN EXTERNAL SYSTEM FROM THE APP, and
+/// it cannot be undone from inside it — so the UI confirms first, and this never runs as a side effect.
+///
+/// `source`/`team`/`label` come from `app.json`, read HERE on the trusted side. The renderer supplies
+/// only the title and body: it does not get to choose which tracker gets written to, or which team an
+/// issue lands in. Same rule S3 established for `chatBaseUrl`, and it matters more here — a misdirected
+/// write creates real work in the wrong place, with no undo.
+///
+/// Runs on the QUERY pipe, so it answers while a run is in flight (and is bounded by QUERY_TIMEOUT).
+#[tauri::command(async)]
+pub fn api_create_task(
+    state: State<'_, Sidecar>,
+    repo_path: String,
+    title: String,
+    body: String,
+) -> Result<serde_json::Value, String> {
+    let cfg = crate::appconfig::read(std::path::Path::new(&repo_path));
+    let source = cfg.source.unwrap_or_else(|| "github".to_string());
+    let mut params = serde_json::json!({
+        "source": source,
+        "repoPath": repo_path,
+        "title": title,
+        "body": body,
+    });
+    if let Some(team) = cfg.team {
+        params["team"] = serde_json::Value::String(team);
+    }
+    if let Some(label) = cfg.label {
+        params["labels"] = serde_json::json!([label]);
+    }
+    let resp = request(
+        &state,
+        Pipe::Query,
+        serde_json::json!({ "id": "task", "method": "createTask", "params": params }),
+        |_| {},
+    )?;
+    // The sidecar reports a caller mistake as an in-band {id, error} envelope, which `request` returns as
+    // Ok(non-result). Surfacing "no result" here would bury an actionable message ("set a Linear team
+    // key") under a meaningless one — on the one action the user cannot undo.
+    if let Some(err) = resp.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("createTask failed");
+        return Err(msg.to_string());
+    }
+    resp.get("result").cloned().ok_or_else(|| "createTask returned no result".to_string())
 }
 
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project

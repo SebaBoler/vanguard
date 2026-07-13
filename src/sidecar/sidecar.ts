@@ -3,6 +3,7 @@ import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
 import { VanguardError } from '../core/errors.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { Capabilities } from '../api/capabilities.js';
+import type { CreatedTask } from '../tasks/create.js';
 
 /** A caller mistake in a request (bad params, unknown method) — classified `kind: "bad-request"`. */
 export class BadRequestError extends VanguardError {}
@@ -31,12 +32,53 @@ export interface CreateRunResult {
 export interface SidecarDeps {
   capabilities: () => Capabilities;
   createRun: (params: CreateRunParams, onEvent: (e: RunEvent) => void) => Promise<CreateRunResult>;
+  createTask: (params: CreateTaskParams) => Promise<CreatedTask>;
+}
+
+/**
+ * A task to create on the configured transport. `source`/`label`/`team` come from AppConfig, read on
+ * the TRUSTED side (Rust) — the renderer does not get to choose which tracker gets written to.
+ */
+export interface CreateTaskParams {
+  source: string;
+  repoPath: string;
+  title: string;
+  body: string;
+  labels?: string[];
+  /** Linear only: which team the issue lands in. */
+  team?: string;
 }
 
 interface Request {
   id?: string;
   method?: string;
   params?: unknown;
+}
+
+/**
+ * Validate a createTask request at the protocol boundary. This one creates something in an external
+ * system and CANNOT be undone from inside the app, so every caller mistake must fail here — loudly,
+ * before anything is written — rather than half-way through a transport.
+ */
+export function validateCreateTask(params: unknown): void {
+  const p = (params ?? {}) as Record<string, unknown>;
+  if (typeof p.source !== 'string' || !TRANSPORTS.includes(p.source as (typeof TRANSPORTS)[number])) {
+    throw new BadRequestError(`source must be one of: ${TRANSPORTS.join(', ')}`);
+  }
+  if (typeof p.repoPath !== 'string' || p.repoPath.trim() === '') {
+    throw new BadRequestError('repoPath is required');
+  }
+  if (typeof p.title !== 'string' || p.title.trim() === '') {
+    throw new BadRequestError('title is required');
+  }
+  if (typeof p.body !== 'string') {
+    throw new BadRequestError('body must be a string');
+  }
+  if (p.source === 'linear' && (typeof p.team !== 'string' || p.team.trim() === '')) {
+    // Without a team Linear would either fail deep in the API or land the issue in the caller's default
+    // team — creating real work in the wrong place, with no undo.
+    throw new BadRequestError('a Linear team key is required to create a task (set it in Settings)');
+  }
 }
 
 /**
@@ -93,6 +135,10 @@ export async function runSidecar(
     try {
       if (req.method === 'capabilities') {
         write(JSON.stringify({ id, result: deps.capabilities() }));
+      } else if (req.method === 'createTask') {
+        validateCreateTask(req.params);
+        const result = await deps.createTask(req.params as CreateTaskParams);
+        write(JSON.stringify({ id, result }));
       } else if (req.method === 'createRun') {
         validateCreateRun(req.params);
         const params = req.params as CreateRunParams;

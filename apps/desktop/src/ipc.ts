@@ -146,6 +146,17 @@ export function apiComplete(
   return invoke('api_complete', { repoPath, req: params });
 }
 
+/**
+ * Create a task on the configured transport. The app's first WRITE to an external system, and it cannot
+ * be undone from here — so the caller must confirm first, and it must never fire as a side effect.
+ *
+ * Only title/body cross: `source`, `team` and `label` are read from app.json in Rust. The renderer does
+ * not choose which tracker gets written to. (Same rule as CompleteParams — and it matters more here.)
+ */
+export function apiCreateTask(repoPath: string, title: string, body: string): Promise<{ id: string; url: string }> {
+  return invoke('api_create_task', { repoPath, title, body });
+}
+
 export function listDocs(repoPath: string): Promise<string[]> {
   return invoke<string[]>('list_docs', { repoPath });
 }

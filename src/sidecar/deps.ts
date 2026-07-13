@@ -1,4 +1,5 @@
 import { capabilities } from '../api/capabilities.js';
+import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
 import { beginRun, endRun } from './cancel.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { githubDepsFromEnv, runGithubIssue } from '../runners/github.js';
@@ -46,6 +47,22 @@ function linearExtras(
 export function productionDeps(): SidecarDeps {
   return {
     capabilities,
+    // The first WRITE to an external system from the app, and it cannot be undone from inside it.
+    // Params are validated at the protocol boundary (validateCreateTask) before we get here.
+    createTask: async (params) => {
+      const input = {
+        title: params.title,
+        body: params.body,
+        ...(params.labels !== undefined && params.labels.length > 0 ? { labels: params.labels } : {}),
+      };
+      if (params.source === 'linear') {
+        // team is guaranteed by validateCreateTask — an issue in the wrong team is real work in the
+        // wrong place, with no undo.
+        return createLinearIssue(params.team as string, input);
+      }
+      if (params.source === 'gitlab') return createGitlabIssue(params.repoPath, input);
+      return createGithubIssue(params.repoPath, input);
+    },
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       const transport = params.transport ?? 'github';
       const provider = toProvider(params.provider);

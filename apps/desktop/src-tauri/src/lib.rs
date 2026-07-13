@@ -171,6 +171,7 @@ pub fn run() {
             sidecar::api_active_run,
             sidecar::api_run_backlog,
             sidecar::api_cancel,
+            sidecar::api_create_task,
             sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())

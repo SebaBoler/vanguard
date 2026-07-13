@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Button } from '@/ui';
-import { apiComplete, listDocs, readDoc, writeDoc, readAppConfig } from '../../ipc.js';
+import { apiComplete, apiCreateTask, listDocs, readDoc, writeDoc, readAppConfig } from '../../ipc.js';
 import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
+import { CreateTaskDialog } from './CreateTaskDialog.js';
+import { titleFromDoc } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-5';
@@ -26,6 +28,20 @@ export function DocsScreen({ project }: { project: string }) {
   // synchronously within one tick — see `send`. `turnSeq` only mints the ids.
   const inFlight = useRef(0);
   const turnSeq = useRef(0);
+  // Create-task: the confirm dialog, the result, and a ref guard. A ref, not state, because a double
+  // click before the next render would create TWO REAL ISSUES — S3's double-send bug, except this one
+  // cannot be undone. `creating` is only for the spinner.
+  const [confirming, setConfirming] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
+  const [source, setSource] = useState('github');
+  const createInFlight = useRef(false);
+
+  useEffect(() => {
+    void readAppConfig(project)
+      .then((cfg) => setSource(cfg.source ?? 'github'))
+      .catch(() => setSource('github'));
+  }, [project]);
 
   const refresh = useCallback(
     () => void listDocs(project).then(setNames).catch(() => setNames([])),
@@ -119,6 +135,24 @@ export function DocsScreen({ project }: { project: string }) {
       });
   };
 
+  const docTitle = titleFromDoc(doc);
+
+  const createTask = (): void => {
+    if (createInFlight.current || active === undefined || docTitle === undefined) return;
+    createInFlight.current = true;
+    setCreating(true);
+    void apiCreateTask(project, docTitle, doc)
+      .then((task) => {
+        setCreated(task);
+        setConfirming(false);
+      })
+      .catch((err: unknown) => dispatch({ type: 'fail', message: `create task failed: ${String(err)}` }))
+      .finally(() => {
+        createInFlight.current = false;
+        setCreating(false);
+      });
+  };
+
   const accept = (): void => {
     if (chat.pending === undefined) return;
     const next = chat.pending;
@@ -154,9 +188,44 @@ export function DocsScreen({ project }: { project: string }) {
           <p className="p-4 text-sm text-muted-foreground">Select or create a doc.</p>
         )}
       </div>
-      <div className="w-80 shrink-0 border-l border-border pl-3">
-        <ChatPane state={chat} onSend={send} onAccept={accept} onReject={() => dispatch({ type: 'reject' })} />
+      <div className="flex w-80 shrink-0 flex-col gap-2 border-l border-border pl-3">
+        <div className="shrink-0">
+          <Button
+            onClick={() => setConfirming(true)}
+            disabled={active === undefined || docTitle === undefined || chat.pending !== undefined}
+            className="w-full"
+          >
+            Create task
+          </Button>
+          {active !== undefined && docTitle === undefined && (
+            // Refuse rather than invent a title: a filename fallback would create a real, un-deletable
+            // issue called `note-3.md`.
+            <p className="mt-1 text-xs text-muted-foreground">Add a `# heading` to name the task.</p>
+          )}
+          {created !== null && (
+            <p className="mt-1 truncate text-xs">
+              Created{' '}
+              <a href={created.url} target="_blank" rel="noreferrer" className="underline">
+                {created.id}
+              </a>
+            </p>
+          )}
+        </div>
+        <div className="min-h-0 flex-1">
+          <ChatPane state={chat} onSend={send} onAccept={accept} onReject={() => dispatch({ type: 'reject' })} />
+        </div>
       </div>
+
+      {confirming && docTitle !== undefined && (
+        <CreateTaskDialog
+          source={source}
+          title={docTitle}
+          bodyBytes={new TextEncoder().encode(doc).length}
+          busy={creating}
+          onConfirm={createTask}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }

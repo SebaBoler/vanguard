@@ -9,6 +9,7 @@ vi.mock('../../ipc.js', () => ({
   writeDoc: vi.fn(async () => {}),
   readAppConfig: vi.fn(async () => ({})),
   apiComplete: vi.fn(async () => ({ text: 'done <doc>REVISED</doc>' })),
+  apiCreateTask: vi.fn(async () => ({ id: 'o/r#7', url: 'https://github.com/o/r/issues/7' })),
 }));
 
 // Replace the real CodeMirror editor with a plain div — CM6 needs DOM geometry jsdom lacks, and its
@@ -141,4 +142,46 @@ test('New doc creates the first free note-N (no collision on a numbering gap)', 
   fireEvent.click(screen.getByRole('button', { name: /new doc/i }));
   // note-1 exists → skip; note-2 is free → use it (must NOT reuse note-1 or clobber note-3).
   await waitFor(() => expect(ipc.writeDoc).toHaveBeenCalledWith('/repo', 'note-2.md', expect.stringContaining('# note-2')));
+});
+
+test('Create task never fires without an explicit confirmation', async () => {
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  // Clicking the button opens the dialog. It must NOT create anything yet — this write cannot be undone.
+  fireEvent.click(screen.getByRole('button', { name: /^create task$/i }));
+  expect(ipc.apiCreateTask).not.toHaveBeenCalled();
+  expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+
+  // Cancelling must also create nothing.
+  fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+  expect(ipc.apiCreateTask).not.toHaveBeenCalled();
+});
+
+test('a double-click on the confirm button creates only ONE issue', async () => {
+  vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise(() => {})); // never settles: stays in flight
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+
+  fireEvent.click(screen.getByRole('button', { name: /^create task$/i })); // open dialog
+  const confirm = screen.getAllByRole('button', { name: /^create task$/i }).at(-1)!;
+  // Both clicks land in one tick, before `creating` can re-render the button as disabled. Without the
+  // ref guard this creates TWO REAL ISSUES, and neither can be deleted from the app.
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+
+  await waitFor(() => expect(ipc.apiCreateTask).toHaveBeenCalled());
+  expect(ipc.apiCreateTask).toHaveBeenCalledTimes(1);
+});
+
+test('a doc with no # heading cannot be turned into a task', async () => {
+  vi.mocked(ipc.readDoc).mockResolvedValueOnce('no heading here, just prose');
+  render(<DocsScreen project="/repo" />);
+  fireEvent.click(await screen.findByText('plan.md'));
+  await waitFor(() => expect(ipc.readDoc).toHaveBeenCalled());
+  // Refuse rather than invent: a filename fallback would create a real issue called `note-3.md`.
+  expect(screen.getByRole('button', { name: /^create task$/i })).toBeDisabled();
+  expect(screen.getByText(/add a .*heading/i)).toBeInTheDocument();
 });
