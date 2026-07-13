@@ -4,7 +4,8 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { FLOWS } from '../api/capabilities.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -53,6 +54,13 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /**
+   * Named flow key (a `FLOWS` registry entry, e.g. 'flow-b'). Set via `--flow`. `--plan` is the
+   * back-compat alias for `flow: 'plan'`. When set, `FLOWS[flow].build()` supplies the base stages
+   * instead of the adapter's — EXCEPT `'default'`, which means "the adapter's own stages" (an adapter
+   * may customize them; Linear does). Validated at the CLI/sidecar boundary.
+   */
+  flow?: string;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
   baseBranch?: string;
   /**
@@ -93,6 +101,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.flow !== undefined ? { flow: cmd.flow } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
@@ -272,9 +281,18 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
-      // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
-      const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
+      // Named-flow dispatch. `--flow <name>` selects a FLOWS builder; `--plan` is the back-compat
+      // alias for flow 'plan'.
+      //
+      // 'default' means "this adapter's own stages", NOT FLOWS.default.build. They are not the same:
+      // the Linear adapter's stages() swaps in an implementer that reads the issue via the linear-cli
+      // skill, while FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting
+      // 'default' by name — the natural thing for a name-driven UI — must not silently downgrade a
+      // Linear run to an implementer that never reads the issue.
+      const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
+      if (flow !== undefined && !Object.hasOwn(FLOWS, flow)) throw new Error(`unknown flow "${flow}"`);
+      const baseStages =
+        flow !== undefined && flow !== 'default' ? FLOWS[flow]!.build() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
@@ -283,10 +301,20 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
+      // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
+      // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.
+      // Fail at assembly rather than surface nothing the user explicitly asked for. Giving conformance
+      // its own standalone comment would need its own body format + dedupe marker; this error is that TODO.
+      if (pipeline.some((s) => s.name === STAGE.CONFORMANCE) && !pipeline.some((s) => s.name === STAGE.REVIEWER)) {
+        throw new Error(
+          `--conformance needs a flow with a reviewer stage (its verdict rides on the review comment); flow "${flow ?? 'default'}" has none`,
+        );
+      }
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
-        flow: deps.plan === true ? 'plan' : 'default',
+        flow: flow ?? 'default',
         provider: agents.agent.name,
         stages: pipeline.map((s) => s.name),
       });
@@ -441,7 +469,13 @@ export async function runSourcedIssue(
         ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
       });
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
-      if (!whiteLabel) {
+      // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
+      // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
+      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A
+      // conformance stage can only reach here alongside a reviewer — the assembly check above rejects
+      // conformance on a reviewer-less flow — so this skip can never swallow a conformance narrative.)
+      const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
+      if (!whiteLabel && pipelineHasReviewer) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({

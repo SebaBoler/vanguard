@@ -8,6 +8,7 @@ import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './so
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
+import type { RunEvent } from '../pipeline/events.js';
 
 describe('PR body assembly', () => {
   it('starts with Closes <task.id> for auto-close on merge', () => {
@@ -30,6 +31,7 @@ describe('pickRunOptions', () => {
       conformance: false,
       conformanceModel: 'opus',
       reviewGate: true,
+      flow: 'flow-b',
     };
 
     expect(pickRunOptions(cmd)).toEqual({
@@ -42,6 +44,7 @@ describe('pickRunOptions', () => {
       visualProofCmd: 'pnpm screenshots',
       conformance: false,
       conformanceModel: 'opus',
+      flow: 'flow-b',
     });
   });
 
@@ -197,6 +200,67 @@ describe('runSourcedIssue', () => {
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled[0]?.name).toBe('planner'); // planning runs before the implementer
     expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
+  });
+
+  it('--flow flow-b runs planner→implementer→adversary→repairer and reports the flow key', async () => {
+    const events: RunEvent[] = [];
+    const adapter = fakeAdapter([], STAGES);
+    // Faithful mock: echo outcomes for the ACTUAL assembled stages (no synthetic 'reviewer'), so the
+    // reviewer-less publish path is exercised — flow-b has adversary+repairer but no reviewer.
+    runStages.mockImplementation(async (_ctx: unknown, stages: PipelineStage[]) => stages.map((s) => stageOutcome(s.name)));
+    const result = await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', flow: 'flow-b', onEvent: (e) => events.push(e) },
+      adapter,
+    );
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
+    const runStart = events.find((e) => e.type === 'run-start');
+    expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('flow-b');
+    // A reviewer-less flow completes and publishes the PR, but posts no verdict comment.
+    expect(result.prUrl).toBe(MR_URL);
+    expect(adapter.publishVerdict).not.toHaveBeenCalled();
+  });
+
+  it('--max-turns overrides only the implementer of an HCL-shaped flow; other stages survive', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', maxTurns: 10 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(10); // flag wins on implementer
+    expect(assembled.find((s) => s.name === 'adversary')?.maxTurns).toBe(12); // non-implementer HCL value survives
+  });
+
+  it("--flow default keeps the adapter's own stages (Linear's issue-reading implementer survives)", async () => {
+    // 'default' is a selectable name in capabilities().flows, so a name-driven UI will send it. It must
+    // mean "the adapter's stages", NOT FLOWS.default.build — an adapter may customize them (Linear swaps
+    // in an implementer that reads the issue via linear-cli), and overriding that is a silent regression.
+    const linearish: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'Use the linear-cli skill to read Linear issue {{ISSUE}}', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
+    ];
+    const adapter = fakeAdapter([], linearish);
+    await runSourcedIssue('VAN-1', { repoPath: '/repo', flow: 'default' }, adapter);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.promptTemplate).toContain('linear-cli');
+  });
+
+  it('--conformance on a reviewer-less flow throws instead of running a stage nobody will see', async () => {
+    // flow-b is adversary+repairer, no reviewer. The conformance narrative is published as a section of
+    // the reviewer verdict comment, so without a reviewer it would run and surface nowhere.
+    const adapter = fakeAdapter([], STAGES);
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', conformance: true }, adapter),
+    ).rejects.toThrow(/--conformance needs a flow with a reviewer stage/);
+    expect(runStages).not.toHaveBeenCalled(); // rejected at assembly — no agent time burned
+  });
+
+  it('an unknown flow key throws', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
+      /unknown flow "nope"/,
+    );
   });
 
   it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {

@@ -624,6 +624,29 @@ describe('parseCli', () => {
     expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
   });
 
+  it('parses --flow on run and watch (a FLOWS key)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'flow-b'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('flow-b');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'flow-b'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('flow-b');
+
+    const noFlow = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noFlow.kind === 'run' && 'flow' in noFlow).toBe(false);
+  });
+
+  it('rejects an unknown --flow', () => {
+    const cmd = parseCli(['run', '--github', 'o/r#1', '--flow', 'bogus'], '/work');
+    expect(cmd.kind).toBe('error');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/Unknown flow "bogus".*default, plan, flow-b/);
+  });
+
+  it('rejects --plan and --flow together', () => {
+    const cmd = parseCli(['run', '--github', 'o/r#1', '--plan', '--flow', 'flow-b'], '/work');
+    expect(cmd.kind).toBe('error');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/not both/);
+  });
+
   it('parses --base on run and watch (defaults to undefined)', () => {
     const run = parseCli(['run', '--github', 'o/r#1', '--base', 'dev'], '/work');
     expect(run.kind === 'run' && run.baseBranch).toBe('dev');
