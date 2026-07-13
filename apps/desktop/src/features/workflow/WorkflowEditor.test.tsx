@@ -291,3 +291,17 @@ test('create rejects a name whose FILE already exists even when unparseable (r4 
   expect(screen.getByRole('button', { name: /create flow/i })).toBeDisabled();
   expect(screen.getByText(/"broken" is taken/)).toBeInTheDocument();
 });
+
+test('a failed load can be retried by clicking the same rail entry again (review #338 r5 finding 1)', async () => {
+  vi.mocked(ipc.apiReadFlow)
+    .mockRejectedValueOnce('transient parse hiccup')
+    .mockResolvedValueOnce({ doc: DOC, source: 'RAW SOURCE' });
+  render(<WorkflowEditor project="/repo" />);
+
+  fireEvent.click(await screen.findByText('my-flow'));
+  expect(await screen.findByText(/transient parse hiccup/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText('my-flow')); // retry — must NOT be eaten by the same-file no-op
+  await screen.findByTestId('stage-block-0');
+  expect(vi.mocked(ipc.apiReadFlow)).toHaveBeenCalledTimes(2);
+});

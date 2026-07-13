@@ -28,6 +28,12 @@ export function WorkflowEditor({ project }: { project: string }) {
   const gen = useRef(0);
   const saving = useRef(false);
 
+  // Unsaved edits must never vanish on a stray click — the same discipline saveFailed follows.
+  // (A project switch still resets without asking: navigation is owned by the shell; the dirty
+  // chip is the guard there — recorded limitation.)
+  const confirmDiscard = (): boolean =>
+    !state.dirty || window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`);
+
   const refreshList = useCallback(async (): Promise<void> => {
     const issued = gen.current;
     try {
@@ -49,6 +55,8 @@ export function WorkflowEditor({ project }: { project: string }) {
     dispatch({ type: 'reset' });
     setFlows(null);
     setListError(null);
+    // caps/capsError deliberately NOT reset here: capabilities are global + session-cached (see
+    // the fetch below). If they ever become project-scoped, reset them with the rest.
     void refreshList();
     // A swallowed failure here would silently disable the built-in collision guard AND empty the
     // palette (review #338 r2) — surface it, and gate create on caps being loaded.
@@ -67,14 +75,11 @@ export function WorkflowEditor({ project }: { project: string }) {
 
   const open = (file: string): void => {
     // Re-clicking the open flow is a no-op — reloading would silently replace dirty edits with the
-    // on-disk content, the one discard path the confirm below wouldn't cover.
-    if (file === state.file) return;
-    // Unsaved edits must never vanish on a stray rail click — the same discipline saveFailed
-    // follows. (A project switch still resets without asking: navigation is owned by the shell;
-    // the dirty chip is the guard there — recorded limitation.)
-    if (state.dirty && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) {
-      return;
-    }
+    // on-disk content, the one discard path the confirm below wouldn't cover. Only when a doc is
+    // actually loaded: after loadFailed the same click must RETRY, not dead-end (error recovery is
+    // what this editor is for).
+    if (file === state.file && state.doc !== null) return;
+    if (!confirmDiscard()) return;
     // Bump, don't just read: opening a flow invalidates every in-flight read AND save for the one
     // we're leaving — a slower earlier read must not clobber this selection, and a late saveOk
     // must not overwrite this flow's source/dirty (saveOk is not file-keyed).
@@ -230,7 +235,7 @@ export function WorkflowEditor({ project }: { project: string }) {
                     // "plan" collision would surface first at Save — exactly what the form exists to prevent
                     disabled={newName === '' || newNameProblem !== null || caps === null}
                     onClick={() => {
-                      if (state.dirty && !window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`)) return;
+                      if (!confirmDiscard()) return;
                       gen.current += 1; // same invalidation as open(): a late read/save must not land on the new doc
                       saving.current = false;
                       dispatch({ type: 'created', name: newName });
