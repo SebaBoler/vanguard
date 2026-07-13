@@ -62,17 +62,89 @@ describe('LinearCliTaskFetcher', () => {
     expect(task.comments).toEqual([{ author: 'Bob Builder', body: 'Another comment' }]);
   });
 
-  it('lists via issue query, mapping labels.nodes and filtering by label', async () => {
-    const fetcher = new LinearCliTaskFetcher({ linear: runner({ nodes: [queryIssue] }) });
-    const all = await fetcher.list();
-    expect(all).toHaveLength(1);
-    expect(all[0]?.labels).toEqual(['bug', 'p1']);
-    expect(all[0]?.children).toEqual([]);
-    expect(await fetcher.list({ labels: ['nope'] })).toHaveLength(0);
-  });
-
   it('throws when the issue is not found', async () => {
     await expect(new LinearCliTaskFetcher({ linear: runner({}) }).fetch('TES-99')).rejects.toThrow(/not found/);
+  });
+});
+
+// list() goes to Linear's GraphQL API, NOT the `linear` CLI: the CLI has no machine-readable issue
+// list (schpet v1.11.1 has no `issue query`, and `issue list` has no --json), and which flags exist
+// varies by CLI version. The API does not.
+describe('LinearCliTaskFetcher.list (GraphQL)', () => {
+  /** A fake GraphQL transport that records the bodies it was sent and replays canned pages. */
+  function graphqlFake(pages: { nodes: unknown[]; hasNextPage?: boolean; endCursor?: string }[]) {
+    const sent: { query: string; variables: Record<string, unknown> }[] = [];
+    let call = 0;
+    const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+      sent.push(body);
+      const page = pages[call++] ?? { nodes: [] };
+      return {
+        data: {
+          issues: {
+            pageInfo: { hasNextPage: page.hasNextPage ?? false, endCursor: page.endCursor ?? null },
+            nodes: page.nodes,
+          },
+        },
+      };
+    };
+    return { graphql, sent };
+  }
+
+  const node = (identifier: string, labels: string[] = [], state = 'Todo') => ({
+    identifier,
+    title: `T ${identifier}`,
+    description: 'body',
+    state: { name: state, type: 'unstarted' },
+    labels: { nodes: labels.map((name) => ({ name })) },
+  });
+
+  it('lists over GraphQL and never shells the CLI for a list', async () => {
+    const { graphql } = graphqlFake([{ nodes: [node('TES-1', ['bug', 'p1'])] }]);
+    // A runner that fails loudly: list() must not touch the CLI at all (the original bug shelled a
+    // command that does not exist, and a permissive fake is exactly what hid it).
+    const linear: LinearCliRunner = async (args) => {
+      throw new Error(`list() must not shell the CLI, but ran: linear ${args.join(' ')}`);
+    };
+    const all = await new LinearCliTaskFetcher({ linear, graphql }).list();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.id).toBe('TES-1');
+    expect(all[0]?.labels).toEqual(['bug', 'p1']);
+  });
+
+  it('pushes the state filter into the query — the watcher must not see completed issues', async () => {
+    const { graphql, sent } = graphqlFake([{ nodes: [node('TES-1')] }]);
+    await new LinearCliTaskFetcher({ linear: runner({}), graphql }).list({ state: 'unstarted' });
+    // TaskFilter.state is a Linear state TYPE. Dropping it would make watch --linear poll every issue
+    // in the team and claim already-completed ones.
+    expect(sent[0]?.variables['f']).toMatchObject({ state: { type: { eq: 'unstarted' } } });
+  });
+
+  it('scopes to the team when one is configured', async () => {
+    const { graphql, sent } = graphqlFake([{ nodes: [] }]);
+    await new LinearCliTaskFetcher({ linear: runner({}), team: 'DEV', graphql }).list();
+    expect(sent[0]?.variables['f']).toMatchObject({ team: { key: { eq: 'DEV' } } });
+  });
+
+  it('follows pagination to exhaustion — a watcher must not silently cap its work queue', async () => {
+    const { graphql, sent } = graphqlFake([
+      { nodes: [node('TES-1'), node('TES-2')], hasNextPage: true, endCursor: 'cur-1' },
+      { nodes: [node('TES-3')] },
+    ]);
+    const all = await new LinearCliTaskFetcher({ linear: runner({}), graphql }).list();
+    expect(all.map((t) => t.id)).toEqual(['TES-1', 'TES-2', 'TES-3']);
+    expect(sent[1]?.variables['after']).toBe('cur-1'); // second page asked for, from the cursor
+  });
+
+  it('filters by label client-side', async () => {
+    const { graphql } = graphqlFake([{ nodes: [node('TES-1', ['bug']), node('TES-2', ['chore'])] }]);
+    const fetcher = new LinearCliTaskFetcher({ linear: runner({}), graphql });
+    expect((await fetcher.list({ labels: ['bug'] })).map((t) => t.id)).toEqual(['TES-1']);
+  });
+
+  it('surfaces a GraphQL error instead of returning an empty list', async () => {
+    const graphql = async (): Promise<unknown> => ({ errors: [{ message: 'boom' }] });
+    // Silently returning [] would look exactly like "no work to do" — the watcher would idle forever.
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(/boom/);
   });
 });
 

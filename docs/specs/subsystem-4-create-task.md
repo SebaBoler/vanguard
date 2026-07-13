@@ -29,6 +29,13 @@ linear auth token                     → exit 0   (works; undocumented)
 not exist. The call chain `src/cli/watch.ts:97` → `src/runners/watch.ts:236,365` → `fetcher.list()`
 means **every `vanguard watch --linear` run dies on its first poll.**
 
+**It is a CLI-identity/version mismatch, not a typo.** `linear-cli.ts:10` says *"Verified against
+linear-cli 2.0"*, while the installed CLI is schpet **v1.11.1** — which has no `issue query`, and
+whose `issue list` is human-only with no `--json`. Core is coded against a CLI that is not the one
+in play. **This is the argument for GraphQL over any CLI command: the API is version-independent,
+and it is what the desktop board already does successfully.** Chasing the "right" CLI flag would
+leave us one upstream release away from the same outage.
+
 It is green in CI because the tests inject a fake `LinearCliRunner` — the fake cheerfully answers a
 command that does not exist. **The test proves the parsing and nothing about the contract.** That is
 the actual defect; the missing command is a symptom.
