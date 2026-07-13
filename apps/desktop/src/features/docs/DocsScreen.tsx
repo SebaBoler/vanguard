@@ -175,10 +175,18 @@ export function DocsScreen({ project }: { project: string }) {
         );
       })
       .finally(() => {
-        // The slot is released unconditionally: `open` already cleared it for the new doc, and leaving it
-        // set would wedge the create button. But the UI state below belongs to the issuing doc only.
-        createInFlight.current = false;
+        // Only the create that still owns the slot may release it — the same rule `send` follows, and for
+        // the same reason. Releasing unconditionally looked safe ("`open` already cleared it on switch"),
+        // but that ignores the case where the NEW doc has since started its own create: doc A settling
+        // would then clear doc B's LIVE guard. The ref is the documented last line of defence against
+        // filing the same issue twice, so a stale create must never disarm a live one.
+        //
+        // No test pins this, deliberately: `creating` ALSO gates the confirm button, and in the broken
+        // version A's finally bailed before clearing it — so B's button stayed disabled and no duplicate
+        // was reachable. The invariant was still broken (one of two guards silently gone), and defence in
+        // depth only works while both layers hold. Fixing it without claiming a test proves it.
         if (issued !== gen.current) return;
+        createInFlight.current = false;
         setCreating(false);
         // ALWAYS close the dialog, including on failure. Leaving it open would put a live "Create task"
         // button back under the user's cursor with the warning rendered BEHIND the modal — one more click

@@ -240,3 +240,4 @@ test('a create that lands AFTER a doc switch does not report itself under the ne
   // ...and b.md's Create button must still work (the slot was released on switch).
   expect(screen.getByRole('button', { name: /^create task$/i })).toBeEnabled();
 });
+
