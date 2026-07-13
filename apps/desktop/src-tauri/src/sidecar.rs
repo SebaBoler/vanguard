@@ -116,10 +116,13 @@ fn request(
 
 /// The pure capability surface (providers/flows/transports/defaults). No stdout scraping.
 ///
-/// Sync (not `async`) on purpose: `request` holds a std Mutex across a blocking `read_line`, which
-/// would stall the shared async runtime. As a plain command Tauri runs it on its own thread pool
-/// thread, so a long-running exchange never blocks other IPC.
-#[tauri::command]
+/// The body stays sync — `request` holds a std Mutex across a blocking `read_line`, which would stall
+/// the shared async runtime if this were an `async fn`. But it must NOT be a plain `#[tauri::command]`:
+/// tauri-macros compiles a sync body with no attribute as `ExecutionContext::Blocking`, i.e. it runs on
+/// the MAIN thread, where a blocking read freezes the webview. `(async)` on a sync fn is the third
+/// option — tauri dispatches it to the blocking threadpool ("sync_threadpool"), which is what the
+/// comment here previously (wrongly) claimed a plain command already did.
+#[tauri::command(async)]
 pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, String> {
     let resp = request(
         &state,
@@ -243,7 +246,11 @@ impl Drop for RunGuard<'_> {
 /// Start a run. Mints a runId, emits `run-accepted` + every event as `{runId, event}` (buffered for
 /// re-attach), and guarantees exactly one terminal event (run-end from the stream on success, else a
 /// synthesized run-error / run-cancelled). Returns the run's result, or an error string.
-#[tauri::command]
+///
+/// `(async)` for the same reason as `api_capabilities`, and far more urgently: this call blocks for the
+/// WHOLE run (minutes). As a plain sync command that is the main thread, so the webview would be frozen
+/// for the entire run — the live event strip this powers could never paint a single frame.
+#[tauri::command(async)]
 pub fn api_create_run(
     app: AppHandle,
     state: State<'_, Sidecar>,
@@ -343,8 +350,9 @@ pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
 }
 
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project
-/// at click instead of minutes into a run.
-#[tauri::command]
+/// at click instead of minutes into a run. `(async)` — it shells out to git, and process spawns do not
+/// belong on the main thread even when they're fast.
+#[tauri::command(async)]
 pub fn api_repo_ok(repo_path: String) -> bool {
     Command::new("git")
         .arg("-C")
