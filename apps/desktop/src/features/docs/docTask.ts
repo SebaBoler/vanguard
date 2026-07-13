@@ -16,9 +16,19 @@ export const MAX_BODY_BYTES = 60_000;
  * Pure so it can be tested without a DOM; CodeMirror cannot be driven under jsdom.
  */
 export function titleFromDoc(doc: string): string | undefined {
+  let fenced = false;
   for (const line of doc.split('\n')) {
-    const m = line.match(/^#\s+(.*\S)\s*$/);
-    if (m?.[1] !== undefined) return m[1];
+    // A ``` fence toggles code. `# install deps` inside a shell snippet is a comment, not the doc's
+    // heading — taking it would file a real, un-deletable issue under a name the user never wrote.
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    // Closed-ATX headings (`# Title #`) carry trailing hashes that are syntax, not title.
+    const m = line.match(/^#\s+(.*?)\s*#*\s*$/);
+    const title = m?.[1];
+    if (title !== undefined && title !== '') return title;
   }
   return undefined;
 }

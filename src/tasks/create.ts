@@ -39,8 +39,26 @@ export const MAX_BODY_BYTES = 60_000;
  * it is the only option that works for both.
  */
 export type CliRunner = (bin: 'gh' | 'glab', args: string[], opts: { cwd: string; stdin?: string }) => Promise<string>;
+
+/**
+ * Bound on the CLI itself, so a dead network fails instead of wedging the caller forever.
+ *
+ * The sidecar deliberately does NOT kill this exchange (see `Bound::Untimed`) — a kill mid-response
+ * cannot un-create an issue. But with no bound anywhere, a hung `gh` holds the query pipe until the app
+ * is restarted. So the bound lives HERE, at the transport, and is generous: a create that has not
+ * returned in two minutes is not coming back. It carries the same ambiguity as any other failure — the
+ * issue may already exist — which is exactly what the UI now tells the user, so nothing new is hidden.
+ */
+const CLI_TIMEOUT_MS = 120_000;
+
 const defaultCli: CliRunner = async (bin, args, opts) =>
-  (await execa(bin, args, { cwd: opts.cwd, ...(opts.stdin === undefined ? {} : { input: opts.stdin }) })).stdout;
+  (
+    await execa(bin, args, {
+      cwd: opts.cwd,
+      timeout: CLI_TIMEOUT_MS,
+      ...(opts.stdin === undefined ? {} : { input: opts.stdin }),
+    })
+  ).stdout;
 
 function assertCreatable(input: CreateTaskInput): void {
   if (input.title.trim() === '') throw new VanguardError('A task needs a title.');

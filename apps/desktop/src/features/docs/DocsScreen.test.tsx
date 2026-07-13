@@ -187,7 +187,7 @@ test('a doc with no # heading cannot be turned into a task', async () => {
   expect(screen.getByText(/add a .*heading/i)).toBeInTheDocument();
 });
 
-test('a failed create warns that the issue may exist, instead of inviting a blind retry', async () => {
+test('a failed create closes the dialog and shows the ambiguity warning where it can be READ', async () => {
   vi.mocked(ipc.apiCreateTask).mockRejectedValueOnce(new Error('network down'));
   render(<DocsScreen project="/repo" />);
   fireEvent.click(await screen.findByText('plan.md'));
@@ -196,9 +196,14 @@ test('a failed create warns that the issue may exist, instead of inviting a blin
   fireEvent.click(screen.getByRole('button', { name: /^create task$/i }));
   fireEvent.click(screen.getAllByRole('button', { name: /^create task$/i }).at(-1)!);
 
-  // A failed WRITE is an ambiguous write: it may have landed before the error. A bare "failed" would
-  // invite a retry, and a retry creates a SECOND real, un-deletable issue.
+  // A failed WRITE is an ambiguous write: it may have landed before the error reached us.
   expect(await screen.findByText(/may or may not have been created/i)).toBeInTheDocument();
+
+  // The dialog MUST be gone. Leaving it open puts a live confirm button back under the cursor with the
+  // warning rendered behind the modal — one more click files the same issue twice. Asserting the text
+  // exists is not enough: it existed before this fix too, just underneath the modal.
+  await waitFor(() => expect(screen.queryByText(/cannot be undone/i)).toBeNull());
+  expect(screen.getAllByRole('button', { name: /^create task$/i })).toHaveLength(1); // only the panel one
 });
 
 test('an over-long doc is refused BEFORE the irreversible click', async () => {

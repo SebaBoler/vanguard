@@ -34,6 +34,7 @@ export function DocsScreen({ project }: { project: string }) {
   const [confirming, setConfirming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [source, setSource] = useState('github');
   const createInFlight = useRef(false);
 
@@ -61,6 +62,7 @@ export function DocsScreen({ project }: { project: string }) {
     // A "Created <link>" line belongs to the doc it was created FROM. Left standing under a different
     // document it reads as "this doc was created" — misleading, for the one action with no undo.
     setCreated(null);
+    setCreateError(null);
     setConfirming(false);
     void readDoc(project, name)
       .then((content) => {
@@ -147,22 +149,24 @@ export function DocsScreen({ project }: { project: string }) {
     if (createInFlight.current || active === undefined || docTitle === undefined) return;
     createInFlight.current = true;
     setCreating(true);
+    setCreateError(null);
     void apiCreateTask(project, docTitle, doc)
-      .then((task) => {
-        setCreated(task);
-        setConfirming(false);
-      })
+      .then((task) => setCreated(task))
       .catch((err: unknown) =>
-        // A failed WRITE is an ambiguous write: the request may have landed before the error. Saying only
-        // "failed" invites a blind retry, and a retry here creates a SECOND real, un-deletable issue.
-        dispatch({
-          type: 'fail',
-          message: `Create task failed: ${String(err)} — the issue may or may not have been created. Check ${source} before retrying.`,
-        }),
+        // A failed WRITE is an ambiguous write: the request may have landed before the error reached us.
+        // Saying only "failed" invites a blind retry, and a retry here creates a SECOND real,
+        // un-deletable issue.
+        setCreateError(
+          `${String(err)} — the issue may or may not have been created. Check ${source} before retrying.`,
+        ),
       )
       .finally(() => {
         createInFlight.current = false;
         setCreating(false);
+        // ALWAYS close the dialog, including on failure. Leaving it open would put a live "Create task"
+        // button back under the user's cursor with the warning rendered BEHIND the modal — one more click
+        // and they have filed the same issue twice. A retry must mean deliberately reopening this.
+        setConfirming(false);
       });
   };
 
@@ -221,6 +225,9 @@ export function DocsScreen({ project }: { project: string }) {
             // Refuse rather than invent a title: a filename fallback would create a real, un-deletable
             // issue called `note-3.md`.
             <p className="mt-1 text-xs text-muted-foreground">Add a `# heading` to name the task.</p>
+          )}
+          {createError !== null && (
+            <p className="mt-1 text-xs text-destructive">{createError}</p>
           )}
           {created !== null && (
             <p className="mt-1 truncate text-xs">
