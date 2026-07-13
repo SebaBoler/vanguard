@@ -111,13 +111,11 @@ async function main(): Promise<void> {
     console.log = (...args: unknown[]): void => console.error(...args);
     console.info = (...args: unknown[]): void => console.error(...args);
     console.debug = (...args: unknown[]): void => console.error(...args);
-    const [{ runComplete }, { authFromEnv }, { default: Anthropic }, { createInterface: mkRl }] = await Promise.all([
+    const [{ runComplete }, { query }, { createInterface: mkRl }] = await Promise.all([
       import('../api/complete.js'),
-      import('../agents/auth.js'),
-      import('@anthropic-ai/sdk'),
+      import('@anthropic-ai/claude-agent-sdk'),
       import('node:readline'),
     ]);
-    type AnthropicLike = import('../api/complete.js').AnthropicLike;
     const rlc = mkRl({ input: process.stdin });
     const input = await new Promise<string>((resolve) => {
       rlc.once('line', (l: string) => {
@@ -133,8 +131,7 @@ async function main(): Promise<void> {
       return;
     }
     const res = await runComplete(req, {
-      authFromEnv: () => authFromEnv(),
-      anthropic: (opts) => new Anthropic(opts) as unknown as AnthropicLike,
+      query: (params) => query(params as Parameters<typeof query>[0]),
     });
     process.stdout.write(JSON.stringify(res) + '\n');
     return;

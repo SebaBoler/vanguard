@@ -1,10 +1,8 @@
-import type { AgentAuth } from '../agents/auth.js';
-
 /** One doc-chat completion request (the JSON `vanguard __complete` reads on stdin). */
 export interface CompleteRequest {
   system?: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
-  model: string;
+  model?: string;
   baseUrl?: string;
 }
 
@@ -14,58 +12,60 @@ export interface CompleteResponse {
   error?: { message: string };
 }
 
-/** Minimal structural shape of the Anthropic client this uses (the real SDK client is cast to it). */
-export interface AnthropicLike {
-  messages: { create: (body: unknown) => Promise<{ content: { type: string; text?: string }[] }> };
-}
+/** The async-iterable subset of the agent SDK's `query()` result we consume. */
+type QueryStream = AsyncIterable<{ type: string; subtype?: string; result?: string }>;
 
-/** Injected so tests mock the SDK + env auth; the CLI branch wires the real ones. */
+/** Injected so tests mock the SDK; the CLI branch wires the real `@anthropic-ai/claude-agent-sdk`. */
 export interface CompleteDeps {
-  authFromEnv: () => AgentAuth | undefined;
-  anthropic: (opts: { apiKey: string; baseURL?: string }) => AnthropicLike;
+  query: (params: { prompt: string; options?: Record<string, unknown> }) => QueryStream;
 }
-
-const NEED_KEY = 'doc chat needs ANTHROPIC_API_KEY';
 
 /**
- * Run one plain Messages-API completion for the doc-editor chat. No sandbox, no pipeline. Requires
- * an API key (`mode:'api'`) — a Claude-Code subscription token is scoped to the CLI and rejected by
- * the Messages endpoint, so it fails fast with a specific message rather than a raw 401.
+ * Run one plain doc-editor chat completion via the Claude Code agent SDK. Auth is inherited from the
+ * environment exactly like the `claude` CLI — so a `CLAUDE_CODE_OAUTH_TOKEN` subscription token works
+ * with no API key (and `ANTHROPIC_API_KEY` works too). Constrained to a single turn with no tools, so
+ * it behaves as a completion, not an agent (no filesystem/tool access).
  */
 export async function runComplete(req: unknown, deps: CompleteDeps): Promise<CompleteResponse> {
   const parsed = validate(req);
   if ('error' in parsed) return parsed;
 
-  const auth = deps.authFromEnv();
-  if (auth === undefined) return { error: { message: `${NEED_KEY} (none found in the environment)` } };
-  if (auth.mode !== 'api') {
-    return { error: { message: `${NEED_KEY} (found a Claude-Code subscription token, which the Messages API cannot use)` } };
-  }
-
+  const prompt = parsed.messages.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
   try {
-    // Construct inside the try: a bad baseURL/opts throwing synchronously becomes {error}, not a
-    // reject that Rust would report as the generic "produced no output".
-    const client = deps.anthropic({ apiKey: auth.apiKey, ...(parsed.baseUrl !== undefined ? { baseURL: parsed.baseUrl } : {}) });
-    const res = await client.messages.create({
-      model: parsed.model,
-      max_tokens: 4096,
-      ...(parsed.system !== undefined ? { system: parsed.system } : {}),
-      messages: parsed.messages,
+    const stream = deps.query({
+      prompt,
+      options: {
+        allowedTools: [], // completion, not an agent — no filesystem/tool access
+        settingSources: [], // don't load project/user CLAUDE.md or settings
+        maxTurns: 1,
+        ...(parsed.system !== undefined ? { systemPrompt: parsed.system } : {}),
+        ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+        ...(parsed.baseUrl !== undefined ? { env: withBaseUrl(parsed.baseUrl) } : {}),
+      },
     });
-    const text = res.content
-      .filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('');
-    return { text };
+    for await (const msg of stream) {
+      if (msg.type === 'result') {
+        if (msg.subtype === 'success' && typeof msg.result === 'string') return { text: msg.result };
+        return { error: { message: `doc chat failed: ${msg.subtype ?? 'unknown error'}` } };
+      }
+    }
+    return { error: { message: 'no result from the model' } };
   } catch (err) {
     return { error: { message: err instanceof Error ? err.message : String(err) } };
   }
 }
 
+/** Preserve the inherited env (incl. the auth token) and point the SDK at a custom Anthropic-compatible base URL. */
+function withBaseUrl(baseUrl: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+  env['ANTHROPIC_BASE_URL'] = baseUrl;
+  return env;
+}
+
 function validate(req: unknown): CompleteRequest | { error: { message: string } } {
   if (req === null || typeof req !== 'object') return { error: { message: 'invalid request' } };
   const r = req as Record<string, unknown>;
-  if (typeof r['model'] !== 'string' || r['model'] === '') return { error: { message: 'missing model' } };
   if (!Array.isArray(r['messages']) || r['messages'].length === 0) {
     return { error: { message: 'messages must be a non-empty array' } };
   }
@@ -78,9 +78,9 @@ function validate(req: unknown): CompleteRequest | { error: { message: string } 
     }
   }
   return {
-    model: r['model'],
     messages: r['messages'] as CompleteRequest['messages'],
     ...(typeof r['system'] === 'string' ? { system: r['system'] } : {}),
+    ...(typeof r['model'] === 'string' ? { model: r['model'] } : {}),
     ...(typeof r['baseUrl'] === 'string' ? { baseUrl: r['baseUrl'] } : {}),
   };
 }

@@ -43,16 +43,15 @@ at all** (an *absent* button, not a disabled one — S4's job is purely additive
    access** — **not** the React renderer (no env, must never hold a key), **not** `app.json`.
    Only non-secret `chatModel`/`chatBaseUrl` may live in `AppConfig`.
 
-2. **The chat needs `ANTHROPIC_API_KEY` (api mode) — a subscription OAuth token will not work.**
-   (Feasibility #1.) `authFromEnv()` (`src/agents/auth.ts:26`) *prefers* the subscription token
-   `CLAUDE_CODE_OAUTH_TOKEN` (Vanguard's default, and the user's `--provider claude` dogfood
-   path), falling back to `ANTHROPIC_API_KEY`. But the `@anthropic-ai/sdk` Messages endpoint
-   authenticates with `x-api-key` and **rejects Claude-Code OAuth subscription tokens** — that
-   token is scoped to the `claude` CLI, which is why the existing `claude` provider shells the
-   CLI (`src/agents/claude-code.ts:30`) rather than calling Messages. So `__complete` **requires
-   `auth.mode === 'api'`**; a subscription-only environment gets a *specific* error, not a
-   silent 401. (Follow-up, not v1: a "use local `claude` CLI" mode could serve subscription
-   users — noted below.)
+2. **Auth is inherited from the environment — a `CLAUDE_CODE_OAUTH_TOKEN` subscription token is
+   enough** (and `ANTHROPIC_API_KEY` works too). `__complete` runs the chat through
+   `@anthropic-ai/claude-agent-sdk`'s `query()` — the Claude Code programmatic interface, which
+   reads the same credentials from the environment as the `claude` CLI. So it authenticates with
+   whatever the app was launched with (the user's `--provider claude` subscription token), no API
+   key required, no auth branching in our code. (An earlier draft wrongly reached for the plain
+   `@anthropic-ai/sdk` Messages endpoint, which `x-api-key`-only and rejects the subscription
+   token — that was the wrong SDK; `claude-agent-sdk` is the one built for this and was already a
+   dependency.)
 
 3. **The chat must not queue behind a run.** The run sidecar is one Node process, one pipe, one
    mutex, single-in-flight (S0.5). So the chat completion runs on a **separate one-shot path**,
@@ -81,8 +80,8 @@ turn**:
 DocsScreen (React)                 Rust (env access)              one-shot Node (env access)
   apiComplete(req)  ──invoke──►  api_complete command  ──spawn──►  vanguard __complete
    {system,messages,             sh -c 'exec vanguard              sets VANGUARD_SIDECAR gate,
-    model, baseUrl?}              __complete', pipes req,          authFromEnv() → REQUIRE api,
-                                  reads ONE JSON line              @anthropic-ai/sdk Messages,
+    model?, baseUrl?}             __complete', pipes req,          claude-agent-sdk query()
+                                  reads ONE JSON line              (no tools, 1 turn, auth from env),
    ◄── {text} | {error} ◄────────────────────────────────────────  writes {text}|{error}, exits
 ```
 
@@ -113,12 +112,11 @@ custom-provider routing (the Zai-via-proxy case) are **Subsystem 6**; `__complet
 
 1. **`vanguard __complete`** — hidden CLI entrypoint. Sets the stdout gate, reads one JSON
    request line on stdin (`{ system?: string; messages: {role:'user'|'assistant'; content:string}[];
-   model: string; baseUrl?: string; maxTokens?: number }`), resolves auth via `authFromEnv()`
-   and **requires `mode:'api'`**, makes one `@anthropic-ai/sdk` Messages call
-   (`new Anthropic({ apiKey, ...(baseUrl?{baseURL}:{}) })`), writes one JSON line (`{ text }` or
-   `{ error: { message } }`), exits. No sandbox, no pipeline. On a subscription-only env, the
-   error message names the fix: *"doc chat needs ANTHROPIC_API_KEY (found a Claude-Code
-   subscription token, which the Messages API can't use)."*
+   model?: string; baseUrl?: string }`), runs `@anthropic-ai/claude-agent-sdk`'s `query()`
+   constrained to **`allowedTools: []`, `settingSources: []`, `maxTurns: 1`** (a completion, not an
+   agent — no filesystem/tool access), extracts the `type:'result'` success text, writes one JSON
+   line (`{ text }` or `{ error: { message } }`), exits. No sandbox, no run pipeline. Auth is read
+   from the environment by the SDK (subscription token or API key) — no auth code of our own.
 2. **Rust `api_complete`** — `#[tauri::command]` that spawns `vanguard __complete`, pipes the
    request, reads the one response line, returns it. No `Sidecar` state (sidesteps the run
    mutex). Registered in `lib.rs`.
@@ -157,8 +155,6 @@ custom-provider routing (the Zai-via-proxy case) are **Subsystem 6**; `__complet
   S4's seam is the finished `.vanguard/docs/*.md` + the per-project `cfg.source`/`cfg.label`
   already in `AppConfig` (which repo/tracker to target).
 - **v2 inline selection comments** (span edits, anchoring, decorations) → later S3 iteration.
-- **Subscription-token doc chat** (a "use local `claude` CLI" mode for `CLAUDE_CODE_OAUTH_TOKEN`
-  users) → follow-up; v1 requires `ANTHROPIC_API_KEY`.
 - **OpenAI-format / multi-format providers, stored custom keys** → **S6**.
 - **Streaming tokens** — v1 is request→full-response (one-shot). Deferred.
 - **Rich doc management** (folders, rename, delete, search) → later.
@@ -197,9 +193,8 @@ custom-provider routing (the Zai-via-proxy case) are **Subsystem 6**; `__complet
 
 ## New dependencies
 
-- Root (`package.json`): **`@anthropic-ai/sdk`** (plain Messages API). Runtime dep of the CLI's
-  `__complete`. (The unused `@anthropic-ai/claude-agent-sdk` is the agentic loop, wrong primitive
-  + same OAuth auth — removable later, out of scope.)
+- Root: **no new dep** — `__complete` uses the already-present `@anthropic-ai/claude-agent-sdk`
+  (the Claude Code programmatic SDK, which is exactly what makes the subscription token work).
 - Desktop (`apps/desktop/package.json`): **`@uiw/react-codemirror`**, **`@codemirror/lang-markdown`**
   (+ transitive `@codemirror/*`). React 19 satisfied (peer `>=16.8.0`).
 
@@ -213,10 +208,10 @@ custom-provider routing (the Zai-via-proxy case) are **Subsystem 6**; `__complet
 - **AC2** `api_complete` (Rust) spawns `__complete`, pipes the request, returns the parsed
   response; a non-zero exit or malformed line → `Err(String)`. It takes no `State<Sidecar>` (a
   chat completes while a run is in flight).
-- **AC3** Auth: with `ANTHROPIC_API_KEY` set, the call succeeds; with **only** a subscription
-  token (`CLAUDE_CODE_OAUTH_TOKEN`), `__complete` returns a *specific* error naming
-  `ANTHROPIC_API_KEY` (not a generic 401 or crash); with neither, a "set ANTHROPIC_API_KEY"
-  error. The key is never written to `app.json` and never sent to the renderer.
+- **AC3** Auth is inherited from the environment by the agent SDK: a `CLAUDE_CODE_OAUTH_TOKEN`
+  subscription token alone drives the chat (no API key needed), and `ANTHROPIC_API_KEY` works too.
+  An auth failure surfaces as a chat `{error}` (the SDK's `result` error subtype), not a crash. No
+  credential is ever written to `app.json` or sent to the renderer.
 - **AC4** `DocsScreen` lists `.vanguard/docs/*.md`, opens one in the editor, edits persist via
   `write_doc`, "New doc" creates one; reachable from the Rail.
 - **AC5** Chat: sending calls `apiComplete`; an assistant reply with `<doc>…</doc>` renders a

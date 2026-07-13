@@ -164,7 +164,7 @@ export function Settings({ project }: { project: string }) {
             />
           </Field>
         </div>
-        <Field label="Doc chat model" hint="— the Docs editor chat (needs ANTHROPIC_API_KEY in your env)">
+        <Field label="Doc chat model" hint="— the Docs editor chat (uses your Claude auth from the environment)">
           <Input
             value={cfg.chatModel ?? ''}
             onChange={(e) => set('chatModel', e.target.value || undefined)}
