@@ -57,7 +57,8 @@ export interface RunOptions extends ProviderChoice {
   /**
    * Named flow key (a `FLOWS` registry entry, e.g. 'flow-b'). Set via `--flow`. `--plan` is the
    * back-compat alias for `flow: 'plan'`. When set, `FLOWS[flow].build()` supplies the base stages
-   * instead of the adapter's default. Validated at the CLI/sidecar boundary.
+   * instead of the adapter's — EXCEPT `'default'`, which means "the adapter's own stages" (an adapter
+   * may customize them; Linear does). Validated at the CLI/sidecar boundary.
    */
   flow?: string;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
@@ -281,10 +282,17 @@ export async function runSourcedIssue(
     );
     try {
       // Named-flow dispatch. `--flow <name>` selects a FLOWS builder; `--plan` is the back-compat
-      // alias for flow 'plan'. Absent ⇒ the adapter's default stages (== FLOWS.default.build today).
+      // alias for flow 'plan'.
+      //
+      // 'default' means "this adapter's own stages", NOT FLOWS.default.build. They are not the same:
+      // the Linear adapter's stages() swaps in an implementer that reads the issue via the linear-cli
+      // skill, while FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting
+      // 'default' by name — the natural thing for a name-driven UI — must not silently downgrade a
+      // Linear run to an implementer that never reads the issue.
       const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
       if (flow !== undefined && !Object.hasOwn(FLOWS, flow)) throw new Error(`unknown flow "${flow}"`);
-      const baseStages = flow !== undefined ? FLOWS[flow]!.build() : adapter.stages();
+      const baseStages =
+        flow !== undefined && flow !== 'default' ? FLOWS[flow]!.build() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
@@ -293,6 +301,16 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
+      // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
+      // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.
+      // Fail at assembly rather than surface nothing the user explicitly asked for. Giving conformance
+      // its own standalone comment would need its own body format + dedupe marker; this error is that TODO.
+      if (pipeline.some((s) => s.name === STAGE.CONFORMANCE) && !pipeline.some((s) => s.name === STAGE.REVIEWER)) {
+        throw new Error(
+          `--conformance needs a flow with a reviewer stage (its verdict rides on the review comment); flow "${flow ?? 'default'}" has none`,
+        );
+      }
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
@@ -453,9 +471,9 @@ export async function runSourcedIssue(
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
       // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
-      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A conformance
-      // stage's narrative rides on this verdict comment, so it too is surfaced only for reviewer-bearing
-      // flows; it is still persisted to the run record, and the deterministic manifest still gates the body.)
+      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A
+      // conformance stage can only reach here alongside a reviewer — the assembly check above rejects
+      // conformance on a reviewer-less flow — so this skip can never swallow a conformance narrative.)
       const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
       if (!whiteLabel && pipelineHasReviewer) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);

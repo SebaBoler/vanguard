@@ -231,6 +231,31 @@ describe('runSourcedIssue', () => {
     expect(assembled.find((s) => s.name === 'adversary')?.maxTurns).toBe(12); // non-implementer HCL value survives
   });
 
+  it("--flow default keeps the adapter's own stages (Linear's issue-reading implementer survives)", async () => {
+    // 'default' is a selectable name in capabilities().flows, so a name-driven UI will send it. It must
+    // mean "the adapter's stages", NOT FLOWS.default.build — an adapter may customize them (Linear swaps
+    // in an implementer that reads the issue via linear-cli), and overriding that is a silent regression.
+    const linearish: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'Use the linear-cli skill to read Linear issue {{ISSUE}}', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
+    ];
+    const adapter = fakeAdapter([], linearish);
+    await runSourcedIssue('VAN-1', { repoPath: '/repo', flow: 'default' }, adapter);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.promptTemplate).toContain('linear-cli');
+  });
+
+  it('--conformance on a reviewer-less flow throws instead of running a stage nobody will see', async () => {
+    // flow-b is adversary+repairer, no reviewer. The conformance narrative is published as a section of
+    // the reviewer verdict comment, so without a reviewer it would run and surface nowhere.
+    const adapter = fakeAdapter([], STAGES);
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', conformance: true }, adapter),
+    ).rejects.toThrow(/--conformance needs a flow with a reviewer stage/);
+    expect(runStages).not.toHaveBeenCalled(); // rejected at assembly — no agent time burned
+  });
+
   it('an unknown flow key throws', async () => {
     const adapter = fakeAdapter([], STAGES);
     await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
