@@ -90,7 +90,12 @@ async function postGraphql(token: string, body: { query: string; variables: Reco
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new VanguardError(`Linear API request failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    // Linear puts the actionable reason (bad key, missing scope) in the BODY. Throwing on the status
+    // line alone turns a fixable auth problem into a bare "401 Unauthorized" on every watch poll.
+    const detail = await res.text().catch(() => '');
+    throw new VanguardError(`Linear API request failed: ${res.status} ${res.statusText}${detail === '' ? '' : ` — ${detail.slice(0, 300)}`}`);
+  }
   return res.json();
 }
 
@@ -186,8 +191,15 @@ export class LinearCliTaskFetcher implements TaskFetcher {
         throw new VanguardError(`Linear API error: ${errors.map((e) => e.message ?? '').join('; ')}`);
       }
       const connection = response.data?.issues;
-      issues.push(...(connection?.nodes ?? []));
-      const next = connection?.pageInfo;
+      // Valid JSON, no `errors`, but no issue connection either (`{"data":{"issues":null}}`, or a proxy
+      // returning well-formed-but-wrong JSON). Falling through would `break` and return [] — again
+      // indistinguishable from "no work to do", idling the watcher forever. That is the failure mode
+      // this whole change exists to kill, so it must not survive in the malformed-SUCCESS case either.
+      if (connection === undefined || connection === null) {
+        throw new VanguardError('Linear API returned no issue connection — refusing to report an empty list.');
+      }
+      issues.push(...(connection.nodes ?? []));
+      const next = connection.pageInfo;
       if (next?.hasNextPage !== true || next.endCursor === null || next.endCursor === undefined) break;
       // The cursor must ADVANCE. `hasNextPage: true` with a repeating cursor is the infinite loop.
       if (next.endCursor === after) {

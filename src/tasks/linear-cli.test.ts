@@ -187,6 +187,16 @@ describe('LinearCliTaskFetcher.list (GraphQL)', () => {
     await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(/cursor/i);
   });
 
+  it('refuses a well-formed 200 that carries no issue connection', async () => {
+    // No `errors`, but no `data.issues` either (a proxy, or `{"data":{"issues":null}}`). Returning []
+    // here is indistinguishable from "no work to do" and idles the watcher forever — the exact failure
+    // this change exists to kill, so the malformed-SUCCESS case must fail loudly too.
+    const graphql = async (): Promise<unknown> => ({ data: { issues: null } });
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(
+      /no issue connection/i,
+    );
+  });
+
   it('surfaces a GraphQL error instead of returning an empty list', async () => {
     const graphql = async (): Promise<unknown> => ({ errors: [{ message: 'boom' }] });
     // Silently returning [] would look exactly like "no work to do" — the watcher would idle forever.
