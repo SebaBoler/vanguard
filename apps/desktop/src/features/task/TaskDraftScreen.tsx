@@ -79,6 +79,10 @@ export function TaskDraftScreen({
   const [createError, setCreateError] = useState<string | null>(null);
   const [source, setSource] = useState<string | undefined>(undefined);
   const [deleteArm, setDeleteArm] = useState<string | null>(null);
+  // Ids the user deleted THIS session. The archive step needs to tell a deliberate delete (silent)
+  // from a transient read/parse failure (review #349 r7): both surface as a non-'written' update,
+  // but only the latter leaves a re-filable filed draft on disk and must warn.
+  const deletedIds = useRef(new Set<string>());
 
   useEffect(() => {
     void readAppConfig(project)
@@ -155,14 +159,25 @@ export function TaskDraftScreen({
           }),
         );
         if (!alive) return;
-        setEntries(loaded);
-        entriesRef.current = loaded;
+        // MERGE, don't replace (review #349 r7): the editor is live before this resolves, and a
+        // draft minted in that window is not in the disk snapshot — replacing would drop it from
+        // the sidebar and the switch below would yank it out from under the user's typing.
+        const known = new Set(loaded.map((e) => e.id));
+        const merged = [...entriesRef.current.filter((e) => !known.has(e.id)), ...loaded];
+        setEntries(merged);
+        entriesRef.current = merged;
+        if (activeIdRef.current !== null) {
+          // The user already minted a draft this mount — their selection wins; just consume the
+          // nonce so a later prop change still resets.
+          consumedNonce.value = freshNonce;
+          return;
+        }
         if (freshNonce !== consumedNonce.value) {
           consumedNonce.value = freshNonce;
           switchRef.current(null);
         } else {
           const remembered = lastSelection.get(project);
-          switchRef.current(remembered !== undefined && loaded.some((e) => e.id === remembered) ? remembered : null);
+          switchRef.current(remembered !== undefined && merged.some((e) => e.id === remembered) ? remembered : null);
         }
       })
       .catch(() => {});
@@ -328,7 +343,9 @@ export function TaskDraftScreen({
           draftRef.current = { ...draftRef.current, archived: true, created: task };
           setArchived(true);
           setCreated(task);
-          if (outcome === 'failed') {
+          if (outcome !== 'written' && !deletedIds.current.has(id)) {
+            // 'skipped' here without a local delete means the read-modify-write couldn't see the
+            // file (transient IO, corrupt parse) — on disk the draft is still re-filable.
             setCreateError(`The issue WAS created (${task.id}) but the draft could not be archived — do not re-file it.`);
           }
         }
@@ -352,6 +369,7 @@ export function TaskDraftScreen({
 
   const removeDraft = (id: string): void => {
     setDeleteArm(null);
+    deletedIds.current.add(id);
     setEntries((prev) => prev.filter((e) => e.id !== id));
     // deleteNow discards the pending debounce first and queues after any in-flight write — the
     // delete wins; the file cannot resurrect (spec G2).

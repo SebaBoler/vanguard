@@ -351,6 +351,52 @@ test('the outbound completion carries the body of the draft it was issued FOR, n
   expect(system).not.toContain('Secret B contents'); // never the draft the user switched to
 });
 
+test('a transient failure of the archive write shows the do-not-re-file warning (review #349 r7)', async () => {
+  renderFresh();
+  await screen.findByRole('button', { name: /new draft/i });
+  type('# Fragile\n');
+  await settle();
+  // The archive step is a read-modify-write; fail its read once (transient IO — NOT a delete).
+  vi.mocked(ipc.readDraft).mockRejectedValueOnce(new Error('EIO'));
+  fireEvent.click(screen.getByRole('button', { name: /create task/i }));
+  await confirmCreate();
+  await settle();
+  // The issue exists but the file was never archived — the user MUST be warned off re-filing.
+  expect(screen.getByText(/do not re-file/i)).toBeInTheDocument();
+});
+
+test('a draft deliberately deleted mid-create does NOT get the scary warning (review #349 r4/r7)', async () => {
+  let resolveCreate: (v: { id: string; url: string }) => void = () => {};
+  vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
+  renderFresh();
+  await screen.findByRole('button', { name: /new draft/i });
+  type('# Doomed but filed\n');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /create task/i }));
+  await confirmCreate();
+  // Delete the draft while the create is in flight.
+  fireEvent.click(screen.getByLabelText(/delete Doomed but filed/i));
+  fireEvent.click(screen.getByText('delete'));
+  resolveCreate({ id: 'gh-7', url: 'https://g/7' });
+  await settle();
+  expect(files.size).toBe(0); // update skipped — no resurrection
+  expect(screen.queryByText(/do not re-file/i)).toBeNull();
+});
+
+test('typing before the mount loader resolves is not clobbered by it (review #349 r7)', async () => {
+  seed('draft-b', { body: '# Existing\n' });
+  let resolveList: (v: string[]) => void = () => {};
+  vi.mocked(ipc.listDrafts).mockReturnValueOnce(new Promise((r) => (resolveList = r)));
+  renderFresh();
+  // The editor is live before the sidebar loads — start typing immediately.
+  type('# Early bird');
+  resolveList(['draft-b']);
+  await settle();
+  expect(screen.getByTestId('editor')).toHaveValue('# Early bird'); // not yanked away
+  expect(screen.getByText('Early bird')).toBeInTheDocument(); // still in the sidebar
+  expect(screen.getByText('Existing')).toBeInTheDocument(); // disk entries merged in
+});
+
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);

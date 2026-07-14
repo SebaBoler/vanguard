@@ -51,10 +51,15 @@ export function createNavGuardRegistry(): NavGuardRegistry {
     hasFlush: () => currentFlush !== null,
     flush: (timeoutMs) => {
       if (currentFlush === null) return Promise.resolve(true);
+      let timer: ReturnType<typeof setTimeout> | undefined;
       return Promise.race([
         currentFlush().then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-      ]).catch(() => false);
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ])
+        .catch(() => false)
+        .finally(() => clearTimeout(timer));
     },
   };
 }
