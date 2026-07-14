@@ -49,6 +49,11 @@ test('parseDraft rejects garbage, bad chat shapes, and non-http created urls', (
   expect(parseDraft(JSON.stringify(draft({ created: { id: 'x', url: 'file:///etc' } })))).toBeUndefined();
 });
 
+test('parseDraft coerces created ⇒ archived — a hand-edited file cannot re-enable Create task on a filed draft', () => {
+  const parsed = parseDraft(JSON.stringify(draft({ archived: false, created: { id: 'gh-1', url: 'https://g/1' } })));
+  expect(parsed?.archived).toBe(true);
+});
+
 test('draftLabel: heading, then first user chat message, then Untitled', () => {
   expect(draftLabel(draft({ body: '# Fix flicker\n' }))).toBe('Fix flicker');
   expect(draftLabel(draft({ chat: [{ role: 'assistant', content: 'hello' }, { role: 'user', content: 'plan the flicker fix' }] }))).toBe(

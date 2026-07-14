@@ -173,7 +173,16 @@ export function TaskDraftScreen({
   }, [project]);
 
   // A New Task click while already mounted resets to a fresh draft — through the switch routine.
+  // Skipped on the initial mount (review #349 r6): the async loader above is the SOLE nonce
+  // authority there, so two consumers never race on consumedNonce. (Even before this gate the
+  // race was benign — switchTo(null) deletes lastSelection[project], so the loader's else-branch
+  // had nothing to restore — but that rested on a non-obvious side effect; this doesn't.)
+  const nonceMounted = useRef(false);
   useEffect(() => {
+    if (!nonceMounted.current) {
+      nonceMounted.current = true;
+      return;
+    }
     if (freshNonce !== consumedNonce.value) {
       consumedNonce.value = freshNonce;
       switchRef.current(null);

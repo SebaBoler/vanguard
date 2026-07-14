@@ -55,7 +55,9 @@ export function parseDraft(raw: string): DraftData | undefined {
   return {
     body: o.body,
     chat,
-    archived: o.archived === true,
+    // created ⇒ archived (review #349 r6): a hand-edited file must not present an enabled
+    // Create-task on a draft that already carries a filed-issue link — that fails toward re-file.
+    archived: o.archived === true || created !== undefined,
     ...(created !== undefined ? { created } : {}),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : '',
   };
