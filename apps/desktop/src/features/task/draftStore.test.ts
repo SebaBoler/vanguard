@@ -145,8 +145,8 @@ test('deleteNow cancels the pending debounce and wins over an in-flight write �
 test('update read-modify-writes the target draft', async () => {
   vi.mocked(ipc.readDraft).mockResolvedValue(JSON.stringify(draft({ body: 'kept', chat: [{ role: 'user', content: 'q' }] })));
   const w = new DraftWriter('/repo', () => {});
-  const ok = await w.update('draft-a', (d) => ({ ...d, archived: true }));
-  expect(ok).toBe(true);
+  const outcome = await w.update('draft-a', (d) => ({ ...d, archived: true }));
+  expect(outcome).toBe('written');
   const written = JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]) as DraftData;
   expect(written.archived).toBe(true);
   expect(written.body).toBe('kept');
@@ -156,10 +156,14 @@ test('update read-modify-writes the target draft', async () => {
 test('update SKIPS a missing or unreadable file — an id-keyed append must never resurrect a deleted draft', async () => {
   vi.mocked(ipc.readDraft).mockRejectedValue(new Error('missing'));
   const w = new DraftWriter('/repo', () => {});
-  await w.update('draft-gone', (d) => d);
+  expect(await w.update('draft-gone', (d) => d)).toBe('skipped');
   vi.mocked(ipc.readDraft).mockResolvedValue('{corrupt');
-  await w.update('draft-corrupt', (d) => d);
+  expect(await w.update('draft-corrupt', (d) => d)).toBe('skipped');
   expect(ipc.writeDraft).not.toHaveBeenCalled();
+  // A write that actually fails is 'failed', not 'skipped' — the do-not-re-file copy keys on it.
+  vi.mocked(ipc.readDraft).mockResolvedValue(JSON.stringify(draft()));
+  vi.mocked(ipc.writeDraft).mockRejectedValueOnce(new Error('disk full'));
+  expect(await w.update('draft-a', (d) => d)).toBe('failed');
 });
 
 test('a failed write reports the error, resolves false, and does not break the chain', async () => {

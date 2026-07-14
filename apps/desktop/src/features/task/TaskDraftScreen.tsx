@@ -302,7 +302,10 @@ export function TaskDraftScreen({
         // The one rule the whole subsystem hangs on (spec G1): this write is keyed to the id
         // captured at click time and runs regardless of what is selected NOW — a filed draft
         // must never stay re-filable because the user switched away mid-create.
-        const ok = await writer.update(id, (d) => ({ ...d, archived: true, created: task }));
+        // Belt to the readOnly gate: if the user switched away and typed on this draft elsewhere
+        // during the flight, an armed archived:false snapshot must not land after the archive.
+        writer.discard(id);
+        const outcome = await writer.update(id, (d) => ({ ...d, archived: true, created: task }));
         setEntries((prev) =>
           prev.map((e) =>
             e.id === id && e.data !== undefined ? { ...e, data: { ...e.data, archived: true, created: task } } : e,
@@ -312,7 +315,7 @@ export function TaskDraftScreen({
           draftRef.current = { ...draftRef.current, archived: true, created: task };
           setArchived(true);
           setCreated(task);
-          if (!ok) {
+          if (outcome === 'failed') {
             setCreateError(`The issue WAS created (${task.id}) but the draft could not be archived — do not re-file it.`);
           }
         }
@@ -425,7 +428,13 @@ export function TaskDraftScreen({
             This draft file could not be read — it can only be deleted.
           </p>
         ) : (
-          <DocEditor value={body} onChange={onBodyChange} readOnly={chat.pending !== undefined || archived} />
+          <DocEditor
+            value={body}
+            onChange={onBodyChange}
+            // confirming/creating too (review #349 r4): a keystroke while the create is in flight
+            // would arm an archived:false debounce that lands AFTER the archive write.
+            readOnly={chat.pending !== undefined || archived || confirming || creating}
+          />
         )}
       </div>
       <div className="flex w-80 shrink-0 flex-col gap-2 border-l border-border pl-3">

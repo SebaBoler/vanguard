@@ -180,15 +180,19 @@ export class DraftWriter {
   /**
    * Read-modify-write keyed by id — for events that must persist regardless of what's open now
    * (create success after a switch, a late chat reply). A missing or unreadable file is SKIPPED,
-   * not recreated: an id-keyed append must never resurrect a draft the user deleted.
+   * not recreated: an id-keyed append must never resurrect a draft the user deleted. The caller
+   * can tell the outcomes apart (review #349 r4): 'skipped' is a deliberate delete, not a failed
+   * archive — only 'failed' warrants the do-not-re-file warning.
    */
-  update(id: string, mutate: (d: DraftData) => DraftData): Promise<boolean> {
+  update(id: string, mutate: (d: DraftData) => DraftData): Promise<'written' | 'skipped' | 'failed'> {
+    let wrote = false;
     return this.enqueue(id, async () => {
       const raw = await readDraft(this.repoPath, id).catch(() => undefined);
       const current = raw !== undefined ? parseDraft(raw) : undefined;
       if (current === undefined) return;
       await writeDraft(this.repoPath, id, this.stamp(mutate(current)));
-    });
+      wrote = true;
+    }).then((ok) => (ok ? (wrote ? 'written' : 'skipped') : 'failed'));
   }
 
   /** Cancel the draft's pending save and delete its file; queued after in-flight writes, so it wins. */

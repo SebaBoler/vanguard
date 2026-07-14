@@ -297,6 +297,40 @@ test('New Task inside the debounce window does not wipe the outgoing draft (revi
   expect(data.body).toBe('# Keep this body'); // not overwritten with emptyDraft()
 });
 
+test('New Task on a REMOUNT lands on a fresh draft even with a remembered selection (review #349 r4 high)', async () => {
+  const project = freshProject();
+  const first = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await screen.findByRole('button', { name: /new draft/i });
+  type('# Remembered\n');
+  await settle(); // persists AND records lastSelection[project]
+  first.unmount();
+  // Board → New Task: fresh mount with a NEW nonce. The async entry-loader must not restore the
+  // remembered draft over the fresh one the nonce demands.
+  render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await screen.findByText('Remembered'); // sidebar loaded (the async path completed)
+  await settle();
+  expect(screen.getByTestId('editor')).toHaveValue('');
+});
+
+test('the editor is read-only while a create is confirming/in flight — a keystroke cannot arm an un-archiving debounce (review #349 r4)', async () => {
+  let resolveCreate: (v: { id: string; url: string }) => void = () => {};
+  vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
+  renderFresh();
+  await screen.findByRole('button', { name: /new draft/i });
+  type('# Lock me\n');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /create task/i }));
+  await screen.findByText(/create a task on github\?/i);
+  expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'true'); // dialog open
+  const buttons = screen.getAllByRole('button', { name: /^create task$/i });
+  fireEvent.click(buttons.at(-1)!);
+  expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'true'); // create in flight
+  resolveCreate({ id: 'gh-7', url: 'https://g/7' });
+  await settle();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.archived).toBe(true);
+});
+
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);
