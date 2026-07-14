@@ -72,10 +72,24 @@ pub fn list(repo: &Path) -> Vec<String> {
     entries.into_iter().map(|(id, _)| id).collect()
 }
 
+/// Leaf-file guard (review #349 r3): the dir checks don't cover a committed symlink FILE — read
+/// would follow `<id>.json` out of the tree, and `fs::write` follows a dangling `.gitignore` or
+/// `.tmp` symlink, planting an attacker-chosen file outside the checkout.
+fn assert_leaf_not_symlink(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(format!("{} is a symlink — refusing to operate on it", path.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
 pub fn read(repo: &Path, id: &str) -> Result<String, String> {
     safe_name(id)?;
     assert_not_symlink(repo)?;
-    fs::read_to_string(drafts_dir(repo).join(format!("{id}.json"))).map_err(|e| e.to_string())
+    let file = drafts_dir(repo).join(format!("{id}.json"));
+    assert_leaf_not_symlink(&file)?;
+    fs::read_to_string(file).map_err(|e| e.to_string())
 }
 
 /// Atomic write: tmp + rename, so a torn write can never degrade a draft (body, transcript, and
@@ -88,11 +102,17 @@ pub fn write(repo: &Path, id: &str, content: &str) -> Result<(), String> {
     let dir = drafts_dir(repo);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ignore = dir.join(".gitignore");
+    // symlink_metadata, not exists(): a DANGLING symlink reports !exists() and fs::write would
+    // follow it, planting a file outside the checkout (review #349 r3, vector B).
+    assert_leaf_not_symlink(&ignore)?;
     if !ignore.exists() {
         fs::write(&ignore, "*\n").map_err(|e| e.to_string())?;
     }
     let tmp = dir.join(format!("{id}.json.tmp"));
+    assert_leaf_not_symlink(&tmp)?;
     fs::write(&tmp, content).map_err(|e| e.to_string())?;
+    // rename replaces the target without following it, so a symlinked `<id>.json` is overwritten
+    // by a real file rather than written through.
     fs::rename(&tmp, dir.join(format!("{id}.json"))).map_err(|e| e.to_string())
 }
 
@@ -206,6 +226,34 @@ mod tests {
         assert!(list(tmp.path()).is_empty());
         // Nothing crossed the symlink.
         assert!(fs::read_dir(target.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn refuses_symlinked_leaf_files() {
+        // review #349 r3: the dir checks alone leave two leaf vectors open in a hostile clone —
+        // read follows a committed `<id>.json` symlink out of the tree, and a DANGLING
+        // `.gitignore` symlink (exists() == false) gets written through, creating an
+        // attacker-chosen file outside the checkout.
+        let repo = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let dir = drafts_dir(repo.path());
+        fs::create_dir_all(&dir).unwrap();
+
+        // Vector A: read must not follow a symlinked draft file.
+        fs::write(outside.path().join("loot.json"), "{\"body\":\"secret\",\"chat\":[]}").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("loot.json"), dir.join("draft-evil.json")).unwrap();
+        assert!(read(repo.path(), "draft-evil").is_err());
+
+        // Vector B: a dangling .gitignore symlink must not be written through.
+        std::os::unix::fs::symlink(outside.path().join("planted"), dir.join(".gitignore")).unwrap();
+        assert!(write(repo.path(), "draft-a", "{}").is_err());
+        assert!(!outside.path().join("planted").exists());
+
+        // Vector C: a committed `<id>.json.tmp` symlink must not receive the staged write.
+        fs::remove_file(dir.join(".gitignore")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("smuggled"), dir.join("draft-b.json.tmp")).unwrap();
+        assert!(write(repo.path(), "draft-b", "{}").is_err());
+        assert!(!outside.path().join("smuggled").exists());
     }
 
     #[test]
