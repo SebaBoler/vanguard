@@ -45,6 +45,8 @@ export type Command =
       provider?: ProviderName;
       /** Model for the tech-spec stage (e.g. a planner-tier model). */
       specModel?: string;
+      /** Override the tech-spec stage turn cap (default: techSpecStage's own default). Backs --max-turns. */
+      maxTurns?: number;
       /** Branch the spec worktree is cut from — the "baseline" Fable researches against (default: main). */
       baseBranch?: string;
       /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
@@ -577,6 +579,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -958,7 +961,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer (or spec's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
@@ -1033,7 +1036,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer (or spec's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 

@@ -718,7 +718,7 @@ export function planImplementReviewStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
@@ -842,7 +842,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       systemPrompt,
       promptTemplate:
@@ -906,14 +906,16 @@ export function techSpecSystemPrompt(): string {
  * Model is omitted from the stage unless explicitly supplied via opts.model; the caller owns the
  * provider-aware default (e.g. 'haiku' for Claude, omitted for z.ai so ZaiProvider picks glm).
  */
-export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
+export function techSpecStage(opts?: { model?: string; maxTurns?: number }): PipelineStage[] {
   return [
     {
       name: STAGE.TECH_SPEC,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
-      maxTurns: 15,
+      // Research over a whole codebase needs more turns than implementation; 15 silently starved
+      // large tickets (hit maxTurns mid-research, no <tech_spec> emitted). Overridable via --max-turns.
+      maxTurns: opts?.maxTurns ?? 30,
       systemPrompt: techSpecSystemPrompt(),
       promptTemplate: [
         'Task: {{TITLE}}',

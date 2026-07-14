@@ -669,6 +669,11 @@ describe('techSpecStage', () => {
     expect(stages[0]?.model).toBe('sonnet');
   });
 
+  it('defaults maxTurns to 30 (research needs more than the old 15) and honors an explicit override', () => {
+    expect(techSpecStage()[0]?.maxTurns).toBe(30);
+    expect(techSpecStage({ maxTurns: 50 })[0]?.maxTurns).toBe(50);
+  });
+
   it('promptTemplate references tech_spec tag and COMPLETE signal', () => {
     const { promptTemplate } = techSpecStage()[0]!;
     expect(promptTemplate).toContain('tech_spec');
