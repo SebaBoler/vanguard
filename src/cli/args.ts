@@ -76,6 +76,8 @@ export type Command =
       reviewedLabel: string;
       /** Only review PRs opened by this GitHub login (self-review-only when set). */
       author?: string;
+      /** Review this PR even when the label-filtered scan misses it (from --pr or the CI label event). */
+      pr?: number;
       concurrency: number;
       intervalMs: number;
       once: boolean;
@@ -341,6 +343,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'reviewed-label': { type: 'string' },
         author: { type: 'string' },
         concurrency: { type: 'string' },
+        // watch-prs: review this PR even when the label-filtered scan misses it
+        pr: { type: 'string' },
         // watch
         team: { type: 'string' },
         'trigger-state': { type: 'string' },
@@ -613,6 +617,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (repoSlug === undefined || label === undefined) return fail('watch-prs requires --github-repo <owner/repo> and --label <name>.');
     const concurrency = Number(values.concurrency);
     const interval = Number(values.interval);
+    const prNumber = typeof values.pr === 'string' ? Number(values.pr) : undefined;
+    if (prNumber !== undefined && (!Number.isInteger(prNumber) || prNumber < 1)) {
+      return fail('watch-prs --pr expects a positive PR number.');
+    }
     return {
       kind: 'watch-prs',
       repoSlug,
@@ -625,6 +633,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       once: values.once === true,
       egress: values.egress === true,
       ...(typeof values.author === 'string' ? { author: values.author } : {}),
+      ...(prNumber !== undefined ? { pr: prNumber } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
@@ -1091,6 +1100,8 @@ Commands:
     --reviewing-label <l>  Label added while a PR is being reviewed (default: "vanguard:reviewing")
     --reviewed-label <l>   Label added after review succeeds (default: "vanguard:reviewed")
     --author <login>       Only review PRs opened by this GitHub login (self-review-only when set)
+    --pr <number>          Also review this PR even if the label scan misses it (label-triggered
+                           CI runs pin the event's PR automatically via GITHUB_EVENT_PATH)
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
     --concurrency <n>      Max PRs reviewed at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
@@ -1101,7 +1112,9 @@ Commands:
       vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
 
     Dedupe: successful Vanguard reviews include a hidden head SHA marker; watch-prs skips
-      the same PR commit if the trigger label is re-added accidentally.
+      the same PR commit if the trigger label is re-added accidentally. The PR pinned by --pr or
+      the triggering label event is always reviewed, and incomplete notices carry no marker, so a
+      failed review is retried on the next re-label or sweep.
 
   doctor-prs options:
     Uses the same repo and label routing flags as watch-prs, but only runs AFK preflight checks and exits.

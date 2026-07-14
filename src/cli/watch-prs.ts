@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { githubPullRequestWatchPrimitives, watchPullRequests } from '../runners/pr-watch.js';
 import { reviewPrCommand } from './review-pr.js';
 import type { Command } from './args.js';
 import type { GhRunner } from '../tasks/github.js';
-import type { PullRequestWatchPrimitives, WatchPullRequestsLoopOptions } from '../runners/pr-watch.js';
+import type { PullRequestWatchPrimitives, PullRequestWatchTick, WatchPullRequestsLoopOptions } from '../runners/pr-watch.js';
 
 type WatchPrsCommand = Extract<Command, { kind: 'watch-prs' }>;
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
@@ -11,7 +12,33 @@ export type ReviewPrCommandRunner = (cmd: ReviewPrCommand) => Promise<void>;
 export type WatchPullRequestsRunner = (
   primitives: PullRequestWatchPrimitives,
   opts: WatchPullRequestsLoopOptions,
-) => Promise<void>;
+) => Promise<PullRequestWatchTick | undefined>;
+
+interface LabeledPullRequestEventPayload {
+  label?: { name?: string };
+  pull_request?: { number?: number };
+}
+
+/**
+ * PR number from the Actions event that triggered this run. The label-filtered scan is search-backed
+ * and eventually consistent — a PR labeled seconds before the run can be invisible to it, turning the
+ * run into a silent no-op. Only trusts the payload when its label matches the trigger label.
+ */
+export function eventPullRequestHint(
+  label: string,
+  eventPath: string | undefined,
+  readFile: (path: string) => string = (path) => readFileSync(path, 'utf8'),
+): number | undefined {
+  if (eventPath === undefined || eventPath === '') return undefined;
+  try {
+    const payload = JSON.parse(readFile(eventPath)) as LabeledPullRequestEventPayload;
+    if (payload.label?.name !== label) return undefined;
+    const number = payload.pull_request?.number;
+    return typeof number === 'number' && Number.isInteger(number) && number >= 1 ? number : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export interface WatchPrsCommandDeps {
   gh?: GhRunner;
@@ -29,11 +56,14 @@ export async function watchPrsCommand(cmd: WatchPrsCommand, deps: WatchPrsComman
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  const hintPr = cmd.pr ?? eventPullRequestHint(cmd.label, process.env.GITHUB_EVENT_PATH);
   const primitives = githubPullRequestWatchPrimitives({
     repoSlug: cmd.repoSlug,
     label: cmd.label,
     reviewingLabel: cmd.reviewingLabel,
     reviewedLabel: cmd.reviewedLabel,
+    log,
+    ...(hintPr !== undefined ? { hintPr } : {}),
     ...(cmd.author !== undefined ? { author: cmd.author } : {}),
     ...(deps.gh !== undefined ? { gh: deps.gh } : {}),
     reviewOne: (item) =>
@@ -50,14 +80,20 @@ export async function watchPrsCommand(cmd: WatchPrsCommand, deps: WatchPrsComman
   });
 
   log(`watch-prs[github]: polling every ${cmd.intervalMs / 1000}s for PRs labeled "${cmd.label}". Ctrl-C to stop.`);
+  if (hintPr !== undefined) {
+    log(`watch-prs[github]: ${cmd.repoSlug}#${hintPr} pinned from ${cmd.pr !== undefined ? '--pr' : 'the label event'} — reviewed even if the label scan misses it.`);
+  }
   try {
-    await runWatchPullRequests(primitives, {
+    const tick = await runWatchPullRequests(primitives, {
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
       signal: controller.signal,
       log,
     });
+    // --once is the CI mode: a failed review must fail the step (the trigger label was restored and
+    // the next sweep retries) instead of reporting green with nothing posted.
+    if (cmd.once && tick !== undefined && tick.failed.length > 0) process.exitCode = 1;
   } finally {
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
