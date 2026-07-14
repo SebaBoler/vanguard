@@ -29,7 +29,7 @@ import { WorkflowEditor } from '../workflow/WorkflowEditor';
 import { DocsScreen } from '../docs/DocsScreen';
 import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
-import { reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
+import { foldLiveEvent, reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
 import { useAppConfig } from '../../hooks';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
 
@@ -169,14 +169,13 @@ export function Inspector({
       if (type === 'run-end' || type === 'run-error' || type === 'run-cancelled') {
         // Single-in-flight: ANY observed terminal means the sidecar is (about to be) idle — the
         // foreign-run note would otherwise outlive the run it warns about (review #343 r2).
+        // (A LOCAL run's note-hiding needs no clear here: the note renders only while
+        // typedRun === null, and a local run materializes the strip.)
         setForeignRun(null);
       }
-      setTypedRun((prev) => {
-        const next = reduceTypedRun(prev ?? initialTypedRun(), e.payload, project);
-        // A local run seeding also proves the foreign run is done.
-        if (next.runId !== undefined) setForeignRun(null);
-        return next;
-      });
+      // foldLiveEvent keeps null null when the reducer declines — materializing an empty strip
+      // for a foreign event would hide the note and render a blank panel (r3 blocking).
+      setTypedRun((prev) => foldLiveEvent(prev, e.payload, project));
     });
     return () => {
       void un.then((f) => f());

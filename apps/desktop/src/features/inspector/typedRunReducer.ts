@@ -79,3 +79,19 @@ export function reduceTypedRun(
       return state;
   }
 }
+
+/**
+ * Fold one LIVE event into a possibly-absent strip. Distinct from reduceTypedRun because the
+ * component's state is `TypedRunState | null` and null must STAY null when the reducer declines
+ * to adopt (foreign/non-accepted event on a virgin strip): materializing `initialTypedRun()`
+ * anyway would hide the foreign-run note and render an empty strip — the bleed in blank form
+ * (review #343 round 3, blocking).
+ */
+export function foldLiveEvent(
+  prev: TypedRunState | null,
+  payload: { runId: string; event: Incoming },
+  repoPath?: string,
+): TypedRunState | null {
+  const next = reduceTypedRun(prev ?? initialTypedRun(), payload, repoPath);
+  return prev === null && next.runId === undefined ? prev : next;
+}

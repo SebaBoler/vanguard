@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialTypedRun, reduceTypedRun } from './typedRunReducer';
+import { foldLiveEvent, initialTypedRun, reduceTypedRun } from './typedRunReducer';
 
 const ev = (runId: string, event: unknown): Parameters<typeof reduceTypedRun>[1] =>
   ({ runId, event }) as Parameters<typeof reduceTypedRun>[1];
@@ -88,3 +88,15 @@ type TypedRunTerminal = ReturnType<typeof reduceTypedRun>['terminal'];
 import type { AppRunEvent } from './typedRunReducer';
 const _accepted: AppRunEvent = { type: 'run-accepted' };
 void _accepted;
+
+// r3 blocking: a foreign event must not MATERIALIZE an empty strip out of null — that hides the
+// foreign-run note and renders a blank panel (the bleed in blank form).
+it('foldLiveEvent keeps null null when the reducer declines to adopt', () => {
+  expect(foldLiveEvent(null, ev('rA', { type: 'stage-start', name: 'a', index: 0, of: 1 }), '/mine')).toBeNull();
+  expect(foldLiveEvent(null, ev('rA', { type: 'run-accepted', repoPath: '/other' }), '/mine')).toBeNull();
+  const adopted = foldLiveEvent(null, ev('rA', { type: 'run-accepted', repoPath: '/mine' }), '/mine');
+  expect(adopted?.runId).toBe('rA');
+  // and a non-null strip keeps folding normally
+  const stepped = foldLiveEvent(adopted, ev('rA', { type: 'cost', usdSpent: 1 }), '/mine');
+  expect(stepped?.usdSpent).toBe(1);
+});
