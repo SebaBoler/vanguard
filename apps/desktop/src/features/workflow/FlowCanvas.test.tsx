@@ -50,3 +50,12 @@ test('clicking a block selects it', () => {
   fireEvent.click(screen.getByRole('button', { name: 'select implementer' }));
   expect(onSelect).toHaveBeenCalledWith(1);
 });
+
+test('a cancelled drag (dragend without drop) disarms the source — a later stray drop moves nothing (S8)', () => {
+  const onMove = vi.fn();
+  render(<FlowCanvas doc={DOC} palette={PALETTE} selected={null} onSelect={() => {}} onMove={onMove} />);
+  fireEvent.dragStart(screen.getByTestId('stage-block-0'));
+  fireEvent.dragEnd(screen.getByTestId('stage-block-0')); // Esc / dropped outside
+  fireEvent.drop(screen.getByTestId('stage-block-2')); // stray drop later
+  expect(onMove).not.toHaveBeenCalled();
+});
