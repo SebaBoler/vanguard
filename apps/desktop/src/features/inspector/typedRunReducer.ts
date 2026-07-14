@@ -17,20 +17,36 @@ export interface TypedRunState {
 }
 
 /** `run-accepted` is Rust-minted (sidecar.rs) and never core-emitted, so it is a DESKTOP extension
- *  of the wire union, not part of it. */
-export type AppRunEvent = RunEvent | { type: 'run-accepted' };
+ *  of the wire union, not part of it. It carries the run's repoPath so a strip can refuse a run
+ *  that belongs to another project (S8 item 4). */
+export type AppRunEvent = RunEvent | { type: 'run-accepted'; repoPath?: string };
 type Incoming = AppRunEvent;
 
 export function initialTypedRun(): TypedRunState {
   return { stages: [], stageState: {}, usdSpent: 0 };
 }
 
-/** Fold one `{runId, event}` payload, last-write-wins per key. Foreign runIds are dropped. */
-export function reduceTypedRun(state: TypedRunState, payload: { runId: string; event: Incoming }): TypedRunState {
-  // Adopt the first runId; thereafter drop anything that isn't ours.
-  if (state.runId !== undefined && payload.runId !== state.runId) return state;
-  const runId = state.runId ?? payload.runId;
+/**
+ * Fold one `{runId, event}` payload, last-write-wins per key. Foreign runIds are dropped.
+ * `repoPath` (when given) scopes the strip to one project: only a `run-accepted` whose repoPath
+ * matches may ADOPT a runId into a virgin state — any other event on a virgin state is dropped.
+ * Without this a foreign run's mid-flight `stage-start` would seed a strip in the wrong project
+ * even with the backlog fold skipped (S8 item 4 — accept-time filtering alone is insufficient).
+ */
+export function reduceTypedRun(
+  state: TypedRunState,
+  payload: { runId: string; event: Incoming },
+  repoPath?: string,
+): TypedRunState {
   const e = payload.event;
+  if (state.runId === undefined) {
+    // Virgin state: only an accepted marker for OUR project may seed it.
+    if (e.type !== 'run-accepted') return state;
+    if (repoPath !== undefined && e.repoPath !== undefined && e.repoPath !== repoPath) return state;
+    return { ...state, runId: payload.runId };
+  }
+  if (payload.runId !== state.runId) return state;
+  const runId = state.runId;
   switch (e.type) {
     case 'run-accepted':
       return { ...state, runId };

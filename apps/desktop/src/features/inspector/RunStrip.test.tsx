@@ -4,7 +4,10 @@ import { RunStrip } from './RunStrip';
 import { initialTypedRun, reduceTypedRun, type TypedRunState } from './typedRunReducer';
 
 function build(events: unknown[]): TypedRunState {
-  return events.reduce((s: TypedRunState, e) => reduceTypedRun(s, e as never), initialTypedRun());
+  // Reality always leads with run-accepted (Rust emits it before anything) — since S8 only that
+  // event may seed a virgin strip, so the builder mirrors the real stream.
+  const accepted = { runId: (events[0] as { runId: string }).runId, event: { type: 'run-accepted' } };
+  return [accepted, ...events].reduce((s: TypedRunState, e) => reduceTypedRun(s, e as never), initialTypedRun());
 }
 
 test('shows a spinner for a started-but-not-ended stage, pending for the rest', () => {

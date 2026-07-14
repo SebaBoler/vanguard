@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useNavGuardRegistry } from '../../navGuard';
 import { Button, CodeBlock, Input } from '@/ui';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { apiCapabilitiesCached, apiListFlows, apiReadFlow, apiWriteFlow } from '../../ipc';
@@ -29,10 +30,21 @@ export function WorkflowEditor({ project }: { project: string }) {
   const saving = useRef(false);
 
   // Unsaved edits must never vanish on a stray click — the same discipline saveFailed follows.
-  // (A project switch still resets without asking: navigation is owned by the shell; the dirty
-  // chip is the guard there — recorded limitation.)
   const confirmDiscard = (): boolean =>
     !state.dirty || window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`);
+
+  // Shell-level navigations (project switch, Rail screen switch, home, remove, running-run open,
+  // window close) unmount/remount this whole component — the local confirmDiscard above never
+  // fires for them. While dirty, register it with the App's nav-guard registry (S8, #339).
+  const navGuard = useNavGuardRegistry();
+  const confirmRef = useRef(confirmDiscard);
+  confirmRef.current = confirmDiscard;
+  useEffect(() => {
+    if (navGuard === null || !state.dirty) return;
+    const guard = (): boolean => confirmRef.current();
+    navGuard.register(guard);
+    return () => navGuard.unregister(guard);
+  }, [navGuard, state.dirty]);
 
   const refreshList = useCallback(async (): Promise<void> => {
     const issued = gen.current;
@@ -269,6 +281,7 @@ export function WorkflowEditor({ project }: { project: string }) {
               </div>
               {selectedStage !== undefined && state.selected !== null ? (
                 <StageInspector
+              key={state.selected}
                   stage={selectedStage}
                   palette={palette}
                   providers={caps?.providers ?? []}

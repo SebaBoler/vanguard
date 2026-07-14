@@ -20,10 +20,33 @@ describe('reduceTypedRun', () => {
   });
 
   it('cost is last-wins (cumulative), not summed', () => {
-    let s = initialTypedRun();
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
     s = reduceTypedRun(s, ev('r1', { type: 'cost', usdSpent: 0.02 }));
     s = reduceTypedRun(s, ev('r1', { type: 'cost', usdSpent: 0.05 }));
     expect(s.usdSpent).toBe(0.05);
+  });
+
+  // S8 item 4 — the narrowed adoption rule: accept-time filtering alone was insufficient because
+  // ANY first event used to adopt a runId into a virgin strip.
+  it('a virgin strip refuses every event except run-accepted (foreign mid-flight events cannot seed it)', () => {
+    const virgin = initialTypedRun();
+    for (const e of [
+      { type: 'run-start', taskId: 't', flow: 'f', provider: 'p', stages: ['a'] },
+      { type: 'stage-start', name: 'a', index: 0, of: 1 },
+      { type: 'cost', usdSpent: 1 },
+      { type: 'run-end' },
+    ] as const) {
+      expect(reduceTypedRun(virgin, ev('rA', e as never))).toBe(virgin);
+    }
+    expect(reduceTypedRun(virgin, ev('rA', { type: 'run-accepted' })).runId).toBe('rA');
+  });
+
+  it("a run-accepted for ANOTHER project's repoPath does not adopt when the strip is scoped", () => {
+    const virgin = initialTypedRun();
+    const foreign = reduceTypedRun(virgin, ev('rA', { type: 'run-accepted', repoPath: '/other' }), '/mine');
+    expect(foreign).toBe(virgin);
+    const ours = reduceTypedRun(virgin, ev('rA', { type: 'run-accepted', repoPath: '/mine' }), '/mine');
+    expect(ours.runId).toBe('rA');
   });
 
   it('is idempotent on replay (backlog + live overlap)', () => {

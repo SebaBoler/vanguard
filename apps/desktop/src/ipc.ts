@@ -202,9 +202,10 @@ export function apiWriteFlow(repoPath: string, file: string, doc: FlowDoc): Prom
   return invoke('api_write_flow', { repoPath, file, doc });
 }
 
-/** The in-flight typed run's id, or null when idle. */
-export function apiActiveRun(): Promise<string | null> {
-  return invoke<string | null>('api_active_run');
+/** The in-flight typed run `{runId, repoPath}`, or null when idle. repoPath scopes re-attach to
+ *  the owning project (S8 — the sidecar is global, Inspectors are per-project). */
+export function apiActiveRun(): Promise<{ runId: string; repoPath: string } | null> {
+  return invoke<{ runId: string; repoPath: string } | null>('api_active_run');
 }
 
 /** Buffered `{ runId, event }` backlog for a run, for a re-attaching live strip. */

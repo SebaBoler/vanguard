@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { type Theme } from '@/ui';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TopBar, type Crumb } from './TopBar';
@@ -9,6 +10,7 @@ import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
 import { listProjects, addProject, removeProject, listActive } from './ipc';
 import { projectColor, contrastColor } from './color';
+import { createNavGuardRegistry, NavGuardContext } from './navGuard';
 import { ProjectCombobox } from './ProjectCombobox';
 import type { Project, ActiveRun } from './vanguard-output';
 
@@ -25,6 +27,14 @@ export default function App() {
   const [crumb, setCrumb] = useState<string | null>(null);
   const [clearNonce, setClearNonce] = useState(0);
   const [palette, setPalette] = useState(false);
+  // Navigation guard (S8, #339): a dirty screen registers a confirm; ALL App-owned navigation
+  // routes through navigate(), because a project switch REMOUNTS Inspector (key below) and a
+  // screen switch unmounts the editor — component-local confirms never fire for either.
+  const navGuard = useRef(createNavGuardRegistry());
+  const navigate = (fn: () => void): void => {
+    if (!navGuard.current.confirm()) return;
+    fn();
+  };
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('vg-theme');
     const initial: Theme =
@@ -81,6 +91,22 @@ export default function App() {
     };
   }, [activeProject]);
 
+  // Window close is the third discard path. Tauri/WKWebView does not reliably fire beforeunload
+  // on native close, so onCloseRequested is the primary hook (beforeunload kept as a belt).
+  useEffect(() => {
+    const un = getCurrentWindow().onCloseRequested((event) => {
+      if (!navGuard.current.confirm()) event.preventDefault();
+    });
+    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+      if (navGuard.current.guarded()) e.preventDefault();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      void un.then((f) => f());
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -102,6 +128,8 @@ export default function App() {
   };
 
   const remove = async (path: string): Promise<void> => {
+    // Removing the ACTIVE project unmounts Inspector — guard like any navigation.
+    if (activeProject === path && !navGuard.current.confirm()) return;
     try {
       setProjects(await removeProject(path));
       if (activeProject === path) setActiveProject(null);
@@ -118,8 +146,10 @@ export default function App() {
   };
 
   const enterProject = (path: string): void => {
-    setActiveProject(path);
-    setScreen('runs');
+    navigate(() => {
+      setActiveProject(path);
+      setScreen('runs');
+    });
   };
 
   const active = projects.find((p) => p.path === activeProject) ?? null;
@@ -148,7 +178,7 @@ export default function App() {
   }
   const projectSwitcher =
     active && screen !== 'dashboard' ? (
-      <ProjectCombobox projects={projects} active={active} onSelect={(path) => setActiveProject(path)} />
+      <ProjectCombobox projects={projects} active={active} onSelect={(path) => navigate(() => setActiveProject(path))} />
     ) : null;
 
   return (
@@ -165,7 +195,7 @@ export default function App() {
       <TopBar
         crumbs={crumbs}
         projectSwitcher={projectSwitcher}
-        onHome={() => setScreen('dashboard')}
+        onHome={() => navigate(() => setScreen('dashboard'))}
         onCommandK={() => setPalette(true)}
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -178,10 +208,13 @@ export default function App() {
             activePath={activeProject}
             screen={screen}
             running={railRunning}
-            onScreen={setScreen}
+            onScreen={(sc) => navigate(() => setScreen(sc))}
             onOpenRunning={(r) => {
-              setScreen('runs');
-              setFocusRunning(r);
+              // The sixth navigation path (review round 1) — also discards a dirty editor.
+              navigate(() => {
+                setScreen('runs');
+                setFocusRunning(r);
+              });
             }}
           />
         )}
@@ -194,14 +227,16 @@ export default function App() {
               onRemove={remove}
             />
           ) : (
-            <Inspector
-              key={active.path}
-              project={active.path}
-              screen={screen}
-              focusRunning={focusRunning}
-              clearNonce={clearNonce}
-              onCrumb={setCrumb}
-            />
+            <NavGuardContext.Provider value={navGuard.current}>
+              <Inspector
+                key={active.path}
+                project={active.path}
+                screen={screen}
+                focusRunning={focusRunning}
+                clearNonce={clearNonce}
+                onCrumb={setCrumb}
+              />
+            </NavGuardContext.Provider>
           )}
         </main>
       </div>
@@ -209,7 +244,7 @@ export default function App() {
         <CommandPalette
           projects={projects}
           onOpenProject={(p) => enterProject(p.path)}
-          onHome={() => setScreen('dashboard')}
+          onHome={() => navigate(() => setScreen('dashboard'))}
           onAddProject={add}
           onToggleTheme={toggleTheme}
           onClose={() => setPalette(false)}

@@ -61,6 +61,7 @@ export function Inspector({
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
   const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
+  const [foreignRun, setForeignRun] = useState<string | null>(null); // repoPath of another project's live run (S8)
   const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
   const dismissedRunId = useRef<string | null>(null); // a run the user closed — ignore its late events
   const runGen = useRef(0); // bumped per launch; a settled apiCreateRun from an older run is dropped
@@ -163,7 +164,8 @@ export function Inspector({
   useEffect(() => {
     const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
       if (e.payload.runId === dismissedRunId.current) return;
-      setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload));
+      // repoPath scopes adoption: a foreign project's run can never seed a strip here (S8).
+      setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload, project));
     });
     return () => {
       void un.then((f) => f());
@@ -177,13 +179,20 @@ export function Inspector({
   useEffect(() => {
     const attach = async (): Promise<void> => {
       try {
-        const id = await apiActiveRun();
-        if (id === null) return;
-        const backlog = (await apiRunBacklog(id)) as { runId: string; event: RunEvent }[];
+        const active = await apiActiveRun();
+        if (active === null) return;
+        if (active.repoPath !== project) {
+          // Another project's run holds the sidecar. Don't fold its backlog — surface a note
+          // instead; New-run stays enabled (the Rust single-in-flight guard rejects with a clear
+          // error, which beats silently disabling the button for a run the user can't see).
+          setForeignRun(active.repoPath);
+          return;
+        }
+        const backlog = (await apiRunBacklog(active.runId)) as { runId: string; event: RunEvent }[];
         // Fold BEFORE flipping checkedIdle: between the two the button's guard would see
         // checkedIdle && typedRun === null and enable New run while a run is genuinely live.
         setTypedRun((prev) =>
-          backlog.reduce((s, p) => reduceTypedRun(s, p), prev ?? initialTypedRun()),
+          backlog.reduce((s, p) => reduceTypedRun(s, p, project), prev ?? initialTypedRun()),
         );
       } catch {
         // Treat an unverifiable idle-check as idle: a rejected apiActiveRun (sidecar not up yet, IPC
@@ -323,6 +332,11 @@ export function Inspector({
         </div>
       )}
 
+      {foreignRun !== null && typedRun === null && screen === 'runs' && (
+        <div className="mb-2 rounded border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          a run is live in <code className="font-mono">{foreignRun}</code> — starting one here will be rejected until it finishes
+        </div>
+      )}
       {typedRun !== null && screen === 'runs' ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           {typedRun.terminal !== undefined && (
