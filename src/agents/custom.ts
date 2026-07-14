@@ -35,10 +35,10 @@ export interface CustomProviderEntry {
   spec?: CustomProviderSpec;
 }
 
-/** The flow-name grammar (S5) — one grammar for repo-configured names. */
-const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
-const KEY_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const ENTRY_KEYS = new Set(['name', 'baseUrl', 'keyEnv', 'model']);
+// One repo-name grammar + entry vocabulary, shared with the desktop via src/wire.ts (S7).
+import { FLOW_NAME_RE as NAME_RE, KEY_ENV_RE, CUSTOM_PROVIDER_KEYS } from '../wire.js';
+
+const ENTRY_KEYS: ReadonlySet<string> = new Set(CUSTOM_PROVIDER_KEYS);
 
 /** `AgentProvider.name` prefix for run records; the grammar forbids `:` so collision is impossible. */
 export const CUSTOM_PROVIDER_PREFIX = 'custom:';

@@ -2,15 +2,15 @@ import type { AppConfig } from '../../vanguard-output';
 
 type Row = NonNullable<AppConfig['customProviders']>[number];
 
-/** Built-in provider names — mirrors core PROVIDER_NAMES (manual-mirror discipline, like RunEvent). */
-export const PROVIDERS = ['claude', 'codex', 'cursor', 'zai', 'openrouter', 'meridian'];
+import { WIRE_PROVIDER_NAMES, FLOW_NAME_RE, KEY_ENV_RE, CUSTOM_PROVIDER_KEYS } from '../../wire';
 
-/** Grammar mirrors of the core predicate (src/agents/custom.ts) — inline feedback only; the core
- *  loader is the one validity predicate and re-validates everything at run time (S6 §4). */
-const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
-const KEY_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Built-in provider names, from the generated wire contract (S7 — pinned to the registry in core). */
+export const PROVIDERS: readonly string[] = WIRE_PROVIDER_NAMES;
 
-const ROW_KEYS = new Set(['name', 'baseUrl', 'keyEnv', 'model']);
+// Constants come from wire (S7); this module keeps only the row predicate + UI copy. The core
+// loader is still the one validity predicate and re-validates everything at run time (S6 §4).
+const NAME_RE = FLOW_NAME_RE;
+const ROW_KEYS: ReadonlySet<string> = new Set(CUSTOM_PROVIDER_KEYS);
 
 /** First violated rule for a Settings custom-provider row, or undefined when saveable. */
 export function customProviderRowError(row: Row, index: number, all: Row[]): string | undefined {

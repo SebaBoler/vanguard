@@ -1,26 +1,10 @@
-/**
- * Mirrors MAX_BODY_BYTES in `src/tasks/create.ts`. The desktop is a separate package with no import
- * path into core (see typedRunReducer's RunEvent, same gap), so this is a copy — KEEP IN SYNC.
- *
- * It is only a UX guard: the sidecar enforces the real limit independently, so drifting out of sync
- * degrades the message, not the safety. Refusing here means the user is told BEFORE committing to an
- * irreversible click, rather than after.
- */
-export const MAX_BODY_BYTES = 60_000;
+// Limits + transports come from the generated wire contract (S7 — no more hand-mirrors). They are
+// UX guards here: the sidecar enforces the real limits independently; refusing locally means the
+// user is told BEFORE committing to an irreversible click, rather than after.
+import { MAX_BODY_BYTES, MAX_TITLE_BYTES, TRANSPORTS } from '../../wire';
+export { MAX_BODY_BYTES, MAX_TITLE_BYTES, TRANSPORTS };
 
-/** Mirrors MAX_TITLE_BYTES in `src/tasks/create.ts` — same copy, same reason. KEEP IN SYNC. */
-export const MAX_TITLE_BYTES = 500;
-
-/**
- * The transports the sidecar will actually accept (`TRANSPORTS` in `src/api/capabilities.ts`).
- *
- * The dialog promises "Create a task on <source>". Without this, an app.json carrying `jira` or `''`
- * renders "Create a task on jira?" / "Create a task on ?", the user confirms the one irreversible
- * action, and it fails as bad-request AFTER the click. Fails safe — nothing is written — but the dialog
- * made a promise about the target it could not keep.
- */
-export const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
-
+/** The dialog promises "Create a task on <source>" — never promise a transport the sidecar rejects. */
 export function isTransport(s: string | undefined): boolean {
   return s !== undefined && (TRANSPORTS as readonly string[]).includes(s);
 }

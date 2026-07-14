@@ -10,32 +10,14 @@ export interface CreateTaskInput {
   labels?: string[];
 }
 
-/** A created task: the ref `vanguard run` accepts, and the URL to show the human. */
-export interface CreatedTask {
-  id: string;
-  url: string;
-}
+// CreatedTask lives in src/wire.ts (the shared desktop contract — S7).
+export type { CreatedTask } from '../wire.js';
+import type { CreatedTask } from '../wire.js';
 
-/**
- * Body size ceiling.
- *
- * `glab` has no `--body-file`, so its description crosses as an argv value and is bounded by ARG_MAX
- * (~256KB on macOS, and that budget is shared with the environment). `gh` takes the body on stdin so it
- * has no such limit, and Linear takes it in a JSON body — but a single cap for all three keeps the rule
- * one thing a user can understand, and an issue body past this is not an issue body.
- *
- * Enforced BEFORE any request: hitting the real limit surfaces as a bare E2BIG from the OS, which tells
- * the user nothing.
- */
-export const MAX_BODY_BYTES = 60_000;
+// MAX_BODY_BYTES / MAX_TITLE_BYTES live in src/wire.ts (S7) — enforced BEFORE any request here.
+export { MAX_BODY_BYTES, MAX_TITLE_BYTES } from '../wire.js';
+import { MAX_BODY_BYTES, MAX_TITLE_BYTES } from '../wire.js';
 
-/**
- * Title ceiling. The title crosses as an ARGV value on BOTH gh and glab, so an unbounded one hits
- * ARG_MAX exactly like an unbounded body would — surfacing a raw E2BIG on the irreversible path, which
- * is the failure the body cap exists to avoid. `titleFromDoc` returns a whole heading line, so a
- * pathological `# ...` is a doc away.
- */
-export const MAX_TITLE_BYTES = 500;
 
 /**
  * Runs `gh`/`glab` **in the repo directory**, optionally piping stdin.
