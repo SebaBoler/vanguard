@@ -92,6 +92,7 @@ export function WorkflowEditor({ project }: { project: string }) {
     // what this editor is for).
     if (file === state.file && state.doc !== null) return;
     if (!confirmDiscard()) return;
+    setOpError(null); // a stale rename/delete message must not linger across navigation (r3 minor)
     // Bump, don't just read: opening a flow invalidates every in-flight read AND save for the one
     // we're leaving — a slower earlier read must not clobber this selection, and a late saveOk
     // must not overwrite this flow's source/dirty (saveOk is not file-keyed).
@@ -220,6 +221,8 @@ export function WorkflowEditor({ project }: { project: string }) {
       void refreshList();
     } catch (err) {
       setOpError(String(err));
+    } finally {
+      opBusy.current = false; // success OR failure — a latched lock would dead-button the session
     }
   };
 

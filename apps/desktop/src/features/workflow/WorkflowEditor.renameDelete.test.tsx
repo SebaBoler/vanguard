@@ -142,3 +142,36 @@ test('a double-click on confirm rename fires ONE write→delete sequence (in-fli
   expect(vi.mocked(ipc.apiWriteFlow)).toHaveBeenCalledTimes(1);
   expect(vi.mocked(ipc.apiDeleteFlow)).toHaveBeenCalledTimes(1);
 });
+
+// #345 r3 BLOCKING: renameFlow set opBusy and never cleared it — the FIRST rename (success or
+// failure) latched the lock forever; every later rename/delete silently no-op'd until remount.
+test('a second, independent rename after the first resolves still works (opBusy released)', async () => {
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'rename my-flow' }));
+  fireEvent.change(screen.getByLabelText('rename my-flow'), { target: { value: 'renamed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'confirm rename' }));
+  await waitFor(() => expect(ipc.apiDeleteFlow).toHaveBeenCalledTimes(1));
+
+  // the list still shows my-flow (mock is static) — rename again
+  fireEvent.click(await screen.findByRole('button', { name: 'rename my-flow' }));
+  fireEvent.change(screen.getByLabelText('rename my-flow'), { target: { value: 'again' } });
+  fireEvent.click(screen.getByRole('button', { name: 'confirm rename' }));
+  await waitFor(() => expect(vi.mocked(ipc.apiWriteFlow)).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(vi.mocked(ipc.apiDeleteFlow)).toHaveBeenCalledTimes(2));
+});
+
+test('a FAILED rename releases the lock — delete afterwards still works', async () => {
+  vi.mocked(ipc.apiWriteFlow).mockRejectedValueOnce(new Error('flow "renamed" is already declared in other.hcl'));
+  const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'rename my-flow' }));
+  fireEvent.change(screen.getByLabelText('rename my-flow'), { target: { value: 'renamed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'confirm rename' }));
+  await waitFor(() => expect(screen.getByText(/already declared/)).toBeInTheDocument());
+
+  // the rename input stays open for retry — cancel it, then the delete affordance is back
+  fireEvent.click(screen.getByRole('button', { name: 'cancel rename' }));
+  fireEvent.click(screen.getByRole('button', { name: 'delete my-flow' }));
+  await waitFor(() => expect(ipc.apiDeleteFlow).toHaveBeenCalledWith('/repo', 'my-flow.hcl'));
+  confirmSpy.mockRestore();
+});
