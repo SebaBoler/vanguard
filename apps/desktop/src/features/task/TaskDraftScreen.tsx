@@ -225,6 +225,10 @@ export function TaskDraftScreen({
     const id = ensureId();
     pendingTurns.current.add(id);
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
+    // Snapshot the body SYNCHRONOUSLY, like apiMessages (review #349 r5 blocking): the .then below
+    // runs after an IPC round-trip, and a draft switch in that window repoints draftRef — reading
+    // it late would send the newly opened draft's body (possibly secrets) as this turn's <doc>.
+    const bodyAtSend = draftRef.current.body;
     dispatch({ type: 'send', text });
     draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
     syncEntry(id);
@@ -233,7 +237,7 @@ export function TaskDraftScreen({
     void readAppConfig(project)
       .then((cfg) =>
         apiComplete(project, {
-          system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${draftRef.current.body}</doc>`,
+          system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
           messages: apiMessages,
           model: cfg.chatModel ?? DEFAULT_CHAT_MODEL,
         }),

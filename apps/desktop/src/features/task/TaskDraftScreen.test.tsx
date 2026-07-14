@@ -331,6 +331,26 @@ test('the editor is read-only while a create is confirming/in flight — a keyst
   expect(data.archived).toBe(true);
 });
 
+test('the outbound completion carries the body of the draft it was issued FOR, not the draft now open (review #349 r5 blocking)', async () => {
+  seed('draft-b', { body: '# Secret B contents\n' });
+  vi.mocked(ipc.readAppConfig).mockResolvedValueOnce({ source: 'github' }); // the mount read
+  let resolveCfg: (v: { chatModel?: string }) => void = () => {};
+  vi.mocked(ipc.readAppConfig).mockReturnValueOnce(new Promise((r) => (resolveCfg = r))); // the send-path read
+  renderFresh();
+  await screen.findByText('Secret B contents');
+  type('# A private body\n');
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan it' } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  // Switch to B while the send path is still awaiting readAppConfig.
+  fireEvent.click(screen.getByText('Secret B contents'));
+  resolveCfg({});
+  await settle();
+  expect(ipc.apiComplete).toHaveBeenCalledTimes(1);
+  const system = vi.mocked(ipc.apiComplete).mock.calls[0][1].system as string;
+  expect(system).toContain('# A private body'); // the draft the turn was issued for
+  expect(system).not.toContain('Secret B contents'); // never the draft the user switched to
+});
+
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);
