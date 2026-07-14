@@ -165,3 +165,18 @@ describe('fetchTaskSpec guards (no exec reaches a bad id)', () => {
     await expect(fetchTaskSpec('/nonexistent', 'owner/repo#weird')).rejects.toThrow(/Recognized prefixes/);
   });
 });
+
+// review #346 r2: detection-failure errors must never echo an embedded credential.
+describe('remote redaction in board errors', () => {
+  it('a PAT-bearing https origin never reaches the error message', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-remote-'));
+    const { execa } = await import('execa');
+    await execa('git', ['init', '-q'], { cwd: repo });
+    await execa('git', ['remote', 'add', 'origin', 'https://oauth2:glpat-SECRET123@gitlab.example/group/proj.git'], { cwd: repo });
+    await mkdir(join(repo, '.vanguard'), { recursive: true });
+    await writeFile(join(repo, '.vanguard', 'app.json'), JSON.stringify({ source: 'github' }));
+    const err = await listBoardTasks(repo).catch((e: Error) => e.message);
+    expect(err).toContain('could not detect a github.com repo');
+    expect(err).not.toContain('glpat-SECRET123');
+  });
+});

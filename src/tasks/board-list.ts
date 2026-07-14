@@ -61,13 +61,34 @@ async function originRemote(repoPath: string): Promise<string> {
   return stdout.trim();
 }
 
+/**
+ * A remote URL safe to put in an error message: HTTPS remotes routinely embed credentials
+ * (`https://oauth2:glpat-xxx@gitlab.com/...`), and the detection-failure paths are exactly the
+ * hand-configured remotes most likely to carry one — echoing it verbatim would ship the token to
+ * the board UI and any log (review #346 r2). Redacts userinfo; falls back to a regex strip for
+ * non-URL remotes (ssh shorthand has no userinfo password, but strip defensively anyway).
+ */
+function redactRemote(remote: string): string {
+  try {
+    const url = new URL(remote);
+    if (url.username !== '' || url.password !== '') {
+      url.username = '';
+      url.password = '';
+      return `${url.href} (credentials redacted)`;
+    }
+    return remote;
+  } catch {
+    return remote.replace(/\/\/[^@/]+@/, '//<redacted>@');
+  }
+}
+
 async function githubSlug(repoPath: string): Promise<string> {
   try {
     return await detectRepoSlug(repoPath);
   } catch {
     const remote = await originRemote(repoPath).catch(() => '<no origin remote>');
     // Declared limitation (S9 spec §2.8): detection is github.com-only; Enterprise is trigger-gated.
-    throw new VanguardError(`could not detect a github.com repo from origin (${remote}) — the board supports github.com remotes.`);
+    throw new VanguardError(`could not detect a github.com repo from origin (${redactRemote(remote)}) — the board supports github.com remotes.`);
   }
 }
 
@@ -76,7 +97,7 @@ async function gitlabProject(repoPath: string): Promise<string> {
     throw new VanguardError('no origin remote — the board needs one to find the GitLab project.');
   });
   const project = parseGitlabProjectFromRemote(remote);
-  if (project === undefined) throw new VanguardError(`cannot detect a GitLab project from origin (${remote}).`);
+  if (project === undefined) throw new VanguardError(`cannot detect a GitLab project from origin (${redactRemote(remote)}).`);
   return project;
 }
 
@@ -97,16 +118,10 @@ async function assertLinearTeam(team: string, send: Awaited<ReturnType<typeof li
 }
 
 /**
- * List the board's tasks from the configured tracker (S9 — the read path that used to live in
- * apps/desktop/src-tauri/src/tasks.rs). One page of BOARD_FETCH_CAP; `capped` drives the banner.
- * `state: 'all'` goes to github AND gitlab (Done fills from closed issues — the glab parity change,
- * spec §2.3) but NEVER to Linear: its `state` filter is a workflow-state TYPE compared with `eq`,
- * and `'all'` matches nothing — the board would be silently empty (spec §2.2, blocking).
- */
-/**
  * The board's TaskFilter per source — PURE and test-pinned, because getting it wrong is silent:
- * `state: 'all'` for github/gitlab (Done fills from closed issues), NEVER for Linear (its state
- * filter is a workflow-state TYPE compared with `eq`; 'all' matches nothing ⇒ empty board).
+ * `state: 'all'` for github/gitlab (Done fills from closed issues — the declared glab parity
+ * change, spec §2.3), NEVER for Linear (its state filter is a workflow-state TYPE compared with
+ * `eq`; 'all' matches nothing ⇒ silently empty board — spec §2.2, blocking).
  */
 export function boardFilterFor(source: BoardSource, label?: string): { state?: string; labels?: string[]; limit: number } {
   const labels = label !== undefined ? { labels: [label] } : {};
@@ -130,6 +145,10 @@ const defaultFetcherFactory: BoardFetcherFactory = async (source, cfg, repoPath)
   return new LinearCliTaskFetcher({ team, graphql: send });
 };
 
+/**
+ * List the board's tasks from the configured tracker (S9 — the read path that used to live in
+ * apps/desktop/src-tauri/src/tasks.rs). One page of BOARD_FETCH_CAP; `capped` drives the banner.
+ */
 export async function listBoardTasks(
   repoPath: string,
   fetcherFor: BoardFetcherFactory = defaultFetcherFactory,
