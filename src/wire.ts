@@ -170,6 +170,15 @@ export const WIRE_PROVIDER_NAMES = ['claude', 'codex', 'cursor', 'zai', 'openrou
 export const FINDING_SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
 export const FINDING_KINDS = ['security', 'perf', 'correctness', 'style'] as const;
 
+/** One board card (S9): id resolvable to (source, ref) for spec fetch and run-record matching. */
+export interface BoardTask {
+  id: string;
+  title: string;
+  column: 'queued' | 'claimed' | 'running' | 'verify-failed' | 'review' | 'done';
+  /** The chip: first label else provider state (github/gitlab); the workflow state (Linear). */
+  state: string;
+}
+
 /** One adversary-stage finding (the `<findings>` block item shape). */
 export interface Finding {
   severity: (typeof FINDING_SEVERITIES)[number];

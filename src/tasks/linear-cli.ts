@@ -33,6 +33,7 @@ interface LinearCliIssue {
   title?: string;
   description?: string | null;
   labels?: { nodes?: Array<{ name?: string }> };
+  state?: { name?: string; type?: string };
   children?: { nodes?: Array<{ identifier?: string; id?: string; title?: string }> };
   comments?: LinearCliCommentNode[] | { nodes?: LinearCliCommentNode[] };
 }
@@ -53,6 +54,7 @@ function toTask(issue: LinearCliIssue): Task {
   const children = (issue.children?.nodes ?? [])
     .map((child) => ({ id: child.identifier ?? child.id ?? '', title: child.title ?? '' }))
     .filter((child) => child.id !== '');
+  const stateName = issue.state?.name;
   return {
     id: issue.identifier ?? issue.id ?? '',
     title: issue.title ?? '',
@@ -60,6 +62,9 @@ function toTask(issue: LinearCliIssue): Task {
     labels,
     children,
     comments: parseComments(issue.comments),
+    ref: issue.identifier ?? issue.id ?? '',
+    // The LIST query has always fetched state — it was dropped here. The board needs it (S9).
+    ...(stateName !== undefined ? { state: stateName } : {}),
   };
 }
 
@@ -79,7 +84,14 @@ async function linearToken(run: LinearCliRunner): Promise<string> {
   // Authorization value and fail at Linear with an opaque 401 instead of the actionable message here.
   const fromEnv = process.env['LINEAR_API_KEY']?.trim();
   if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-  const token = (await run(['auth', 'token'])).trim();
+  let token: string;
+  try {
+    token = (await run(['auth', 'token'])).trim();
+  } catch {
+    // Non-zero exit = not logged in. Without this map the raw execa error ("Command failed…")
+    // reaches the board on every load (S9 — the Rust board had the actionable message; core didn't).
+    throw new VanguardError('Not logged in to Linear — run `linear auth login` or set LINEAR_API_KEY.');
+  }
   if (token === '') throw new VanguardError('No Linear credential — set LINEAR_API_KEY or run `linear auth login`.');
   return token;
 }
@@ -112,8 +124,8 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 
 /** One page of the issue list. `state { type }` is what TaskFilter.state selects on. */
-const LIST_QUERY = `query($f: IssueFilter, $after: String) {
-  issues(first: ${PAGE_SIZE}, after: $after, filter: $f) {
+const LIST_QUERY = `query($f: IssueFilter, $after: String, $first: Int!) {
+  issues(first: $first, after: $after, filter: $f) {
     pageInfo { hasNextPage endCursor }
     nodes { identifier title description state { name type } labels { nodes { name } } }
   }
@@ -186,6 +198,10 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     const send = await this.sender(); // credential resolved once, not per page
     const issues: LinearCliIssue[] = [];
     let after: string | undefined;
+    // filter.limit (S9, board): cap `first:` and stop after enough issues — the board wants ONE
+    // page (its cap banner covers the rest), and paginating a big team to exhaustion can bust the
+    // sidecar query pipe's 60s watchdog. Unset ⇒ exhaustive, exactly as before (watch's contract).
+    const pageSize = filter?.limit !== undefined ? Math.min(filter.limit, PAGE_SIZE) : PAGE_SIZE;
     for (let page = 0; ; page++) {
       // "Exhaust the pages" still assumes a finite, well-behaved server. A `hasNextPage: true` with a
       // cursor that never advances (server bug, proxy, hostile response) would spin here forever and
@@ -196,7 +212,7 @@ export class LinearCliTaskFetcher implements TaskFetcher {
       }
       const response = (await send({
         query: LIST_QUERY,
-        variables: { f: issueFilter, ...(after !== undefined ? { after } : {}) },
+        variables: { f: issueFilter, first: pageSize, ...(after !== undefined ? { after } : {}) },
       })) as IssuePage;
       // A GraphQL error arrives with HTTP 200 and no `data`. Returning [] here would be indistinguishable
       // from "no work to do" — the watcher would idle forever against a broken query.
@@ -213,6 +229,7 @@ export class LinearCliTaskFetcher implements TaskFetcher {
         throw new VanguardError('Linear API returned no issue connection — refusing to report an empty list.');
       }
       issues.push(...(connection.nodes ?? []));
+      if (filter?.limit !== undefined && issues.length >= filter.limit) break; // board cap — one page
       const next = connection.pageInfo;
       if (next?.hasNextPage !== true || next.endCursor === null || next.endCursor === undefined) break;
       // The cursor must ADVANCE. `hasNextPage: true` with a repeating cursor is the infinite loop.

@@ -25,6 +25,8 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
   readFlow: async () => ({ doc: { name: 'f', label: 'L', stages: [{ name: 'planner', overrides: {} }], loops: [] }, source: 'flow "f" {}' }),
   writeFlow: async () => ({ source: 'flow "f" {}' }),
   deleteFlow: async () => ({}),
+  listTasks: async () => ({ tasks: [], capped: false }),
+  fetchSpec: async () => ({ spec: '# t' }),
   ...over,
 });
 
