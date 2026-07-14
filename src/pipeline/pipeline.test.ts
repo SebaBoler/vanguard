@@ -326,6 +326,13 @@ describe('implementReviewSimplifyStages', () => {
   });
 });
 
+describe('planImplement stages', () => {
+  it('gives the planner 15 turns (research on a large repo needs more than the old 10)', () => {
+    expect(planImplementReviewStages().find((s) => s.name === 'planner')?.maxTurns).toBe(15);
+    expect(planImplementAdversaryStages().find((s) => s.name === 'planner')?.maxTurns).toBe(15);
+  });
+});
+
 describe('fastStages', () => {
   it('is a single low-effort implementer on a fast model', () => {
     const stages = fastStages();
