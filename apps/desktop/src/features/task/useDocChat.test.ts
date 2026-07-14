@@ -25,12 +25,28 @@ test('send appends a user message and sets busy', () => {
   expect(s.busy).toBe(true);
 });
 
-test('reply with <doc> sets a pending proposal and clears busy', () => {
+test('reply with <doc> sets a pending proposal and clears busy — the RAW reply is stored', () => {
   const s0 = reduceDocChat(initialDocChat(), { type: 'send', text: 'x' });
   const s = reduceDocChat(s0, { type: 'reply', text: 'sure <doc>NEW</doc>' });
   expect(s.pending).toBe('NEW');
   expect(s.busy).toBe(false);
-  expect(s.messages.at(-1)).toEqual({ role: 'assistant', content: 'sure' });
+  // The transcript persists to disk now (S10): storing a display placeholder would destroy the
+  // proposal's content on relaunch. The placeholder is derived at render time (ChatMessage).
+  expect(s.messages.at(-1)).toEqual({ role: 'assistant', content: 'sure <doc>NEW</doc>' });
+});
+
+test('load seeds a persisted transcript without restoring pending or busy', () => {
+  const persisted = [
+    { role: 'user' as const, content: 'plan?' },
+    { role: 'assistant' as const, content: 'here <doc>PLAN</doc>' },
+  ];
+  const s = reduceDocChat(reduceDocChat(initialDocChat(), { type: 'send', text: 'old' }), {
+    type: 'load',
+    messages: persisted,
+  });
+  expect(s.messages).toEqual(persisted); // the <doc> content survives the round-trip
+  expect(s.pending).toBeUndefined(); // accept/reject is session-only
+  expect(s.busy).toBe(false);
 });
 
 test('reply without <doc> is a plain message, no pending', () => {

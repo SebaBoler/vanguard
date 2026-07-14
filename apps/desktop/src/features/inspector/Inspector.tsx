@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Chip, cn } from '@/ui';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowLeft, Play, RefreshCw } from 'lucide-react';
+import { ArrowLeft, FilePlus, RefreshCw } from 'lucide-react';
 import {
   listRuns,
   listActive,
@@ -26,7 +26,7 @@ import { Settings } from '../settings/Settings';
 import { TaskBoard } from '../board/TaskBoard';
 import { TaskDetail } from '../board/TaskDetail';
 import { WorkflowEditor } from '../workflow/WorkflowEditor';
-import { DocsScreen } from '../docs/DocsScreen';
+import { TaskDraftScreen } from '../task/TaskDraftScreen';
 import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
 import { foldLiveEvent, reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
@@ -38,13 +38,19 @@ export function Inspector({
   screen,
   focusRunning,
   clearNonce,
+  newTaskNonce,
   onCrumb,
+  onNewTask,
+  onOpenBoard,
 }: {
   project: string;
-  screen: 'runs' | 'board' | 'docs' | 'fleet' | 'remote' | 'workflow' | 'settings';
+  screen: 'runs' | 'board' | 'task' | 'fleet' | 'remote' | 'workflow' | 'settings';
   focusRunning: ActiveRun | null;
   clearNonce: number;
+  newTaskNonce: number;
   onCrumb: (c: string | null) => void;
+  onNewTask: () => void;
+  onOpenBoard: () => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [active, setActive] = useState<ActiveRun[]>([]);
@@ -295,7 +301,7 @@ export function Inspector({
     <div
       className={cn(
         'mx-auto flex h-full w-full min-h-0 flex-col gap-4 p-6',
-        screen !== 'board' && screen !== 'docs' && 'max-w-5xl',
+        screen !== 'board' && screen !== 'task' && 'max-w-5xl',
       )}
     >
       {screen === 'runs' && (
@@ -311,17 +317,15 @@ export function Inspector({
           {detail && <span className="tabular-nums text-xs text-muted-foreground">{detail.timestamp}</span>}
           {liveRun && <Chip color="success" variant="outlined">running</Chip>}
           {detail && <Chip color={detailPassed ? 'success' : 'destructive'}>{detailPassed ? 'passed' : 'failed'}</Chip>}
+          {/* S10 (D3): the toolbar path to the provider form is gone — runs start from the board
+              (TaskDetail keeps the only setShowNewRun entry). Authoring starts here instead. */}
           <Button
             variant="outlined"
             color="secondary"
-            onClick={() => setShowNewRun((v) => !v)}
-            startIcon={<Play className="size-4" />}
-            // Single-in-flight: disabled until the mount idle-check resolves, and while a typed run is
-            // live (in-flight derives from typedRun.terminal — the listener updates it, so re-attach and
-            // run-end both clear the guard). No write-once busy latch.
-            disabled={!checkedIdle || (typedRun !== null && typedRun.terminal === undefined)}
+            onClick={onNewTask}
+            startIcon={<FilePlus className="size-4" />}
           >
-            New run
+            New Task
           </Button>
           <Button variant="text" color="secondary" onClick={load} loading={loading} startIcon={<RefreshCw className="size-4" />}>
             Reload
@@ -393,7 +397,7 @@ export function Inspector({
           <RunList runs={runs} active={active} onSelect={open} onOpenActive={setLiveRun} />
         </div>
       ) : screen === 'board' ? (
-        <TaskBoard project={project} onOpenTask={setTaskDetailId} />
+        <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} />
       ) : screen === 'remote' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <RemoteRuns project={project} />
@@ -410,9 +414,9 @@ export function Inspector({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <Settings project={project} />
         </div>
-      ) : screen === 'docs' ? (
+      ) : screen === 'task' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <DocsScreen project={project} />
+          <TaskDraftScreen project={project} freshNonce={newTaskNonce} onOpenBoard={onOpenBoard} />
         </div>
       ) : null}
     </div>

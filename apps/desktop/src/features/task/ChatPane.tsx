@@ -3,14 +3,17 @@ import { Button, Textarea } from '@/ui';
 import { ChatMessage } from './ChatMessage.js';
 import type { DocChatState } from './useDocChat.js';
 
-/** Sidebar chat: transcript + input + (when a proposal is pending) an accept/reject bar. */
+/** Sidebar chat: transcript + input + (when a proposal is pending) an accept/reject bar.
+ * `disabled` freezes input entirely (archived/unreadable drafts, S10) while keeping the transcript. */
 export function ChatPane({
   state,
+  disabled = false,
   onSend,
   onAccept,
   onReject,
 }: {
   state: DocChatState;
+  disabled?: boolean;
   onSend: (text: string) => void;
   onAccept: () => void;
   onReject: () => void;
@@ -18,7 +21,7 @@ export function ChatPane({
   const [draft, setDraft] = useState('');
   const send = (): void => {
     const text = draft.trim();
-    if (text === '' || state.busy) return;
+    if (text === '' || state.busy || disabled) return;
     onSend(text);
     setDraft('');
   };
@@ -46,11 +49,12 @@ export function ChatPane({
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Ask for a plan…"
+          placeholder={disabled ? 'This draft is read-only.' : 'Ask for a plan…'}
           rows={2}
           className="flex-1"
+          disabled={disabled}
         />
-        <Button onClick={send} disabled={state.busy}>
+        <Button onClick={send} disabled={state.busy || disabled}>
           Send
         </Button>
       </div>

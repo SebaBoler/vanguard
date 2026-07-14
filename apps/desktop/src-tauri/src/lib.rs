@@ -1,6 +1,6 @@
 mod active;
 mod appconfig;
-mod docs;
+mod drafts;
 mod projects;
 mod remote;
 mod runs;
@@ -62,7 +62,7 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 
 #[tauri::command]
 async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
-    // Passive read: collapse-to-default. DocsScreen consumes this directly (chat model, task
+    // Passive read: collapse-to-default. TaskDraftScreen consumes this directly (chat model, task
     // source) and must keep degrading gracefully on an unreadable file — routing THIS command
     // through read_strict broke every chat turn on a hand-edit typo (review #341 r2 blocking).
     Ok(appconfig::read(Path::new(&repo_path)))
@@ -81,18 +81,23 @@ async fn write_app_config(repo_path: String, config: appconfig::AppConfig) -> Re
 }
 
 #[tauri::command]
-async fn list_docs(repo_path: String) -> Result<Vec<String>, String> {
-    Ok(docs::list(Path::new(&repo_path)))
+async fn list_drafts(repo_path: String) -> Result<Vec<String>, String> {
+    Ok(drafts::list(Path::new(&repo_path)))
 }
 
 #[tauri::command]
-async fn read_doc(repo_path: String, name: String) -> Result<String, String> {
-    docs::read(Path::new(&repo_path), &name)
+async fn read_draft(repo_path: String, id: String) -> Result<String, String> {
+    drafts::read(Path::new(&repo_path), &id)
 }
 
 #[tauri::command]
-async fn write_doc(repo_path: String, name: String, content: String) -> Result<(), String> {
-    docs::write(Path::new(&repo_path), &name, &content)
+async fn write_draft(repo_path: String, id: String, content: String) -> Result<(), String> {
+    drafts::write(Path::new(&repo_path), &id, &content)
+}
+
+#[tauri::command]
+async fn delete_draft(repo_path: String, id: String) -> Result<(), String> {
+    drafts::delete(Path::new(&repo_path), &id)
 }
 
 #[tauri::command]
@@ -165,9 +170,10 @@ pub fn run() {
             read_app_config,
             read_app_config_strict,
             write_app_config,
-            list_docs,
-            read_doc,
-            write_doc,
+            list_drafts,
+            read_draft,
+            write_draft,
+            delete_draft,
             list_remote_runs,
             list_tasks,
             fetch_spec,

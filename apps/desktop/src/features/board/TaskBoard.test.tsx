@@ -26,7 +26,7 @@ const TASKS: BoardTask[] = [
 describe('TaskBoard', () => {
   test('renders all six workflow columns', async () => {
     mockListTasks.mockResolvedValue({ tasks: [], capped: false });
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     for (const label of ['Queued', 'Claimed', 'Running', 'Verify failed', 'Review', 'Done']) {
       expect(await screen.findByText(label)).toBeInTheDocument();
     }
@@ -34,7 +34,7 @@ describe('TaskBoard', () => {
 
   test('routes each task to its column lane (guards a col.key typo silently emptying a lane)', async () => {
     mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     await screen.findByText('Queued one'); // wait for load
 
     expect(within(lane('Queued')).getByText('Queued one')).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe('TaskBoard', () => {
 
   test('shows per-column counts and a placeholder for empty lanes', async () => {
     mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     await screen.findByText('Queued one');
 
     expect(within(lane('Queued')).getByText('2')).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe('TaskBoard', () => {
 
   test('shows the raw backend state only when it differs from the lane key', async () => {
     mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     await screen.findByText('Running one');
 
     // running task: state "In Progress" !== column "running" → shown
@@ -67,13 +67,13 @@ describe('TaskBoard', () => {
 
   test('renders the error branch when listTasks rejects', async () => {
     mockListTasks.mockRejectedValue('boom');
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     expect(await screen.findByText(/No task board/)).toBeInTheDocument();
   });
 });
 
 test('the cap banner follows the RESPONSE capped flag, not a client-side count (S9)', async () => {
   mockListTasks.mockResolvedValue({ tasks: TASKS, capped: true });
-  render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+  render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
   expect(await screen.findByText(/Showing the first 5 tasks/)).toBeInTheDocument();
 });
