@@ -98,7 +98,10 @@ export default function App() {
       if (!navGuard.current.confirm()) event.preventDefault();
     });
     const onBeforeUnload = (e: BeforeUnloadEvent): void => {
-      if (navGuard.current.guarded()) e.preventDefault();
+      if (navGuard.current.guarded()) {
+        e.preventDefault();
+        e.returnValue = ''; // some WebKit/Chromium builds need returnValue, not just preventDefault
+      }
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => {

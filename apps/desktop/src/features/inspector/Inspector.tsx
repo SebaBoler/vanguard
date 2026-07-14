@@ -165,9 +165,15 @@ export function Inspector({
     const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
       if (e.payload.runId === dismissedRunId.current) return;
       // repoPath scopes adoption: a foreign project's run can never seed a strip here (S8).
+      const type = e.payload.event.type;
+      if (type === 'run-end' || type === 'run-error' || type === 'run-cancelled') {
+        // Single-in-flight: ANY observed terminal means the sidecar is (about to be) idle — the
+        // foreign-run note would otherwise outlive the run it warns about (review #343 r2).
+        setForeignRun(null);
+      }
       setTypedRun((prev) => {
         const next = reduceTypedRun(prev ?? initialTypedRun(), e.payload, project);
-        // A local run seeding means the foreign run is done (single-in-flight) — drop the note.
+        // A local run seeding also proves the foreign run is done.
         if (next.runId !== undefined) setForeignRun(null);
         return next;
       });

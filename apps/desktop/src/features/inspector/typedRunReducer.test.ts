@@ -51,6 +51,7 @@ describe('reduceTypedRun', () => {
 
   it('is idempotent on replay (backlog + live overlap)', () => {
     const seq = [
+      ev('r1', { type: 'run-accepted' }),
       ev('r1', { type: 'run-start', taskId: 't1', flow: 'f', provider: 'p', stages: ['a'] }),
       ev('r1', { type: 'stage-start', name: 'a', index: 0, of: 1 }),
       ev('r1', { type: 'cost', usdSpent: 0.03 }),
@@ -63,7 +64,7 @@ describe('reduceTypedRun', () => {
   });
 
   it('drops payloads from a different runId', () => {
-    let s = initialTypedRun();
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
     s = reduceTypedRun(s, ev('r1', { type: 'run-start', taskId: 't1', flow: 'f', provider: 'p', stages: ['a'] }));
     s = reduceTypedRun(s, ev('r2', { type: 'cost', usdSpent: 99 }));
     expect(s.usdSpent).toBe(0);
