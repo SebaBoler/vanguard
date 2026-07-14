@@ -86,8 +86,7 @@ async function gitlabProject(repoPath: string): Promise<string> {
  * throws-every-poll on a typo'd key — S9 spec §2.7c). Linear returns an empty issue set for a
  * wrong key exactly as for an empty team, so without this a typo looks like "0 issues".
  */
-async function assertLinearTeam(team: string): Promise<void> {
-  const send = await linearGraphql();
+async function assertLinearTeam(team: string, send: Awaited<ReturnType<typeof linearGraphql>>): Promise<void> {
   const response = (await send({
     query: 'query($tf: TeamFilter) { teams(filter: $tf) { nodes { id } } }',
     variables: { tf: { key: { eq: team } } },
@@ -123,8 +122,12 @@ const defaultFetcherFactory: BoardFetcherFactory = async (source, cfg, repoPath)
   if (source === 'gitlab') return new GitLabTaskFetcher(await gitlabProject(repoPath));
   const team = cfg.team;
   if (team === undefined) throw new VanguardError('Set a Linear team key (e.g. DEV) in Settings to load the board.');
-  await assertLinearTeam(team);
-  return new LinearCliTaskFetcher({ team });
+  // ONE credential resolution for probe + list — linearGraphql shells `linear auth token` when
+  // LINEAR_API_KEY is unset, and doing that twice per board load is a subprocess per load wasted
+  // (review #346 obs 3).
+  const send = await linearGraphql();
+  await assertLinearTeam(team, send);
+  return new LinearCliTaskFetcher({ team, graphql: send });
 };
 
 export async function listBoardTasks(
@@ -135,6 +138,8 @@ export async function listBoardTasks(
   const source = requireBoardSource(cfg);
   const fetcher = await fetcherFor(source, cfg, repoPath);
   const tasks = await fetcher.list(boardFilterFor(source, cfg.label));
+  // `capped` false-positives on EXACTLY cap items (a one-page budget cannot see page two) — the
+  // banner reads "first 50 shown", which stays true; Rust-board parity (review #346 obs 4).
   return { tasks: tasks.map((t) => toBoardTask(source, t)), capped: tasks.length >= BOARD_FETCH_CAP };
 }
 
@@ -143,6 +148,12 @@ export async function listBoardTasks(
  * trailing-number semantics accept both (`gh-904` and `gh-owner-repo-904`). Byte-compatible with
  * the retired spec.rs output; core fetch() is richer (comments, sub-issues) — v1 formats
  * title+body only, matching today's SpecPane.
+ *
+ * KNOWN LIMITATION (Rust-board parity, review #346 obs 2): the sanitized slug inside a run-record
+ * id is DISCARDED — `gh-other-repo-904` fetches issue 904 of THIS repo, because `other-repo-904`
+ * cannot be split back into owner/repo deterministically (hyphens are ambiguous) and the retired
+ * spec.rs shelled `gh` in the repo cwd with exactly the same semantics. Cross-repo run records
+ * only arise when .vanguard state is copied between repos.
  */
 export async function fetchTaskSpec(repoPath: string, taskId: string): Promise<{ spec: string }> {
   const resolved = resolveTaskRef(taskId);

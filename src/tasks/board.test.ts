@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { columnFor, mintBoardId, resolveTaskRef, toBoardTask } from './board.js';
-import { boardFilterFor, BOARD_FETCH_CAP, listBoardTasks, readBoardConfig } from './board-list.js';
+import { boardFilterFor, BOARD_FETCH_CAP, fetchTaskSpec, listBoardTasks, readBoardConfig } from './board-list.js';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -148,5 +148,20 @@ describe('readBoardConfig', () => {
     await mkdir(join(repo, '.vanguard'), { recursive: true });
     await writeFile(join(repo, '.vanguard', 'app.json'), '{not json');
     expect(await readBoardConfig(repo)).toEqual({});
+  });
+});
+
+// review #346 obs 1: the flag-smuggling guard is the one argv-safety check here — pin it.
+describe('fetchTaskSpec guards (no exec reaches a bad id)', () => {
+  it('rejects a flag-shaped Linear id before any CLI spawn (linear--version → -VERSION)', async () => {
+    await expect(fetchTaskSpec('/nonexistent', 'linear--version')).rejects.toThrow(/Invalid Linear id/);
+  });
+
+  it('rejects a hyphen-less Linear reference (not an identifier shape)', async () => {
+    await expect(fetchTaskSpec('/nonexistent', 'linear-devonly')).rejects.toThrow(/Invalid Linear id/);
+  });
+
+  it('rejects an unresolvable id with the prefix guidance', async () => {
+    await expect(fetchTaskSpec('/nonexistent', 'owner/repo#weird')).rejects.toThrow(/Recognized prefixes/);
   });
 });
