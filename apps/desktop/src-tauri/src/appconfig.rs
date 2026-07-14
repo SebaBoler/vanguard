@@ -49,7 +49,11 @@ pub fn read(repo: &Path) -> AppConfig {
 /// Absent file still means defaults. Passive consumers (board, projects, chat) keep `read`.
 pub fn read_strict(repo: &Path) -> Result<AppConfig, String> {
     match fs::read_to_string(config_path(repo)) {
-        Err(_) => Ok(AppConfig::default()),
+        // Only genuine ABSENCE defaults: permission-denied / is-a-directory / transient IO all mean
+        // "a file exists that we could not read" — Save must stay blocked, or a later write clobbers
+        // the file this guard exists to protect (review #341 obs 1).
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(e) => Err(format!(".vanguard/app.json is unreadable: {e}")),
         Ok(s) => serde_json::from_str(&s).map_err(|e| format!(".vanguard/app.json is unreadable: {e}")),
     }
 }
@@ -95,6 +99,15 @@ mod tests {
         fs::write(config_path(tmp.path()), "{not json").unwrap();
         assert!(read_strict(tmp.path()).is_err()); // unreadable -> error, NOT Default
         assert!(read(tmp.path()).source.is_none()); // passive read keeps collapse-to-default
+    }
+
+    #[test]
+    fn read_strict_treats_non_notfound_io_errors_as_errors() {
+        // app.json as a DIRECTORY: read_to_string fails with a non-NotFound error — the file-shaped
+        // thing exists, so defaults (and a Save over it) would be wrong (review #341 obs 1).
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(config_path(tmp.path())).unwrap();
+        assert!(read_strict(tmp.path()).is_err());
     }
 
     #[test]

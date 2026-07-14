@@ -20,6 +20,11 @@ describe('customProviderRowError (grammar mirror of the core predicate)', () => 
     expect(customProviderRowError(row, 0, [row])).toMatch(re);
   });
 
+  it('flags an unknown key from a hand-edited file — core would reject it at run time', () => {
+    const row = { ...ROW, futureKey: true } as typeof ROW;
+    expect(customProviderRowError(row, 0, [row])).toMatch(/unknown key "futureKey"/);
+  });
+
   it('flags the SECOND duplicate, not the first', () => {
     const rows = [ROW, { ...ROW }];
     expect(customProviderRowError(rows[0]!, 0, rows)).toBeUndefined();
