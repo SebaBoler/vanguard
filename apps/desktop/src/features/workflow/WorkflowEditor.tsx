@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { useNavGuardRegistry } from '../../navGuard';
 import { Button, CodeBlock, Input } from '@/ui';
-import { AlertTriangle, Plus } from 'lucide-react';
-import { apiCapabilitiesCached, apiListFlows, apiReadFlow, apiWriteFlow } from '../../ipc';
+import { AlertTriangle, Pencil, Plus, Trash2 } from 'lucide-react';
+import { apiCapabilitiesCached, apiDeleteFlow, apiListFlows, apiReadFlow, apiWriteFlow } from '../../ipc';
 import type { Capabilities, RepoFlowInfo } from '../../ipc';
 import { FlowCanvas } from './FlowCanvas';
 import { StageInspector } from './StageInspector';
@@ -133,19 +133,76 @@ export function WorkflowEditor({ project }: { project: string }) {
   // collision with "plan" would otherwise surface only at Save (S5 §19). FILE basenames are in the
   // set as well as names: an unparseable file has no name, but `created` writes to <name>.hcl and
   // would silently clobber it (review r4).
-  const takenNames = new Set([
-    ...(caps?.flows.map((f) => f.name) ?? []),
-    ...(flows?.map((f) => f.name).filter((n): n is string => n !== undefined) ?? []),
-    ...(flows?.map((f) => f.file.replace(/\.hcl$/, '')) ?? []),
-  ]);
-  const newNameProblem =
-    newName === ''
+  const takenNames = (excludeFile?: string): Set<string> =>
+    new Set([
+      ...(caps?.flows.map((f) => f.name) ?? []),
+      ...(flows ?? [])
+        .filter((f) => f.file !== excludeFile)
+        .flatMap((f) => [...(f.name !== undefined ? [f.name] : []), f.file.replace(/\.hcl$/, '')]),
+    ]);
+  const nameProblem = (name: string, excludeFile?: string): string | null =>
+    name === ''
       ? null
-      : !FLOW_NAME_RE.test(newName)
+      : !FLOW_NAME_RE.test(name)
         ? 'lowercase letters, digits, . _ - only'
-        : takenNames.has(newName)
-          ? `"${newName}" is taken`
+        : takenNames(excludeFile).has(name)
+          ? `"${name}" is taken`
           : null;
+  const newNameProblem = nameProblem(newName);
+
+  // Rename/delete (S8 item 6). Rename is COMPOSITION, not protocol: write the new file first,
+  // delete the old second — a failure between the two leaves both files (messy, never lossy).
+  const [renaming, setRenaming] = useState<string | null>(null); // file being renamed
+  const [renameTo, setRenameTo] = useState('');
+  const [opError, setOpError] = useState<string | null>(null);
+  const renameProblem = renaming !== null ? nameProblem(renameTo, renaming) : null;
+
+  const removeFlow = async (file: string): Promise<void> => {
+    if (!window.confirm(`Delete ${file} from .vanguard/flows/?`)) return;
+    try {
+      await apiDeleteFlow(project, file);
+      setOpError(null);
+      if (state.file === file) {
+        gen.current += 1; // invalidate in-flight reads/saves of the deleted flow
+        saving.current = false;
+        dispatch({ type: 'reset' });
+      }
+      void refreshList();
+    } catch (err) {
+      setOpError(String(err));
+    }
+  };
+
+  const renameFlow = async (file: string, to: string): Promise<void> => {
+    if (state.file === file && state.dirty) {
+      setOpError('save or discard the unsaved changes before renaming this flow');
+      return;
+    }
+    try {
+      const { doc } = await apiReadFlow(project, file); // the ON-DISK doc — rename never invents content
+      await apiWriteFlow(project, `${to}.hcl`, { ...doc, name: to });
+      setOpError(null);
+      try {
+        await apiDeleteFlow(project, file);
+      } catch (err) {
+        // write-before-delete: the flow now exists under both names — say so, lose nothing.
+        setOpError(`renamed to ${to}.hcl but could not remove ${file}: ${String(err)} — both files exist`);
+      }
+      setRenaming(null);
+      if (state.file === file) {
+        gen.current += 1;
+        saving.current = false;
+        apiReadFlow(project, `${to}.hcl`)
+          .then(({ doc: d, source }) => {
+            dispatch({ type: 'loaded', file: `${to}.hcl`, doc: d, source });
+          })
+          .catch((err) => dispatch({ type: 'loadFailed', file: `${to}.hcl`, error: String(err) }));
+      }
+      void refreshList();
+    } catch (err) {
+      setOpError(String(err));
+    }
+  };
 
   const palette = caps?.stages ?? [];
   const selectedStage = state.doc !== null && state.selected !== null ? state.doc.stages[state.selected] : undefined;
@@ -183,6 +240,12 @@ export function WorkflowEditor({ project }: { project: string }) {
           {state.error}
         </div>
       )}
+      {opError !== null && (
+        <div className="flex shrink-0 items-center gap-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+          <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
+          {opError}
+        </div>
+      )}
       {capsError !== null && (
         <div className="flex shrink-0 items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs text-amber-600 dark:text-amber-400">
           <AlertTriangle className="size-3.5 shrink-0" aria-hidden />
@@ -217,19 +280,68 @@ export function WorkflowEditor({ project }: { project: string }) {
               <div className="space-y-1">
                 {(flows ?? []).map((f) => {
                   const openable = f.name !== undefined;
+                  if (renaming === f.file) {
+                    return (
+                      <div key={f.file} className="space-y-1 rounded bg-muted/60 px-2 py-1.5">
+                        <div className="flex items-center gap-1">
+                          <Input
+                            value={renameTo}
+                            onChange={(e) => setRenameTo(e.target.value)}
+                            aria-label={`rename ${f.name ?? f.file}`}
+                            className="w-full text-xs"
+                          />
+                          <Button
+                            aria-label="confirm rename"
+                            disabled={renameTo === '' || renameProblem !== null || renameTo === f.name}
+                            onClick={() => void renameFlow(f.file, renameTo)}
+                          >
+                            <Pencil className="size-3.5" aria-hidden />
+                          </Button>
+                          <Button variant="text" color="secondary" aria-label="cancel rename" onClick={() => setRenaming(null)}>
+                            ✕
+                          </Button>
+                        </div>
+                        {renameProblem !== null && <div className="px-1 text-[11px] text-destructive">{renameProblem}</div>}
+                      </div>
+                    );
+                  }
                   return (
-                    <button
+                    <div
                       key={f.file}
-                      disabled={!openable}
-                      onClick={() => open(f.file)}
-                      title={f.error}
-                      className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm ${
+                      className={`group flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm ${
                         state.file === f.file ? 'bg-muted font-medium' : openable ? 'hover:bg-muted/60' : 'opacity-50'
                       }`}
                     >
-                      <span className="truncate">{f.name ?? f.file}</span>
-                      {f.error !== undefined && <AlertTriangle className="ml-auto size-3.5 shrink-0 text-amber-500" aria-hidden />}
-                    </button>
+                      <button
+                        disabled={!openable}
+                        onClick={() => open(f.file)}
+                        title={f.error}
+                        aria-label={`open ${f.name ?? f.file}`}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <span className="truncate">{f.name ?? f.file}</span>
+                        {f.error !== undefined && <AlertTriangle className="ml-auto size-3.5 shrink-0 text-amber-500" aria-hidden />}
+                      </button>
+                      {openable && (
+                        <button
+                          aria-label={`rename ${f.name}`}
+                          onClick={() => {
+                            setRenaming(f.file);
+                            setRenameTo(f.name ?? '');
+                          }}
+                          className="hidden shrink-0 text-muted-foreground hover:text-foreground group-hover:block"
+                        >
+                          <Pencil className="size-3.5" aria-hidden />
+                        </button>
+                      )}
+                      <button
+                        aria-label={`delete ${f.name ?? f.file}`}
+                        onClick={() => void removeFlow(f.file)}
+                        className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </button>
+                    </div>
                   );
                 })}
               </div>

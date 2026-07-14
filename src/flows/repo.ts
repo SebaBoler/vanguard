@@ -306,3 +306,20 @@ function rejectUnknown(obj: Record<string, unknown>, allowed: Set<string>, where
     if (!allowed.has(key)) throw new FlowError(`unknown key "${key}" in ${where}`);
   }
 }
+
+/**
+ * Delete one flow file (S8). Idempotent: ENOENT is SUCCESS — "already gone" is the state the
+ * caller asked for, and the query pipe's Timed watchdog may retry a killed exchange (a scary
+ * error on the second attempt would be a lie). Anything else (EACCES, EISDIR) throws FlowError.
+ */
+export async function deleteRepoFlow(repoPath: string, file: string): Promise<void> {
+  if (!FLOW_FILE_RE.test(file)) {
+    throw new FlowError(`invalid flow file name "${file}" — expected <name>.hcl`);
+  }
+  try {
+    await unlink(join(flowsDir(repoPath), file));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new FlowError(err instanceof Error ? err.message : String(err));
+  }
+}

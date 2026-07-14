@@ -32,6 +32,7 @@ export interface SidecarDeps {
   listProviders: (params: ListProvidersParams) => Promise<{ providers: RepoProviderInfo[] }>;
   readFlow: (params: ReadFlowParams) => Promise<{ doc: FlowDoc; source: string }>;
   writeFlow: (params: WriteFlowParams) => Promise<{ source: string }>;
+  deleteFlow: (params: DeleteFlowParams) => Promise<Record<string, never>>;
 }
 
 /** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
@@ -58,6 +59,11 @@ export interface WriteFlowParams {
   repoPath: string;
   file: string;
   doc: FlowDoc;
+}
+/** Delete one flow file (S8). Idempotent — ENOENT is success. */
+export interface DeleteFlowParams {
+  repoPath: string;
+  file: string;
 }
 
 /**
@@ -174,6 +180,10 @@ export function validateReadFlow(params: unknown): void {
   requireFlowFile(requireAbsoluteRepoPath(params));
 }
 
+export function validateDeleteFlow(params: unknown): void {
+  requireFlowFile(requireAbsoluteRepoPath(params));
+}
+
 /**
  * Validate a writeFlow request and return the coerced doc. Everything pure happens here, before
  * dispatch: shape + unknown-key rejection (the renderer sends a JS object, so parse's typo
@@ -242,6 +252,9 @@ export async function runSidecar(
       } else if (req.method === 'readFlow') {
         validateReadFlow(req.params);
         write(JSON.stringify({ id, result: await deps.readFlow(req.params as ReadFlowParams) }));
+      } else if (req.method === 'deleteFlow') {
+        validateDeleteFlow(req.params);
+        write(JSON.stringify({ id, result: await deps.deleteFlow(req.params as DeleteFlowParams) }));
       } else if (req.method === 'writeFlow') {
         const doc = validateWriteFlow(req.params);
         const params = req.params as WriteFlowParams;
