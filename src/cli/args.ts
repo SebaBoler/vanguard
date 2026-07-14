@@ -970,7 +970,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer (or loop-v1 spec pass's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
