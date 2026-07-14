@@ -41,6 +41,9 @@ export function parseDraft(raw: string): DraftData | undefined {
   if (typeof o.body !== 'string' || !Array.isArray(o.chat)) return undefined;
   const chat: ChatMsg[] = [];
   for (const m of o.chat) {
+    // null/primitive elements must parse-FAIL, not throw (review #349 r9): parseDraft runs inside
+    // the mount loader's Promise.all, and a throw there would blank the entire sidebar.
+    if (typeof m !== 'object' || m === null) return undefined;
     const msg = m as Record<string, unknown>;
     if ((msg.role !== 'user' && msg.role !== 'assistant') || typeof msg.content !== 'string') return undefined;
     chat.push({ role: msg.role, content: msg.content });
@@ -203,7 +206,8 @@ export class DraftWriter {
     return this.enqueue(id, () => deleteDraft(this.repoPath, id));
   }
 
-  /** True while a debounce is armed or a write is in flight — drives the close-flush guard. */
+  /** True while a debounce is armed or a write is in flight. Introspection only — the close path
+   * simply awaits `flush()`, which is a no-op when clean. */
   dirty(): boolean {
     return this.timers.size > 0 || this.inFlight > 0;
   }

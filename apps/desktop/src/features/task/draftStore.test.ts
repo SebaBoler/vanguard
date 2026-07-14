@@ -44,6 +44,10 @@ test('parseDraft rejects garbage, bad chat shapes, and non-http created urls', (
   expect(parseDraft('null')).toBeUndefined();
   expect(parseDraft(JSON.stringify({ body: 1, chat: [] }))).toBeUndefined();
   expect(parseDraft(JSON.stringify({ body: '', chat: [{ role: 'system', content: 'x' }] }))).toBeUndefined();
+  // A null chat element must PARSE-FAIL, not throw (review #349 r9 blocking): parseDraft runs
+  // inside the mount loader's Promise.all — a throw there blanks the ENTIRE sidebar.
+  expect(parseDraft(JSON.stringify({ body: '', chat: [null] }))).toBeUndefined();
+  expect(parseDraft(JSON.stringify({ body: '', chat: [42] }))).toBeUndefined();
   // A committed draft in a cloned repo must not smuggle a javascript: URL into the link chip.
   expect(parseDraft(JSON.stringify(draft({ created: { id: 'x', url: 'javascript:alert(1)' } })))).toBeUndefined();
   expect(parseDraft(JSON.stringify(draft({ created: { id: 'x', url: 'file:///etc' } })))).toBeUndefined();

@@ -63,9 +63,14 @@ export function TaskDraftScreen({
   const draftRef = useRef<DraftData>(emptyDraft());
 
   const [saveError, setSaveError] = useState<string | null>(null);
-  const writerRef = useRef<DraftWriter | null>(null);
-  writerRef.current ??= new DraftWriter(project, setSaveError);
-  const writer = writerRef.current;
+  // Recreated when `project` changes (review #349 r9 note): today Inspector's key remounts this
+  // screen per project, but a stale-repoPath writer silently writing into the previous repo must
+  // not be load-bearing on a remount decided elsewhere.
+  const writerRef = useRef<{ project: string; writer: DraftWriter } | null>(null);
+  if (writerRef.current === null || writerRef.current.project !== project) {
+    writerRef.current = { project, writer: new DraftWriter(project, setSaveError) };
+  }
+  const writer = writerRef.current.writer;
 
   // Chat / create guards, carried from DocsScreen (S3/S4 review-hardened) — but keyed by draft id
   // (review #349 r1): a selection-scoped ref is cleared by a switch, so leaving and returning to a
