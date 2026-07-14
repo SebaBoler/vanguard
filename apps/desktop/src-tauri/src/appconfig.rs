@@ -44,6 +44,16 @@ pub fn read(repo: &Path) -> AppConfig {
         .unwrap_or_default()
 }
 
+/// Settings read path (S6 guard b): a file that EXISTS but doesn't parse is an error, not
+/// `Default` — collapsing it would let the next Save silently replace the whole hand-edited file.
+/// Absent file still means defaults. Passive consumers (board, projects, chat) keep `read`.
+pub fn read_strict(repo: &Path) -> Result<AppConfig, String> {
+    match fs::read_to_string(config_path(repo)) {
+        Err(_) => Ok(AppConfig::default()),
+        Ok(s) => serde_json::from_str(&s).map_err(|e| format!(".vanguard/app.json is unreadable: {e}")),
+    }
+}
+
 pub fn write(repo: &Path, cfg: &AppConfig) -> io::Result<()> {
     fs::create_dir_all(repo.join(".vanguard"))?;
     let json = serde_json::to_string_pretty(cfg).map_err(io::Error::other)?;
@@ -75,6 +85,16 @@ mod tests {
     fn missing_config_is_default() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(read(tmp.path()).source.is_none());
+    }
+
+    #[test]
+    fn read_strict_distinguishes_unreadable_from_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_strict(tmp.path()).is_ok()); // absent -> defaults
+        fs::create_dir_all(tmp.path().join(".vanguard")).unwrap();
+        fs::write(config_path(tmp.path()), "{not json").unwrap();
+        assert!(read_strict(tmp.path()).is_err()); // unreadable -> error, NOT Default
+        assert!(read(tmp.path()).source.is_none()); // passive read keeps collapse-to-default
     }
 
     #[test]

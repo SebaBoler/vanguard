@@ -1,11 +1,12 @@
 import { test, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { flowOptionsFrom, NewRunForm } from './NewRunForm';
+import { flowOptionsFrom, providerOptionsFrom, NewRunForm } from './NewRunForm';
 import * as ipc from '../../ipc';
 import type { Capabilities } from '../../ipc';
 
 vi.mock('../../ipc.js', () => ({
   apiListFlows: vi.fn(async () => ({ flows: [] })),
+  apiListProviders: vi.fn(async () => ({ providers: [] })),
 }));
 
 const caps: Capabilities = {
@@ -95,4 +96,27 @@ test('flowOptionsFrom keeps option values unique even if colliding entries slip 
   expect(merged.filter((o) => o.value === 'plan')).toEqual([{ value: 'plan', label: 'Plan' }]); // built-in wins, once
   expect(merged.filter((o) => o.value === 'twin')).toEqual([{ value: 'twin', label: 'First' }]); // first wins, once
   expect(new Set(merged.map((o) => o.value)).size).toBe(merged.length); // globally unique
+});
+
+
+test('providerOptionsFrom merges built-ins with healthy repo customs; errored entries never offered (S6)', () => {
+  const options = providerOptionsFrom(caps, [
+    { index: 0, name: 'my-proxy' },
+    { index: 1, name: 'bad', error: 'customProviders[1]: "baseUrl" must be an absolute http:// or https:// URL' },
+    { index: 2, name: 'claude' }, // built-in collision slipping past the error flag — first wins
+  ]);
+  expect(options.map((o) => o.value)).toEqual(['claude', 'codex', 'my-proxy']);
+});
+
+test('the form fetches repo providers fresh for its project on open (S6)', async () => {
+  vi.mocked(ipc.apiListProviders).mockResolvedValueOnce({ providers: [{ index: 0, name: 'my-proxy' }] });
+  render(<NewRunForm capabilities={caps} project="/repo" onRun={vi.fn()} onCancel={() => {}} />);
+  await waitFor(() => expect(ipc.apiListProviders).toHaveBeenCalledWith('/repo'));
+});
+
+test('listProviders failure degrades to built-ins with a notice — the form never disappears (S6)', async () => {
+  vi.mocked(ipc.apiListProviders).mockRejectedValueOnce(new Error('sidecar down'));
+  render(<NewRunForm capabilities={caps} project="/repo" onRun={vi.fn()} onCancel={() => {}} />);
+  await waitFor(() => expect(screen.getByText(/repo providers unavailable/i)).toBeInTheDocument());
+  expect(screen.getByRole('button', { name: /^run$/i })).toBeInTheDocument();
 });

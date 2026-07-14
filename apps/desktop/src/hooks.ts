@@ -31,11 +31,33 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T
   return state;
 }
 
-/** Load a project's AppConfig into editable local state; reloads when the project changes. */
-export function useAppConfig(project: string): [AppConfig, Dispatch<SetStateAction<AppConfig>>] {
+/**
+ * Load a project's AppConfig into editable local state; reloads when the project changes.
+ * `status` (S6 guard a/b): consumers that WRITE the config (Settings) must gate Save on 'ready' —
+ * a save while 'loading' would write the {} seed over the file, and 'error' means the file exists
+ * but does not parse (Rust read_strict), where a save would replace the user's hand-edited JSON.
+ * Read-only consumers may ignore it (they just see defaults).
+ */
+export function useAppConfig(
+  project: string,
+): [AppConfig, Dispatch<SetStateAction<AppConfig>>, 'loading' | 'ready' | 'error'] {
   const [cfg, setCfg] = useState<AppConfig>({});
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   useEffect(() => {
-    readAppConfig(project).then(setCfg).catch(() => {});
+    let live = true;
+    setStatus('loading');
+    readAppConfig(project)
+      .then((c) => {
+        if (!live) return;
+        setCfg(c);
+        setStatus('ready');
+      })
+      .catch(() => {
+        if (live) setStatus('error');
+      });
+    return () => {
+      live = false;
+    };
   }, [project]);
-  return [cfg, setCfg];
+  return [cfg, setCfg, status];
 }

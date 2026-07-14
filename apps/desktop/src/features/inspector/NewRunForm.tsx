@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Button, Collapsible, Input } from '@/ui';
 import { Play } from 'lucide-react';
 import { EnumSelect } from './EnumSelect';
-import { apiListFlows } from '../../ipc';
-import type { Capabilities, CreateRunParams, RepoFlowInfo } from '../../ipc';
+import { apiListFlows, apiListProviders } from '../../ipc';
+import type { Capabilities, CreateRunParams, RepoFlowInfo, RepoProviderInfo } from '../../ipc';
 
 /** Built-ins ∪ healthy repo flows. Entries with an error (or no name) are never offered — they cannot run. */
 export function flowOptionsFrom(
@@ -22,6 +22,25 @@ export function flowOptionsFrom(
       ? repoFlows
           .filter((f): f is RepoFlowInfo & { name: string } => f.name !== undefined && f.error === undefined && unique(f.name))
           .map((f) => ({ value: f.name, label: f.label ?? f.name }))
+      : []),
+  ];
+}
+
+/** Built-ins ∪ healthy repo customs (S6) — the flowOptionsFrom pattern verbatim: error-flagged
+ *  entries are never offered (errors are visible where they're editable — Settings), first-wins
+ *  seen-set keeps option values / React keys unique without cross-module invariants. */
+export function providerOptionsFrom(
+  capabilities: Capabilities,
+  repoProviders: RepoProviderInfo[] | 'error' | null,
+): { value: string; label: string }[] {
+  const seen = new Set<string>();
+  const unique = (name: string): boolean => !seen.has(name) && (seen.add(name), true);
+  return [
+    ...capabilities.providers.filter(unique).map((p) => ({ value: p, label: p })),
+    ...(Array.isArray(repoProviders)
+      ? repoProviders
+          .filter((p): p is RepoProviderInfo & { name: string } => p.name !== undefined && p.error === undefined && unique(p.name))
+          .map((p) => ({ value: p.name, label: p.name }))
       : []),
   ];
 }
@@ -48,6 +67,8 @@ export function NewRunForm({
   // Workflow screen must be runnable here immediately. 'error' = degraded: built-ins still work,
   // the form must never disappear the way the caps-failure path hides it.
   const [repoFlows, setRepoFlows] = useState<RepoFlowInfo[] | 'error' | null>(null);
+  // Repo customProviders (S6 §8), same lifecycle and degrade rules as repoFlows above.
+  const [repoProviders, setRepoProviders] = useState<RepoProviderInfo[] | 'error' | null>(null);
   useEffect(() => {
     let live = true;
     apiListFlows(project)
@@ -57,11 +78,19 @@ export function NewRunForm({
       .catch(() => {
         if (live) setRepoFlows('error');
       });
+    apiListProviders(project)
+      .then(({ providers }) => {
+        if (live) setRepoProviders(providers);
+      })
+      .catch(() => {
+        if (live) setRepoProviders('error');
+      });
     return () => {
       live = false;
     };
   }, [project]);
   const flowOptions = flowOptionsFrom(capabilities, repoFlows);
+  const providerOptions = providerOptionsFrom(capabilities, repoProviders);
 
   const maxTurnsNum = Number(maxTurns);
   // Mirrors validateCreateRun (sidecar): non-blank issueRef, positive-integer maxTurns, non-blank base.
@@ -83,10 +112,13 @@ export function NewRunForm({
       <div className="flex flex-wrap items-center gap-2">
         <Input value={issueRef} onChange={(e) => setIssueRef(e.target.value)} placeholder="issue ref (e.g. 322)" className="w-40" />
         <EnumSelect value={transport} onValueChange={setTransport} options={capabilities.transports.map((t) => ({ value: t, label: t }))} />
-        <EnumSelect value={provider} onValueChange={setProvider} options={capabilities.providers.map((p) => ({ value: p, label: p }))} />
+        <EnumSelect value={provider} onValueChange={setProvider} options={providerOptions} />
         <EnumSelect value={flow} onValueChange={setFlow} options={flowOptions} />
         {repoFlows === 'error' && (
           <span className="text-[11px] text-muted-foreground">repo flows unavailable — built-in flows only</span>
+        )}
+        {repoProviders === 'error' && (
+          <span className="text-[11px] text-muted-foreground">repo providers unavailable — built-in providers only</span>
         )}
       </div>
 

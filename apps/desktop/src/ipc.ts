@@ -215,6 +215,19 @@ export function apiListFlows(repoPath: string): Promise<{ flows: RepoFlowInfo[] 
   return invoke('api_list_flows', { repoPath });
 }
 
+/** One configured custom provider (S6): healthy (name, no error) or broken (`error` set; index -1 =
+ *  whole-file pseudo-entry). `error` absent ⇔ runnable. Names only — no baseUrl/keyEnv on the wire. */
+export interface RepoProviderInfo {
+  index: number;
+  name?: string;
+  error?: string;
+}
+
+/** Fresh per mount, like apiListFlows — a provider saved in Settings must be runnable immediately. */
+export function apiListProviders(repoPath: string): Promise<{ providers: RepoProviderInfo[] }> {
+  return invoke('api_list_providers', { repoPath });
+}
+
 /** `source` is the raw file bytes on read; the canonical form appears only after a write. */
 export function apiReadFlow(repoPath: string, file: string): Promise<{ doc: FlowDoc; source: string }> {
   return invoke('api_read_flow', { repoPath, file });

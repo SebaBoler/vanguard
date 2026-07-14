@@ -73,6 +73,13 @@ export interface AppConfig {
   /** Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; key is env-only. */
   chatModel?: string;
   chatBaseUrl?: string;
+  /**
+   * Custom providers (Subsystem 6). `keyEnv` is the NAME of the host env var holding the key —
+   * the key itself is never stored. Nullable: Rust's emit-all serde writes null for absent.
+   * Entries may carry unknown keys at runtime (Rust round-trips them as raw JSON); this is the
+   * intended shape, validated by the core loader.
+   */
+  customProviders?: { name: string; baseUrl: string; keyEnv: string; model?: string }[] | null;
 }
 
 export interface RemoteRun {

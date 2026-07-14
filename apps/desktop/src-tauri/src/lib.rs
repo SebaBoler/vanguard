@@ -65,7 +65,9 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 
 #[tauri::command]
 async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
-    Ok(appconfig::read(Path::new(&repo_path)))
+    // Strict: Settings must not treat an unreadable (hand-edit typo) config as empty defaults —
+    // a Save would then replace the whole file (S6 guard b). Absent file still reads as defaults.
+    appconfig::read_strict(Path::new(&repo_path))
 }
 
 #[tauri::command]
@@ -173,6 +175,7 @@ pub fn run() {
             sidecar::api_cancel,
             sidecar::api_create_task,
             sidecar::api_list_flows,
+            sidecar::api_list_providers,
             sidecar::api_read_flow,
             sidecar::api_write_flow,
             sidecar::api_repo_ok
