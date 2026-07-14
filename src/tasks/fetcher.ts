@@ -18,11 +18,21 @@ export interface Task {
   labels: string[];
   children: SubTask[];
   comments: TaskComment[];
+  /** Provider-native short ref (`904`, `42`, `DEV-639`) — the board id mint's input (S9). Never in prompts. */
+  ref?: string;
+  /** Provider lifecycle state (`open`/`closed`/`opened`/Linear state name) — the board's column input (S9). */
+  state?: string;
 }
 
 export interface TaskFilter {
   labels?: string[];
   state?: string;
+  /**
+   * Page/result cap (S9, board parity). STRICTLY conditional: unset ⇒ every fetcher's argv and
+   * GraphQL variables are byte-identical to before this field existed — watch never sets it, and
+   * its fetch size must not change. Set ⇒ gh -L / glab -P / Linear first: + single-page stop.
+   */
+  limit?: number;
 }
 
 /**

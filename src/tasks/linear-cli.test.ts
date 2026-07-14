@@ -28,6 +28,8 @@ describe('LinearCliTaskFetcher', () => {
       labels: [],
       children: [{ id: 'TES-2', title: 'Sub one' }],
       comments: [],
+      ref: 'TES-1', // additive (S9)
+      ...(viewIssue.state !== undefined ? { state: viewIssue.state.name } : {}),
     });
   });
 
@@ -213,4 +215,47 @@ describe('linkLinearIssue', () => {
     expect(seen).toEqual(expect.arrayContaining(['issue', 'comment', 'add', 'TES-1', '--body']));
     expect(seen.join(' ')).toContain('https://example/pr/1');
   });
+});
+
+// S9: limit caps the Linear list to ONE page (the board's watchdog budget); unset stays exhaustive.
+it('list() with limit fetches a single page at first:<limit> and stops despite hasNextPage', async () => {
+  const bodies: { query: string; variables: Record<string, unknown> }[] = [];
+  const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+    bodies.push(body);
+    return {
+      data: {
+        issues: {
+          pageInfo: { hasNextPage: true, endCursor: 'more' },
+          nodes: Array.from({ length: 50 }, (_, i) => ({ identifier: `DEV-${i}`, title: 't', state: { name: 'Todo' } })),
+        },
+      },
+    };
+  };
+  const tasks = await new LinearCliTaskFetcher({ team: 'DEV', graphql }).list({ limit: 50 });
+  expect(bodies).toHaveLength(1); // ONE page — no pagination past the cap
+  expect(bodies[0]?.variables['first']).toBe(50);
+  expect(bodies[0]?.variables['f']).toEqual({ team: { key: { eq: 'DEV' } } }); // NO state filter on the board call
+  expect(tasks).toHaveLength(50);
+  expect(tasks[0]).toMatchObject({ ref: 'DEV-0', state: 'Todo' });
+});
+
+it('list() without limit keeps first:100 and paginates to exhaustion (watch contract)', async () => {
+  const bodies: { variables: Record<string, unknown> }[] = [];
+  let page = 0;
+  const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+    bodies.push(body);
+    page += 1;
+    return {
+      data: {
+        issues: {
+          pageInfo: { hasNextPage: page < 2, endCursor: `c${page}` },
+          nodes: [{ identifier: `DEV-${page}`, title: 't', state: { name: 'Todo' } }],
+        },
+      },
+    };
+  };
+  const tasks = await new LinearCliTaskFetcher({ team: 'DEV', graphql }).list();
+  expect(bodies).toHaveLength(2); // exhaustive
+  expect(bodies[0]?.variables['first']).toBe(100);
+  expect(tasks).toHaveLength(2);
 });

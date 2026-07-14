@@ -108,3 +108,25 @@ describe('editGitlabLabels', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// S9: TaskFilter.limit is STRICTLY conditional — unset keeps watch's argv byte-identical.
+it('list() argv is byte-identical to the pre-S9 shape when limit is unset (watch contract)', async () => {
+  const calls: string[][] = [];
+  const glab = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return '[]';
+  };
+  await new GitLabTaskFetcher('g/p', glab).list({ labels: ['x'] });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'g/p', '--output', 'json', '--label', 'x']);
+});
+
+it('list() with limit + all adds -P and --all (the board call); state carried onto the task', async () => {
+  const calls: string[][] = [];
+  const glab = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return JSON.stringify([{ iid: 5, title: 't', description: null, labels: [], state: 'closed' }]);
+  };
+  const tasks = await new GitLabTaskFetcher('g/p', glab).list({ state: 'all', limit: 50 });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'g/p', '--output', 'json', '--all', '-P', '50']);
+  expect(tasks[0]).toMatchObject({ ref: '5', state: 'closed' });
+});

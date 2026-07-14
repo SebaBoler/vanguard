@@ -15,6 +15,7 @@ export class BadRequestError extends VanguardError {}
 // CreateRunParams lives in src/wire.ts (the shared desktop contract — S7).
 export type { CreateRunParams } from '../wire.js';
 import type { CreateRunParams } from '../wire.js';
+import type { BoardTask } from '../wire.js';
 
 /**
  * What the sidecar forwards back to the client — the run's PR outcome. A structural subset of the
@@ -33,6 +34,8 @@ export interface SidecarDeps {
   readFlow: (params: ReadFlowParams) => Promise<{ doc: FlowDoc; source: string }>;
   writeFlow: (params: WriteFlowParams) => Promise<{ source: string }>;
   deleteFlow: (params: DeleteFlowParams) => Promise<Record<string, never>>;
+  listTasks: (params: ListTasksParams) => Promise<{ tasks: BoardTask[]; capped: boolean }>;
+  fetchSpec: (params: FetchSpecParams) => Promise<{ spec: string }>;
 }
 
 /** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
@@ -64,6 +67,14 @@ export interface WriteFlowParams {
 export interface DeleteFlowParams {
   repoPath: string;
   file: string;
+}
+/** Board read path (S9). Source/team/label come from app.json, read core-side from repoPath. */
+export interface ListTasksParams {
+  repoPath: string;
+}
+export interface FetchSpecParams {
+  repoPath: string;
+  taskId: string;
 }
 
 /**
@@ -184,6 +195,17 @@ export function validateDeleteFlow(params: unknown): void {
   requireFlowFile(requireAbsoluteRepoPath(params));
 }
 
+export function validateListTasks(params: unknown): void {
+  requireAbsoluteRepoPath(params);
+}
+
+export function validateFetchSpec(params: unknown): void {
+  const p = requireAbsoluteRepoPath(params);
+  if (typeof p.taskId !== 'string' || p.taskId.trim() === '') {
+    throw new BadRequestError('taskId is required and must be a non-blank string');
+  }
+}
+
 /**
  * Validate a writeFlow request and return the coerced doc. Everything pure happens here, before
  * dispatch: shape + unknown-key rejection (the renderer sends a JS object, so parse's typo
@@ -252,6 +274,12 @@ export async function runSidecar(
       } else if (req.method === 'readFlow') {
         validateReadFlow(req.params);
         write(JSON.stringify({ id, result: await deps.readFlow(req.params as ReadFlowParams) }));
+      } else if (req.method === 'listTasks') {
+        validateListTasks(req.params);
+        write(JSON.stringify({ id, result: await deps.listTasks(req.params as ListTasksParams) }));
+      } else if (req.method === 'fetchSpec') {
+        validateFetchSpec(req.params);
+        write(JSON.stringify({ id, result: await deps.fetchSpec(req.params as FetchSpecParams) }));
       } else if (req.method === 'deleteFlow') {
         validateDeleteFlow(req.params);
         write(JSON.stringify({ id, result: await deps.deleteFlow(req.params as DeleteFlowParams) }));
