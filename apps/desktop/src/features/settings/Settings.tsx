@@ -104,6 +104,13 @@ export function Settings({ project }: { project: string }) {
         </div>
       )}
 
+      {/* The form renders only once the read resolves: fields shown from the {} seed would accept
+          edits that the resolving setCfg then silently discards — while dirty stays true, so the
+          next Save persists the loaded config WITHOUT the user's edit (review #341 r3 obs 1; the
+          local-file read resolves in ms, so the blank frame is invisible). */}
+      {cfgStatus === 'loading' ? (
+        <div className="rounded-lg border border-border p-5 text-sm text-muted-foreground">Loading…</div>
+      ) : (
       <div className="space-y-4 rounded-lg border border-border p-5">
         <Field label="Repo path">
           <Input value={project} readOnly className="w-full" />
@@ -285,6 +292,7 @@ export function Settings({ project }: { project: string }) {
           </p>
         </div>
       </div>
+      )}
     </div>
   );
 }

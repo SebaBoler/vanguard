@@ -17,15 +17,18 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
-test('Save is disabled until the config read resolves — an early save must not write the {} seed (S6 guard a)', async () => {
+test('the form does not render until the read resolves — a mid-load edit cannot be silently clobbered (S6 guard a)', async () => {
   const gate = deferred<Record<string, never>>();
   read.mockReturnValueOnce(gate.promise);
   render(<Settings project="/repo" />);
-  // dirty the form while the read is still in flight
-  fireEvent.change(screen.getByPlaceholderText('vanguard-ready'), { target: { value: 'x' } });
+  // While loading: no editable fields at all (an edit here would be discarded by the resolving
+  // setCfg while dirty stayed true — review #341 r3), and Save is disabled.
+  expect(screen.queryByPlaceholderText('vanguard-ready')).not.toBeInTheDocument();
+  expect(screen.getByText('Loading…')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
   gate.resolve({});
-  await waitFor(() => expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled());
+  await waitFor(() => expect(screen.getByPlaceholderText('vanguard-ready')).toBeInTheDocument());
+  expect(screen.getByRole('button', { name: /save/i })).toBeDisabled(); // still clean — not dirty
 });
 
 test('an unreadable config surfaces an error and blocks save instead of silently defaulting (S6 guard b)', async () => {
