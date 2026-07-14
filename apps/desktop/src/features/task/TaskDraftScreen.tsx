@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
-import { Button } from '@/ui';
+import { Button, InlineEdit } from '@/ui';
 import { apiComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
 import { relTime } from '../../time.js';
@@ -8,7 +8,7 @@ import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
 import { CreateTaskDialog } from './CreateTaskDialog.js';
 import { TaskDrawer, type DrawerTab, type HistoryRow } from './TaskDrawer.js';
-import { titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
+import { retitleDoc, titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 import { DraftWriter, draftLabel, emptyDraft, mintDraftId, parseDraft, type DraftData } from './draftStore.js';
 
@@ -55,10 +55,13 @@ export function TaskDraftScreen({
   project,
   freshNonce,
   onOpenBoard,
+  onConversationCrumb,
 }: {
   project: string;
   freshNonce: number;
   onOpenBoard: () => void;
+  /** Publishes the open conversation's name + rename hook to the App breadcrumb (dogfood r3). */
+  onConversationCrumb?: (c: { name: string; onRename: (v: string) => void } | null) => void;
 }) {
   // Captured ONCE per mount, before the session-store effect below can overwrite the map entry
   // with this mount's initial (pre-restore) state.
@@ -83,6 +86,9 @@ export function TaskDraftScreen({
   const [archived, setArchived] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
   const [model, setModel] = useState<string | undefined>(undefined);
+  // Reactive mirror of the ACTIVE conversation's `name` (draftRef is a ref, not state) — drives
+  // the breadcrumb InlineEdit. The doc title is a separate identity (the `# heading`).
+  const [convName, setConvName] = useState<string | undefined>(undefined);
   // The authoritative persisted shape for the OPEN draft. A ref, not state: the mint and the
   // first write must see the value the keystroke that triggered them produced — synchronously.
   // Every hand-off to the writer is a SNAPSHOT (`{ ...draftRef.current }`), never the ref itself:
@@ -198,6 +204,7 @@ export function TaskDraftScreen({
       setArchived(false);
       setCreated(null);
       setModel(undefined);
+      setConvName(undefined);
       dispatch({ type: 'reset' });
       return;
     }
@@ -215,6 +222,7 @@ export function TaskDraftScreen({
     setArchived(entry.data.archived);
     setCreated(entry.data.created ?? null);
     setModel(entry.data.chatModel);
+    setConvName(entry.data.name);
     // Re-present as busy when this draft's completion is still in flight — its reply will land
     // through the id-keyed path, and a second send meanwhile must stay blocked.
     dispatch({ type: 'load', messages: entry.data.chat, busy: pendingTurns.current.has(id) });
@@ -350,6 +358,7 @@ export function TaskDraftScreen({
     renamedIds.current.add(id);
     if (id === activeIdRef.current) {
       draftRef.current = { ...draftRef.current, name: name === '' ? undefined : name };
+      setConvName(name === '' ? undefined : name);
       syncEntry(id);
       void writer.writeNow(id, { ...draftRef.current });
       return;
@@ -396,6 +405,7 @@ export function TaskDraftScreen({
         if (id === activeIdRef.current) {
           if (draftRef.current.name !== undefined) return;
           draftRef.current = { ...draftRef.current, name: title };
+          setConvName(title);
           syncEntry(id);
           void writer.writeNow(id, { ...draftRef.current });
           return;
@@ -415,6 +425,26 @@ export function TaskDraftScreen({
       })
       .catch(() => {});
   };
+
+  /** Breadcrumb rename (dogfood r3): naming an unsaved conversation mints it — a name is worth
+   * persisting, same as a first keystroke. */
+  const renameActive = (raw: string): void => {
+    if (draftRef.current.archived) return;
+    if (activeIdRef.current === null && raw.trim() === '') return; // nothing to clear on a fresh draft
+    rename(activeIdRef.current ?? ensureId(), raw);
+  };
+  const renameActiveRef = useRef(renameActive);
+  renameActiveRef.current = renameActive;
+
+  // Publish the conversation identity to the App breadcrumb; cleared on unmount.
+  useEffect(() => {
+    onConversationCrumb?.({ name: convName ?? '', onRename: (v) => renameActiveRef.current(v) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convName]);
+  useEffect(() => {
+    return () => onConversationCrumb?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const send = (text: string): void => {
     if (archived) return;
@@ -602,6 +632,7 @@ export function TaskDraftScreen({
     };
     setBody(src.body);
     setModel(src.chatModel);
+    setConvName(undefined); // the copy is a NEW conversation — it earns its own name
     dispatch({ type: 'load', messages: src.chat });
     setEntries((prev) => [{ id, data: { ...draftRef.current } }, ...prev]);
     void writer.writeNow(id, { ...draftRef.current });
@@ -626,14 +657,15 @@ export function TaskDraftScreen({
     return [
       {
         id,
-        label: draftLabel(e.data),
+        // NOT draftLabel (dogfood r3): its first-user-message fallback named the conversation the
+        // moment the user hit send. A tab is name → doc heading → a neutral placeholder; the LLM
+        // title arrives at the END of the first exchange.
+        label: e.data.name ?? titleFromDoc(e.data.body) ?? 'New chat',
         dot: pendingIds.has(id) || unseen.has(id),
         archived: e.data.archived,
       },
     ];
   });
-
-  const headerLabel = activeId === null && body === '' && chat.messages.length === 0 ? 'New task…' : draftLabel(draftRef.current);
   const updatedMs = Date.parse(draftRef.current.updatedAt);
   const activity = openTabs.some((id) => pendingIds.has(id) || unseen.has(id));
 
@@ -651,7 +683,18 @@ export function TaskDraftScreen({
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center gap-3 border-b border-border pb-2">
-        <h1 className="truncate text-lg font-semibold">{headerLabel}</h1>
+        {/* The DOC's title (the `# heading` — what Create task files), not the conversation's
+            name (breadcrumb/tab). Editing rewrites the heading line in the body. */}
+        <InlineEdit
+          value={docTitle ?? ''}
+          placeholder="Name the task…"
+          ariaLabel="task title"
+          disabled={archived || confirming || creating}
+          onCommit={(t) => {
+            if (t !== '') onBodyChange(retitleDoc(body, t));
+          }}
+          className="text-lg font-semibold"
+        />
         {archived && created !== null && (
           <a
             href={created.url}

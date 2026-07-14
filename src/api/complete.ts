@@ -27,7 +27,11 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
       options: {
         allowedTools: [], // completion, not an agent — no filesystem/tool access
         settingSources: [], // don't load project/user CLAUDE.md or settings
-        maxTurns: 1,
+        // NOT 1 (dogfood 2026-07-14): the SDK counts internal assistant steps (thinking, a
+        // hallucinated tool call it then refuses) as turns, so maxTurns:1 intermittently dies
+        // with error_max_turns before any text lands. With zero tools allowed the extra turns
+        // can't act — this stays a completion, the cap is only a runaway stop.
+        maxTurns: 8,
         ...(parsed.system !== undefined ? { systemPrompt: parsed.system } : {}),
         ...(parsed.model !== undefined ? { model: parsed.model } : {}),
         ...(parsed.baseUrl !== undefined ? { env: withBaseUrl(parsed.baseUrl) } : {}),

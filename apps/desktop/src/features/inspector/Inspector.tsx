@@ -40,6 +40,7 @@ export function Inspector({
   clearNonce,
   newTaskNonce,
   onCrumb,
+  onTaskCrumb,
   onNewTask,
   onOpenBoard,
 }: {
@@ -49,6 +50,8 @@ export function Inspector({
   clearNonce: number;
   newTaskNonce: number;
   onCrumb: (c: string | null) => void;
+  /** Task screen only: publishes the open conversation's name + rename hook for the breadcrumb. */
+  onTaskCrumb: (c: { name: string; onRename: (v: string) => void } | null) => void;
   onNewTask: () => void;
   onOpenBoard: () => void;
 }) {
@@ -416,7 +419,12 @@ export function Inspector({
         </div>
       ) : screen === 'task' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <TaskDraftScreen project={project} freshNonce={newTaskNonce} onOpenBoard={onOpenBoard} />
+          <TaskDraftScreen
+            project={project}
+            freshNonce={newTaskNonce}
+            onOpenBoard={onOpenBoard}
+            onConversationCrumb={onTaskCrumb}
+          />
         </div>
       ) : null}
     </div>

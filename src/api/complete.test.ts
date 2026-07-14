@@ -57,5 +57,7 @@ test('passes system + model into the query options', async () => {
   expect(seen?.['systemPrompt']).toBe('be terse');
   expect(seen?.['model']).toBe('claude-sonnet-5');
   expect(seen?.['allowedTools']).toEqual([]);
-  expect(seen?.['maxTurns']).toBe(1);
+  // >1 (dogfood 2026-07-14): the SDK counts internal steps as turns, and maxTurns:1 died with
+  // error_max_turns before any text. Tools stay empty, so the cap is only a runaway stop.
+  expect(seen?.['maxTurns']).toBe(8);
 });

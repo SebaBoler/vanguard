@@ -25,6 +25,9 @@ export default function App() {
   const [railRunning, setRailRunning] = useState<ActiveRun[]>([]);
   const [focusRunning, setFocusRunning] = useState<ActiveRun | null>(null);
   const [crumb, setCrumb] = useState<string | null>(null);
+  // The task screen's trailing breadcrumb: the open conversation's name, click-to-rename
+  // (dogfood r3). Published by TaskDraftScreen, cleared on its unmount.
+  const [taskCrumb, setTaskCrumb] = useState<{ name: string; onRename: (v: string) => void } | null>(null);
   const [clearNonce, setClearNonce] = useState(0);
   // Bumped on every New Task click (S10): the task screen resets to a fresh draft only on an
   // unconsumed nonce, so returning to the screen by other paths restores the last-open draft.
@@ -189,7 +192,13 @@ export default function App() {
   };
   // Home lives on the logo now; the project lives in the switcher — so the breadcrumb is just the screen.
   const crumbs: Crumb[] = [];
-  if (active && screen !== 'dashboard') {
+  if (active && screen === 'task' && taskCrumb) {
+    crumbs.push({ label: SCREEN_LABEL[screen] });
+    crumbs.push({
+      label: taskCrumb.name,
+      edit: { placeholder: 'Name this conversation…', ariaLabel: 'rename conversation', onCommit: taskCrumb.onRename },
+    });
+  } else if (active && screen !== 'dashboard') {
     if (crumb) {
       crumbs.push({ label: SCREEN_LABEL[screen], onClick: () => setClearNonce((n) => n + 1) });
       crumbs.push({ label: crumb });
@@ -257,6 +266,7 @@ export default function App() {
                 clearNonce={clearNonce}
                 newTaskNonce={newTaskNonce}
                 onCrumb={setCrumb}
+                onTaskCrumb={setTaskCrumb}
                 onNewTask={() =>
                   navigate(() => {
                     setScreen('task');

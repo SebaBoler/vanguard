@@ -627,7 +627,7 @@ test('a user rename racing the auto-title WINS (id-keyed re-check)', async () =>
   await drawerReady();
   sendMsg('name race');
   await settle(); // reply landed; the title completion is still in flight
-  fireEvent.doubleClick(screen.getByLabelText('tab name race'));
+  fireEvent.doubleClick(screen.getByLabelText('tab New chat'));
   const input = screen.getByLabelText(/rename/);
   fireEvent.change(input, { target: { value: 'User choice' } });
   fireEvent.keyDown(input, { key: 'Enter' });
@@ -676,6 +676,68 @@ test('deleting the ACTIVE draft while its REPLY is in flight cannot resurrect th
   resolveReply({ text: 'late answer' });
   await settle();
   expect(files.size).toBe(0); // the late reply's id-keyed update skipped the deleted file
+});
+
+test('the first message does NOT name the tab — neutral placeholder until the LLM title lands (dogfood r3)', async () => {
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockReturnValueOnce(new Promise((r) => (resolveReply = r)))
+    .mockResolvedValueOnce({ text: 'End Title' });
+  renderFresh();
+  await drawerReady();
+  sendMsg('plan the task editor beautification');
+  await settle();
+  // Mid-flight: the conversation is NOT named after the message the user just typed.
+  expect(screen.queryByLabelText(/tab plan the task editor/)).toBeNull();
+  expect(screen.getByLabelText('tab New chat')).toBeInTheDocument();
+  resolveReply({ text: 'the reply' });
+  await settle();
+  expect(screen.getByLabelText('tab End Title')).toBeInTheDocument(); // named at the END
+});
+
+test('the header task-title InlineEdit rewrites the doc heading — and enables Create task (dogfood r3)', async () => {
+  renderFresh();
+  await drawerReady();
+  type('some body without a heading');
+  await settle();
+  expect(screen.getByRole('button', { name: /create task/i })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText('task title'));
+  const input = screen.getByLabelText('task title input');
+  fireEvent.change(input, { target: { value: 'Fix the flicker' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await settle();
+  expect(screen.getByTestId('editor')).toHaveValue('# Fix the flicker\n\nsome body without a heading');
+  expect(screen.getByRole('button', { name: /create task/i })).toBeEnabled();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.body.startsWith('# Fix the flicker')).toBe(true);
+  // The doc title is NOT the conversation name — renaming the doc must not name the conversation.
+  expect(data.name).toBeUndefined();
+});
+
+test('the conversation crumb publishes the name and renames through it — minting a fresh draft (dogfood r3)', async () => {
+  const onConversationCrumb = vi.fn();
+  render(
+    <TaskDraftScreen
+      project={freshProject()}
+      freshNonce={++nonce}
+      onOpenBoard={() => {}}
+      onConversationCrumb={onConversationCrumb}
+    />,
+  );
+  await drawerReady();
+  expect(onConversationCrumb).toHaveBeenCalledWith(expect.objectContaining({ name: '' }));
+  // Rename an UNSAVED conversation from the breadcrumb: mints the draft and persists the name.
+  const crumb = onConversationCrumb.mock.calls.at(-1)![0] as { onRename: (v: string) => void };
+  act(() => crumb.onRename('Spike: flicker'));
+  await settle();
+  expect(files.size).toBe(1);
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.name).toBe('Spike: flicker');
+  expect(onConversationCrumb).toHaveBeenCalledWith(expect.objectContaining({ name: 'Spike: flicker' }));
+  // And the auto-title never overrides a crumb rename (it records renamedIds like the tab path).
+  sendMsg('first message');
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBe('Spike: flicker');
 });
 
 // ── model selection (handoff §4) ───────────────────────────────────────────────────────────────
