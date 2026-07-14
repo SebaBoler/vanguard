@@ -111,3 +111,34 @@ test('rename target validates against taken names, excluding the renamed file it
   fireEvent.change(input, { target: { value: 'fresh' } });
   expect(screen.getByRole('button', { name: 'confirm rename' })).not.toBeDisabled();
 });
+
+// #345 r2 BLOCKING: a file whose basename differs from its declared name (hand-authored y.hcl
+// containing name = "x") renamed TO its own basename wrote y.hcl then deleted y.hcl — flow gone.
+// Same-path rename is legitimate (aligning name with basename): write, and skip the delete.
+test('renaming a flow to its own file basename never deletes the file it just wrote', async () => {
+  // Once-scoped: mockResolvedValue would outlive clearAllMocks (which clears calls, not impls)
+  // and bleed x/y.hcl into later tests.
+  vi.mocked(ipc.apiListFlows).mockResolvedValueOnce({ flows: [{ file: 'y.hcl', name: 'x', label: 'X' }] });
+  vi.mocked(ipc.apiReadFlow).mockResolvedValueOnce({
+    doc: { name: 'x', label: 'X', stages: [{ name: 'planner', overrides: {} }], loops: [] },
+    source: 'flow "x" {}',
+  });
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'rename x' }));
+  fireEvent.change(screen.getByLabelText('rename x'), { target: { value: 'y' } });
+  fireEvent.click(screen.getByRole('button', { name: 'confirm rename' }));
+  await waitFor(() => expect(ipc.apiWriteFlow).toHaveBeenCalledWith('/repo', 'y.hcl', expect.objectContaining({ name: 'y' })));
+  expect(ipc.apiDeleteFlow).not.toHaveBeenCalled();
+});
+
+test('a double-click on confirm rename fires ONE write→delete sequence (in-flight guard)', async () => {
+  render(<WorkflowEditor project="/repo" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'rename my-flow' }));
+  fireEvent.change(screen.getByLabelText('rename my-flow'), { target: { value: 'renamed' } });
+  const confirm = screen.getByRole('button', { name: 'confirm rename' });
+  fireEvent.click(confirm);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(ipc.apiDeleteFlow).toHaveBeenCalled());
+  expect(vi.mocked(ipc.apiWriteFlow)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(ipc.apiDeleteFlow)).toHaveBeenCalledTimes(1);
+});

@@ -155,10 +155,15 @@ export function WorkflowEditor({ project }: { project: string }) {
   const [renaming, setRenaming] = useState<string | null>(null); // file being renamed
   const [renameTo, setRenameTo] = useState('');
   const [opError, setOpError] = useState<string | null>(null);
+  // ref, not state (reducer-state lag lets a double-click slip through — the save() lesson):
+  // rename/delete are destructive IPC sequences; exactly one may be in flight.
+  const opBusy = useRef(false);
   const renameProblem = renaming !== null ? nameProblem(renameTo, renaming) : null;
 
   const removeFlow = async (file: string): Promise<void> => {
+    if (opBusy.current) return;
     if (!window.confirm(`Delete ${file} from .vanguard/flows/?`)) return;
+    opBusy.current = true;
     try {
       await apiDeleteFlow(project, file);
       setOpError(null);
@@ -170,23 +175,33 @@ export function WorkflowEditor({ project }: { project: string }) {
       void refreshList();
     } catch (err) {
       setOpError(String(err));
+    } finally {
+      opBusy.current = false;
     }
   };
 
   const renameFlow = async (file: string, to: string): Promise<void> => {
+    if (opBusy.current) return;
     if (state.file === file && state.dirty) {
       setOpError('save or discard the unsaved changes before renaming this flow');
       return;
     }
+    opBusy.current = true;
     try {
       const { doc } = await apiReadFlow(project, file); // the ON-DISK doc — rename never invents content
-      await apiWriteFlow(project, `${to}.hcl`, { ...doc, name: to });
+      const targetFile = `${to}.hcl`;
+      await apiWriteFlow(project, targetFile, { ...doc, name: to });
       setOpError(null);
-      try {
-        await apiDeleteFlow(project, file);
-      } catch (err) {
-        // write-before-delete: the flow now exists under both names — say so, lose nothing.
-        setOpError(`renamed to ${to}.hcl but could not remove ${file}: ${String(err)} — both files exist`);
+      // SAME-PATH rename (a hand-authored y.hcl declaring name "x", renamed to "y" — aligning the
+      // name with the basename): the write above IS the whole operation. Deleting here would
+      // remove the file just written — the flow would be GONE (review #345 r2, blocking).
+      if (targetFile !== file) {
+        try {
+          await apiDeleteFlow(project, file);
+        } catch (err) {
+          // write-before-delete: the flow now exists under both names — say so, lose nothing.
+          setOpError(`renamed to ${targetFile} but could not remove ${file}: ${String(err)} — both files exist`);
+        }
       }
       setRenaming(null);
       if (state.file === file) {
