@@ -23,7 +23,8 @@ export type DocChatAction =
   | { type: 'reset' }
   // Seed a persisted transcript on draft open (S10). Never restores `pending`: the accept/reject
   // affordance is session-only, but the raw reply (its <doc> block included) is in `messages`.
-  | { type: 'load'; messages: ChatMsg[] };
+  // `busy` re-presents an in-flight completion for THIS draft (per-id guard, review #349 r1).
+  | { type: 'load'; messages: ChatMsg[]; busy?: boolean };
 
 export const initialDocChat = (): DocChatState => ({ messages: [], busy: false });
 
@@ -65,7 +66,7 @@ export function reduceDocChat(state: DocChatState, action: DocChatAction): DocCh
       };
     }
     case 'load':
-      return { messages: action.messages, busy: false };
+      return { messages: action.messages, busy: action.busy === true };
     case 'acceptApplied':
     case 'reject':
       return { ...state, pending: undefined };

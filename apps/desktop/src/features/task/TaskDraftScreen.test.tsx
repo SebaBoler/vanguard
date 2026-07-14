@@ -243,6 +243,33 @@ test('re-entering WITHOUT a New Task click restores the last-open draft (session
   await waitFor(() => expect(screen.getByTestId('editor')).toHaveValue('# Resume me\n'));
 });
 
+test('a completion outstanding for a draft blocks a second send after switching away and back (review #349 r1)', async () => {
+  seed('draft-b', { body: '# B\n' });
+  let resolveA: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveA = r)));
+  renderFresh();
+  await screen.findByText('B');
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'q' } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  await settle();
+  const draftAId = [...files.keys()].find((k) => k !== 'draft-b')!;
+  // Leave and come back while A's completion is still in flight.
+  fireEvent.click(screen.getByText('B'));
+  fireEvent.click(screen.getByText('q'));
+  // The reloaded draft must present as busy — and a second send must NOT fire a second completion.
+  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'q again' } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  await settle();
+  expect(ipc.apiComplete).toHaveBeenCalledTimes(1);
+  resolveA({ text: 'answer' });
+  await settle();
+  const data = JSON.parse(files.get(draftAId)!) as DraftData;
+  expect(data.chat).toEqual([
+    { role: 'user', content: 'q' },
+    { role: 'assistant', content: 'answer' }, // exactly one reply — no duplicate persisted turn
+  ]);
+});
+
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);

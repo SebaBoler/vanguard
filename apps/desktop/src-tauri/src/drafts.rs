@@ -8,15 +8,19 @@ fn drafts_dir(repo: &Path) -> PathBuf {
     repo.join(".vanguard").join("drafts")
 }
 
-/// The drafts dir must be a real directory: a cloned repo can commit `.vanguard/drafts` as a
-/// symlink, and following it would redirect writes/deletes outside the checkout.
+/// The drafts dir must be a real directory: a cloned repo can commit `.vanguard/drafts` — or
+/// `.vanguard` itself (review #349 r1: symlink_metadata follows intermediate components, so
+/// checking only the leaf misses a symlinked parent) — as a symlink, and following either would
+/// redirect writes/deletes outside the checkout.
 fn assert_not_symlink(repo: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(drafts_dir(repo)) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            Err(".vanguard/drafts is a symlink — refusing to operate on it".into())
+    for dir in [repo.join(".vanguard"), drafts_dir(repo)] {
+        if let Ok(meta) = fs::symlink_metadata(&dir) {
+            if meta.file_type().is_symlink() {
+                return Err(format!("{} is a symlink — refusing to operate on it", dir.display()));
+            }
         }
-        _ => Ok(()),
     }
+    Ok(())
 }
 
 /// Lenient name rule for list/delete: anything `list` could have returned must be deletable,
@@ -52,7 +56,13 @@ pub fn list(repo: &Path) -> Vec<String> {
                 if stem.is_empty() {
                     return None;
                 }
-                let mtime = e.metadata().ok()?.modified().ok()?;
+                // An unreadable mtime must not hide the draft (AC6: every draft visible and
+                // deletable) — it lists last instead of vanishing.
+                let mtime = e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                 Some((stem, mtime))
             })
             .collect(),
@@ -196,5 +206,20 @@ mod tests {
         assert!(list(tmp.path()).is_empty());
         // Nothing crossed the symlink.
         assert!(fs::read_dir(target.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn refuses_symlinked_vanguard_parent() {
+        // review #349 r1: a repo can commit `.vanguard` itself as the symlink; the leaf check
+        // alone resolves through it and passes.
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        fs::create_dir_all(target.path().join("drafts")).unwrap();
+        std::os::unix::fs::symlink(target.path(), tmp.path().join(".vanguard")).unwrap();
+        assert!(write(tmp.path(), "draft-a", "{}").is_err());
+        assert!(read(tmp.path(), "draft-a").is_err());
+        assert!(delete(tmp.path(), "draft-a").is_err());
+        assert!(list(tmp.path()).is_empty());
+        assert!(fs::read_dir(target.path().join("drafts")).unwrap().next().is_none());
     }
 }

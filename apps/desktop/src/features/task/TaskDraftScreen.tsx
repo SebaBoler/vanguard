@@ -65,9 +65,10 @@ export function TaskDraftScreen({
   writerRef.current ??= new DraftWriter(project, setSaveError);
   const writer = writerRef.current;
 
-  // Chat / create guards, carried from DocsScreen (S3/S4 review-hardened).
-  const inFlight = useRef(0);
-  const turnSeq = useRef(0);
+  // Chat / create guards, carried from DocsScreen (S3/S4 review-hardened) — but keyed by draft id
+  // (review #349 r1): a selection-scoped ref is cleared by a switch, so leaving and returning to a
+  // draft mid-completion would let a second send fire and persist a duplicate assistant turn.
+  const pendingTurns = useRef(new Set<string>());
   // Holds the draft id being filed. NOT cleared on draft switch: persistence is id-keyed now, and
   // a stale create settling must never disarm a newer one — it releases only its own id.
   const createInFlight = useRef<string | null>(null);
@@ -97,7 +98,6 @@ export function TaskDraftScreen({
    */
   const switchTo = (id: string | null): void => {
     void writer.flush();
-    inFlight.current = 0;
     setConfirming(false);
     setCreating(false);
     setCreateError(null);
@@ -132,7 +132,9 @@ export function TaskDraftScreen({
     setBody(entry.data.body);
     setArchived(entry.data.archived);
     setCreated(entry.data.created ?? null);
-    dispatch({ type: 'load', messages: entry.data.chat });
+    // Re-present as busy when this draft's completion is still in flight — its reply will land
+    // through the id-keyed path, and a second send meanwhile must stay blocked.
+    dispatch({ type: 'load', messages: entry.data.chat, busy: pendingTurns.current.has(id) });
   };
   const switchRef = useRef(switchTo);
   switchRef.current = switchTo;
@@ -214,10 +216,12 @@ export function TaskDraftScreen({
   };
 
   const send = (text: string): void => {
-    if (inFlight.current !== 0 || archived || unreadable) return;
-    const turn = ++turnSeq.current;
-    inFlight.current = turn;
+    if (archived || unreadable) return;
+    // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
+    // draft switch cannot clear another draft's slot.
+    if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return;
     const id = ensureId();
+    pendingTurns.current.add(id);
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
     dispatch({ type: 'send', text });
     draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
@@ -261,7 +265,7 @@ export function TaskDraftScreen({
         if (id === activeIdRef.current) dispatch({ type: 'fail', message: String(err) });
       })
       .finally(() => {
-        if (inFlight.current === turn) inFlight.current = 0;
+        pendingTurns.current.delete(id);
       });
   };
 
@@ -343,7 +347,8 @@ export function TaskDraftScreen({
     activeIdRef.current = id;
     setActiveId(id);
     lastSelection.set(project, id);
-    draftRef.current = { body: src.body, chat: [...src.chat], archived: false, updatedAt: '' };
+    // Stamped here too (not just at write): the sidebar row renders this copy's time immediately.
+    draftRef.current = { body: src.body, chat: [...src.chat], archived: false, updatedAt: new Date().toISOString() };
     setBody(src.body);
     dispatch({ type: 'load', messages: src.chat });
     setEntries((prev) => [{ id, data: { ...draftRef.current } }, ...prev]);

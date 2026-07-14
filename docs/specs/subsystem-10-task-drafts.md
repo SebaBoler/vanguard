@@ -162,10 +162,10 @@ mint-on-click are deleted outright. From then on:
   ref + confirm dialog on Create task, read-only editor while a proposal is pending.
 
 **Close/quit protocol (G3):** the nav guard's synchronous `confirm()` cannot await a flush.
-TaskDraftScreen registers a guard only while a write is pending or in flight; on
-`onCloseRequested` App additionally calls a new async `flushGuard` hook: prevent the close,
-await the flush (bounded, 2 s), then close programmatically; on flush failure fall back to the
-existing confirm. Chat turns and archive writes are already awaited at write time, so the only
+TaskDraftScreen registers an async flush hook for the lifetime of the screen (the flush is a
+no-op when nothing is pending — cheaper and less racy than register/unregister churn per
+keystroke); on `onCloseRequested` App prevents the close, awaits the flush (bounded, 2 s), then
+closes programmatically. Chat turns and archive writes are already awaited at write time, so the only
 state at risk is ≤800 ms of body keystrokes. **Accepted limitation:** macOS Cmd+Q does not
 reliably emit close-requested; the maximum loss there is those same ≤800 ms of keystrokes —
 never a chat turn, never an archive flip. AC4/AC8 are worded to match this mechanism.
