@@ -1,5 +1,5 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
-import { readAppConfig } from './ipc';
+import { readAppConfigStrict } from './ipc';
 import type { AppConfig } from './vanguard-output';
 
 export interface AsyncState<T> {
@@ -46,7 +46,7 @@ export function useAppConfig(
   useEffect(() => {
     let live = true;
     setStatus('loading');
-    readAppConfig(project)
+    readAppConfigStrict(project)
       .then((c) => {
         if (!live) return;
         setCfg(c);

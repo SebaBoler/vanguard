@@ -24,7 +24,7 @@ export function customProviderRowError(row: Row, index: number, all: Row[]): str
   if (all.findIndex((r) => r.name === row.name) !== index) return `duplicate provider name "${row.name}"`;
   if (!/^https?:\/\//.test(row.baseUrl) || !isUrl(row.baseUrl)) return 'base URL must be an absolute http:// or https:// URL';
   if (!KEY_ENV_RE.test(row.keyEnv)) return 'key env var must be a valid environment variable name';
-  if (row.model !== undefined && row.model === '') return 'model must be non-empty when set';
+  if (row.model === '') return 'model must be non-empty when set';
   return undefined;
 }
 

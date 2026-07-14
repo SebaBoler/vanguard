@@ -42,6 +42,13 @@ export function readAppConfig(repoPath: string): Promise<AppConfig> {
   return invoke<AppConfig>('read_app_config', { repoPath });
 }
 
+/** Settings' read (S6 guard b): rejects when app.json exists but does not parse — the passive
+ *  readAppConfig collapses that to defaults, which is right for chat/board and WRONG for a form
+ *  that will write the whole object back. */
+export function readAppConfigStrict(repoPath: string): Promise<AppConfig> {
+  return invoke<AppConfig>('read_app_config_strict', { repoPath });
+}
+
 export function writeAppConfig(repoPath: string, config: AppConfig): Promise<void> {
   return invoke<void>('write_app_config', { repoPath, config });
 }

@@ -65,8 +65,16 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 
 #[tauri::command]
 async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
-    // Strict: Settings must not treat an unreadable (hand-edit typo) config as empty defaults —
-    // a Save would then replace the whole file (S6 guard b). Absent file still reads as defaults.
+    // Passive read: collapse-to-default. DocsScreen consumes this directly (chat model, task
+    // source) and must keep degrading gracefully on an unreadable file — routing THIS command
+    // through read_strict broke every chat turn on a hand-edit typo (review #341 r2 blocking).
+    Ok(appconfig::read(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_app_config_strict(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    // Settings' read (S6 guard b): a file that EXISTS but cannot be read/parsed is an error —
+    // Save stays blocked instead of replacing the user's hand-edited JSON with defaults.
     appconfig::read_strict(Path::new(&repo_path))
 }
 
@@ -155,6 +163,7 @@ pub fn run() {
             list_active,
             read_session,
             read_app_config,
+            read_app_config_strict,
             write_app_config,
             list_docs,
             read_doc,

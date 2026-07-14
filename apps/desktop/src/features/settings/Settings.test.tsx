@@ -4,11 +4,11 @@ import { Settings } from './Settings';
 import * as ipc from '../../ipc';
 
 vi.mock('../../ipc.js', () => ({
-  readAppConfig: vi.fn(async () => ({})),
+  readAppConfigStrict: vi.fn(async () => ({})),
   writeAppConfig: vi.fn(async () => {}),
 }));
 
-const read = vi.mocked(ipc.readAppConfig);
+const read = vi.mocked(ipc.readAppConfigStrict);
 const write = vi.mocked(ipc.writeAppConfig);
 
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
@@ -62,14 +62,12 @@ test('a valid custom-provider row saves through writeAppConfig with only name/ba
   const save = screen.getByRole('button', { name: /save/i });
   await waitFor(() => expect(save).not.toBeDisabled());
   fireEvent.click(save);
-  await waitFor(() =>
-    expect(write).toHaveBeenCalledWith(
-      '/repo',
-      expect.objectContaining({
-        customProviders: [{ name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_KEY' }],
-      }),
-    ),
-  );
+  await waitFor(() => expect(write).toHaveBeenCalled());
+  // Exact row shape: an extra key leaking into a SAVED row would survive the raw-Value round-trip
+  // forever, so objectContaining is not enough here (review #341 r2 minor).
+  expect(vi.mocked(write).mock.calls[0]?.[1]?.customProviders).toEqual([
+    { name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_KEY' },
+  ]);
 });
 
 test('a dangling cfg.provider renders flagged instead of silently blanking', async () => {
