@@ -9,7 +9,7 @@ import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
-import { buildPullRequestReviewPrompt, reviewPullRequest } from '../runners/pr-review.js';
+import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewPullRequest } from '../runners/pr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
@@ -42,15 +42,29 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     log(`review-pr ${result.pr.repoSlug}#${result.pr.number}: done`);
   };
 
+  const runAndDeliver = async (reviewer: PullRequestReviewer): Promise<void> => {
+    try {
+      await deliver(
+        await runReview(cmd.prRef, {
+          reviewer,
+          log,
+          publish: !toFile,
+          ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
+        }),
+      );
+    } catch (error) {
+      // --out callers still get the incomplete notice on disk; the rethrow keeps the exit code truthful.
+      if (cmd.out !== undefined && error instanceof PullRequestReviewIncompleteError) {
+        await mkdir(dirname(cmd.out), { recursive: true });
+        await writeFile(cmd.out, error.commentBody, 'utf8');
+        log(`review-pr ${error.pr.repoSlug}#${error.pr.number}: incomplete notice written to ${resolve(cmd.out)} (no PR comment)`);
+      }
+      throw error;
+    }
+  };
+
   if (deps.reviewer !== undefined) {
-    await deliver(
-      await runReview(cmd.prRef, {
-        reviewer: deps.reviewer,
-        log,
-        publish: !toFile,
-        ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
-      }),
-    );
+    await runAndDeliver(deps.reviewer);
     return;
   }
 
@@ -62,15 +76,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
   });
   try {
-    const reviewer: PullRequestReviewer = (pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts);
-    await deliver(
-      await runReview(cmd.prRef, {
-        reviewer,
-        log,
-        publish: !toFile,
-        ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
-      }),
-    );
+    await runAndDeliver((pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts));
   } finally {
     await sandboxContext.destroy();
   }

@@ -46,6 +46,14 @@ export interface GitHubPullRequestWatchOptions {
   reviewedLabel: string;
   /** Only review PRs opened by this GitHub login (self-review-only when set). */
   author?: string;
+  /**
+   * PR number named by the triggering label event (or --pr). The label-filtered list is
+   * search-backed and eventually consistent, so a just-labeled PR can be missing from the scan;
+   * this PR is fetched directly and reviewed even when its head already carries a review marker —
+   * the label was deliberately (re-)added.
+   */
+  hintPr?: number;
+  log?: (line: string) => void;
   gh?: GhRunner;
   reviewOne: (item: PullRequestWatchItem) => Promise<void>;
 }
@@ -91,13 +99,12 @@ function isAutomationAuthor(login: string): boolean {
   return lower.includes('vanguard') || lower.endsWith('[bot]') || lower === 'github-actions';
 }
 
-function parsePullRequestList(
-  out: string,
+function eligiblePullRequests(
+  parsed: GhPullRequestListItem[],
   repoSlug: string,
   triggerLabel: string,
   onlyAuthor?: string,
 ): PullRequestWatchItem[] {
-  const parsed = JSON.parse(out) as GhPullRequestListItem[];
   return parsed.flatMap((item) => {
     if (item.number === undefined) return [];
     const labels = labelNames(item.labels);
@@ -129,6 +136,38 @@ function editPullRequestLabels(
   for (const label of labels.remove ?? []) args.push('--remove-label', label);
   for (const label of labels.add ?? []) args.push('--add-label', label);
   return gh(args);
+}
+
+interface GhPullRequestViewItem extends GhPullRequestListItem {
+  state?: string;
+}
+
+/** Fetch the event-named PR directly — `gh pr view` is not subject to the label-search index lag. */
+async function fetchHintedPullRequest(
+  gh: GhRunner,
+  opts: GitHubPullRequestWatchOptions,
+  number: number,
+): Promise<PullRequestWatchItem | undefined> {
+  const id = `${opts.repoSlug}#${number}`;
+  let view: GhPullRequestViewItem;
+  try {
+    view = JSON.parse(
+      await gh(['pr', 'view', String(number), '--repo', opts.repoSlug, '--json', 'number,title,isDraft,author,headRefOid,labels,state']),
+    ) as GhPullRequestViewItem;
+  } catch (error) {
+    opts.log?.(`watch-prs ${id}: hint fetch failed -> ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+  if (view.state !== undefined && view.state !== 'OPEN') {
+    opts.log?.(`watch-prs ${id}: hint skip -> state ${view.state}`);
+    return undefined;
+  }
+  const [item] = eligiblePullRequests([view], opts.repoSlug, opts.label, opts.author);
+  if (item === undefined) {
+    opts.log?.(`watch-prs ${id}: hint skip -> draft, automation author, or missing "${opts.label}" label`);
+    return undefined;
+  }
+  return item;
 }
 
 async function hasExistingReviewForHead(gh: GhRunner, item: PullRequestWatchItem): Promise<boolean> {
@@ -167,11 +206,26 @@ export function githubPullRequestWatchPrimitives(opts: GitHubPullRequestWatchOpt
         '--json',
         'number,title,isDraft,author,headRefOid,labels',
       ];
-      const candidates = parsePullRequestList(await gh(listArgs), opts.repoSlug, opts.label, opts.author);
+      const candidates = eligiblePullRequests(
+        JSON.parse(await gh(listArgs)) as GhPullRequestListItem[],
+        opts.repoSlug,
+        opts.label,
+        opts.author,
+      );
+      if (opts.hintPr !== undefined && !candidates.some((item) => item.number === opts.hintPr)) {
+        const hinted = await fetchHintedPullRequest(gh, opts, opts.hintPr);
+        if (hinted !== undefined) candidates.push(hinted);
+      }
       const ready = await Promise.all(
-        candidates.map(async (item): Promise<PullRequestWatchItem | undefined> =>
-          (await hasExistingReviewForHead(gh, item)) ? undefined : item,
-        ),
+        candidates.map(async (item): Promise<PullRequestWatchItem | undefined> => {
+          // The hinted PR was deliberately (re-)labeled: review it even when this head has a verdict.
+          if (item.number === opts.hintPr) return item;
+          if (await hasExistingReviewForHead(gh, item)) {
+            opts.log?.(`watch-prs ${prId(item)}: skip -> head ${item.headRefOid.slice(0, 7)} already reviewed`);
+            return undefined;
+          }
+          return item;
+        }),
       );
       return ready.filter((item): item is PullRequestWatchItem => item !== undefined);
     },
@@ -252,17 +306,18 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Poll GitHub PRs until stopped, running the PR review loop for each ready PR. */
+/** Poll GitHub PRs until stopped, running the PR review loop for each ready PR. Returns the last tick so `--once` callers can report failures truthfully. */
 export async function watchPullRequests(
   primitives: PullRequestWatchPrimitives,
   opts: WatchPullRequestsLoopOptions = {},
-): Promise<void> {
+): Promise<PullRequestWatchTick | undefined> {
   const intervalMs = opts.intervalMs ?? 60_000;
+  let last: PullRequestWatchTick | undefined;
   for (;;) {
-    if (opts.signal?.aborted === true) return;
-    const tick = await watchPullRequestsOnce(primitives, opts);
-    opts.log?.(`watch-prs: ${tick.reviewed.length} reviewed, ${tick.failed.length} failed, ${tick.skipped.length} skipped.`);
-    if (opts.once === true) return;
+    if (opts.signal?.aborted === true) return last;
+    last = await watchPullRequestsOnce(primitives, opts);
+    opts.log?.(`watch-prs: ${last.reviewed.length} reviewed, ${last.failed.length} failed, ${last.skipped.length} skipped.`);
+    if (opts.once === true) return last;
     await delay(intervalMs, opts.signal);
   }
 }

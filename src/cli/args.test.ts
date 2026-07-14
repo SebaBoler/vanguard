@@ -308,6 +308,20 @@ describe('parseCli', () => {
     expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work')).toMatchObject({ kind: 'error' });
   });
 
+  it('parses watch-prs --pr as a pinned PR number', () => {
+    const cmd = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '316'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch-prs', pr: 316 });
+  });
+
+  it('rejects a watch-prs --pr that is not a positive PR number', () => {
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', 'abc'], '/work')).toMatchObject({
+      kind: 'error',
+    });
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '0'], '/work')).toMatchObject({
+      kind: 'error',
+    });
+  });
+
   it('parses doctor-prs with PR review label defaults', () => {
     expect(parseCli(['doctor-prs', '--github-repo', 'o/r', '--label', 'ready for vanguard review'], '/work')).toEqual({
       kind: 'doctor-prs',
