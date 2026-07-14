@@ -97,25 +97,23 @@ export function unwatchProject(repoPath: string): Promise<void> {
 // Typed core API over the `vanguard __sidecar` child (no stdout scraping). Run events arrive on the
 // `api:event` Tauri channel — subscribe with `listen('api:event', …)` where the run UI needs them
 // (that consumption is Subsystem 1; this only exposes the wrappers).
-export interface Capabilities {
-  providers: string[];
-  flows: { name: string; label: string }[];
-  /** Stage-library names — the flow editor's palette. Static per session, like everything here. */
-  stages: string[];
-  transports: string[];
-  defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
-}
-
-export interface CreateRunParams {
-  issueRef: string;
-  /** Absolute path to the target project repo — required (the sidecar child has no project cwd). */
-  repoPath: string;
-  flow?: string;
-  provider?: string;
-  transport?: string;
-  maxTurns?: number;
-  baseBranch?: string;
-}
+// Wire types come from the GENERATED src/wire.ts (S7) — no more hand-mirrors. Feature code keeps
+// importing them from this module.
+export type {
+  Capabilities,
+  FlowInfo,
+  CreateRunParams,
+  CreateRunResult,
+  StageOverrides,
+  StageDecl,
+  LoopDecl,
+  FlowDoc,
+  RepoFlowInfo,
+  RepoProviderInfo,
+  CreatedTask,
+  Finding,
+} from './wire';
+import type { Capabilities, CreateRunParams, CreateRunResult, FlowDoc, RepoFlowInfo, RepoProviderInfo, CompleteRequest } from './wire';
 
 export function apiCapabilities(): Promise<Capabilities> {
   return invoke<Capabilities>('api_capabilities');
@@ -138,7 +136,7 @@ export function apiCapabilitiesCached(): Promise<Capabilities> {
   return capsCache;
 }
 
-export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string; secretBlocked?: boolean }> {
+export function apiCreateRun(params: CreateRunParams): Promise<CreateRunResult> {
   return invoke('api_create_run', { params });
 }
 
@@ -149,11 +147,7 @@ export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string;
  * caller-supplied base URL would be a way for anything running in the webview to redirect that token
  * to a host of its choosing. Rust reads `chatBaseUrl` from `app.json` itself — hence `repoPath`.
  */
-export interface CompleteParams {
-  system?: string;
-  messages: { role: 'user' | 'assistant'; content: string }[];
-  model: string;
-}
+export type CompleteParams = Omit<CompleteRequest, 'baseUrl'> & { model: string };
 export function apiComplete(
   repoPath: string,
   params: CompleteParams,
@@ -168,7 +162,7 @@ export function apiComplete(
  * Only title/body cross: `source`, `team` and `label` are read from app.json in Rust. The renderer does
  * not choose which tracker gets written to. (Same rule as CompleteParams — and it matters more here.)
  */
-export function apiCreateTask(repoPath: string, title: string, body: string): Promise<{ id: string; url: string }> {
+export function apiCreateTask(repoPath: string, title: string, body: string): Promise<import('./wire').CreatedTask> {
   return invoke('api_create_task', { repoPath, title, body });
 }
 
@@ -182,52 +176,9 @@ export function writeDoc(repoPath: string, name: string, content: string): Promi
   return invoke<void>('write_doc', { repoPath, name, content });
 }
 
-// Flow-file editing (S5). Hand-mirrors of src/flows/types.ts + src/flows/repo.ts — same
-// manual-mirror discipline as RunEvent; the shared-types seam is backlog.
-export interface StageOverrides {
-  model?: string;
-  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-  maxTurns?: number;
-  provider?: string;
-  resumePrevious?: boolean;
-}
-export interface StageDecl {
-  name: string;
-  /** `"relpath#export"` under `.vanguard/` — the Layer-2 escape hatch. */
-  ref?: string;
-  overrides: StageOverrides;
-  meta?: Record<string, unknown>;
-}
-export interface LoopDecl {
-  stages: string[];
-  until: string;
-  max: number;
-}
-export interface FlowDoc {
-  name: string;
-  label: string;
-  stages: StageDecl[];
-  loops: LoopDecl[];
-  meta?: Record<string, unknown>;
-}
-/** One discovered flow file. `name` present ⇔ parsed (openable); `error` present ⇔ not runnable. */
-export interface RepoFlowInfo {
-  file: string;
-  name?: string;
-  label?: string;
-  error?: string;
-}
-
+// Flow-file editing (S5). Types now come from the generated wire (S7).
 export function apiListFlows(repoPath: string): Promise<{ flows: RepoFlowInfo[] }> {
   return invoke('api_list_flows', { repoPath });
-}
-
-/** One configured custom provider (S6): healthy (name, no error) or broken (`error` set; index -1 =
- *  whole-file pseudo-entry). `error` absent ⇔ runnable. Names only — no baseUrl/keyEnv on the wire. */
-export interface RepoProviderInfo {
-  index: number;
-  name?: string;
-  error?: string;
 }
 
 /** Fresh per mount, like apiListFlows — a provider saved in Settings must be runnable immediately. */

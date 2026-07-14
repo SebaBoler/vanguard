@@ -12,25 +12,17 @@ import type { CreatedTask } from '../tasks/create.js';
 export class BadRequestError extends VanguardError {}
 
 /** Typed projection of a run request — a subset of RunOptions plus the issue ref and transport. */
-export interface CreateRunParams {
-  issueRef: string;
-  /** Absolute path to the target project repo. Required — the sidecar child has no project cwd. */
-  repoPath: string;
-  flow?: string;
-  provider?: string;
-  transport?: string;
-  maxTurns?: number;
-  baseBranch?: string;
-}
+// CreateRunParams lives in src/wire.ts (the shared desktop contract — S7).
+export type { CreateRunParams } from '../wire.js';
+import type { CreateRunParams } from '../wire.js';
 
 /**
  * What the sidecar forwards back to the client — the run's PR outcome. A structural subset of the
  * runner's RunIssueResult (which the production deps return directly); the sidecar never reads `task`.
  */
-export interface CreateRunResult {
-  prUrl?: string;
-  secretBlocked?: boolean;
-}
+// CreateRunResult lives in src/wire.ts (S7).
+export type { CreateRunResult } from '../wire.js';
+import type { CreateRunResult } from '../wire.js';
 
 export interface SidecarDeps {
   capabilities: () => Capabilities;
@@ -55,11 +47,9 @@ export interface ListProvidersParams {
  * index -1 = the whole-file pseudo-entry). `error` absent ⇔ runnable. No baseUrl/keyEnv here —
  * nothing in the UI consumes them (Settings edits app.json directly).
  */
-export interface RepoProviderInfo {
-  index: number;
-  name?: string;
-  error?: string;
-}
+// RepoProviderInfo lives in src/wire.ts (S7).
+export type { RepoProviderInfo } from '../wire.js';
+import type { RepoProviderInfo } from '../wire.js';
 export interface ReadFlowParams {
   repoPath: string;
   file: string;

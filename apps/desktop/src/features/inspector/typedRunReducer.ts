@@ -1,14 +1,7 @@
-// Mirrors the core `RunEvent` union (src/pipeline/events.ts) + the Rust-only `run-accepted`. The
-// desktop mirrors core wire types locally (like Capabilities/CreateRunParams in ipc.ts) rather than
-// importing across the app boundary. Keep in sync with events.ts on change.
-export type RunEvent =
-  | { type: 'run-start'; taskId: string; flow: string; provider: string; stages: string[] }
-  | { type: 'stage-start'; name: string; index: number; of: number }
-  | { type: 'stage-end'; name: string; index: number; of: number; outcome: string }
-  | { type: 'cost'; usdSpent: number }
-  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean }
-  | { type: 'run-error'; message: string }
-  | { type: 'run-cancelled' };
+// RunEvent comes from the generated wire contract (S7 — no more hand-mirror). Re-exported because
+// Inspector imports it from here.
+import type { RunEvent } from '../../wire';
+export type { RunEvent } from '../../wire';
 
 type StagePhase = 'pending' | 'running' | 'done' | 'failed';
 
@@ -23,8 +16,10 @@ export interface TypedRunState {
   terminal?: { kind: 'success' | 'no-changes' | 'secret-blocked' | 'error' | 'cancelled'; prUrl?: string; message?: string };
 }
 
-/** `run-accepted` is Rust-emitted and not in RunEvent; accept it as an extra variant here. */
-type Incoming = RunEvent | { type: 'run-accepted' };
+/** `run-accepted` is Rust-minted (sidecar.rs) and never core-emitted, so it is a DESKTOP extension
+ *  of the wire union, not part of it. */
+export type AppRunEvent = RunEvent | { type: 'run-accepted' };
+type Incoming = AppRunEvent;
 
 export function initialTypedRun(): TypedRunState {
   return { stages: [], stageState: {}, usdSpent: 0 };

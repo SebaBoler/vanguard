@@ -58,3 +58,9 @@ describe('reduceTypedRun', () => {
 });
 
 type TypedRunTerminal = ReturnType<typeof reduceTypedRun>['terminal'];
+
+// S7: run-accepted stays a desktop extension of the wire RunEvent — this pins the TYPE accepts it
+// (the runtime folds above already exercise it).
+import type { AppRunEvent } from './typedRunReducer';
+const _accepted: AppRunEvent = { type: 'run-accepted' };
+void _accepted;

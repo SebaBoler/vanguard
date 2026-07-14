@@ -1,3 +1,6 @@
+// Hand-mirrors of the RUST serde structs in src-tauri (the persisted/aggregated shapes) — a TS
+// seam cannot pin these; keep them in sync manually. Anything Rust passes through OPAQUELY
+// belongs in src/wire.ts (the generated S7 contract), not here.
 export interface AgentUsage {
   inputTokens: number;
   outputTokens: number;

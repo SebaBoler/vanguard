@@ -29,7 +29,7 @@ function Select({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: readonly string[];
   /** Render a stored value missing from options as a flagged entry so display matches storage. */
   danglingLabel?: (v: string) => string;
 }) {

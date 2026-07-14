@@ -30,7 +30,9 @@ export interface RepoFlowInfo {
 /** Filename rule: separators are excluded entirely, so `..` can never form a path segment. */
 export const FLOW_FILE_RE = /^[a-z0-9][a-z0-9._-]*\.hcl$/;
 /** Flow-name grammar — the filename rule minus the extension (write canonicalizes file = name.hcl). */
-export const FLOW_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+// The one repo-name grammar lives in src/wire.ts (S7).
+export { FLOW_NAME_RE } from '../wire.js';
+import { FLOW_NAME_RE } from '../wire.js';
 
 const flowsDir = (repoPath: string): string => join(repoPath, '.vanguard', 'flows');
 

@@ -7,24 +7,11 @@ import {
   type PipelineStage,
 } from '../pipeline/pipeline.js';
 
-/** A selectable flow: its stable key and a human label for the UI. */
-export interface FlowInfo {
-  name: string;
-  label: string;
-}
-
-/** What the run builder + flow editor render from — providers, flows, the stage palette, transports, defaults. */
-export interface Capabilities {
-  providers: string[];
-  flows: FlowInfo[];
-  /** STAGE_LIBRARY keys — the flow editor's stage palette. Static, so it belongs here, not on the repo-scoped listFlows. */
-  stages: string[];
-  transports: string[];
-  defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
-}
-
-/** The task transports vanguard reads/publishes through. Single source for the capability + validation. */
-export const TRANSPORTS = ['github', 'gitlab', 'linear'] as const;
+// Capabilities/FlowInfo/TRANSPORTS live in src/wire.ts (the shared desktop contract — S7).
+export type { Capabilities, FlowInfo } from '../wire.js';
+export { TRANSPORTS } from '../wire.js';
+import { TRANSPORTS } from '../wire.js';
+import type { Capabilities } from '../wire.js';
 
 /**
  * Name-addressable flow registry. v0 registers only the TS-authored flows that already exist;
