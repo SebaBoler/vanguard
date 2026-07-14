@@ -577,6 +577,9 @@ export function TaskDraftScreen({
     // deleteNow discards the pending debounce first and queues after any in-flight write — the
     // delete wins; the file cannot resurrect (spec G2).
     void writer.deleteNow(id);
+    // Also the anti-resurrection guard for in-flight completions (PR #350 r2): repointing the
+    // active selection forces a late reply/title for this id onto the id-keyed `update` path,
+    // which skips a deleted file. Without it, the active-path `writeNow` would re-create it.
     if (id === activeIdRef.current) switchTo(null);
   };
 

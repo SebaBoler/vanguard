@@ -624,6 +624,46 @@ test('a user rename racing the auto-title WINS (id-keyed re-check)', async () =>
   expect(screen.getByLabelText('tab User choice')).toBeInTheDocument();
 });
 
+test('deleting the ACTIVE draft while its auto-title is in flight cannot resurrect the file (PR #350 r2, G2)', async () => {
+  let resolveTitle: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockReturnValueOnce(new Promise((r) => (resolveTitle = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Doomed\n');
+  sendMsg('first exchange');
+  await settle(); // reply landed and persisted; the title completion is still in flight
+  expect(files.size).toBe(1);
+  // Delete the draft while the title round-trip is outstanding. removeDraft switches the active
+  // selection to null, so the resolving title must take the id-keyed update path and skip.
+  toHistory();
+  fireEvent.click(screen.getByLabelText(/delete Doomed/i));
+  fireEvent.click(screen.getByText('delete'));
+  await settle();
+  resolveTitle({ text: 'Robot Title' });
+  await settle();
+  expect(files.size).toBe(0); // not resurrected with the LLM title
+});
+
+test('deleting the ACTIVE draft while its REPLY is in flight cannot resurrect the file (PR #350 r2, G2)', async () => {
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveReply = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Doomed\n');
+  sendMsg('q');
+  await settle(); // user turn persisted; the completion is in flight
+  toHistory();
+  fireEvent.click(screen.getByLabelText(/delete Doomed/i));
+  fireEvent.click(screen.getByText('delete'));
+  await settle();
+  expect(files.size).toBe(0);
+  resolveReply({ text: 'late answer' });
+  await settle();
+  expect(files.size).toBe(0); // the late reply's id-keyed update skipped the deleted file
+});
+
 // ── model selection (handoff §4) ───────────────────────────────────────────────────────────────
 
 test('model options come from the vanguard config; a choice persists per draft and is sent', async () => {
