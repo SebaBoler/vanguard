@@ -61,8 +61,13 @@ export function parseDraft(raw: string): DraftData | undefined {
   }
   // name/chatModel are lenient, unlike created: a hostile value here can only mislabel a row or
   // fall back to the default model — dropping the field beats failing the whole file unreadable.
-  const name = typeof o.name === 'string' && o.name.trim() !== '' ? o.name : undefined;
-  const chatModel = typeof o.chatModel === 'string' && o.chatModel.trim() !== '' ? o.chatModel : undefined;
+  // Both are size-bounded too (PR #350 r3): the name truncates to the interactive rename cap; an
+  // over-long model id is no model id at all and is dropped rather than forwarded to the API.
+  const name = typeof o.name === 'string' && o.name.trim() !== '' ? o.name.slice(0, 60) : undefined;
+  const chatModel =
+    typeof o.chatModel === 'string' && o.chatModel.trim() !== '' && o.chatModel.length <= 200
+      ? o.chatModel
+      : undefined;
   return {
     body: o.body,
     chat,

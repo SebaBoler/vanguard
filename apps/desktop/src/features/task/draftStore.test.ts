@@ -69,6 +69,12 @@ test('parseDraft: name and chatModel are LENIENT — hostile values drop, never 
   expect(bad?.chatModel).toBeUndefined();
 });
 
+test('parseDraft bounds name/chatModel size — a hostile file cannot smuggle megabytes through a label (PR #350 r3)', () => {
+  const big = parseDraft(JSON.stringify(draft({ name: 'n'.repeat(10_000), chatModel: 'm'.repeat(10_000) })));
+  expect(big?.name).toBe('n'.repeat(60)); // truncated to the rename cap, not dropped
+  expect(big?.chatModel).toBeUndefined(); // an over-long model id is no model id — dropped
+});
+
 test('draftLabel: explicit name wins over the heading', () => {
   expect(draftLabel(draft({ name: 'Chosen name', body: '# Some heading\n' }))).toBe('Chosen name');
 });

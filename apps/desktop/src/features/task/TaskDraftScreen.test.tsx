@@ -604,6 +604,20 @@ test('the first exchange auto-titles an unnamed conversation (LLM rename)', asyn
   ).toBe(1);
 });
 
+test('a failed FIRST send does not burn the auto-title — the retry that succeeds still titles (PR #350 r3)', async () => {
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: undefined, error: { message: 'transient' } })
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockResolvedValueOnce({ text: 'Recovered Title' });
+  renderFresh();
+  await drawerReady();
+  sendMsg('first try');
+  await settle(); // fails — the user turn is persisted, no assistant turn yet
+  sendMsg('second try');
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBe('Recovered Title');
+});
+
 test('a user rename racing the auto-title WINS (id-keyed re-check)', async () => {
   let resolveTitle: (v: { text?: string }) => void = () => {};
   vi.mocked(ipc.apiComplete)

@@ -201,15 +201,15 @@ export function TaskDraftScreen({
       dispatch({ type: 'reset' });
       return;
     }
-    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    clearUnseen(id);
     const entry = entriesRef.current.find((e) => e.id === id);
     if (entry?.data === undefined) {
       // Defensive only (call sites filter unreadable ids): fall back to a fresh draft rather
-      // than render a file we cannot trust.
+      // than render a file we cannot trust — before the id can enter openTabs/session state.
       switchRef.current(null);
       return;
     }
+    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    clearUnseen(id);
     draftRef.current = { ...entry.data };
     setBody(entry.data.body);
     setArchived(entry.data.archived);
@@ -431,8 +431,11 @@ export function TaskDraftScreen({
     // this turn's <doc>, or its model as this turn's model.
     const bodyAtSend = draftRef.current.body;
     const modelAtSend = draftRef.current.chatModel;
-    // First exchange of an unnamed conversation ⇒ auto-title once the reply lands (handoff §3).
-    const wantsTitle = draftRef.current.chat.length === 0 && draftRef.current.name === undefined;
+    // First SUCCESSFUL exchange of an unnamed conversation ⇒ auto-title once the reply lands
+    // (handoff §3). Keyed on "no assistant turn yet", not "chat empty" (PR #350 r3): a failed
+    // first send persists its user turn, and the retry must still get to title.
+    const wantsTitle =
+      !draftRef.current.chat.some((m) => m.role === 'assistant') && draftRef.current.name === undefined;
     dispatch({ type: 'send', text });
     draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
     syncEntry(id);
