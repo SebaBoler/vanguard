@@ -22,6 +22,15 @@ pub struct AppConfig {
     pub concurrency: Option<u32>,
     pub budget_usd: Option<f64>,
     pub run_command: Option<String>,
+    /// Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; the API key is never
+    /// stored here (env only). Optional Anthropic-compatible base URL for a self-hosted proxy.
+    pub chat_model: Option<String>,
+    pub chat_base_url: Option<String>,
+    /// Custom providers (Subsystem 6). Deliberately a raw `Value`, NOT a typed Vec: Rust is a dumb
+    /// pipe here — a typed struct would silently strip unknown entry keys on every Settings save
+    /// and collapse the whole config to `Default` on one type-mismatched entry. The core loader
+    /// (src/agents/custom.ts) is the one validity predicate; keys never live in this file.
+    pub custom_providers: Option<serde_json::Value>,
 }
 
 fn config_path(repo: &Path) -> PathBuf {
@@ -33,6 +42,20 @@ pub fn read(repo: &Path) -> AppConfig {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// Settings read path (S6 guard b): a file that EXISTS but doesn't parse is an error, not
+/// `Default` — collapsing it would let the next Save silently replace the whole hand-edited file.
+/// Absent file still means defaults. Passive consumers (board, projects, chat) keep `read`.
+pub fn read_strict(repo: &Path) -> Result<AppConfig, String> {
+    match fs::read_to_string(config_path(repo)) {
+        // Only genuine ABSENCE defaults: permission-denied / is-a-directory / transient IO all mean
+        // "a file exists that we could not read" — Save must stay blocked, or a later write clobbers
+        // the file this guard exists to protect (review #341 obs 1).
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(AppConfig::default()),
+        Err(e) => Err(format!(".vanguard/app.json is unreadable: {e}")),
+        Ok(s) => serde_json::from_str(&s).map_err(|e| format!(".vanguard/app.json is unreadable: {e}")),
+    }
 }
 
 pub fn write(repo: &Path, cfg: &AppConfig) -> io::Result<()> {
@@ -66,5 +89,45 @@ mod tests {
     fn missing_config_is_default() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(read(tmp.path()).source.is_none());
+    }
+
+    #[test]
+    fn read_strict_distinguishes_unreadable_from_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_strict(tmp.path()).is_ok()); // absent -> defaults
+        fs::create_dir_all(tmp.path().join(".vanguard")).unwrap();
+        fs::write(config_path(tmp.path()), "{not json").unwrap();
+        assert!(read_strict(tmp.path()).is_err()); // unreadable -> error, NOT Default
+        assert!(read(tmp.path()).source.is_none()); // passive read keeps collapse-to-default
+    }
+
+    #[test]
+    fn read_strict_treats_non_notfound_io_errors_as_errors() {
+        // app.json as a DIRECTORY: read_to_string fails with a non-NotFound error — the file-shaped
+        // thing exists, so defaults (and a Save over it) would be wrong (review #341 obs 1).
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(config_path(tmp.path())).unwrap();
+        assert!(read_strict(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn custom_providers_round_trip_arbitrary_content() {
+        // The S6 invariant: a read→write cycle (any Settings save) must preserve hand-written
+        // customProviders byte-content — including entry keys this binary has never heard of.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".vanguard")).unwrap();
+        fs::write(
+            config_path(tmp.path()),
+            r#"{"label":"x","customProviders":[{"name":"my-proxy","baseUrl":"https://llm.example.com/api","keyEnv":"MY_KEY","model":"glm-5.2","futureKey":{"nested":true}}]}"#,
+        )
+        .unwrap();
+        let cfg = read(tmp.path());
+        write(tmp.path(), &cfg).unwrap();
+        let back: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(config_path(tmp.path())).unwrap()).unwrap();
+        let entry = &back["customProviders"][0];
+        assert_eq!(entry["name"], "my-proxy");
+        assert_eq!(entry["keyEnv"], "MY_KEY");
+        assert_eq!(entry["futureKey"]["nested"], true);
     }
 }

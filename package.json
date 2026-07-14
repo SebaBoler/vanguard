@@ -16,7 +16,8 @@
     "pricing:check": "tsx scripts/check-openrouter-pricing.ts",
     "dev": "tsx",
     "sbom": "bash docker/sbom.sh",
-    "clean": "rm -rf dist .vanguard"
+    "clean": "rm -rf dist .vanguard",
+    "gen:wire": "tsx scripts/gen-desktop-wire.ts"
   },
   "packageManager": "pnpm@10.32.1",
   "type": "module",
@@ -30,6 +31,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.201",
+    "@cdktf/hcl2json": "0.21.0",
     "execa": "^9.6.1",
     "pino": "^10.3.1",
     "zod": "^4.4.3"

@@ -24,4 +24,13 @@ describe('capabilities', () => {
       expect(flow.build().length).toBeGreaterThan(0);
     }
   });
+
+  it('surfaces flow-b (Subsystem 2) as a selectable flow', () => {
+    expect(capabilities().flows.map((f) => f.name)).toContain('flow-b');
+    expect(capabilities().flows.find((f) => f.name === 'flow-b')?.label).toMatch(/adversary/);
+  });
+
+  it('flow-b builds planner→implementer→adversary→repairer', () => {
+    expect(FLOWS['flow-b']?.build().map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
+  });
 });

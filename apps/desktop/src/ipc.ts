@@ -42,6 +42,13 @@ export function readAppConfig(repoPath: string): Promise<AppConfig> {
   return invoke<AppConfig>('read_app_config', { repoPath });
 }
 
+/** Settings' read (S6 guard b): rejects when app.json exists but does not parse — the passive
+ *  readAppConfig collapses that to defaults, which is right for chat/board and WRONG for a form
+ *  that will write the whole object back. */
+export function readAppConfigStrict(repoPath: string): Promise<AppConfig> {
+  return invoke<AppConfig>('read_app_config_strict', { repoPath });
+}
+
 export function writeAppConfig(repoPath: string, config: AppConfig): Promise<void> {
   return invoke<void>('write_app_config', { repoPath, config });
 }
@@ -90,43 +97,115 @@ export function unwatchProject(repoPath: string): Promise<void> {
 // Typed core API over the `vanguard __sidecar` child (no stdout scraping). Run events arrive on the
 // `api:event` Tauri channel — subscribe with `listen('api:event', …)` where the run UI needs them
 // (that consumption is Subsystem 1; this only exposes the wrappers).
-export interface Capabilities {
-  providers: string[];
-  flows: { name: string; label: string }[];
-  transports: string[];
-  defaults: { provider: string; maxTurns: number; maxCostUsd: number; baseBranch: string };
-}
-
-export interface CreateRunParams {
-  issueRef: string;
-  /** Absolute path to the target project repo — required (the sidecar child has no project cwd). */
-  repoPath: string;
-  flow?: string;
-  provider?: string;
-  transport?: string;
-  maxTurns?: number;
-  baseBranch?: string;
-}
+// Wire types come from the GENERATED src/wire.ts (S7) — no more hand-mirrors. Feature code keeps
+// importing them from this module.
+export type {
+  Capabilities,
+  FlowInfo,
+  CreateRunParams,
+  CreateRunResult,
+  StageOverrides,
+  StageDecl,
+  LoopDecl,
+  FlowDoc,
+  RepoFlowInfo,
+  RepoProviderInfo,
+  CreatedTask,
+  Finding,
+} from './wire';
+import type { Capabilities, CreateRunParams, CreateRunResult, FlowDoc, RepoFlowInfo, RepoProviderInfo, CompleteRequest } from './wire';
 
 export function apiCapabilities(): Promise<Capabilities> {
   return invoke<Capabilities>('api_capabilities');
 }
 
-// capabilities() is pure and never changes in a session — cache it once so a live run's held proc
-// mutex (api_create_run) never blocks the New Run form's populate call.
+// capabilities() is pure and never changes in a session, so cache it — one fewer IPC round-trip on
+// every mount. It is NO LONGER a workaround for the run mutex: capabilities now goes over the sidecar's
+// query pipe, which answers while a run holds the run pipe. (It used to be exactly that workaround, and
+// the comment said so — leaving that claim here would have someone "simplify" the cache away on the
+// belief that the block it dodged still exists, or keep it for a reason that is no longer true.)
 let capsCache: Promise<Capabilities> | undefined;
 export function apiCapabilitiesCached(): Promise<Capabilities> {
-  capsCache ??= apiCapabilities();
+  // Cache successes only: `??=` would pin a REJECTED promise for the whole session (a sidecar
+  // that was briefly unavailable at startup would permanently disable everything caps-gated —
+  // the flow editor's create form, the palette — with no recovery short of an app restart).
+  capsCache ??= apiCapabilities().catch((err: unknown) => {
+    capsCache = undefined;
+    throw err;
+  });
   return capsCache;
 }
 
-export function apiCreateRun(params: CreateRunParams): Promise<{ prUrl?: string; secretBlocked?: boolean }> {
+export function apiCreateRun(params: CreateRunParams): Promise<CreateRunResult> {
   return invoke('api_create_run', { params });
 }
 
-/** The in-flight typed run's id, or null when idle. */
-export function apiActiveRun(): Promise<string | null> {
-  return invoke<string | null>('api_active_run');
+/**
+ * Doc-editor chat completion (Subsystem 3). One-shot spawn, never the run mutex.
+ *
+ * No `baseUrl` here on purpose: the completion runs with the inherited Anthropic credential, so a
+ * caller-supplied base URL would be a way for anything running in the webview to redirect that token
+ * to a host of its choosing. Rust reads `chatBaseUrl` from `app.json` itself — hence `repoPath`.
+ */
+// ALLOWLIST, deliberately not Omit<CompleteRequest,...>: every field here is one the renderer is
+// permitted to send. A new CompleteRequest field must be added HERE to cross the webview boundary
+// (a denylist would auto-expose it — review #342). Field types still derive from wire (no drift).
+export interface CompleteParams {
+  system?: CompleteRequest['system'];
+  messages: CompleteRequest['messages'];
+  model: string;
+}
+export function apiComplete(
+  repoPath: string,
+  params: CompleteParams,
+): Promise<{ text?: string; error?: { message: string } }> {
+  return invoke('api_complete', { repoPath, req: params });
+}
+
+/**
+ * Create a task on the configured transport. The app's first WRITE to an external system, and it cannot
+ * be undone from here — so the caller must confirm first, and it must never fire as a side effect.
+ *
+ * Only title/body cross: `source`, `team` and `label` are read from app.json in Rust. The renderer does
+ * not choose which tracker gets written to. (Same rule as CompleteParams — and it matters more here.)
+ */
+export function apiCreateTask(repoPath: string, title: string, body: string): Promise<import('./wire').CreatedTask> {
+  return invoke('api_create_task', { repoPath, title, body });
+}
+
+export function listDocs(repoPath: string): Promise<string[]> {
+  return invoke<string[]>('list_docs', { repoPath });
+}
+export function readDoc(repoPath: string, name: string): Promise<string> {
+  return invoke<string>('read_doc', { repoPath, name });
+}
+export function writeDoc(repoPath: string, name: string, content: string): Promise<void> {
+  return invoke<void>('write_doc', { repoPath, name, content });
+}
+
+// Flow-file editing (S5). Types now come from the generated wire (S7).
+export function apiListFlows(repoPath: string): Promise<{ flows: RepoFlowInfo[] }> {
+  return invoke('api_list_flows', { repoPath });
+}
+
+/** Fresh per mount, like apiListFlows — a provider saved in Settings must be runnable immediately. */
+export function apiListProviders(repoPath: string): Promise<{ providers: RepoProviderInfo[] }> {
+  return invoke('api_list_providers', { repoPath });
+}
+
+/** `source` is the raw file bytes on read; the canonical form appears only after a write. */
+export function apiReadFlow(repoPath: string, file: string): Promise<{ doc: FlowDoc; source: string }> {
+  return invoke('api_read_flow', { repoPath, file });
+}
+
+export function apiWriteFlow(repoPath: string, file: string, doc: FlowDoc): Promise<{ source: string }> {
+  return invoke('api_write_flow', { repoPath, file, doc });
+}
+
+/** The in-flight typed run `{runId, repoPath}`, or null when idle. repoPath scopes re-attach to
+ *  the owning project (S8 — the sidecar is global, Inspectors are per-project). */
+export function apiActiveRun(): Promise<{ runId: string; repoPath: string } | null> {
+  return invoke<{ runId: string; repoPath: string } | null>('api_active_run');
 }
 
 /** Buffered `{ runId, event }` backlog for a run, for a re-attaching live strip. */

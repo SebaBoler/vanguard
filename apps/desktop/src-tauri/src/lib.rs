@@ -1,5 +1,6 @@
 mod active;
 mod appconfig;
+mod docs;
 mod projects;
 mod remote;
 mod runs;
@@ -64,12 +65,37 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 
 #[tauri::command]
 async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    // Passive read: collapse-to-default. DocsScreen consumes this directly (chat model, task
+    // source) and must keep degrading gracefully on an unreadable file — routing THIS command
+    // through read_strict broke every chat turn on a hand-edit typo (review #341 r2 blocking).
     Ok(appconfig::read(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_app_config_strict(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    // Settings' read (S6 guard b): a file that EXISTS but cannot be read/parsed is an error —
+    // Save stays blocked instead of replacing the user's hand-edited JSON with defaults.
+    appconfig::read_strict(Path::new(&repo_path))
 }
 
 #[tauri::command]
 async fn write_app_config(repo_path: String, config: appconfig::AppConfig) -> Result<(), String> {
     appconfig::write(Path::new(&repo_path), &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_docs(repo_path: String) -> Result<Vec<String>, String> {
+    Ok(docs::list(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_doc(repo_path: String, name: String) -> Result<String, String> {
+    docs::read(Path::new(&repo_path), &name)
+}
+
+#[tauri::command]
+async fn write_doc(repo_path: String, name: String, content: String) -> Result<(), String> {
+    docs::write(Path::new(&repo_path), &name, &content)
 }
 
 #[tauri::command]
@@ -137,7 +163,11 @@ pub fn run() {
             list_active,
             read_session,
             read_app_config,
+            read_app_config_strict,
             write_app_config,
+            list_docs,
+            read_doc,
+            write_doc,
             list_remote_runs,
             list_tasks,
             fetch_spec,
@@ -147,10 +177,16 @@ pub fn run() {
             watch_project,
             unwatch_project,
             sidecar::api_capabilities,
+            sidecar::api_complete,
             sidecar::api_create_run,
             sidecar::api_active_run,
             sidecar::api_run_backlog,
             sidecar::api_cancel,
+            sidecar::api_create_task,
+            sidecar::api_list_flows,
+            sidecar::api_list_providers,
+            sidecar::api_read_flow,
+            sidecar::api_write_flow,
             sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())

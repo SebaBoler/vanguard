@@ -4,6 +4,8 @@ import { gitlabDepsFromEnv } from '../runners/gitlab.js';
 import { pickRunOptions } from '../runners/source-adapter.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
+import { customEgressHosts } from '../agents/registry.js';
+import { loadProviderChoice } from './provider-choice.js';
 import { LinearCliTaskFetcher } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher } from '../tasks/github.js';
 import { GitLabTaskFetcher } from '../tasks/gitlab.js';
@@ -21,25 +23,30 @@ const SPEC_CLAIMED_STATE = 'Speccing'; // Linear default; override with --spec-c
 
 /** Run the autonomous watch loop for the chosen source (poll -> claim -> run -> review), with egress. */
 export async function watchCommand(cmd: WatchCommand): Promise<void> {
+  // S6: customs load + re-validate FIRST (the sync parser skipped pairing checks for a custom
+  // --provider). Loaded once per watch process: customs and the enclave allowlist are a
+  // watch-start snapshot — restart the watch to pick up app.json edits.
+  const choice = await loadProviderChoice(cmd);
+  cmd = choice.customProviders !== undefined ? { ...cmd, customProviders: choice.customProviders } : cmd;
+
   const report = await runPreflight(cmd);
   for (const line of formatPreflightReport(report)) console.log(line);
   if (!report.ok) throw new Error('preflight failed');
 
-  const auth = agentAuthFromEnv({
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-  });
+  const auth = agentAuthFromEnv(choice);
 
   const controller = new AbortController();
   const stop = (): void => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
+  const extraEgressHosts = customEgressHosts(choice);
   const ctx = await startSandboxContext({
     egress: cmd.egress,
     llmProxy: cmd.llmProxy === true,
     ...(auth !== undefined ? { auth } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
   });
 
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
@@ -101,6 +108,7 @@ export async function watchLinearSource(
       ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
       ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
     };
     await watchLinearLoopV1({
@@ -148,7 +156,7 @@ export async function watchLinearSource(
 }
 
 export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
     deps.proxyUrl = ctx.proxyUrl;
@@ -180,6 +188,7 @@ async function watchGithubSource(
       ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
       ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
     };
     await watchGithubLoopV1({
@@ -251,7 +260,7 @@ export async function watchGitlabSource(
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
-  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd.provider, cmd.reviewProvider);
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd.provider, cmd.reviewProvider, cmd.customProviders);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
     deps.proxyUrl = ctx.proxyUrl;
@@ -272,6 +281,7 @@ export async function watchGitlabSource(
       ...(ctx.proxyUrl !== undefined && ctx.network !== undefined ? { proxyUrl: ctx.proxyUrl, network: ctx.network } : {}),
       ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
     };
     await watchGitlabLoopV1({
