@@ -190,13 +190,17 @@ export function WorkflowEditor({ project }: { project: string }) {
       }
       setRenaming(null);
       if (state.file === file) {
-        gen.current += 1;
+        // Gen-guarded like open(): a stale reload landing after another open/delete bumped gen
+        // must not clobber the newer selection (review #345 — the S5 async-context class again).
+        const issued = ++gen.current;
         saving.current = false;
         apiReadFlow(project, `${to}.hcl`)
           .then(({ doc: d, source }) => {
-            dispatch({ type: 'loaded', file: `${to}.hcl`, doc: d, source });
+            if (issued === gen.current) dispatch({ type: 'loaded', file: `${to}.hcl`, doc: d, source });
           })
-          .catch((err) => dispatch({ type: 'loadFailed', file: `${to}.hcl`, error: String(err) }));
+          .catch((err) => {
+            if (issued === gen.current) dispatch({ type: 'loadFailed', file: `${to}.hcl`, error: String(err) });
+          });
       }
       void refreshList();
     } catch (err) {

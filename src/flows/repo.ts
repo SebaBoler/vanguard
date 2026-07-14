@@ -189,6 +189,11 @@ export async function readRepoFlow(repoPath: string, file: string): Promise<{ do
  * sibling-duplicate check, first-save mkdir, the re-parse guard (a file readFlow cannot read back
  * must never be written), and the temp-file contract (dot-prefixed ⇒ invisible to discovery;
  * truncate-on-retry; best-effort unlink on error).
+ *
+ * KNOWN GAP (client-guarded only): the sibling check matches parseable NAMES — a basename
+ * collision with an UNPARSEABLE file is invisible here, and the atomic rename overwrites it.
+ * The editor's taken-name set (file basenames included) is the guard; a future non-UI caller of
+ * writeFlow reintroduces that data-loss path unless it checks basenames too (review #345).
  */
 export async function writeRepoFlow(repoPath: string, file: string, doc: FlowDoc): Promise<{ source: string }> {
   // Valid declarations only, matching findDeclaring: an invalid scratch file that happens to claim
