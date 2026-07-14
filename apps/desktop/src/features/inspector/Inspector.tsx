@@ -165,7 +165,12 @@ export function Inspector({
     const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
       if (e.payload.runId === dismissedRunId.current) return;
       // repoPath scopes adoption: a foreign project's run can never seed a strip here (S8).
-      setTypedRun((prev) => reduceTypedRun(prev ?? initialTypedRun(), e.payload, project));
+      setTypedRun((prev) => {
+        const next = reduceTypedRun(prev ?? initialTypedRun(), e.payload, project);
+        // A local run seeding means the foreign run is done (single-in-flight) — drop the note.
+        if (next.runId !== undefined) setForeignRun(null);
+        return next;
+      });
     });
     return () => {
       void un.then((f) => f());

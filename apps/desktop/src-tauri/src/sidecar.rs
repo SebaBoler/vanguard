@@ -362,6 +362,8 @@ fn buffer_push(state: &Sidecar, run_id: &str, event: &serde_json::Value) {
             // Evict the SECOND-oldest, never index 0: the first event is `run-accepted`, the only
             // event allowed to seed a strip (the reducer's narrowed adoption rule, S8 item 4) —
             // evicting it would make a >cap run's re-attach fold nothing while blocking New-run.
+            // Known cost: index 1 is usually `run-start`, so an over-cap re-attach renders with
+            // no stage names — accepted (the run still attaches, terminates, and unblocks).
             events.remove(1);
         }
     }

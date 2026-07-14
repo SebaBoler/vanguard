@@ -40,9 +40,11 @@ export function reduceTypedRun(
 ): TypedRunState {
   const e = payload.event;
   if (state.runId === undefined) {
-    // Virgin state: only an accepted marker for OUR project may seed it.
+    // Virgin state: only an accepted marker for OUR project may seed it. A scoped strip also
+    // rejects an accepted marker with NO repoPath — Rust always stamps it, so an unstamped one is
+    // a stale/foreign source, not a legitimate run (defensive, review #343 obs 3).
     if (e.type !== 'run-accepted') return state;
-    if (repoPath !== undefined && e.repoPath !== undefined && e.repoPath !== repoPath) return state;
+    if (repoPath !== undefined && e.repoPath !== repoPath) return state;
     return { ...state, runId: payload.runId };
   }
   if (payload.runId !== state.runId) return state;

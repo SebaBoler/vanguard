@@ -281,7 +281,7 @@ export function WorkflowEditor({ project }: { project: string }) {
               </div>
               {selectedStage !== undefined && state.selected !== null ? (
                 <StageInspector
-              key={state.selected}
+                  key={state.selected}
                   stage={selectedStage}
                   palette={palette}
                   providers={caps?.providers ?? []}
