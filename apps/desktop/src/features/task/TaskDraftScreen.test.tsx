@@ -38,8 +38,8 @@ vi.mock('./DocEditor.js', () => ({
   ),
 }));
 
-// The screen keeps session memory (last selection / consumed nonce) at module level; isolate
-// tests with a unique project per test and a strictly increasing nonce.
+// The screen keeps session memory (tabs / consumed nonce) at module level; isolate tests with a
+// unique project per test and a strictly increasing nonce.
 let proj = 0;
 let nonce = 0;
 const freshProject = (): string => `/repo-${++proj}`;
@@ -55,11 +55,27 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+// A fresh nonce ⇒ the loader treats the mount as a New Task click: fresh conversation, drawer
+// open on the chat panel — so the composer and the strip are immediately reachable.
 const renderFresh = (project = freshProject()): ReturnType<typeof render> =>
   render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
 
+const drawerReady = (): Promise<HTMLElement> => screen.findByLabelText('new conversation');
+const toHistory = (): void => {
+  fireEvent.click(screen.getByLabelText('history'));
+};
+const openRow = (label: RegExp): void => {
+  toHistory();
+  fireEvent.click(screen.getByLabelText(label));
+};
+
 const type = (text: string): void => {
   fireEvent.change(screen.getByTestId('editor'), { target: { value: text } });
+};
+
+const sendMsg = (text: string): void => {
+  fireEvent.change(screen.getByPlaceholderText(/plan, scope/i), { target: { value: text } });
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
 };
 
 const settle = async (): Promise<void> => {
@@ -74,12 +90,18 @@ const confirmCreate = async (): Promise<void> => {
   fireEvent.click(buttons.at(-1)!);
 };
 
-test('opening the screen and clicking New draft N times writes ZERO files (the 29-notes fix)', async () => {
+/** apiComplete calls that are chat turns (the auto-title follow-up uses a different preset). */
+const planCalls = (): unknown[][] =>
+  vi.mocked(ipc.apiComplete).mock.calls.filter((c) => String((c[1] as { system?: string }).system).includes('<doc>'));
+
+// ── lazy mint ──────────────────────────────────────────────────────────────────────────────────
+
+test('opening the screen and clicking [+] N times writes ZERO files (the 29-notes fix)', async () => {
   renderFresh();
-  const newDraft = await screen.findByRole('button', { name: /new draft/i });
-  fireEvent.click(newDraft);
-  fireEvent.click(newDraft);
-  fireEvent.click(newDraft);
+  const plus = await drawerReady();
+  fireEvent.click(plus);
+  fireEvent.click(plus);
+  fireEvent.click(plus);
   await settle();
   expect(ipc.writeDraft).not.toHaveBeenCalled();
   expect(files.size).toBe(0);
@@ -87,7 +109,7 @@ test('opening the screen and clicking New draft N times writes ZERO files (the 2
 
 test('the first keystroke mints exactly one draft file; further typing stays on the same id', async () => {
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# F');
   type('# Fix');
   await settle();
@@ -99,10 +121,9 @@ test('the first keystroke mints exactly one draft file; further typing stays on 
 
 test('typing then sending within the debounce window still yields ONE file (shared synchronous mint)', async () => {
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('some body'); // debounce armed, not yet fired
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan it' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  sendMsg('plan it');
   await settle();
   expect(files.size).toBe(1);
   const data = JSON.parse([...files.values()].at(-1)!) as DraftData;
@@ -113,9 +134,8 @@ test('typing then sending within the debounce window still yields ONE file (shar
 test('chat turns persist immediately and the transcript keeps the RAW <doc> reply', async () => {
   vi.mocked(ipc.apiComplete).mockResolvedValueOnce({ text: 'here <doc># Revised</doc>' });
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan it' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  await drawerReady();
+  sendMsg('plan it');
   await waitFor(() => expect(screen.getByRole('button', { name: /accept/i })).toBeInTheDocument());
   await settle();
   const data = JSON.parse([...files.values()][0]!) as DraftData;
@@ -124,16 +144,19 @@ test('chat turns persist immediately and the transcript keeps the RAW <doc> repl
 
 test('deleting a typed draft before the debounce fires leaves NO file behind (no resurrection)', async () => {
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Doomed');
-  // The entry exists in the sidebar (mint is synchronous); delete it before the 800ms save fires.
+  // The entry exists in History (mint is synchronous); delete it before the 800ms save fires.
+  toHistory();
   fireEvent.click(screen.getByLabelText(/delete Doomed/i));
   fireEvent.click(screen.getByText('delete'));
   await settle();
   expect(files.size).toBe(0);
 });
 
-test('resume: a persisted draft lists by title, opens with its transcript, and continues', async () => {
+// ── resume / history / tabs ────────────────────────────────────────────────────────────────────
+
+test('resume: a persisted draft opens from History with its transcript, and continues', async () => {
   seed('draft-old', {
     body: '# Old plan\n',
     chat: [
@@ -141,32 +164,148 @@ test('resume: a persisted draft lists by title, opens with its transcript, and c
       { role: 'assistant', content: 'a1' },
     ],
   });
-  const project = freshProject();
-  render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  fireEvent.click(await screen.findByText('Old plan'));
+  renderFresh();
+  await drawerReady();
+  openRow(/open Old plan/);
   expect(screen.getByTestId('editor')).toHaveValue('# Old plan\n');
   expect(screen.getByText('q1')).toBeInTheDocument();
   expect(screen.getByText('a1')).toBeInTheDocument();
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'q2' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  sendMsg('q2');
   await settle();
   const data = JSON.parse(files.get('draft-old')!) as DraftData;
   expect(data.chat.map((m) => m.content)).toEqual(['q1', 'a1', 'q2', 'ok']);
 });
+
+test('History opens tabs; tab clicks swap the editor; closing a tab keeps the file and the row', async () => {
+  seed('draft-a', { body: '# Alpha\n' });
+  seed('draft-b', { body: '# Beta\n' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  openRow(/open Beta/);
+  expect(screen.getByTestId('editor')).toHaveValue('# Beta\n');
+  expect(screen.getByLabelText('tab Alpha')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('tab Alpha'));
+  expect(screen.getByTestId('editor')).toHaveValue('# Alpha\n');
+  // Close Beta's tab: the strip loses it, the file and its History row survive.
+  fireEvent.click(screen.getByLabelText('close Beta'));
+  expect(screen.queryByLabelText('tab Beta')).toBeNull();
+  expect(files.has('draft-b')).toBe(true);
+  toHistory();
+  expect(screen.getByLabelText('open Beta')).toBeInTheDocument();
+});
+
+test('closing the ACTIVE tab focuses the left neighbor and flushes the closing draft', async () => {
+  seed('draft-a', { body: '# Alpha\n' });
+  seed('draft-b', { body: '# Beta\n' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  openRow(/open Beta/);
+  type('# Beta edited'); // debounce armed on Beta
+  fireEvent.click(screen.getByLabelText('close Beta edited'));
+  expect(screen.getByTestId('editor')).toHaveValue('# Alpha\n'); // left neighbor focused
+  await settle();
+  expect((JSON.parse(files.get('draft-b')!) as DraftData).body).toBe('# Beta edited'); // flushed, not lost
+});
+
+test('two tabs can have turns in flight at once; each reply lands in its own file', async () => {
+  seed('draft-a', { body: '# Alpha\n', name: 'Alpha' });
+  seed('draft-b', { body: '# Beta\n', name: 'Beta' });
+  let resolveA: (v: { text?: string }) => void = () => {};
+  let resolveB: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockReturnValueOnce(new Promise((r) => (resolveA = r)))
+    .mockReturnValueOnce(new Promise((r) => (resolveB = r)));
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  sendMsg('qa');
+  openRow(/open Beta/);
+  sendMsg('qb');
+  await settle();
+  resolveA({ text: 'ra' });
+  resolveB({ text: 'rb' });
+  await settle();
+  expect((JSON.parse(files.get('draft-a')!) as DraftData).chat).toEqual([
+    { role: 'user', content: 'qa' },
+    { role: 'assistant', content: 'ra' },
+  ]);
+  expect((JSON.parse(files.get('draft-b')!) as DraftData).chat).toEqual([
+    { role: 'user', content: 'qb' },
+    { role: 'assistant', content: 'rb' },
+  ]);
+});
+
+test('a reply landing on the FOCUSED tab leaves no activity dot (PR #350 r1-1)', async () => {
+  seed('draft-a', { body: '# Alpha\n', name: 'Alpha' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  sendMsg('qa');
+  await settle(); // reply lands while the drawer is open on this very tab
+  expect(screen.queryByLabelText('Alpha activity')).toBeNull();
+});
+
+test('a rename cleared to empty during the first exchange still beats the auto-title (PR #350 r1-2)', async () => {
+  let resolveTitle: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockReturnValueOnce(new Promise((r) => (resolveTitle = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Alpha\n');
+  sendMsg('first exchange');
+  await settle(); // reply landed; the title completion is in flight
+  // The user names the tab, then deliberately clears it back to the derived label — the clear is
+  // still a user rename, and to the racing title's re-check it looks exactly like "never named".
+  fireEvent.doubleClick(screen.getByLabelText('tab Alpha'));
+  const input = screen.getByLabelText(/rename/);
+  fireEvent.change(input, { target: { value: 'Temp' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  fireEvent.doubleClick(screen.getByLabelText('tab Temp'));
+  const again = screen.getByLabelText(/rename/);
+  fireEvent.change(again, { target: { value: '' } });
+  fireEvent.keyDown(again, { key: 'Enter' });
+  await settle();
+  resolveTitle({ text: 'Robot Title' });
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBeUndefined();
+  expect(screen.getByLabelText('tab Alpha')).toBeInTheDocument();
+});
+
+test('a reply landing on an unfocused tab shows the activity dot; focusing the tab clears it', async () => {
+  seed('draft-a', { body: '# Alpha\n', name: 'Alpha' });
+  seed('draft-b', { body: '# Beta\n', name: 'Beta' });
+  let resolveA: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveA = r)));
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  sendMsg('qa');
+  openRow(/open Beta/);
+  resolveA({ text: 'ra' });
+  await settle();
+  expect(screen.getByLabelText('Alpha activity')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('tab Alpha'));
+  await waitFor(() => expect(screen.queryByLabelText('Alpha activity')).toBeNull());
+});
+
+// ── create / archive ───────────────────────────────────────────────────────────────────────────
 
 test('create task archives the draft ON DISK even when the user switches drafts mid-create (G1)', async () => {
   seed('draft-other', { body: '# Other\n' });
   let resolveCreate: (v: { id: string; url: string }) => void = () => {};
   vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
   renderFresh();
-  await screen.findByText('Other');
+  await drawerReady();
   type('# File me\n');
   await settle();
   const filedId = [...files.keys()].find((k) => k !== 'draft-other')!;
   fireEvent.click(screen.getByRole('button', { name: /create task/i }));
   await confirmCreate();
   // Switch away while the create is in flight.
-  fireEvent.click(screen.getByText('Other'));
+  openRow(/open Other/);
   resolveCreate({ id: 'gh-9', url: 'https://github.com/o/r/issues/9' });
   await settle();
   const filed = JSON.parse(files.get(filedId)!) as DraftData;
@@ -176,7 +315,7 @@ test('create task archives the draft ON DISK even when the user switches drafts 
 
 test('after filing, a stale debounced save cannot un-archive the draft (G14)', async () => {
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Ship it\n');
   await settle();
   fireEvent.click(screen.getByRole('button', { name: /create task/i }));
@@ -188,14 +327,15 @@ test('after filing, a stale debounced save cannot un-archive the draft (G14)', a
   expect(data.created?.id).toBe('gh-7');
 });
 
-test('archived drafts are read-only: chat disabled, no Create button, link chip + Duplicate instead', async () => {
+test('archived drafts are read-only: chat disabled, header shows chip + Open board + Duplicate', async () => {
   seed('draft-done', { body: '# Done thing\n', archived: true, created: { id: 'gh-3', url: 'https://g/3' } });
   renderFresh();
-  fireEvent.click(await screen.findByText('Done thing'));
+  await drawerReady();
+  openRow(/open Done thing/);
   expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'true');
   expect(screen.getByPlaceholderText(/read-only/i)).toBeDisabled();
   expect(screen.queryByRole('button', { name: /create task/i })).toBeNull();
-  expect(screen.getByRole('link', { name: 'gh-3' })).toHaveAttribute('href', 'https://g/3');
+  expect(screen.getByRole('link', { name: /filed as #gh-3/i })).toHaveAttribute('href', 'https://g/3');
   // Duplicate yields a fresh, filable copy with no `created`.
   fireEvent.click(screen.getByRole('button', { name: /duplicate/i }));
   await settle();
@@ -207,60 +347,100 @@ test('archived drafts are read-only: chat disabled, no Create button, link chip 
   expect(screen.getByRole('button', { name: /create task/i })).toBeInTheDocument();
 });
 
-test('an unreadable draft file is listed and deletable — never hidden (AC6)', async () => {
+test('an unreadable draft file is listed delete-only — never openable, never hidden (AC6)', async () => {
   files.set('My Draft', '{corrupt');
   renderFresh();
-  fireEvent.click(await screen.findByText(/My Draft \(unreadable\)/));
-  expect(screen.getByText(/could not be read/i)).toBeInTheDocument();
+  await drawerReady();
+  toHistory();
+  type('# typed first'); // the active fresh draft — an unreadable row must not steal focus
+  fireEvent.click(screen.getByLabelText(/open My Draft \(unreadable\)/));
+  expect(screen.getByTestId('editor')).toHaveValue('# typed first'); // click was a no-op
+  expect(screen.queryByLabelText(/tab My Draft/)).toBeNull();
   fireEvent.click(screen.getByLabelText(/delete My Draft/i));
   fireEvent.click(screen.getByText('delete'));
   await settle();
-  expect(files.size).toBe(0);
-  expect(screen.queryByText(/My Draft/)).toBeNull();
+  expect(files.has('My Draft')).toBe(false);
+  expect(screen.queryByLabelText(/open My Draft/)).toBeNull();
 });
 
-test('a New Task click (nonce bump) resets to a fresh draft; the old one stays in the sidebar', async () => {
+// ── nonce / session memory ─────────────────────────────────────────────────────────────────────
+
+test('a New Task click (nonce bump) resets to a fresh conversation; the old one stays in History', async () => {
   const project = freshProject();
   const view = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Keep me\n');
   await settle();
   view.rerender(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
   expect(screen.getByTestId('editor')).toHaveValue('');
-  expect(screen.getByText('Keep me')).toBeInTheDocument();
+  toHistory();
+  expect(screen.getByLabelText(/open Keep me/)).toBeInTheDocument();
   expect(files.size).toBe(1); // reset did not mint anything
 });
 
-test('re-entering WITHOUT a New Task click restores the last-open draft (session memory)', async () => {
+test('re-entering WITHOUT a New Task click restores the open tabs and active draft (session memory)', async () => {
+  seed('draft-a', { body: '# Alpha\n' });
   const project = freshProject();
   const first = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  await screen.findByRole('button', { name: /new draft/i });
-  type('# Resume me\n');
+  await drawerReady();
+  openRow(/open Alpha/);
+  type('# Alpha resumed\n');
   await settle();
   first.unmount();
   // Same nonce (already consumed) — e.g. coming back from a Settings detour.
   render(<TaskDraftScreen project={project} freshNonce={nonce} onOpenBoard={() => {}} />);
-  await waitFor(() => expect(screen.getByTestId('editor')).toHaveValue('# Resume me\n'));
+  await waitFor(() => expect(screen.getByTestId('editor')).toHaveValue('# Alpha resumed\n'));
+  expect(await screen.findByLabelText(/tab Alpha resumed/)).toBeInTheDocument(); // tab restored too
 });
+
+test('New Task on a REMOUNT lands on a fresh draft even with a remembered selection (review #349 r4 high)', async () => {
+  const project = freshProject();
+  const first = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await drawerReady();
+  type('# Remembered\n');
+  await settle(); // persists AND records the session
+  first.unmount();
+  // Board → New Task: fresh mount with a NEW nonce. The async entry-loader must not restore the
+  // remembered draft over the fresh one the nonce demands.
+  render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await screen.findByLabelText(/tab Remembered/); // loader done (remembered tab restored to strip)
+  await settle();
+  expect(screen.getByTestId('editor')).toHaveValue('');
+});
+
+test('typing before the mount loader resolves is not clobbered by it (review #349 r7)', async () => {
+  seed('draft-b', { body: '# Existing\n' });
+  let resolveList: (v: string[]) => void = () => {};
+  vi.mocked(ipc.listDrafts).mockReturnValueOnce(new Promise((r) => (resolveList = r)));
+  renderFresh();
+  // The editor is live before the drafts load — start typing immediately.
+  type('# Early bird');
+  resolveList(['draft-b']);
+  await settle();
+  expect(screen.getByTestId('editor')).toHaveValue('# Early bird'); // not yanked away
+  toHistory();
+  expect(screen.getByLabelText(/open Early bird/)).toBeInTheDocument();
+  expect(screen.getByLabelText(/open Existing/)).toBeInTheDocument(); // disk entries merged in
+});
+
+// ── review-hardened S10 guards, carried over ───────────────────────────────────────────────────
 
 test('a completion outstanding for a draft blocks a second send after switching away and back (review #349 r1)', async () => {
   seed('draft-b', { body: '# B\n' });
   let resolveA: (v: { text?: string }) => void = () => {};
   vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveA = r)));
   renderFresh();
-  await screen.findByText('B');
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'q' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  await drawerReady();
+  sendMsg('q');
   await settle();
   const draftAId = [...files.keys()].find((k) => k !== 'draft-b')!;
   // Leave and come back while A's completion is still in flight.
-  fireEvent.click(screen.getByText('B'));
-  fireEvent.click(screen.getByText('q'));
+  openRow(/open B/);
+  openRow(/open q/);
   // The reloaded draft must present as busy — and a second send must NOT fire a second completion.
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'q again' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  sendMsg('q again');
   await settle();
-  expect(ipc.apiComplete).toHaveBeenCalledTimes(1);
+  expect(planCalls().length).toBe(1);
   resolveA({ text: 'answer' });
   await settle();
   const data = JSON.parse(files.get(draftAId)!) as DraftData;
@@ -273,10 +453,10 @@ test('a completion outstanding for a draft blocks a second send after switching 
 test('switching drafts INSIDE the debounce window persists the outgoing draft, not the incoming one (review #349 r2 blocking)', async () => {
   seed('draft-b', { body: '# B stays\n', archived: true, created: { id: 'gh-2', url: 'https://g/2' } });
   renderFresh();
-  await screen.findByText('B stays');
+  await drawerReady();
   type('# A body');
   // No settle: the 800ms debounce is still armed when the switch happens.
-  fireEvent.click(screen.getByText('B stays'));
+  openRow(/open B stays/);
   await settle();
   const aId = [...files.keys()].find((k) => k !== 'draft-b')!;
   const a = JSON.parse(files.get(aId)!) as DraftData;
@@ -289,7 +469,7 @@ test('switching drafts INSIDE the debounce window persists the outgoing draft, n
 test('New Task inside the debounce window does not wipe the outgoing draft (review #349 r2 blocking)', async () => {
   const project = freshProject();
   const view = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Keep this body');
   view.rerender(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
   await settle();
@@ -297,26 +477,11 @@ test('New Task inside the debounce window does not wipe the outgoing draft (revi
   expect(data.body).toBe('# Keep this body'); // not overwritten with emptyDraft()
 });
 
-test('New Task on a REMOUNT lands on a fresh draft even with a remembered selection (review #349 r4 high)', async () => {
-  const project = freshProject();
-  const first = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  await screen.findByRole('button', { name: /new draft/i });
-  type('# Remembered\n');
-  await settle(); // persists AND records lastSelection[project]
-  first.unmount();
-  // Board → New Task: fresh mount with a NEW nonce. The async entry-loader must not restore the
-  // remembered draft over the fresh one the nonce demands.
-  render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
-  await screen.findByText('Remembered'); // sidebar loaded (the async path completed)
-  await settle();
-  expect(screen.getByTestId('editor')).toHaveValue('');
-});
-
 test('the editor is read-only while a create is confirming/in flight — a keystroke cannot arm an un-archiving debounce (review #349 r4)', async () => {
   let resolveCreate: (v: { id: string; url: string }) => void = () => {};
   vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Lock me\n');
   await settle();
   fireEvent.click(screen.getByRole('button', { name: /create task/i }));
@@ -337,23 +502,22 @@ test('the outbound completion carries the body of the draft it was issued FOR, n
   let resolveCfg: (v: { chatModel?: string }) => void = () => {};
   vi.mocked(ipc.readAppConfig).mockReturnValueOnce(new Promise((r) => (resolveCfg = r))); // the send-path read
   renderFresh();
-  await screen.findByText('Secret B contents');
+  await drawerReady();
   type('# A private body\n');
-  fireEvent.change(screen.getByPlaceholderText(/ask for a plan/i), { target: { value: 'plan it' } });
-  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  sendMsg('plan it');
   // Switch to B while the send path is still awaiting readAppConfig.
-  fireEvent.click(screen.getByText('Secret B contents'));
+  openRow(/open Secret B contents/);
   resolveCfg({});
   await settle();
-  expect(ipc.apiComplete).toHaveBeenCalledTimes(1);
-  const system = vi.mocked(ipc.apiComplete).mock.calls[0][1].system as string;
+  expect(planCalls().length).toBe(1);
+  const system = (planCalls()[0][1] as { system: string }).system;
   expect(system).toContain('# A private body'); // the draft the turn was issued for
   expect(system).not.toContain('Secret B contents'); // never the draft the user switched to
 });
 
 test('a transient failure of the archive write shows the do-not-re-file warning (review #349 r7)', async () => {
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Fragile\n');
   await settle();
   // The archive step is a read-modify-write; fail its read once (transient IO — NOT a delete).
@@ -369,12 +533,13 @@ test('a draft deliberately deleted mid-create does NOT get the scary warning (re
   let resolveCreate: (v: { id: string; url: string }) => void = () => {};
   vi.mocked(ipc.apiCreateTask).mockReturnValueOnce(new Promise((r) => (resolveCreate = r)));
   renderFresh();
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Doomed but filed\n');
   await settle();
   fireEvent.click(screen.getByRole('button', { name: /create task/i }));
   await confirmCreate();
   // Delete the draft while the create is in flight.
+  toHistory();
   fireEvent.click(screen.getByLabelText(/delete Doomed but filed/i));
   fireEvent.click(screen.getByText('delete'));
   resolveCreate({ id: 'gh-7', url: 'https://g/7' });
@@ -383,28 +548,177 @@ test('a draft deliberately deleted mid-create does NOT get the scary warning (re
   expect(screen.queryByText(/do not re-file/i)).toBeNull();
 });
 
-test('typing before the mount loader resolves is not clobbered by it (review #349 r7)', async () => {
-  seed('draft-b', { body: '# Existing\n' });
-  let resolveList: (v: string[]) => void = () => {};
-  vi.mocked(ipc.listDrafts).mockReturnValueOnce(new Promise((r) => (resolveList = r)));
-  renderFresh();
-  // The editor is live before the sidebar loads — start typing immediately.
-  type('# Early bird');
-  resolveList(['draft-b']);
-  await settle();
-  expect(screen.getByTestId('editor')).toHaveValue('# Early bird'); // not yanked away
-  expect(screen.getByText('Early bird')).toBeInTheDocument(); // still in the sidebar
-  expect(screen.getByText('Existing')).toBeInTheDocument(); // disk entries merged in
-});
-
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);
-  await screen.findByRole('button', { name: /new draft/i });
+  await drawerReady();
   type('# Go\n');
   await settle();
   fireEvent.click(screen.getByRole('button', { name: /create task/i }));
   await confirmCreate();
   fireEvent.click(await screen.findByRole('button', { name: /open board/i }));
   expect(onOpenBoard).toHaveBeenCalled();
+});
+
+// ── naming (handoff §3) ────────────────────────────────────────────────────────────────────────
+
+test('double-click renames a tab inline; the name persists and beats the derived label', async () => {
+  seed('draft-a', { body: '# Alpha\n' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  fireEvent.doubleClick(screen.getByLabelText('tab Alpha'));
+  const input = screen.getByLabelText(/rename Alpha/);
+  fireEvent.change(input, { target: { value: 'My spike' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await settle();
+  expect((JSON.parse(files.get('draft-a')!) as DraftData).name).toBe('My spike');
+  expect(screen.getByLabelText('tab My spike')).toBeInTheDocument();
+  // Empty rename clears the override — back to the heading.
+  fireEvent.doubleClick(screen.getByLabelText('tab My spike'));
+  const again = screen.getByLabelText(/rename My spike/);
+  fireEvent.change(again, { target: { value: '  ' } });
+  fireEvent.keyDown(again, { key: 'Enter' });
+  await settle();
+  expect((JSON.parse(files.get('draft-a')!) as DraftData).name).toBeUndefined();
+  expect(screen.getByLabelText('tab Alpha')).toBeInTheDocument();
+});
+
+test('the first exchange auto-titles an unnamed conversation (LLM rename)', async () => {
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockResolvedValueOnce({ text: '  "Settings Flicker Fix."  ' });
+  renderFresh();
+  await drawerReady();
+  sendMsg('theme toggling flashes the sidebar');
+  await settle();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.name).toBe('Settings Flicker Fix'); // trimmed, unquoted, no trailing period
+  expect(screen.getByLabelText('tab Settings Flicker Fix')).toBeInTheDocument();
+  // Second exchange must NOT re-title.
+  sendMsg('more');
+  await settle();
+  expect(
+    vi.mocked(ipc.apiComplete).mock.calls.filter((c) => String((c[1] as { system?: string }).system).includes('short title'))
+      .length,
+  ).toBe(1);
+});
+
+test('a failed FIRST send does not burn the auto-title — the retry that succeeds still titles (PR #350 r3)', async () => {
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: undefined, error: { message: 'transient' } })
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockResolvedValueOnce({ text: 'Recovered Title' });
+  renderFresh();
+  await drawerReady();
+  sendMsg('first try');
+  await settle(); // fails — the user turn is persisted, no assistant turn yet
+  sendMsg('second try');
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBe('Recovered Title');
+});
+
+test('a user rename racing the auto-title WINS (id-keyed re-check)', async () => {
+  let resolveTitle: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockReturnValueOnce(new Promise((r) => (resolveTitle = r)));
+  renderFresh();
+  await drawerReady();
+  sendMsg('name race');
+  await settle(); // reply landed; the title completion is still in flight
+  fireEvent.doubleClick(screen.getByLabelText('tab name race'));
+  const input = screen.getByLabelText(/rename/);
+  fireEvent.change(input, { target: { value: 'User choice' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await settle();
+  resolveTitle({ text: 'Robot Title' });
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBe('User choice');
+  expect(screen.getByLabelText('tab User choice')).toBeInTheDocument();
+});
+
+test('deleting the ACTIVE draft while its auto-title is in flight cannot resurrect the file (PR #350 r2, G2)', async () => {
+  let resolveTitle: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockReturnValueOnce(new Promise((r) => (resolveTitle = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Doomed\n');
+  sendMsg('first exchange');
+  await settle(); // reply landed and persisted; the title completion is still in flight
+  expect(files.size).toBe(1);
+  // Delete the draft while the title round-trip is outstanding. removeDraft switches the active
+  // selection to null, so the resolving title must take the id-keyed update path and skip.
+  toHistory();
+  fireEvent.click(screen.getByLabelText(/delete Doomed/i));
+  fireEvent.click(screen.getByText('delete'));
+  await settle();
+  resolveTitle({ text: 'Robot Title' });
+  await settle();
+  expect(files.size).toBe(0); // not resurrected with the LLM title
+});
+
+test('deleting the ACTIVE draft while its REPLY is in flight cannot resurrect the file (PR #350 r2, G2)', async () => {
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveReply = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Doomed\n');
+  sendMsg('q');
+  await settle(); // user turn persisted; the completion is in flight
+  toHistory();
+  fireEvent.click(screen.getByLabelText(/delete Doomed/i));
+  fireEvent.click(screen.getByText('delete'));
+  await settle();
+  expect(files.size).toBe(0);
+  resolveReply({ text: 'late answer' });
+  await settle();
+  expect(files.size).toBe(0); // the late reply's id-keyed update skipped the deleted file
+});
+
+// ── model selection (handoff §4) ───────────────────────────────────────────────────────────────
+
+test('model options come from the vanguard config; a choice persists per draft and is sent', async () => {
+  vi.mocked(ipc.readAppConfig).mockResolvedValue({
+    source: 'github',
+    chatModel: 'claude-sonnet-5',
+    customProviders: [
+      { name: 'z', baseUrl: 'https://z', keyEnv: 'Z_KEY', model: 'glm-5.2' },
+      { name: 'z2', baseUrl: 'https://z2', keyEnv: 'Z_KEY', model: 'glm-5.2' }, // dupe — collapses
+    ],
+  });
+  renderFresh();
+  await drawerReady();
+  const select = await screen.findByLabelText('chat model');
+  expect([...select.querySelectorAll('option')].map((o) => o.value)).toEqual(['', 'glm-5.2']);
+  fireEvent.change(select, { target: { value: 'glm-5.2' } });
+  sendMsg('go');
+  await settle();
+  expect((planCalls()[0][1] as { model: string }).model).toBe('glm-5.2');
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.chatModel).toBe('glm-5.2');
+});
+
+test('the model is snapshotted at send — a draft switch mid-flight cannot swap it (review #349 r5 discipline)', async () => {
+  seed('draft-b', { body: '# B\n', chatModel: 'other-model' });
+  vi.mocked(ipc.readAppConfig).mockResolvedValueOnce({ source: 'github' }); // mount
+  let resolveCfg: (v: Record<string, never>) => void = () => {};
+  vi.mocked(ipc.readAppConfig).mockReturnValueOnce(new Promise((r) => (resolveCfg = r))); // send-path
+  renderFresh();
+  await drawerReady();
+  sendMsg('question'); // fresh draft, default model
+  openRow(/open B/); // switch while the send awaits config; B carries an override
+  resolveCfg({});
+  await settle();
+  expect((planCalls()[0][1] as { model: string }).model).toBe('claude-sonnet-5'); // not B's override
+});
+
+test('a fresh conversation is NOT minted by a model choice alone (lazy mint holds)', async () => {
+  renderFresh();
+  await drawerReady();
+  fireEvent.change(screen.getByLabelText('chat model'), { target: { value: '' } });
+  await settle();
+  expect(files.size).toBe(0);
 });

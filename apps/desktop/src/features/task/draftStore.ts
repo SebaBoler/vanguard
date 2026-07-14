@@ -13,6 +13,10 @@ export interface DraftData {
   archived: boolean;
   /** Present once filed (⇒ archived). */
   created?: { id: string; url: string };
+  /** Explicit conversation name (inline rename / LLM auto-title). Absent ⇒ label is derived. */
+  name?: string;
+  /** Per-conversation chat model override. Absent ⇒ the app-wide default from app.json. */
+  chatModel?: string;
   updatedAt: string;
 }
 
@@ -55,6 +59,15 @@ export function parseDraft(raw: string): DraftData | undefined {
     if (!/^https?:\/\//.test(c.url)) return undefined;
     created = { id: c.id, url: c.url };
   }
+  // name/chatModel are lenient, unlike created: a hostile value here can only mislabel a row or
+  // fall back to the default model — dropping the field beats failing the whole file unreadable.
+  // Both are size-bounded too (PR #350 r3): the name truncates to the interactive rename cap; an
+  // over-long model id is no model id at all and is dropped rather than forwarded to the API.
+  const name = typeof o.name === 'string' && o.name.trim() !== '' ? o.name.slice(0, 60) : undefined;
+  const chatModel =
+    typeof o.chatModel === 'string' && o.chatModel.trim() !== '' && o.chatModel.length <= 200
+      ? o.chatModel
+      : undefined;
   return {
     body: o.body,
     chat,
@@ -62,12 +75,15 @@ export function parseDraft(raw: string): DraftData | undefined {
     // Create-task on a draft that already carries a filed-issue link — that fails toward re-file.
     archived: o.archived === true || created !== undefined,
     ...(created !== undefined ? { created } : {}),
+    ...(name !== undefined ? { name } : {}),
+    ...(chatModel !== undefined ? { chatModel } : {}),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : '',
   };
 }
 
-/** Sidebar name: heading → first user chat message → "Untitled" (chat-first drafts must stay distinguishable). */
+/** Row/tab name: explicit name → heading → first user chat message → "Untitled". */
 export function draftLabel(d: DraftData): string {
+  if (d.name !== undefined) return d.name;
   const title = titleFromDoc(d.body);
   if (title !== undefined) return title;
   const firstUser = d.chat.find((m) => m.role === 'user')?.content.trim();

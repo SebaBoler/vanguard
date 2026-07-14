@@ -58,6 +58,27 @@ test('parseDraft coerces created ⇒ archived — a hand-edited file cannot re-e
   expect(parsed?.archived).toBe(true);
 });
 
+test('parseDraft: name and chatModel are LENIENT — hostile values drop, never fail the file', () => {
+  const ok = parseDraft(JSON.stringify(draft({ name: 'My spike', chatModel: 'glm-5.2' })));
+  expect(ok?.name).toBe('My spike');
+  expect(ok?.chatModel).toBe('glm-5.2');
+  // Wrong types / empty strings are dropped — the rest of the draft must survive (handoff §3–4).
+  const bad = parseDraft(JSON.stringify({ body: '# x', chat: [], name: 42, chatModel: '  ' }));
+  expect(bad).toBeDefined();
+  expect(bad?.name).toBeUndefined();
+  expect(bad?.chatModel).toBeUndefined();
+});
+
+test('parseDraft bounds name/chatModel size — a hostile file cannot smuggle megabytes through a label (PR #350 r3)', () => {
+  const big = parseDraft(JSON.stringify(draft({ name: 'n'.repeat(10_000), chatModel: 'm'.repeat(10_000) })));
+  expect(big?.name).toBe('n'.repeat(60)); // truncated to the rename cap, not dropped
+  expect(big?.chatModel).toBeUndefined(); // an over-long model id is no model id — dropped
+});
+
+test('draftLabel: explicit name wins over the heading', () => {
+  expect(draftLabel(draft({ name: 'Chosen name', body: '# Some heading\n' }))).toBe('Chosen name');
+});
+
 test('draftLabel: heading, then first user chat message, then Untitled', () => {
   expect(draftLabel(draft({ body: '# Fix flicker\n' }))).toBe('Fix flicker');
   expect(draftLabel(draft({ chat: [{ role: 'assistant', content: 'hello' }, { role: 'user', content: 'plan the flicker fix' }] }))).toBe(
