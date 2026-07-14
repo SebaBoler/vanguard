@@ -112,8 +112,15 @@ export function productionDeps(): SidecarDeps {
       const customProviders = choice.customProviders;
       const repoPath = params.repoPath;
       // Auth is resolved BEFORE beginRun: it is a pure env read, and a missing key must not leave
-      // an armed AbortController behind (same rationale as the resolvability checks above).
-      const auth = agentAuthFromEnv(choice);
+      // an armed AbortController behind (same rationale as the resolvability checks above). Wrapped
+      // as bad-request: a missing env var is caller-correctable, same class as an unknown name —
+      // without the wrap it is the ONE dispatch-time failure that classified `internal`.
+      let auth: AgentAuth | undefined;
+      try {
+        auth = agentAuthFromEnv(choice);
+      } catch (error) {
+        throw new BadRequestError(error instanceof Error ? error.message : String(error));
+      }
       const extraEgressHosts = customEgressHosts(choice);
       const signal = beginRun();
       const ctx = await startSandboxContext({

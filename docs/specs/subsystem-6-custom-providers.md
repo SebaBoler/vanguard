@@ -47,9 +47,12 @@ exist and are load-bearing:
 **In:**
 - Config shape + validation for custom providers in `.vanguard/app.json` (`customProviders`).
 - Core loader + registry resolution so custom names work on the paths that have a repo:
-  `vanguard run` / `vanguard watch` / `vanguard doctor` / `doctor-prs` / `doctor-mrs` (all
-  preflight-bearing CLI shapes — the checker must be able to check what watch runs), watch's
-  embedded spec generator, sidecar `createRun` (desktop), preflight, cross-provider pairing rules.
+  `vanguard run` / `vanguard watch` / `vanguard doctor` (the checker must be able to check what
+  watch runs), watch's embedded spec generator, sidecar `createRun` (desktop), preflight,
+  cross-provider pairing rules. `doctor-prs`/`doctor-mrs` keep the closed gate: they check
+  `watch-prs`/`watch-mrs`, which are REVIEW loops — and customs never review (§2). (Reconciled
+  after PR #340 review round 1: an earlier draft of this line listed them among the relaxed
+  shapes, which contradicted the review-boundary rule; the code's narrower gate is correct.)
 - Direct mode (default and `--egress`). Under `--egress` the used custom's host is added to the
   enclave allowlist, computed at dispatch (§7).
 - Sidecar `listProviders` method (query pipe) + desktop surfaces: NewRunForm dropdown merge,

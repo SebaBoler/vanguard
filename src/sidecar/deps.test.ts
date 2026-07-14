@@ -83,6 +83,9 @@ describe('createRun provider fail-fast (S6)', () => {
   it('a healthy custom with the key MISSING still fails before beginRun (dispatch fail-fast, key named)', async () => {
     const repoPath = await repoWith([ENTRY]);
     const deps = productionDeps();
+    await expect(deps.createRun({ issueRef: 'o/r#1', repoPath, provider: 'my-proxy' }, () => {})).rejects.toBeInstanceOf(
+      BadRequestError, // caller-correctable → bad-request kind, uniform with unknown/broken/http (review #340 obs 3)
+    );
     await expect(deps.createRun({ issueRef: 'o/r#1', repoPath, provider: 'my-proxy' }, () => {})).rejects.toThrow(
       /MY_PROXY_API_KEY/,
     );

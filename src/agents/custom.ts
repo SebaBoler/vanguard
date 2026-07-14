@@ -45,7 +45,8 @@ export const CUSTOM_PROVIDER_PREFIX = 'custom:';
 
 /**
  * The one validity predicate for a customProviders entry (spec §4). Returns the first violated
- * rule, or undefined for a healthy entry. `seen` = names of earlier healthy entries (dup check).
+ * rule, or undefined for a healthy entry. `seen` = names of ALL earlier named entries — healthy or
+ * broken — so a later same-name entry is always flagged a duplicate (see the loader's note).
  */
 export function customProviderError(entry: unknown, seen: ReadonlySet<string>): string | undefined {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return 'entry must be an object';
@@ -108,16 +109,19 @@ export async function loadCustomProviders(repoPath: string): Promise<CustomProvi
   if (!Array.isArray(value)) return [{ index: -1, error: '"customProviders" must be an array' }];
 
   const entries: CustomProviderEntry[] = [];
+  // Duplicate detection covers EVERY named entry, healthy or broken: if only healthy names counted,
+  // [broken "x", healthy "x"] would leave both un-flagged as duplicates while resolveSpec's find()
+  // hits the broken first — a usable definition silently shadowed by a typo'd one.
   const seen = new Set<string>();
   for (const [index, entry] of value.entries()) {
     const error = customProviderError(entry, seen);
+    const rawName = typeof (entry as { name?: unknown })?.name === 'string' ? (entry as { name: string }).name : undefined;
+    if (rawName !== undefined) seen.add(rawName);
     if (error !== undefined) {
-      const name = typeof (entry as { name?: unknown })?.name === 'string' ? { name: (entry as { name: string }).name } : {};
-      entries.push({ index, ...name, error: `customProviders[${index}]: ${error}` });
+      entries.push({ index, ...(rawName !== undefined ? { name: rawName } : {}), error: `customProviders[${index}]: ${error}` });
       continue;
     }
     const rec = entry as { name: string; baseUrl: string; keyEnv: string; model?: string };
-    seen.add(rec.name);
     entries.push({
       index,
       name: rec.name,

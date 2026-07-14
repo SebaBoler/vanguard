@@ -93,6 +93,13 @@ describe('loadCustomProviders (lenient edges)', () => {
     expect(entries[1]?.spec).toBeUndefined();
   });
 
+  it('a broken entry cannot silently shadow a later healthy same-name entry (review #340 obs 2)', async () => {
+    const repo = await repoWith({ customProviders: [{ ...ENTRY, baseUrl: 'bad' }, ENTRY] });
+    const entries = await loadCustomProviders(repo);
+    expect(entries[0]?.error).toMatch(/baseUrl/);
+    expect(entries[1]?.error).toMatch(/duplicate/); // NOT silently healthy behind the broken first
+  });
+
   it('duplicate names: the SECOND entry is flagged', async () => {
     const repo = await repoWith({ customProviders: [ENTRY, ENTRY] });
     const entries = await loadCustomProviders(repo);
