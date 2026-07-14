@@ -60,21 +60,32 @@ test('draftLabel: heading, then first user chat message, then Untitled', () => {
 
 // ── DraftWriter ────────────────────────────────────────────────────────────────────────────────
 
-test('schedule debounces and reads state at FIRE time, not arm time', async () => {
+test('schedule writes the SNAPSHOT it was armed with — mutating the passed object later cannot alias (review #349 r2)', async () => {
   const w = new DraftWriter('/repo', () => {});
-  const live = { value: draft({ body: 'v1' }) };
-  w.schedule('draft-a', () => live.value);
-  live.value = draft({ body: 'v2' }); // state moved after arming
-  await vi.advanceTimersByTimeAsync(800);
+  const armed = draft({ body: 'outgoing' });
+  w.schedule('draft-a', armed);
+  // A draft switch mutates/repoints the component's live state before the flush's microtask runs;
+  // the armed snapshot must be immune to it.
+  armed.body = 'incoming';
+  await w.flush();
   expect(ipc.writeDraft).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]).body).toBe('v2');
+  expect(JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]).body).toBe('outgoing');
+});
+
+test('writeNow supersedes an armed debounce — the older body snapshot cannot land last', async () => {
+  const w = new DraftWriter('/repo', () => {});
+  w.schedule('draft-a', draft({ body: 'older' }));
+  await w.writeNow('draft-a', draft({ body: 'newer' }));
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(ipc.writeDraft).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]).body).toBe('newer');
 });
 
 test('re-arming replaces the timer — one write per burst', async () => {
   const w = new DraftWriter('/repo', () => {});
-  w.schedule('draft-a', () => draft({ body: '1' }));
+  w.schedule('draft-a', draft({ body: '1' }));
   await vi.advanceTimersByTimeAsync(500);
-  w.schedule('draft-a', () => draft({ body: '12' }));
+  w.schedule('draft-a', draft({ body: '12' }));
   await vi.advanceTimersByTimeAsync(800);
   expect(ipc.writeDraft).toHaveBeenCalledTimes(1);
   expect(JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]).body).toBe('12');
@@ -82,7 +93,7 @@ test('re-arming replaces the timer — one write per burst', async () => {
 
 test('discard drops a pending debounce without writing', async () => {
   const w = new DraftWriter('/repo', () => {});
-  w.schedule('draft-a', () => draft());
+  w.schedule('draft-a', draft());
   w.discard('draft-a');
   await vi.advanceTimersByTimeAsync(2000);
   expect(ipc.writeDraft).not.toHaveBeenCalled();
@@ -90,7 +101,7 @@ test('discard drops a pending debounce without writing', async () => {
 
 test('flush fires the armed debounce immediately and resolves after the write lands', async () => {
   const w = new DraftWriter('/repo', () => {});
-  w.schedule('draft-a', () => draft({ body: 'x' }));
+  w.schedule('draft-a', draft({ body: 'x' }));
   expect(w.dirty()).toBe(true);
   await w.flush();
   expect(ipc.writeDraft).toHaveBeenCalledTimes(1);
@@ -106,8 +117,8 @@ test('writes to one id are serialized in issue order even when the backend is sl
     landed.push(body);
   });
   const w = new DraftWriter('/repo', () => {});
-  void w.writeNow('draft-a', () => draft({ body: 'first' }));
-  void w.writeNow('draft-a', () => draft({ body: 'second' }));
+  void w.writeNow('draft-a', draft({ body: 'first' }));
+  void w.writeNow('draft-a', draft({ body: 'second' }));
   await vi.advanceTimersByTimeAsync(200);
   await w.flush();
   expect(landed).toEqual(['first', 'second']);
@@ -123,8 +134,8 @@ test('deleteNow cancels the pending debounce and wins over an in-flight write �
     events.push('delete');
   });
   const w = new DraftWriter('/repo', () => {});
-  void w.writeNow('draft-a', () => draft());
-  w.schedule('draft-a', () => draft()); // an armed timer that must NOT fire after the delete
+  void w.writeNow('draft-a', draft());
+  w.schedule('draft-a', draft()); // an armed timer that must NOT fire after the delete
   void w.deleteNow('draft-a');
   await vi.advanceTimersByTimeAsync(2000);
   await w.flush();
@@ -155,8 +166,8 @@ test('a failed write reports the error, resolves false, and does not break the c
   const errors: string[] = [];
   vi.mocked(ipc.writeDraft).mockRejectedValueOnce(new Error('disk full'));
   const w = new DraftWriter('/repo', (m) => errors.push(m));
-  const first = await w.writeNow('draft-a', () => draft());
-  const second = await w.writeNow('draft-a', () => draft({ body: 'later' }));
+  const first = await w.writeNow('draft-a', draft());
+  const second = await w.writeNow('draft-a', draft({ body: 'later' }));
   expect(first).toBe(false);
   expect(second).toBe(true);
   expect(errors[0]).toMatch(/disk full/);
@@ -165,7 +176,7 @@ test('a failed write reports the error, resolves false, and does not break the c
 
 test('every write stamps updatedAt', async () => {
   const w = new DraftWriter('/repo', () => {});
-  await w.writeNow('draft-a', () => draft());
+  await w.writeNow('draft-a', draft());
   const written = JSON.parse(vi.mocked(ipc.writeDraft).mock.calls[0][2]) as DraftData;
   expect(Number.isNaN(Date.parse(written.updatedAt))).toBe(false);
 });

@@ -141,11 +141,16 @@ mint-on-click are deleted outright. From then on:
   **Everything else — chat turns, accepted proposals, the archive flip, the created-link
   write — is written immediately and awaited** (G5): those are the writes whose loss crosses a
   process boundary (a crash after createTask succeeded must not leave a re-filable draft, G7).
-- **Writes read component state at fire time, never an armed snapshot, and are serialized
-  per-draft through a promise chain** (G14): a stale debounced snapshot must never overwrite a
-  newer write — the whole-JSON model makes any inversion total (it would flip `archived` back
-  to `false` and erase `created`). Arming a debounce captures `{repoPath, draftId}` only, so a
-  flush after a project switch still targets the old repo.
+- **Writes carry data snapshots taken at the triggering event, are serialized per-draft through
+  a promise chain, and an immediate write supersedes the armed debounce for its id** (G14,
+  revised by PR review r2): the original "read state at fire time" rule aliased live component
+  state — a draft switch inside the debounce window repointed the shared ref before the flushed
+  write's microtask ran, serializing the incoming draft's state into the outgoing draft's file.
+  Snapshots cannot alias (re-arming on every keystroke keeps them current); the supersede rule
+  keeps an older body snapshot from landing after a newer immediate write. Inversions stay
+  impossible: the whole-JSON model makes any inversion total (it would flip `archived` back to
+  `false` and erase `created`). The writer instance captures `repoPath`, so a flush after a
+  project switch still targets the old repo.
 - **Persistence is keyed by draft id, not by selection.** The generation guard (carried from
   DocsScreen) governs what RENDERS, never what persists (G1 — the review's central finding,
   found independently by all three lenses): a create or completion resolving after a draft
@@ -285,3 +290,14 @@ relitigation of D1–D4. All accepted except where noted:
 | G18 | Atomicity claim contradicted "mirrors docs.rs exactly" (2 lenses) | Accepted — tmp+rename specified (part of G-atomic, §2.1) |
 | G19 | `updatedAt` stored but unconsumed (two recency sources) | Accepted — displayed as relative time; ordering stays mtime |
 | G20 | Provider form remains the sole desktop run path — feedback half-addressed with no committed next step | Partially accepted — recorded as S11 candidate pending driver sign-off (§7); folding form changes into S10 rejected as scope creep on run semantics |
+
+### PR review (v2 → shipped)
+
+| R | Finding (PR #349) | Disposition |
+|---|-------------------|-------------|
+| R1-1 | Selection-scoped chat guard bypassed by switch-away-and-back → duplicate persisted assistant turn | Accepted — per-id in-flight set; reopening re-presents busy |
+| R1-2 | Unreadable mtime silently hides a draft from list() | Accepted — UNIX_EPOCH fallback, lists last |
+| R1-3 | Leaf-only symlink check misses a committed `.vanguard` parent symlink | Accepted — both components checked |
+| R2-1 | **Blocking:** debounce thunk aliased the shared draft ref — a switch inside the window wrote the incoming draft's state into the outgoing draft's file | Accepted — data snapshots (call site + defensive copy), immediate writes supersede the armed debounce; G14 wording revised |
+| R2-2 | Writer chains map grows unboundedly | Accepted — settled tails pruned |
+| R2-3 | Transcript markdown could smuggle `javascript:` links from a committed draft | Verified safe (react-markdown 10 defaultUrlTransform, no rehype-raw) and pinned with a test |

@@ -55,9 +55,11 @@ export function TaskDraftScreen({
   const [chat, dispatch] = useReducer(reduceDocChat, undefined, initialDocChat);
   const [archived, setArchived] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
-  // The authoritative persisted shape for the OPEN draft. A ref, not state: the writer reads it
-  // at fire time (inside the per-draft queue), and the mint + first write must see the same
-  // value the keystroke that triggered them produced — synchronously.
+  // The authoritative persisted shape for the OPEN draft. A ref, not state: the mint and the
+  // first write must see the value the keystroke that triggered them produced — synchronously.
+  // Every hand-off to the writer is a SNAPSHOT (`{ ...draftRef.current }`), never the ref itself:
+  // a draft switch repoints this ref, and an aliased read in a later microtask would serialize
+  // the incoming draft's state into the outgoing draft's file (review #349 r2).
   const draftRef = useRef<DraftData>(emptyDraft());
 
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -212,7 +214,7 @@ export function TaskDraftScreen({
     if (activeIdRef.current === null && next === '') return;
     const id = ensureId();
     syncEntry(id);
-    writer.schedule(id, () => draftRef.current);
+    writer.schedule(id, { ...draftRef.current });
   };
 
   const send = (text: string): void => {
@@ -227,7 +229,7 @@ export function TaskDraftScreen({
     draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
     syncEntry(id);
     // Chat turns are written immediately (never debounced): their loss crosses a process boundary.
-    void writer.writeNow(id, () => draftRef.current);
+    void writer.writeNow(id, { ...draftRef.current });
     void readAppConfig(project)
       .then((cfg) =>
         apiComplete(project, {
@@ -246,7 +248,7 @@ export function TaskDraftScreen({
           dispatch({ type: 'reply', text: reply });
           draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'assistant', content: reply }] };
           syncEntry(id);
-          void writer.writeNow(id, () => draftRef.current);
+          void writer.writeNow(id, { ...draftRef.current });
         } else {
           // Late reply after a draft switch: dropped from the UI (the gen rule), but appended to
           // the file it was issued for — a persisted transcript must not end on a dangling user
@@ -277,7 +279,7 @@ export function TaskDraftScreen({
     dispatch({ type: 'acceptApplied' });
     const id = ensureId();
     syncEntry(id);
-    void writer.writeNow(id, () => draftRef.current);
+    void writer.writeNow(id, { ...draftRef.current });
   };
 
   const docTitle = titleFromDoc(body);
@@ -294,7 +296,7 @@ export function TaskDraftScreen({
     // Make sure the file reflects what is being filed BEFORE the create: the archive write below
     // is a read-modify-write, and a debounce firing after it would regress `archived` (spec G14).
     writer.discard(id);
-    void writer.writeNow(id, () => draftRef.current);
+    void writer.writeNow(id, { ...draftRef.current });
     void apiCreateTask(project, docTitle, draftRef.current.body)
       .then(async (task) => {
         // The one rule the whole subsystem hangs on (spec G1): this write is keyed to the id
@@ -352,7 +354,7 @@ export function TaskDraftScreen({
     setBody(src.body);
     dispatch({ type: 'load', messages: src.chat });
     setEntries((prev) => [{ id, data: { ...draftRef.current } }, ...prev]);
-    void writer.writeNow(id, () => draftRef.current);
+    void writer.writeNow(id, { ...draftRef.current });
   };
 
   const rowLabel = useCallback((e: DraftEntry): string => {

@@ -78,10 +78,15 @@ export function draftLabel(d: DraftData): string {
  * - Writes are serialized per draft id through a promise chain — a stale write can never land
  *   after (and clobber) a newer one; the whole-JSON model makes any inversion total (it would
  *   flip `archived` back and erase `created`).
- * - Writes read state at FIRE time (the `get` thunk runs inside the queue), never an armed
- *   snapshot.
+ * - Writes carry DATA SNAPSHOTS, never thunks over shared component state (review #349 r2
+ *   blocking): a `get()` that runs in a later microtask reads whatever the ref points at THEN —
+ *   a draft switch inside the debounce window repointed it, and the flushed write serialized the
+ *   incoming draft's state into the outgoing draft's file. A snapshot cannot alias; re-arming on
+ *   every keystroke keeps it the latest state anyway.
  * - The debounce coalesces body keystrokes ONLY; everything else (chat turns, archive flips,
- *   created-link writes) goes through `writeNow`/`update` immediately.
+ *   created-link writes) goes through `writeNow`/`update` immediately. `writeNow` supersedes the
+ *   armed debounce for its id — its snapshot is strictly newer, and letting the timer fire after
+ *   it would land the older body last.
  * - `deleteNow` discards the pending timer and queues behind any in-flight write of the same id,
  *   so the delete always wins and the file cannot resurrect.
  * - Persistence is keyed by draft id, not by selection: `update` read-modify-writes a draft that
@@ -93,7 +98,7 @@ export function draftLabel(d: DraftData): string {
 export class DraftWriter {
   private chains = new Map<string, Promise<unknown>>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private pendingTimerFire = new Map<string, () => Promise<boolean>>();
+  private pendingData = new Map<string, DraftData>();
   private inFlight = 0;
 
   constructor(
@@ -118,6 +123,10 @@ export class DraftWriter {
         this.inFlight--;
       });
     this.chains.set(id, chain);
+    // Prune the settled tail so the map doesn't retain one entry per draft ever touched.
+    void chain.then(() => {
+      if (this.chains.get(id) === chain) this.chains.delete(id);
+    });
     return chain;
   }
 
@@ -125,25 +134,33 @@ export class DraftWriter {
     return JSON.stringify({ ...d, updatedAt: new Date().toISOString() });
   }
 
-  /** Immediate write. `get` is evaluated when the queue reaches this write, not when it was requested. */
-  writeNow(id: string, get: () => DraftData): Promise<boolean> {
-    return this.enqueue(id, () => writeDraft(this.repoPath, id, this.stamp(get())));
+  /** Immediate write of a snapshot. Supersedes any armed debounce for this id (see class doc). */
+  writeNow(id: string, data: DraftData): Promise<boolean> {
+    this.discard(id);
+    return this.enqueue(id, () => writeDraft(this.repoPath, id, this.stamp(data)));
   }
 
-  /** Debounced write for body keystrokes. Re-arming replaces the timer. */
-  schedule(id: string, get: () => DraftData): void {
+  /** Debounced write for body keystrokes. Re-arming replaces both the timer and the snapshot. */
+  schedule(id: string, data: DraftData): void {
     const existing = this.timers.get(id);
     if (existing !== undefined) clearTimeout(existing);
-    this.pendingTimerFire.set(id, () => this.writeNow(id, get));
+    // Defensive copy: even a call site that forgets to snapshot cannot alias live state in here.
+    this.pendingData.set(id, { ...data });
     this.timers.set(
       id,
       setTimeout(() => {
-        this.timers.delete(id);
-        const fire = this.pendingTimerFire.get(id);
-        this.pendingTimerFire.delete(id);
-        void fire?.();
+        this.fire(id);
       }, this.debounceMs),
     );
+  }
+
+  private fire(id: string): void {
+    const t = this.timers.get(id);
+    if (t !== undefined) clearTimeout(t);
+    this.timers.delete(id);
+    const data = this.pendingData.get(id);
+    this.pendingData.delete(id);
+    if (data !== undefined) void this.enqueue(id, () => writeDraft(this.repoPath, id, this.stamp(data)));
   }
 
   /** Drop a pending debounce without writing (delete path). */
@@ -151,19 +168,12 @@ export class DraftWriter {
     const t = this.timers.get(id);
     if (t !== undefined) clearTimeout(t);
     this.timers.delete(id);
-    this.pendingTimerFire.delete(id);
+    this.pendingData.delete(id);
   }
 
   /** Fire any armed debounce now and wait for every queued write to settle. */
   flush(): Promise<void> {
-    for (const id of [...this.timers.keys()]) {
-      const t = this.timers.get(id);
-      if (t !== undefined) clearTimeout(t);
-      this.timers.delete(id);
-      const fire = this.pendingTimerFire.get(id);
-      this.pendingTimerFire.delete(id);
-      void fire?.();
-    }
+    for (const id of [...this.timers.keys()]) this.fire(id);
     return Promise.all([...this.chains.values()]).then(() => undefined);
   }
 

@@ -270,6 +270,33 @@ test('a completion outstanding for a draft blocks a second send after switching 
   ]);
 });
 
+test('switching drafts INSIDE the debounce window persists the outgoing draft, not the incoming one (review #349 r2 blocking)', async () => {
+  seed('draft-b', { body: '# B stays\n', archived: true, created: { id: 'gh-2', url: 'https://g/2' } });
+  renderFresh();
+  await screen.findByText('B stays');
+  type('# A body');
+  // No settle: the 800ms debounce is still armed when the switch happens.
+  fireEvent.click(screen.getByText('B stays'));
+  await settle();
+  const aId = [...files.keys()].find((k) => k !== 'draft-b')!;
+  const a = JSON.parse(files.get(aId)!) as DraftData;
+  expect(a.body).toBe('# A body'); // NOT wiped, NOT B's body
+  expect(a.archived).toBe(false); // and NOT mis-archived with B's created link
+  expect(a.created).toBeUndefined();
+  expect((JSON.parse(files.get('draft-b')!) as DraftData).body).toBe('# B stays\n');
+});
+
+test('New Task inside the debounce window does not wipe the outgoing draft (review #349 r2 blocking)', async () => {
+  const project = freshProject();
+  const view = render(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await screen.findByRole('button', { name: /new draft/i });
+  type('# Keep this body');
+  view.rerender(<TaskDraftScreen project={project} freshNonce={++nonce} onOpenBoard={() => {}} />);
+  await settle();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.body).toBe('# Keep this body'); // not overwritten with emptyDraft()
+});
+
 test('Open board is offered after filing and navigates', async () => {
   const onOpenBoard = vi.fn();
   render(<TaskDraftScreen project={freshProject()} freshNonce={++nonce} onOpenBoard={onOpenBoard} />);
