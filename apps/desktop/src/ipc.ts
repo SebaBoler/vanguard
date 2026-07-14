@@ -147,7 +147,14 @@ export function apiCreateRun(params: CreateRunParams): Promise<CreateRunResult> 
  * caller-supplied base URL would be a way for anything running in the webview to redirect that token
  * to a host of its choosing. Rust reads `chatBaseUrl` from `app.json` itself — hence `repoPath`.
  */
-export type CompleteParams = Omit<CompleteRequest, 'baseUrl'> & { model: string };
+// ALLOWLIST, deliberately not Omit<CompleteRequest,...>: every field here is one the renderer is
+// permitted to send. A new CompleteRequest field must be added HERE to cross the webview boundary
+// (a denylist would auto-expose it — review #342). Field types still derive from wire (no drift).
+export interface CompleteParams {
+  system?: CompleteRequest['system'];
+  messages: CompleteRequest['messages'];
+  model: string;
+}
 export function apiComplete(
   repoPath: string,
   params: CompleteParams,
