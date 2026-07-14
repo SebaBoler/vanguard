@@ -24,13 +24,9 @@ const COLUMNS: Column[] = [
   { key: 'done', label: 'Done', dot: 'bg-emerald-500', pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', lane: 'bg-emerald-500/[0.06]', cardHover: 'hover:border-emerald-500' },
 ];
 
-// The backend fetches (gh/glab/linear) all page-cap at this many issues. When the board comes back
-// exactly full we can't tell "50 total" from "50+ truncated", so warn — cheaper than paginating.
-// ponytail: keep in sync with the -L/-P/first: 50 in tasks.rs; wire real pagination if boards grow.
-const FETCH_CAP = 50;
-
 export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask: (taskId: string) => void }) {
-  const { data: tasks, error, loading } = useAsync(() => listTasks(project), [project]);
+  const { data, error, loading } = useAsync(() => listTasks(project), [project]);
+  const tasks = data?.tasks;
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading tasks…</div>;
   if (error) {
@@ -41,13 +37,14 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
     );
   }
 
-  const capped = (tasks?.length ?? 0) >= FETCH_CAP;
+  // Capped comes from the response now (S9) — no more synced literal; the core fetch cap decides.
+  const capped = data?.capped === true;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {capped && (
         <div className="mb-2 shrink-0 text-xs text-muted-foreground">
-          Showing the first {FETCH_CAP} tasks — narrow with a label filter in Settings to see the rest.
+          Showing the first {tasks?.length ?? 0} tasks — narrow with a label filter in Settings to see the rest.
         </div>
       )}
       <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-4">

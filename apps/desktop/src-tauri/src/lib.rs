@@ -6,9 +6,6 @@ mod remote;
 mod runs;
 mod sidecar;
 mod spawn;
-mod spec;
-mod taskid;
-mod tasks;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -103,14 +100,17 @@ async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, S
     remote::list_remote_runs(Path::new(&repo_path))
 }
 
-#[tauri::command]
-async fn list_tasks(repo_path: String) -> Result<Vec<tasks::Task>, String> {
-    tasks::list_tasks(Path::new(&repo_path))
+/// Board read path (S9): one brain — the transports live in core now. Same command name, new
+/// body: a Timed query-pipe exchange (idempotent remote read); the old Rust implementations
+/// (tasks.rs/spec.rs/taskid.rs) are deleted.
+#[tauri::command(async)]
+fn list_tasks(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    sidecar::board_request(&state, "listTasks", serde_json::json!({ "repoPath": repo_path }))
 }
 
-#[tauri::command]
-async fn fetch_spec(repo_path: String, task_id: String) -> Result<String, String> {
-    spec::fetch_spec(Path::new(&repo_path), &task_id)
+#[tauri::command(async)]
+fn fetch_spec(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String, task_id: String) -> Result<serde_json::Value, String> {
+    sidecar::board_request(&state, "fetchSpec", serde_json::json!({ "repoPath": repo_path, "taskId": task_id }))
 }
 
 #[tauri::command]

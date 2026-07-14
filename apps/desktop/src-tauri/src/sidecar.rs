@@ -692,6 +692,13 @@ pub fn api_list_flows(state: State<'_, Sidecar>, repo_path: String) -> Result<se
     flow_request(&state, "listFlows", serde_json::json!({ "repoPath": repo_path }))
 }
 
+/// Board exchange (S9): listTasks / fetchSpec ride the same Timed query-pipe contract as the
+/// flow methods — remote idempotent reads; a watchdog-killed exchange retried converges, and the
+/// in-band error envelope (auth, team key, no-source prompts) must reach the UI verbatim.
+pub fn board_request(state: &Sidecar, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    flow_request(state, method, params)
+}
+
 /// List the repo's `customProviders` health (S6): healthy + error-flagged entries, index -1 for an
 /// unparseable file. Names only — no baseUrl/keyEnv on the wire; Settings edits app.json directly.
 #[tauri::command(async)]
