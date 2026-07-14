@@ -7,8 +7,8 @@ import type {
   SessionRead,
   RemoteRun,
   AppConfig,
-  Task,
 } from './vanguard-output';
+import type { BoardTask } from './wire';
 
 export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return invoke<RunSummary[]>('list_runs', { repoPath });
@@ -57,12 +57,14 @@ export function listRemoteRuns(repoPath: string): Promise<RemoteRun[]> {
   return invoke<RemoteRun[]>('list_remote_runs', { repoPath });
 }
 
-export function listTasks(repoPath: string): Promise<Task[]> {
-  return invoke<Task[]>('list_tasks', { repoPath });
+/** Board read path (S9): served by core over the sidecar query pipe; capped drives the banner. */
+export function listTasks(repoPath: string): Promise<{ tasks: BoardTask[]; capped: boolean }> {
+  return invoke<{ tasks: BoardTask[]; capped: boolean }>('list_tasks', { repoPath });
 }
 
-export function fetchSpec(repoPath: string, taskId: string): Promise<string> {
-  return invoke<string>('fetch_spec', { repoPath, taskId });
+export async function fetchSpec(repoPath: string, taskId: string): Promise<string> {
+  const { spec } = await invoke<{ spec: string }>('fetch_spec', { repoPath, taskId });
+  return spec;
 }
 
 export const SPAWN_OUTPUT_EVENT = 'spawn:output';
@@ -100,6 +102,7 @@ export function unwatchProject(repoPath: string): Promise<void> {
 // Wire types come from the GENERATED src/wire.ts (S7) — no more hand-mirrors. Feature code keeps
 // importing them from this module.
 export type {
+  BoardTask,
   Capabilities,
   FlowInfo,
   CreateRunParams,

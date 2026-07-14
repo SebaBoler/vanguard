@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { TaskBoard } from './TaskBoard';
-import type { Task } from '../../vanguard-output';
+import type { BoardTask } from '../../wire';
 
 vi.mock('../../ipc', () => ({ listTasks: vi.fn() }));
 import { listTasks } from '../../ipc';
@@ -15,7 +15,7 @@ function lane(label: string): HTMLElement {
   return el as HTMLElement;
 }
 
-const TASKS: Task[] = [
+const TASKS: BoardTask[] = [
   { id: 't-q1', title: 'Queued one', column: 'queued', state: 'Todo' },
   { id: 't-q2', title: 'Queued two', column: 'queued', state: 'Todo' },
   { id: 't-r1', title: 'Running one', column: 'running', state: 'In Progress' },
@@ -25,7 +25,7 @@ const TASKS: Task[] = [
 
 describe('TaskBoard', () => {
   test('renders all six workflow columns', async () => {
-    mockListTasks.mockResolvedValue([]);
+    mockListTasks.mockResolvedValue({ tasks: [], capped: false });
     render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
     for (const label of ['Queued', 'Claimed', 'Running', 'Verify failed', 'Review', 'Done']) {
       expect(await screen.findByText(label)).toBeInTheDocument();
@@ -33,7 +33,7 @@ describe('TaskBoard', () => {
   });
 
   test('routes each task to its column lane (guards a col.key typo silently emptying a lane)', async () => {
-    mockListTasks.mockResolvedValue(TASKS);
+    mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
     render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
     await screen.findByText('Queued one'); // wait for load
 
@@ -45,7 +45,7 @@ describe('TaskBoard', () => {
   });
 
   test('shows per-column counts and a placeholder for empty lanes', async () => {
-    mockListTasks.mockResolvedValue(TASKS);
+    mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
     render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
     await screen.findByText('Queued one');
 
@@ -55,7 +55,7 @@ describe('TaskBoard', () => {
   });
 
   test('shows the raw backend state only when it differs from the lane key', async () => {
-    mockListTasks.mockResolvedValue(TASKS);
+    mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
     render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
     await screen.findByText('Running one');
 
@@ -70,4 +70,10 @@ describe('TaskBoard', () => {
     render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
     expect(await screen.findByText(/No task board/)).toBeInTheDocument();
   });
+});
+
+test('the cap banner follows the RESPONSE capped flag, not a client-side count (S9)', async () => {
+  mockListTasks.mockResolvedValue({ tasks: TASKS, capped: true });
+  render(<TaskBoard project="/repo" onOpenTask={() => {}} />);
+  expect(await screen.findByText(/Showing the first 5 tasks/)).toBeInTheDocument();
 });
