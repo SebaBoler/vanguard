@@ -970,7 +970,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer (or spec's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
@@ -1045,7 +1045,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer (or spec's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
@@ -1074,6 +1074,7 @@ Commands:
     --github <ref>          Issue ref (alternative to positional)
     --github-repo <o/r>     Required for bare issue numbers
     --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --max-turns <n>         Override the tech-spec stage turn cap (default: 30; opt-in, higher cost)
     --base <branch>         Branch to research against — the "baseline" the spec is written from (default: main)
     --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
     --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
