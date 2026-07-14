@@ -34,7 +34,10 @@ export function retitleDoc(doc: string, title: string): string {
       continue;
     }
     if (fenced) continue;
-    if (/^#[ \t]+.+$/.test(line)) {
+    // Same target as titleFromDoc, including its skip of whitespace-only headings (PR #351 r1):
+    // rewriting `#   ` while the reader takes the next real `# ` line would leave two H1s.
+    const m = line.match(/^#[ \t]+(.+)$/);
+    if (m?.[1] !== undefined && m[1].trim().replace(/\s#+$/, '').trim() !== '') {
       lines[i] = `# ${t}`;
       return lines.join('\n');
     }

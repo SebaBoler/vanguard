@@ -13,8 +13,8 @@ export interface CompleteDeps {
 /**
  * Run one plain doc-editor chat completion via the Claude Code agent SDK. Auth is inherited from the
  * environment exactly like the `claude` CLI — so a `CLAUDE_CODE_OAUTH_TOKEN` subscription token works
- * with no API key (and `ANTHROPIC_API_KEY` works too). Constrained to a single turn with no tools, so
- * it behaves as a completion, not an agent (no filesystem/tool access).
+ * with no API key (and `ANTHROPIC_API_KEY` works too). No tools are allowed, so it behaves as a
+ * completion, not an agent (no filesystem/tool access); the turn cap is only a runaway stop.
  */
 export async function runComplete(req: unknown, deps: CompleteDeps): Promise<CompleteResponse> {
   const parsed = validate(req);

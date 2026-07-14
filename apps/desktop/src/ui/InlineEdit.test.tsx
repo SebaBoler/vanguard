@@ -27,6 +27,22 @@ test('Escape cancels without committing; blur commits', () => {
   expect(onCommit).toHaveBeenCalledWith('via blur');
 });
 
+test('the escape guard does not poison the NEXT edit — commit works again after a cancel (PR #351 r1)', () => {
+  // The guard itself (a browser firing blur on the unmounting input after Escape) is NOT
+  // reproducible under jsdom — React won't dispatch on the detached node. What CAN regress here
+  // is the flag reset: an Escape that permanently disabled committing.
+  const onCommit = vi.fn();
+  render(<InlineEdit value="Old" placeholder="p" ariaLabel="t" onCommit={onCommit} />);
+  fireEvent.click(screen.getByLabelText('t'));
+  fireEvent.change(screen.getByLabelText('t input'), { target: { value: 'discard me' } });
+  fireEvent.keyDown(screen.getByLabelText('t input'), { key: 'Escape' });
+  expect(onCommit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByLabelText('t'));
+  fireEvent.change(screen.getByLabelText('t input'), { target: { value: 'keep me' } });
+  fireEvent.blur(screen.getByLabelText('t input'));
+  expect(onCommit).toHaveBeenCalledWith('keep me');
+});
+
 test('empty value shows the placeholder; disabled renders static text with no edit affordance', () => {
   const { rerender } = render(<InlineEdit value="" placeholder="Name it…" ariaLabel="t" onCommit={() => {}} />);
   expect(screen.getByText('Name it…')).toBeInTheDocument();

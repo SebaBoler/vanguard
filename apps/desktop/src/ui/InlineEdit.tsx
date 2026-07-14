@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { cn } from 'chunks-ui';
 
 /**
@@ -24,6 +24,11 @@ export function InlineEdit({
   className?: string;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
+  // Escape must beat the blur some browsers fire when the focused input unmounts (PR #351 r1):
+  // that blur runs the OLD render's onBlur closure, which would commit the value Escape just
+  // discarded. jsdom cannot reproduce the sequence, so this guard is untestable there — reset in
+  // the next edit's click so one Escape can't poison a later commit.
+  const escaped = useRef(false);
 
   if (disabled) {
     return <span className={cn('truncate', className)}>{value !== '' ? value : placeholder}</span>;
@@ -33,7 +38,10 @@ export function InlineEdit({
       <button
         aria-label={ariaLabel}
         title="Click to rename"
-        onClick={() => setEditing(value)}
+        onClick={() => {
+          escaped.current = false;
+          setEditing(value);
+        }}
         className={cn('truncate text-left decoration-dotted underline-offset-4 hover:underline', className)}
       >
         {value !== '' ? value : <span className="text-muted-foreground">{placeholder}</span>}
@@ -41,6 +49,7 @@ export function InlineEdit({
     );
   }
   const commit = (): void => {
+    if (escaped.current) return;
     onCommit(editing.trim());
     setEditing(null);
   };
@@ -54,7 +63,10 @@ export function InlineEdit({
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') commit();
-        if (e.key === 'Escape') setEditing(null);
+        if (e.key === 'Escape') {
+          escaped.current = true;
+          setEditing(null);
+        }
       }}
       className={cn('min-w-32 border-b border-primary bg-transparent outline-none', className)}
     />
