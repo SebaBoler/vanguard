@@ -1,7 +1,8 @@
 import { stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { isProviderName, makeProvider } from '../agents/registry.js';
+import { anthropicTransportKeyEnv, makeProvider } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import { STAGE_LIBRARY } from './library.js';
 import type { FlowDoc, StageDecl, StageOverrides } from './types.js';
@@ -12,11 +13,14 @@ import type { FlowDoc, StageDecl, StageOverrides } from './types.js';
  * spread on top (last-writer-wins, mirroring resolveRouting). `ref` paths are resolved and confined
  * to `<repoPath>/.vanguard/` (no escape). Source order is preserved.
  */
-export async function lowerFlow(doc: FlowDoc, opts: { repoPath: string }): Promise<PipelineStage[]> {
+export async function lowerFlow(
+  doc: FlowDoc,
+  opts: { repoPath: string; customProviders?: readonly CustomProviderEntry[] },
+): Promise<PipelineStage[]> {
   const out: PipelineStage[] = [];
   for (const decl of doc.stages) {
     const base = await resolveBase(decl, opts.repoPath);
-    out.push(applyOverrides(base, decl.overrides));
+    out.push(applyOverrides(base, decl.overrides, opts.customProviders));
   }
   return out;
 }
@@ -65,18 +69,36 @@ async function resolveRef(ref: string, repoPath: string): Promise<PipelineStage>
   return record;
 }
 
-function applyOverrides(base: PipelineStage, o: StageOverrides): PipelineStage {
+function applyOverrides(
+  base: PipelineStage,
+  o: StageOverrides,
+  customs?: readonly CustomProviderEntry[],
+): PipelineStage {
   // Every StageOverrides key is a PipelineStage field except `provider`, a name that resolves to an
   // AgentProvider. So spread the rest through and resolve provider on top.
   const { provider, ...rest } = o;
   return {
     ...base,
     ...rest,
-    ...(provider !== undefined ? { provider: resolveProvider(provider) } : {}),
+    ...(provider !== undefined ? { provider: resolveProvider(provider, base.name, customs) } : {}),
   };
 }
 
-function resolveProvider(name: string): ReturnType<typeof makeProvider> {
-  if (!isProviderName(name)) throw new Error(`unknown provider "${name}"`);
-  return makeProvider(name);
+function resolveProvider(
+  name: string,
+  stageName: string,
+  customs?: readonly CustomProviderEntry[],
+): ReturnType<typeof makeProvider> {
+  // A stage pin only swaps the AGENT for that stage; the sandbox transport env (ANTHROPIC_BASE_URL
+  // + token) is fixed per-run by selectAgents from the run's --provider. A pinned provider that
+  // owns the Anthropic transport (zai, openrouter, meridian, customs) would therefore silently run
+  // against the RUN provider's endpoint with the pin's forced model — reject loudly instead.
+  // (anthropicTransportKeyEnv doubles as the unknown-name check: it throws the listing error.)
+  if (anthropicTransportKeyEnv(name, customs) !== undefined) {
+    throw new Error(
+      `unknown provider configuration: stage "${stageName}" pins provider "${name}", which owns the ` +
+        `Anthropic transport — per-stage transport rerouting is not supported; set it as the run's --provider instead`,
+    );
+  }
+  return makeProvider(name, customs);
 }

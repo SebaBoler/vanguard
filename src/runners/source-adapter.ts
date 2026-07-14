@@ -32,7 +32,7 @@ import type { ConformanceResult } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
@@ -93,6 +93,8 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    // Loaded repo customs must survive this copy or selectAgents sees a bare name (S6).
+    ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
@@ -234,10 +236,11 @@ async function resolveBaseStages(
   flow: string | undefined,
   repoPath: string,
   adapter: SourceAdapter,
+  customProviders?: readonly CustomProviderEntry[],
 ): Promise<PipelineStage[]> {
   if (flow === undefined || flow === 'default') return adapter.stages();
   if (Object.hasOwn(FLOWS, flow)) return FLOWS[flow]!.build();
-  const stages = await resolveRepoFlow(flow, repoPath);
+  const stages = await resolveRepoFlow(flow, repoPath, customProviders);
   if (stages === undefined) throw await unknownFlowError(flow, repoPath);
   return stages;
 }
@@ -253,7 +256,7 @@ export async function runSourcedIssue(
   // `--flow <name>` selects a FLOWS builder or a repo `.vanguard/flows/*.hcl` flow; `--plan` is
   // the back-compat alias for flow 'plan'.
   const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
-  const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter);
+  const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter, deps.customProviders);
 
   const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
   // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer

@@ -1,5 +1,4 @@
 import { isAbsolute } from 'node:path';
-import { isProviderName, PROVIDER_NAMES } from '../agents/registry.js';
 import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
 import { VanguardError } from '../core/errors.js';
 import { coerceFlowDoc, flowDocError, FlowError, FLOW_FILE_RE } from '../flows/repo.js';
@@ -38,6 +37,7 @@ export interface SidecarDeps {
   createRun: (params: CreateRunParams, onEvent: (e: RunEvent) => void) => Promise<CreateRunResult>;
   createTask: (params: CreateTaskParams) => Promise<CreatedTask>;
   listFlows: (params: ListFlowsParams) => Promise<{ flows: RepoFlowInfo[] }>;
+  listProviders: (params: ListProvidersParams) => Promise<{ providers: RepoProviderInfo[] }>;
   readFlow: (params: ReadFlowParams) => Promise<{ doc: FlowDoc; source: string }>;
   writeFlow: (params: WriteFlowParams) => Promise<{ source: string }>;
 }
@@ -45,6 +45,20 @@ export interface SidecarDeps {
 /** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
 export interface ListFlowsParams {
   repoPath: string;
+}
+/** Repo-scoped custom-provider listing (S6). Query pipe, Bound::Timed. */
+export interface ListProvidersParams {
+  repoPath: string;
+}
+/**
+ * One configured custom provider on the wire: healthy (name, no error) or broken (error set;
+ * index -1 = the whole-file pseudo-entry). `error` absent ⇔ runnable. No baseUrl/keyEnv here —
+ * nothing in the UI consumes them (Settings edits app.json directly).
+ */
+export interface RepoProviderInfo {
+  index: number;
+  name?: string;
+  error?: string;
 }
 export interface ReadFlowParams {
   repoPath: string;
@@ -105,8 +119,8 @@ export function validateCreateTask(params: unknown): void {
 /**
  * Validate a createRun request at the protocol boundary, before dispatch. Throws BadRequestError
  * for any caller mistake so it is classified `bad-request` rather than surfacing as `internal` deep
- * in the runner. Provider/flow are checked against the real registries (PROVIDER_NAMES, FLOWS) so an
- * unknown value fails here instead of silently defaulting.
+ * in the runner. Provider and flow are shape-checked only — repo customs/flows are legal values this
+ * sync validator cannot see; both resolve as first statements of the createRun dep (bad-request).
  */
 export function validateCreateRun(params: unknown): void {
   const p = (params ?? {}) as Record<string, unknown>;
@@ -116,8 +130,11 @@ export function validateCreateRun(params: unknown): void {
   if (typeof p.repoPath !== 'string' || p.repoPath.trim() === '') {
     throw new BadRequestError('repoPath is required and must be a non-blank string');
   }
-  if (p.provider !== undefined && (typeof p.provider !== 'string' || !isProviderName(p.provider))) {
-    throw new BadRequestError(`unknown provider "${String(p.provider)}" — choose one of: ${PROVIDER_NAMES.join(', ')}`);
+  // Only the string shape is checked here (like flow below): repo customProviders are legal values
+  // and this validator is synchronous. Resolvability is a first statement of the createRun dep
+  // (resolveRunChoice — before beginRun, before any sandbox cost), still kind `bad-request`.
+  if (p.provider !== undefined && (typeof p.provider !== 'string' || p.provider.trim() === '')) {
+    throw new BadRequestError(`provider must be a non-blank string, got ${String(p.provider)}`);
   }
   if (p.transport !== undefined && !(TRANSPORTS as readonly unknown[]).includes(p.transport)) {
     throw new BadRequestError(`unknown transport "${String(p.transport)}" — choose one of: ${TRANSPORTS.join(', ')}`);
@@ -156,6 +173,10 @@ function requireFlowFile(p: Record<string, unknown>): void {
 }
 
 export function validateListFlows(params: unknown): void {
+  requireAbsoluteRepoPath(params);
+}
+
+export function validateListProviders(params: unknown): void {
   requireAbsoluteRepoPath(params);
 }
 
@@ -225,6 +246,9 @@ export async function runSidecar(
       } else if (req.method === 'listFlows') {
         validateListFlows(req.params);
         write(JSON.stringify({ id, result: await deps.listFlows(req.params as ListFlowsParams) }));
+      } else if (req.method === 'listProviders') {
+        validateListProviders(req.params);
+        write(JSON.stringify({ id, result: await deps.listProviders(req.params as ListProvidersParams) }));
       } else if (req.method === 'readFlow') {
         validateReadFlow(req.params);
         write(JSON.stringify({ id, result: await deps.readFlow(req.params as ReadFlowParams) }));

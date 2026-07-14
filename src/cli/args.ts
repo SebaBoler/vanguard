@@ -109,8 +109,8 @@ export type Command =
       repoSlug?: string;
       repoPath: string;
       skillsDir?: string;
-      provider?: ProviderName;
-      reviewProvider?: ProviderName;
+      provider?: string;
+      reviewProvider?: string;
       providerModel?: string;
       reviewModel?: string;
       verifyCmd?: string;
@@ -257,6 +257,9 @@ export type Command =
   | { kind: 'complete' }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
+
+/** The repo-configured provider-name grammar (S6, mirrors custom.ts) — every built-in matches too. */
+const CUSTOM_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_HOURS = 6;
@@ -420,17 +423,27 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 
-  // Provider flags (run + watch). An unknown provider name is an error.
+  // Provider flags. run/watch/doctor also accept repo-configured custom provider names (S6): those
+  // shapes relax to the name grammar here — this parser is synchronous and cannot read the repo's
+  // app.json, so resolution (and the "which names exist" error) happens at dispatch. Every other
+  // command keeps the closed built-in set, and --review-provider is built-ins-only everywhere
+  // (customs never review — spec §2/§3).
   const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
   const reviewProviderRaw = typeof values['review-provider'] === 'string' ? values['review-provider'] : undefined;
+  const customsAllowed = positionals[0] === 'run' || positionals[0] === 'watch' || positionals[0] === 'doctor';
   if (providerRaw !== undefined && !isProviderName(providerRaw)) {
-    return fail(`Unknown provider "${providerRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
+    if (!customsAllowed || !CUSTOM_NAME_RE.test(providerRaw)) {
+      return fail(`Unknown provider "${providerRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
+    }
   }
   if (reviewProviderRaw !== undefined && !isProviderName(reviewProviderRaw)) {
     return fail(`Unknown review-provider "${reviewProviderRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
   }
-  const provider: ProviderName | undefined = providerRaw;
+  const provider: string | undefined = providerRaw;
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
+  // Closed-set shapes: the gate above guarantees a built-in there; this re-narrow is for the compiler.
+  const builtinProvider: ProviderName | undefined =
+    provider !== undefined && isProviderName(provider) ? provider : undefined;
 
   // Named flow (run + watch). --flow selects a FLOWS entry or a repo `.vanguard/flows/*.hcl` flow
   // (S5); --plan stays the alias for flow 'plan'. No name check here: this parser is synchronous
@@ -495,13 +508,19 @@ export function parseCli(argv: string[], cwd: string): Command {
   }
 
   const proxyMode = values['llm-proxy'] === true;
-  try {
-    validateProviderChoice(
-      { ...(provider !== undefined ? { provider } : {}), ...(reviewProvider !== undefined ? { reviewProvider } : {}) },
-      { proxyMode },
-    );
-  } catch (error) {
-    return fail(error instanceof Error ? error.message : String(error));
+  // Skipped when the provider is a (possible) custom name: this call dereferences the built-in
+  // table and the customs live on disk, invisible to the sync parser. The dispatch entry point
+  // re-runs it with the loaded customs BEFORE any sandbox cost (run.ts/watch.ts). reviewProvider
+  // cannot be non-built-in (gate above), so built-in pairs keep failing right here at parse.
+  if (provider === undefined || isProviderName(provider)) {
+    try {
+      validateProviderChoice(
+        { ...(provider !== undefined ? { provider } : {}), ...(reviewProvider !== undefined ? { reviewProvider } : {}) },
+        { proxyMode },
+      );
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
   }
 
   if (positionals[0] === 'review-pr') {
@@ -523,7 +542,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
@@ -540,7 +559,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(values.web === true ? { webAccess: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['research-model'] === 'string' ? { researchModel: values['research-model'] } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
     };
@@ -556,7 +575,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
@@ -580,7 +599,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -607,7 +626,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       egress: values.egress === true,
       ...(typeof values.author === 'string' ? { author: values.author } : {}),
       ...(proxyMode ? { llmProxy: true } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
   }
@@ -624,7 +643,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
       ...(proxyMode ? { llmProxy: true } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
     };
   }
 
@@ -639,7 +658,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       repoPath,
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
   }
@@ -659,7 +678,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_GITLAB_MR_REVIEWED_LABEL,
       ...(typeof values.author === 'string' ? { author: values.author } : {}),
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
-      ...(provider !== undefined ? { provider } : {}),
+      ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
     };
     if (commandKind === 'doctor-mrs') return { kind: 'doctor-mrs', ...shared };
@@ -925,6 +944,8 @@ Commands:
                            watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+                           run/watch/doctor also accept a custom provider name from the repo's
+                           .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
@@ -997,6 +1018,8 @@ Commands:
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+                           run/watch/doctor also accept a custom provider name from the repo's
+                           .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)

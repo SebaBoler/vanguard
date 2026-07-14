@@ -21,6 +21,7 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
   },
   createTask: async () => ({ id: 'o/r#1', url: 'https://example/issues/1' }),
   listFlows: async () => ({ flows: [] }),
+  listProviders: async () => ({ providers: [] }),
   readFlow: async () => ({ doc: { name: 'f', label: 'L', stages: [{ name: 'planner', overrides: {} }], loops: [] }, source: 'flow "f" {}' }),
   writeFlow: async () => ({ source: 'flow "f" {}' }),
   ...over,
@@ -55,7 +56,10 @@ describe('runSidecar', () => {
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'x', error: { kind: 'bad-request' } });
   });
 
-  it('rejects an unknown provider as bad-request, without invoking createRun', async () => {
+  // S6 churn: provider is shape-checked only at the protocol boundary (repo customs are legal
+  // values this sync validator cannot see); unknown-NAME rejection now lives in the createRun dep
+  // (resolveRunChoice — deps.test.ts asserts it fires before beginRun). Blank still dies here.
+  it('rejects a blank provider as bad-request, without invoking createRun', async () => {
     const { write, out } = collect();
     let called = false;
     const deps = stubDeps({
@@ -64,7 +68,7 @@ describe('runSidecar', () => {
         return {};
       },
     });
-    await runSidecar(lines(JSON.stringify({ id: 'p', method: 'createRun', params: { issueRef: 'gh-1', repoPath: '/repo', provider: 'notaprovider' } })), write, deps);
+    await runSidecar(lines(JSON.stringify({ id: 'p', method: 'createRun', params: { issueRef: 'gh-1', repoPath: '/repo', provider: '  ' } })), write, deps);
     expect(out).toHaveLength(1);
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'p', error: { kind: 'bad-request' } });
     expect(called).toBe(false);

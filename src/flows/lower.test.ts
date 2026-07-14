@@ -60,8 +60,28 @@ test('rejects a ref whose export is missing', async () => {
 
 test('rejects an unknown provider override', async () => {
   await expect(lowerFlow(doc([{ name: 'planner', overrides: { provider: 'bogus' } }]), { repoPath: REPO })).rejects.toThrow(
-    /unknown provider "bogus"/,
+    /[Uu]nknown provider "bogus"/,
   );
+});
+
+// S6 gate 4: a stage pin only swaps the agent — the sandbox transport env stays the RUN provider's.
+// A transport-owning pin (zai, openrouter, meridian, customs) would silently hit the wrong endpoint
+// (latent trap for `provider = "zai"` before S6), so lowering rejects it loudly.
+test('rejects a stage pinned to a transport-owning provider (zai) with a named error', async () => {
+  await expect(lowerFlow(doc([{ name: 'planner', overrides: { provider: 'zai' } }]), { repoPath: REPO })).rejects.toThrow(
+    /stage "planner" pins provider "zai".*owns the Anthropic transport/s,
+  );
+});
+
+test('rejects a stage pinned to a custom provider; allows a cross-slot pin (codex)', async () => {
+  const customs = [
+    { index: 0, name: 'my-proxy', spec: { name: 'my-proxy', baseUrl: 'https://llm.example.com', keyEnv: 'K' } },
+  ];
+  await expect(
+    lowerFlow(doc([{ name: 'planner', overrides: { provider: 'my-proxy' } }]), { repoPath: REPO, customProviders: customs }),
+  ).rejects.toThrow(/owns the Anthropic transport/);
+  const stages = await lowerFlow(doc([{ name: 'planner', overrides: { provider: 'codex' } }]), { repoPath: REPO });
+  expect(stages[0]?.provider?.name).toBe('codex');
 });
 
 test('re-imports an edited ref module (mtime cache-bust) — the long-lived sidecar must not run stale code', async () => {

@@ -9,7 +9,7 @@ import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL, GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { ProviderName } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
@@ -113,8 +113,9 @@ export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefi
 export async function gitlabDepsFromEnv(
   repoPath: string,
   project: string | undefined,
-  provider?: ProviderName,
-  reviewProvider?: ProviderName,
+  provider?: string,
+  reviewProvider?: string,
+  customProviders?: readonly CustomProviderEntry[],
 ): Promise<RunGitlabIssueDeps> {
   // Resolve auth first (mirrors githubDepsFromEnv order), so a missing-credential error surfaces
   // before git-remote detection. Without this, deps.auth is undefined and runSourcedIssue injects
@@ -122,6 +123,7 @@ export async function gitlabDepsFromEnv(
   const auth = agentAuthFromEnv({
     ...(provider !== undefined ? { provider } : {}),
     ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+    ...(customProviders !== undefined ? { customProviders } : {}),
   });
   let resolvedProject = project;
   if (resolvedProject === undefined) {

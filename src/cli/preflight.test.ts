@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { runPreflight, formatPreflightReport } from './preflight.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
@@ -351,5 +354,68 @@ describe('runPreflight provider combo check', () => {
     // makeRunner throws on `gh api` -> runOk catches -> unreadable -> best-effort skip (no check pushed)
     const unreadable = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: makeRunner() });
     expect(unreadable.checks.find((c) => c.name === 'pr-create setting')).toBeUndefined();
+  });
+});
+
+
+describe('runPreflight with S6 custom providers', () => {
+  async function repoWithCustoms(): Promise<string> {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-preflight-'));
+    await mkdir(join(repo, '.vanguard'), { recursive: true });
+    await writeFile(
+      join(repo, '.vanguard', 'app.json'),
+      JSON.stringify({ customProviders: [{ name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_PROXY_API_KEY' }] }),
+    );
+    return repo;
+  }
+
+  it('llm auth follows the custom keyEnv, not the Anthropic credential', async () => {
+    const repoPath = await repoWithCustoms();
+    const withKey = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy' }), {
+      env: { GH_TOKEN: 'gh', MY_PROXY_API_KEY: 'sk' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(withKey.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: true });
+
+    // an Anthropic token does NOT satisfy a custom's key requirement
+    const wrongKey = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'tok' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(wrongKey.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: false });
+  });
+
+  it('generalization fixes the stale zai literal: openrouter llm auth honors OPENROUTER_API_KEY', async () => {
+    const report = await runPreflight(githubDoctor({ provider: 'openrouter' }), {
+      env: { GH_TOKEN: 'gh', OPENROUTER_API_KEY: 'or-key' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: true });
+  });
+
+  it('provider combo reports the direct-only failure for a custom under --llm-proxy', async () => {
+    const repoPath = await repoWithCustoms();
+    const report = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy', llmProxy: true }), {
+      env: { GH_TOKEN: 'gh', MY_PROXY_API_KEY: 'sk' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    const combo = report.checks.find((c) => c.name === 'provider combo');
+    expect(combo).toMatchObject({ ok: false });
+    expect(combo?.reason).toMatch(/direct-mode only/);
+  });
+
+  it('an unknown provider name fails checks instead of crashing preflight', async () => {
+    const repoPath = await repoWithCustoms();
+    const report = await runPreflight(githubDoctor({ repoPath, provider: 'bogus' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'tok' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === 'provider combo')).toMatchObject({ ok: false });
   });
 });
