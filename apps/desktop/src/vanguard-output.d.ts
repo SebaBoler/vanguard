@@ -55,12 +55,6 @@ export interface SessionRead {
   estCostUsd: number;
 }
 
-export interface Task {
-  id: string;
-  title: string;
-  column: string;
-  state: string;
-}
 
 export interface AppConfig {
   source?: string;
