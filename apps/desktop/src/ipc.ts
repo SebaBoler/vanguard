@@ -42,6 +42,13 @@ export function readAppConfig(repoPath: string): Promise<AppConfig> {
   return invoke<AppConfig>('read_app_config', { repoPath });
 }
 
+/** Settings' read (S6 guard b): rejects when app.json exists but does not parse — the passive
+ *  readAppConfig collapses that to defaults, which is right for chat/board and WRONG for a form
+ *  that will write the whole object back. */
+export function readAppConfigStrict(repoPath: string): Promise<AppConfig> {
+  return invoke<AppConfig>('read_app_config_strict', { repoPath });
+}
+
 export function writeAppConfig(repoPath: string, config: AppConfig): Promise<void> {
   return invoke<void>('write_app_config', { repoPath, config });
 }
@@ -213,6 +220,19 @@ export interface RepoFlowInfo {
 
 export function apiListFlows(repoPath: string): Promise<{ flows: RepoFlowInfo[] }> {
   return invoke('api_list_flows', { repoPath });
+}
+
+/** One configured custom provider (S6): healthy (name, no error) or broken (`error` set; index -1 =
+ *  whole-file pseudo-entry). `error` absent ⇔ runnable. Names only — no baseUrl/keyEnv on the wire. */
+export interface RepoProviderInfo {
+  index: number;
+  name?: string;
+  error?: string;
+}
+
+/** Fresh per mount, like apiListFlows — a provider saved in Settings must be runnable immediately. */
+export function apiListProviders(repoPath: string): Promise<{ providers: RepoProviderInfo[] }> {
+  return invoke('api_list_providers', { repoPath });
 }
 
 /** `source` is the raw file bytes on read; the canonical form appears only after a write. */

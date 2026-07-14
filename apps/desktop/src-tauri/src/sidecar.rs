@@ -670,6 +670,13 @@ pub fn api_list_flows(state: State<'_, Sidecar>, repo_path: String) -> Result<se
     flow_request(&state, "listFlows", serde_json::json!({ "repoPath": repo_path }))
 }
 
+/// List the repo's `customProviders` health (S6): healthy + error-flagged entries, index -1 for an
+/// unparseable file. Names only — no baseUrl/keyEnv on the wire; Settings edits app.json directly.
+#[tauri::command(async)]
+pub fn api_list_providers(state: State<'_, Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    flow_request(&state, "listProviders", serde_json::json!({ "repoPath": repo_path }))
+}
+
 /// Read one flow file: `{ doc, source }` (raw bytes; canonical form appears only after a write).
 #[tauri::command(async)]
 pub fn api_read_flow(state: State<'_, Sidecar>, repo_path: String, file: String) -> Result<serde_json::Value, String> {
