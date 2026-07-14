@@ -120,6 +120,15 @@ export function TaskDraftScreen({
   // from a transient read/parse failure (review #349 r7): both surface as a non-'written' update,
   // but only the latter leaves a re-filable filed draft on disk and must warn.
   const deletedIds = useRef(new Set<string>());
+  // Ids the user renamed THIS session — including a rename cleared to EMPTY (PR #350 r1-2): to
+  // the auto-title's `name === undefined` re-check a deliberate clear looks exactly like "never
+  // named", so the one-shot title must be suppressed by this side channel instead.
+  const renamedIds = useRef(new Set<string>());
+  // Whether the active conversation's transcript is actually on screen — read inside reply
+  // callbacks (PR #350 r1-1): a reply the user is looking at must not set the unseen dot, and the
+  // closure's drawerOpen/panel are stale by the time the completion lands.
+  const viewingRef = useRef(false);
+  viewingRef.current = drawerOpen && panel === 'chat';
 
   useEffect(() => {
     void readAppConfig(project)
@@ -338,6 +347,7 @@ export function TaskDraftScreen({
   /** Inline tab rename (handoff §3). Empty name clears the override back to the derived label. */
   const rename = (id: string, raw: string): void => {
     const name = raw.trim().slice(0, 60);
+    renamedIds.current.add(id);
     if (id === activeIdRef.current) {
       draftRef.current = { ...draftRef.current, name: name === '' ? undefined : name };
       syncEntry(id);
@@ -379,6 +389,10 @@ export function TaskDraftScreen({
           .replace(/^["'`]+|["'`.]+$/g, '')
           .slice(0, 60);
         if (title === undefined || title === '' || res.error !== undefined) return;
+        // Any user rename this session — even one cleared back to empty — wins over the one-shot
+        // title (PR #350 r1-2): the file-level `name === undefined` re-check cannot tell a
+        // deliberate clear from "never named".
+        if (renamedIds.current.has(id)) return;
         if (id === activeIdRef.current) {
           if (draftRef.current.name !== undefined) return;
           draftRef.current = { ...draftRef.current, name: title };
@@ -443,8 +457,9 @@ export function TaskDraftScreen({
           draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'assistant', content: reply }] };
           syncEntry(id);
           void writer.writeNow(id, { ...draftRef.current });
-          // The reply arrived where the user may not be looking — surface it on the tab/badge.
-          markUnseen(id);
+          // Surface the reply on the tab/badge ONLY when the user isn't looking at this
+          // transcript (PR #350 r1-1) — a dot on the tab they just read from never clears.
+          if (!viewingRef.current) markUnseen(id);
         } else {
           // Late reply after a draft switch: dropped from the visible transcript (the gen rule),
           // but appended to the file it was issued for — a persisted transcript must not end on a

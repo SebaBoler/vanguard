@@ -237,6 +237,43 @@ test('two tabs can have turns in flight at once; each reply lands in its own fil
   ]);
 });
 
+test('a reply landing on the FOCUSED tab leaves no activity dot (PR #350 r1-1)', async () => {
+  seed('draft-a', { body: '# Alpha\n', name: 'Alpha' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  sendMsg('qa');
+  await settle(); // reply lands while the drawer is open on this very tab
+  expect(screen.queryByLabelText('Alpha activity')).toBeNull();
+});
+
+test('a rename cleared to empty during the first exchange still beats the auto-title (PR #350 r1-2)', async () => {
+  let resolveTitle: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockResolvedValueOnce({ text: 'the reply' })
+    .mockReturnValueOnce(new Promise((r) => (resolveTitle = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Alpha\n');
+  sendMsg('first exchange');
+  await settle(); // reply landed; the title completion is in flight
+  // The user names the tab, then deliberately clears it back to the derived label — the clear is
+  // still a user rename, and to the racing title's re-check it looks exactly like "never named".
+  fireEvent.doubleClick(screen.getByLabelText('tab Alpha'));
+  const input = screen.getByLabelText(/rename/);
+  fireEvent.change(input, { target: { value: 'Temp' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  fireEvent.doubleClick(screen.getByLabelText('tab Temp'));
+  const again = screen.getByLabelText(/rename/);
+  fireEvent.change(again, { target: { value: '' } });
+  fireEvent.keyDown(again, { key: 'Enter' });
+  await settle();
+  resolveTitle({ text: 'Robot Title' });
+  await settle();
+  expect((JSON.parse([...files.values()][0]!) as DraftData).name).toBeUndefined();
+  expect(screen.getByLabelText('tab Alpha')).toBeInTheDocument();
+});
+
 test('a reply landing on an unfocused tab shows the activity dot; focusing the tab clears it', async () => {
   seed('draft-a', { body: '# Alpha\n', name: 'Alpha' });
   seed('draft-b', { body: '# Beta\n', name: 'Beta' });
