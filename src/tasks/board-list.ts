@@ -48,6 +48,18 @@ export async function readBoardConfig(repoPath: string): Promise<BoardConfig> {
   }
 }
 
+/**
+ * Board list/fetch failures are ALWAYS environment/config-shaped (auth, missing CLI, network) —
+ * Linear's paths already throw actionable VanguardErrors, but gh/glab throw raw execa errors that
+ * the sidecar dep classifies `internal` (review #346 r3 parity gap). Wrap with the first stderr
+ * line, which is where gh/glab put the actionable text ("To get started with GitHub CLI…").
+ */
+function boardVisible(error: unknown): VanguardError {
+  if (error instanceof VanguardError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new VanguardError(message.split('\n').find((l) => l.trim() !== '') ?? message);
+}
+
 function requireBoardSource(cfg: BoardConfig): BoardSource {
   const source = cfg.source;
   if (source === 'github' || source === 'gitlab' || source === 'linear') return source;
@@ -156,7 +168,12 @@ export async function listBoardTasks(
   const cfg = await readBoardConfig(repoPath);
   const source = requireBoardSource(cfg);
   const fetcher = await fetcherFor(source, cfg, repoPath);
-  const tasks = await fetcher.list(boardFilterFor(source, cfg.label));
+  let tasks;
+  try {
+    tasks = await fetcher.list(boardFilterFor(source, cfg.label));
+  } catch (error) {
+    throw boardVisible(error); // gh/glab auth failures must reach the board like Linear's do
+  }
   // `capped` false-positives on EXACTLY cap items (a one-page budget cannot see page two) — the
   // banner reads "first 50 shown", which stays true; Rust-board parity (review #346 obs 4).
   return { tasks: tasks.map((t) => toBoardTask(source, t)), capped: tasks.length >= BOARD_FETCH_CAP };
@@ -192,6 +209,11 @@ export async function fetchTaskSpec(repoPath: string, taskId: string): Promise<{
     }
     fetcher = new LinearCliTaskFetcher({});
   }
-  const task = await fetcher.fetch(reference);
+  let task;
+  try {
+    task = await fetcher.fetch(reference);
+  } catch (error) {
+    throw boardVisible(error);
+  }
   return { spec: `# ${task.title}\n\n${task.description}`.trim() };
 }

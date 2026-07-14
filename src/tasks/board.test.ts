@@ -180,3 +180,20 @@ describe('remote redaction in board errors', () => {
     expect(err).not.toContain('glpat-SECRET123');
   });
 });
+
+// review #346 r3 obs 2: gh/glab failures must be board-visible (Linear already was).
+describe('board-visible errors', () => {
+  it('a raw fetcher failure surfaces its first line as a VanguardError (bad-request downstream)', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-autherr-'));
+    await mkdir(join(repo, '.vanguard'), { recursive: true });
+    await writeFile(join(repo, '.vanguard', 'app.json'), JSON.stringify({ source: 'github' }));
+    const failing: TaskFetcher = {
+      fetch: async () => { throw new Error('To get started with GitHub CLI, please run: gh auth login\nlong tail'); },
+      list: async () => { throw new Error('To get started with GitHub CLI, please run: gh auth login\nlong tail'); },
+    };
+    const { VanguardError } = await import('../core/errors.js');
+    const err = await listBoardTasks(repo, async () => failing).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VanguardError);
+    expect((err as Error).message).toBe('To get started with GitHub CLI, please run: gh auth login');
+  });
+});

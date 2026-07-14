@@ -28,9 +28,10 @@ export interface TaskFilter {
   labels?: string[];
   state?: string;
   /**
-   * Page/result cap (S9, board parity). STRICTLY conditional: unset ⇒ every fetcher's argv and
-   * GraphQL variables are byte-identical to before this field existed — watch never sets it, and
-   * its fetch size must not change. Set ⇒ gh -L / glab -P / Linear first: + single-page stop.
+   * Page/result cap (S9, board parity). STRICTLY conditional: unset ⇒ gh/glab argv is
+   * byte-identical to before this field existed, and Linear keeps first:100 + exhaustive
+   * pagination (behavior-identical; the query wire now passes `first` as a variable) — watch
+   * never sets it, and its fetch size must not change. Set ⇒ gh -L / glab -P / Linear single page.
    */
   limit?: number;
 }
