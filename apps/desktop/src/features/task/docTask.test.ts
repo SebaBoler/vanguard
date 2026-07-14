@@ -1,5 +1,25 @@
 import { test, expect } from 'vitest';
-import { titleFromDoc } from './docTask';
+import { retitleDoc, titleFromDoc } from './docTask';
+
+test('retitleDoc replaces the first real heading and leaves the rest alone', () => {
+  expect(retitleDoc('# Old\n\nbody\n', 'New name')).toBe('# New name\n\nbody\n');
+  // The heading inside a fence is code, not the title — same rule as titleFromDoc.
+  expect(retitleDoc('```\n# in code\n```\n# Real\nbody\n', 'New')).toBe('```\n# in code\n```\n# New\nbody\n');
+  // Round-trips through the reader.
+  expect(titleFromDoc(retitleDoc('# Old\n', 'Renamed'))).toBe('Renamed');
+});
+
+test('retitleDoc targets the same heading titleFromDoc reads — a whitespace-only heading is skipped (PR #351 r1)', () => {
+  // titleFromDoc skips `#   ` (empty after trim) and reads `# Real`; the rewrite must edit that
+  // same line, not leave a second H1 behind.
+  expect(retitleDoc('#   \n\n# Real\nbody\n', 'New')).toBe('#   \n\n# New\nbody\n');
+});
+
+test('retitleDoc prepends a heading when the doc has none, and ignores an empty title', () => {
+  expect(retitleDoc('', 'Fresh')).toBe('# Fresh\n');
+  expect(retitleDoc('just prose\n', 'Fresh')).toBe('# Fresh\n\njust prose\n');
+  expect(retitleDoc('# Keep\n', '   ')).toBe('# Keep\n');
+});
 
 test('takes the first # heading as the title', () => {
   expect(titleFromDoc('# Add a thing\n\nbody')).toBe('Add a thing');

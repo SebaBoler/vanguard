@@ -16,6 +16,35 @@ export function isTransport(s: string | undefined): boolean {
  * back to the filename, or the first line, would create a real, un-deletable issue named `note-3.md`).
  * Pure so it can be tested without a DOM; CodeMirror cannot be driven under jsdom.
  */
+/**
+ * Rewrite the doc's title in place: replace the first `# ` heading line (the same one
+ * `titleFromDoc` reads — fences skipped), or prepend one when the doc has none. An empty title is
+ * a no-op: the caller must never delete the heading through a rename affordance. Line endings are
+ * normalized to LF (the in-app editor produces LF; only a hand-made CRLF file would notice).
+ */
+export function retitleDoc(doc: string, title: string): string {
+  const t = title.trim();
+  if (t === '') return doc;
+  const lines = doc.split(/\r?\n/);
+  let fenced = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    // Same target as titleFromDoc, including its skip of whitespace-only headings (PR #351 r1):
+    // rewriting `#   ` while the reader takes the next real `# ` line would leave two H1s.
+    const m = line.match(/^#[ \t]+(.+)$/);
+    if (m?.[1] !== undefined && m[1].trim().replace(/\s#+$/, '').trim() !== '') {
+      lines[i] = `# ${t}`;
+      return lines.join('\n');
+    }
+  }
+  return doc === '' ? `# ${t}\n` : `# ${t}\n\n${lines.join('\n')}`;
+}
+
 export function titleFromDoc(doc: string): string | undefined {
   let fenced = false;
   // Split on CRLF too. `doc.split('\n')` leaves a trailing `\r`, and `.` does not match `\r`, so

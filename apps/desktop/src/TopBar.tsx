@@ -1,10 +1,13 @@
 import { Fragment, type ReactNode } from 'react';
-import { Breadcrumb, Logo, ThemeToggle, type Theme } from '@/ui';
+import { Breadcrumb, InlineEdit, Logo, ThemeToggle, type Theme } from '@/ui';
 import { Search } from 'lucide-react';
 
 export interface Crumb {
   label: string;
   onClick?: () => void;
+  /** Renders the crumb as a click-to-rename InlineEdit (task-page dogfood r3: the trailing
+   * breadcrumb names the open conversation). Wins over onClick. */
+  edit?: { placeholder: string; ariaLabel: string; onCommit: (value: string) => void };
 }
 
 export function TopBar({
@@ -45,7 +48,16 @@ export function TopBar({
                 <Fragment key={i}>
                   {(i > 0 || projectSwitcher) && <Breadcrumb.Separator />}
                   <Breadcrumb.Item>
-                    {c.onClick && i < crumbs.length - 1 ? (
+                    {c.edit ? (
+                      <Breadcrumb.Page>
+                        <InlineEdit
+                          value={c.label}
+                          placeholder={c.edit.placeholder}
+                          ariaLabel={c.edit.ariaLabel}
+                          onCommit={c.edit.onCommit}
+                        />
+                      </Breadcrumb.Page>
+                    ) : c.onClick && i < crumbs.length - 1 ? (
                       <Breadcrumb.Link onClick={c.onClick} className="cursor-pointer">
                         {c.label}
                       </Breadcrumb.Link>
