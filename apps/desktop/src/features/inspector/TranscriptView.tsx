@@ -18,11 +18,11 @@ export function TranscriptView({ transcript }: { transcript?: string }) {
         </Button>
       </div>
       {raw ? (
-        <pre className="max-h-[32rem] w-full overflow-auto whitespace-pre-wrap rounded border border-border bg-muted p-3 font-mono text-xs leading-relaxed">
+        <pre className="w-full overflow-x-auto whitespace-pre-wrap rounded border border-border bg-muted p-3 font-mono text-xs leading-relaxed">
           {transcript}
         </pre>
       ) : (
-        <div className="max-h-[32rem] overflow-auto rounded border border-border bg-muted/30 p-4">
+        <div className="rounded border border-border bg-muted/30 p-4">
           <StreamView entries={entries} empty="No parseable transcript." />
         </div>
       )}

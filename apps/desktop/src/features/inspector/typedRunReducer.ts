@@ -1,14 +1,7 @@
-// Mirrors the core `RunEvent` union (src/pipeline/events.ts) + the Rust-only `run-accepted`. The
-// desktop mirrors core wire types locally (like Capabilities/CreateRunParams in ipc.ts) rather than
-// importing across the app boundary. Keep in sync with events.ts on change.
-export type RunEvent =
-  | { type: 'run-start'; taskId: string; flow: string; provider: string; stages: string[] }
-  | { type: 'stage-start'; name: string; index: number; of: number }
-  | { type: 'stage-end'; name: string; index: number; of: number; outcome: string }
-  | { type: 'cost'; usdSpent: number }
-  | { type: 'run-end'; prUrl?: string; secretBlocked?: boolean }
-  | { type: 'run-error'; message: string }
-  | { type: 'run-cancelled' };
+// RunEvent comes from the generated wire contract (S7 — no more hand-mirror). Re-exported because
+// Inspector imports it from here.
+import type { RunEvent } from '../../wire';
+export type { RunEvent } from '../../wire';
 
 type StagePhase = 'pending' | 'running' | 'done' | 'failed';
 
@@ -23,19 +16,39 @@ export interface TypedRunState {
   terminal?: { kind: 'success' | 'no-changes' | 'secret-blocked' | 'error' | 'cancelled'; prUrl?: string; message?: string };
 }
 
-/** `run-accepted` is Rust-emitted and not in RunEvent; accept it as an extra variant here. */
-type Incoming = RunEvent | { type: 'run-accepted' };
+/** `run-accepted` is Rust-minted (sidecar.rs) and never core-emitted, so it is a DESKTOP extension
+ *  of the wire union, not part of it. It carries the run's repoPath so a strip can refuse a run
+ *  that belongs to another project (S8 item 4). */
+export type AppRunEvent = RunEvent | { type: 'run-accepted'; repoPath?: string };
+type Incoming = AppRunEvent;
 
 export function initialTypedRun(): TypedRunState {
   return { stages: [], stageState: {}, usdSpent: 0 };
 }
 
-/** Fold one `{runId, event}` payload, last-write-wins per key. Foreign runIds are dropped. */
-export function reduceTypedRun(state: TypedRunState, payload: { runId: string; event: Incoming }): TypedRunState {
-  // Adopt the first runId; thereafter drop anything that isn't ours.
-  if (state.runId !== undefined && payload.runId !== state.runId) return state;
-  const runId = state.runId ?? payload.runId;
+/**
+ * Fold one `{runId, event}` payload, last-write-wins per key. Foreign runIds are dropped.
+ * `repoPath` (when given) scopes the strip to one project: only a `run-accepted` whose repoPath
+ * matches may ADOPT a runId into a virgin state — any other event on a virgin state is dropped.
+ * Without this a foreign run's mid-flight `stage-start` would seed a strip in the wrong project
+ * even with the backlog fold skipped (S8 item 4 — accept-time filtering alone is insufficient).
+ */
+export function reduceTypedRun(
+  state: TypedRunState,
+  payload: { runId: string; event: Incoming },
+  repoPath?: string,
+): TypedRunState {
   const e = payload.event;
+  if (state.runId === undefined) {
+    // Virgin state: only an accepted marker for OUR project may seed it. A scoped strip also
+    // rejects an accepted marker with NO repoPath — Rust always stamps it, so an unstamped one is
+    // a stale/foreign source, not a legitimate run (defensive, review #343 obs 3).
+    if (e.type !== 'run-accepted') return state;
+    if (repoPath !== undefined && e.repoPath !== repoPath) return state;
+    return { ...state, runId: payload.runId };
+  }
+  if (payload.runId !== state.runId) return state;
+  const runId = state.runId;
   switch (e.type) {
     case 'run-accepted':
       return { ...state, runId };
@@ -65,4 +78,20 @@ export function reduceTypedRun(state: TypedRunState, payload: { runId: string; e
     default:
       return state;
   }
+}
+
+/**
+ * Fold one LIVE event into a possibly-absent strip. Distinct from reduceTypedRun because the
+ * component's state is `TypedRunState | null` and null must STAY null when the reducer declines
+ * to adopt (foreign/non-accepted event on a virgin strip): materializing `initialTypedRun()`
+ * anyway would hide the foreign-run note and render an empty strip — the bleed in blank form
+ * (review #343 round 3, blocking).
+ */
+export function foldLiveEvent(
+  prev: TypedRunState | null,
+  payload: { runId: string; event: Incoming },
+  repoPath?: string,
+): TypedRunState | null {
+  const next = reduceTypedRun(prev ?? initialTypedRun(), payload, repoPath);
+  return prev === null && next.runId === undefined ? prev : next;
 }

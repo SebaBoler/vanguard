@@ -32,8 +32,9 @@ pub struct Sidecar {
     buffer: Mutex<HashMap<String, Vec<serde_json::Value>>>,
     /// Completed-run ids in finish order, for bounded eviction.
     order: Mutex<Vec<String>>,
-    /// The in-flight runId, or None when idle.
-    active: Mutex<Option<String>>,
+    /// The in-flight run (runId, repoPath), or None when idle. repoPath rides along so the
+    /// desktop can tell WHICH project's Inspector a re-attach belongs to (S8 item 4).
+    active: Mutex<Option<(String, String)>>,
     /// The running child's PID, readable without the `proc` lock so cancel works during a run.
     child_pid: Mutex<Option<u32>>,
     /// A runId for which cancel was requested — its terminal is `run-cancelled`, not `run-error`.
@@ -358,7 +359,12 @@ fn buffer_push(state: &Sidecar, run_id: &str, event: &serde_json::Value) {
         let events = buf.entry(run_id.to_string()).or_default();
         events.push(event.clone());
         if events.len() > MAX_EVENTS_PER_RUN {
-            events.remove(0);
+            // Evict the SECOND-oldest, never index 0: the first event is `run-accepted`, the only
+            // event allowed to seed a strip (the reducer's narrowed adoption rule, S8 item 4) —
+            // evicting it would make a >cap run's re-attach fold nothing while blocking New-run.
+            // Known cost: index 1 is usually `run-start`, so an over-cap re-attach renders with
+            // no stage names — accepted (the run still attaches, terminates, and unblocks).
+            events.remove(1);
         }
     }
 }
@@ -435,7 +441,7 @@ fn finish_run(state: &Sidecar, run_id: &str) {
     // handoff boundary. Holding `active` across both writes means no B can pass the gate in between,
     // and the `run_id` guard means a finishing run can never disarm a successor that already took over.
     if let Ok(mut active) = state.active.lock() {
-        if active.as_deref() == Some(run_id) {
+        if active.as_ref().map(|(id, _)| id.as_str()) == Some(run_id) {
             clear_run_pid(state, Pipe::Run);
             *active = None;
         }
@@ -496,6 +502,15 @@ pub fn api_create_run(
     // would orphan the first run's re-attach). Check-and-set under ONE lock scope so two concurrent
     // api_create_run calls (Tauri runs commands on a thread pool, not serialized) can't both pass the
     // check before either sets — a check-then-release-then-set would be a TOCTOU race.
+    // repoPath is required BEFORE minting: full validation is Node-side and runs after Rust has
+    // stamped `active` and emitted `run-accepted` — rejecting here keeps the stamped repoPath (and
+    // the run-accepted payload the reducer filters on) always a string (S8 item 4).
+    let repo_path = params
+        .get("repoPath")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| "repoPath is required and must be a non-blank string".to_string())?
+        .to_string();
     let run_id = {
         let mut active = state.active.lock().map_err(|e| e.to_string())?;
         if active.is_some() {
@@ -503,12 +518,12 @@ pub fn api_create_run(
         }
         // Mint the id inside the lock, after the early-return, so a rejected call doesn't burn one.
         let id = format!("run-{}", state.counter.fetch_add(1, Ordering::SeqCst));
-        *active = Some(id.clone());
+        *active = Some((id.clone(), repo_path.clone()));
         id
     };
     // From here on, every exit path releases `active` via RunGuard's Drop.
     let _guard = RunGuard { state: &state, run_id: run_id.clone() };
-    emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted" }));
+    emit_event(&app, &state, &run_id, serde_json::json!({ "type": "run-accepted", "repoPath": repo_path }));
 
     let outcome = request(
         &state,
@@ -549,10 +564,17 @@ pub fn api_create_run(
     result
 }
 
-/// The in-flight runId, or None when idle. Reads only the `active` lock, so it works during a run.
+/// The in-flight run `{runId, repoPath}`, or None when idle. Reads only the `active` lock, so it
+/// works during a run. repoPath lets the Inspector skip a re-attach that belongs to another
+/// project (S8 item 4 — the cross-project strip bleed).
 #[tauri::command]
-pub fn api_active_run(state: State<'_, Sidecar>) -> Option<String> {
-    state.active.lock().ok().and_then(|g| g.clone())
+pub fn api_active_run(state: State<'_, Sidecar>) -> Option<serde_json::Value> {
+    state
+        .active
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|(run_id, repo_path)| serde_json::json!({ "runId": run_id, "repoPath": repo_path }))
 }
 
 /// The buffered event backlog for a run, for a re-attaching strip. Reads only the `buffer` lock.
@@ -575,7 +597,7 @@ pub fn api_run_backlog(state: State<'_, Sidecar>, run_id: String) -> Vec<serde_j
 #[tauri::command]
 pub fn api_cancel(state: State<'_, Sidecar>) -> Result<(), String> {
     let active = state.active.lock().map_err(|e| e.to_string())?.clone();
-    let Some(run_id) = active else {
+    let Some((run_id, _)) = active else {
         return Ok(()); // nothing running
     };
     if let Ok(mut c) = state.cancelled.lock() {
@@ -683,6 +705,14 @@ pub fn api_read_flow(state: State<'_, Sidecar>, repo_path: String, file: String)
     flow_request(&state, "readFlow", serde_json::json!({ "repoPath": repo_path, "file": file }))
 }
 
+/// Delete one flow file (S8). Timed on the query pipe: one local unlink, idempotent (core maps
+/// ENOENT to success), so a watchdog-killed exchange retried converges — Untimed would instead
+/// wedge the query mutex forever on a hang (cancel only reaches the RUN child).
+#[tauri::command(async)]
+pub fn api_delete_flow(state: State<'_, Sidecar>, repo_path: String, file: String) -> Result<serde_json::Value, String> {
+    flow_request(&state, "deleteFlow", serde_json::json!({ "repoPath": repo_path, "file": file }))
+}
+
 /// Validate + emit + atomically write one flow file; returns `{ source }` (the canonical HCL).
 #[tauri::command(async)]
 pub fn api_write_flow(
@@ -751,7 +781,7 @@ mod tests {
         // The success path never cleared child_pid, so a completed run's pid lingered. Only `active`
         // (also cleared by RunGuard) stopped it being signalled — a coincidence, not a design.
         let state = Sidecar::default();
-        *state.active.lock().unwrap() = Some("run-0".to_string());
+        *state.active.lock().unwrap() = Some(("run-0".to_string(), "/repo".to_string()));
         publish_run_pid(&state, Pipe::Run, 123);
         {
             let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
@@ -772,20 +802,20 @@ mod tests {
         let state = Sidecar::default();
 
         // run-1 is live and armed (it already took over from run-0).
-        *state.active.lock().unwrap() = Some("run-1".to_string());
+        *state.active.lock().unwrap() = Some(("run-1".to_string(), "/repo".to_string()));
         publish_run_pid(&state, Pipe::Run, 222);
 
         // run-0's cleanup finally lands. It owns neither `active` nor the pid any more.
         finish_run(&state, "run-0");
 
         assert_eq!(*state.child_pid.lock().unwrap(), Some(222), "run-1 must still be cancellable");
-        assert_eq!(*state.active.lock().unwrap(), Some("run-1".to_string()), "run-1 still holds the gate");
+        assert_eq!(state.active.lock().unwrap().as_ref().map(|(id, _)| id.clone()), Some("run-1".to_string()), "run-1 still holds the gate");
     }
 
     #[test]
     fn run_guard_releases_active_even_on_panic() {
         let state = Sidecar::default();
-        *state.active.lock().unwrap() = Some("run-0".to_string());
+        *state.active.lock().unwrap() = Some(("run-0".to_string(), "/repo".to_string()));
         let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = RunGuard { state: &state, run_id: "run-0".to_string() };
             panic!("run blew up");
@@ -837,5 +867,21 @@ mod tests {
         let (result, terminal) = resolve_terminal(Err("sidecar closed".into()), false);
         assert!(result.is_err());
         assert_eq!(terminal.unwrap(), json!({ "type": "run-error", "message": "sidecar closed" }));
+    }
+
+    #[test]
+    fn buffer_eviction_retains_the_accepted_marker() {
+        // The reducer only adopts a runId from `run-accepted` (S8 item 4) — a >cap run whose
+        // backlog lost its first event would re-attach to nothing while blocking New-run.
+        let state = Sidecar::default();
+        let accepted = serde_json::json!({ "type": "run-accepted", "repoPath": "/repo" });
+        super::buffer_push(&state, "run-0", &accepted);
+        for i in 0..(super::MAX_EVENTS_PER_RUN + 5) {
+            super::buffer_push(&state, "run-0", &serde_json::json!({ "type": "cost", "usdSpent": i }));
+        }
+        let buf = state.buffer.lock().unwrap();
+        let events = buf.get("run-0").unwrap();
+        assert_eq!(events.len(), super::MAX_EVENTS_PER_RUN);
+        assert_eq!(events[0]["type"], "run-accepted");
     }
 }

@@ -58,6 +58,13 @@ export function FlowCanvas({
                   onDragStart={() => {
                     dragFrom.current = i;
                   }}
+                  onDragEnd={() => {
+                    // dragend fires on the SOURCE for every outcome incl. Esc/outside-drop —
+                    // without this a cancelled drag leaves dragFrom armed (a later stray drop
+                    // fires a bogus move) and can leave the drag-over ring stuck.
+                    dragFrom.current = null;
+                    setDragOver(null);
+                  }}
                   onDragOver={(e) => {
                     e.preventDefault();
                     setDragOver(i);

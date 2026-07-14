@@ -7,6 +7,8 @@ import {
   hasPullRequestReviewMarker,
   parsePullRequestRef,
   PR_REVIEW_INCOMPLETE_NOTICE,
+  PR_REVIEW_NO_OUTPUT_NOTICE,
+  PullRequestReviewIncompleteError,
   reviewPullRequest,
 } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -139,23 +141,54 @@ describe('reviewPullRequest', () => {
     expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
   });
 
-  it('incomplete twice posts the incomplete notice, never raw finalText', async () => {
+  it('incomplete twice with partial output posts the too-large notice (no marker) and throws', async () => {
     const { calls, gh } = makeGh();
     const reviewer = vi.fn().mockResolvedValue({ text: 'Now let me examine the auth module...', completed: false });
     const logs: string[] = [];
 
-    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
+    await expect(
+      reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) }),
+    ).rejects.toBeInstanceOf(PullRequestReviewIncompleteError);
 
     expect(reviewer).toHaveBeenCalledTimes(2);
     expect(reviewer).toHaveBeenNthCalledWith(1, expect.objectContaining({ repoSlug: 'o/r' }), { isRetry: false });
     expect(reviewer).toHaveBeenNthCalledWith(2, expect.objectContaining({ repoSlug: 'o/r' }), { isRetry: true });
-    expect(result.commentBody).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
-    expect(result.commentBody).not.toContain('Now let me examine');
-    expect(result.commentBody).toContain('<!-- vanguard-pr-review: def456 -->');
     const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
     expect(reviewCall).toBeDefined();
+    const body = reviewCall?.at(-1) ?? '';
+    expect(body).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).not.toContain('Now let me examine');
+    // No head marker: the notice must not block a retry after re-labeling the same head.
+    expect(body).not.toContain('vanguard-pr-review');
     expect(logs).toContain('review-pr o/r#12: incomplete -> retry (larger budget)');
-    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice');
+    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice (too-large)');
+  });
+
+  it('incomplete with no output at all posts the provider-failure notice and throws', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: '  ', completed: false });
+
+    await expect(reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: () => {} })).rejects.toThrow(
+      'did not complete',
+    );
+
+    const body = calls.find((a) => a[0] === 'pr' && a[1] === 'review')?.at(-1) ?? '';
+    expect(body).toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
+    expect(body).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).not.toContain('vanguard-pr-review');
+  });
+
+  it('publish:false incomplete posts nothing and carries the notice on the error', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: '', completed: false });
+
+    const error = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, publish: false, log: () => {} }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(PullRequestReviewIncompleteError);
+    expect((error as PullRequestReviewIncompleteError).commentBody).toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
+    expect(calls.some((a) => a[0] === 'pr' && a[1] === 'review')).toBe(false);
   });
 
   it('incomplete then completed (retry succeeds) posts the real verdict', async () => {
@@ -301,22 +334,18 @@ describe('review prompt and comment formatting', () => {
 });
 
 describe('buildPullRequestReviewIncompleteComment', () => {
-  it('returns the incomplete notice with a head SHA marker', () => {
-    const comment = buildPullRequestReviewIncompleteComment('abc123');
+  it('defaults to the too-large notice without any head marker', () => {
+    const comment = buildPullRequestReviewIncompleteComment();
     expect(comment).toContain('## Vanguard Review');
     expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
-    expect(comment).toContain('<!-- vanguard-pr-review: abc123 -->');
-  });
-
-  it('returns the incomplete notice without a marker when no oid is given', () => {
-    const comment = buildPullRequestReviewIncompleteComment();
-    expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    // A marker would make watch-prs treat the failed attempt as a delivered verdict for the head.
     expect(comment).not.toContain('vanguard-pr-review');
   });
 
-  it('returns the incomplete notice without a marker when oid is empty', () => {
-    const comment = buildPullRequestReviewIncompleteComment('');
-    expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+  it('names the provider failure for the no-output reason', () => {
+    const comment = buildPullRequestReviewIncompleteComment('no-output');
+    expect(comment).toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
+    expect(comment).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
     expect(comment).not.toContain('vanguard-pr-review');
   });
 });

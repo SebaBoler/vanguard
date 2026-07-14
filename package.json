@@ -16,7 +16,8 @@
     "pricing:check": "tsx scripts/check-openrouter-pricing.ts",
     "dev": "tsx",
     "sbom": "bash docker/sbom.sh",
-    "clean": "rm -rf dist .vanguard"
+    "clean": "rm -rf dist .vanguard",
+    "gen:wire": "tsx scripts/gen-desktop-wire.ts"
   },
   "packageManager": "pnpm@10.32.1",
   "type": "module",

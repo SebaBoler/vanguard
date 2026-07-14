@@ -30,7 +30,9 @@ export interface RepoFlowInfo {
 /** Filename rule: separators are excluded entirely, so `..` can never form a path segment. */
 export const FLOW_FILE_RE = /^[a-z0-9][a-z0-9._-]*\.hcl$/;
 /** Flow-name grammar — the filename rule minus the extension (write canonicalizes file = name.hcl). */
-export const FLOW_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+// The one repo-name grammar lives in src/wire.ts (S7).
+export { FLOW_NAME_RE } from '../wire.js';
+import { FLOW_NAME_RE } from '../wire.js';
 
 const flowsDir = (repoPath: string): string => join(repoPath, '.vanguard', 'flows');
 
@@ -187,6 +189,11 @@ export async function readRepoFlow(repoPath: string, file: string): Promise<{ do
  * sibling-duplicate check, first-save mkdir, the re-parse guard (a file readFlow cannot read back
  * must never be written), and the temp-file contract (dot-prefixed ⇒ invisible to discovery;
  * truncate-on-retry; best-effort unlink on error).
+ *
+ * KNOWN GAP (client-guarded only): the sibling check matches parseable NAMES — a basename
+ * collision with an UNPARSEABLE file is invisible here, and the atomic rename overwrites it.
+ * The editor's taken-name set (file basenames included) is the guard; a future non-UI caller of
+ * writeFlow reintroduces that data-loss path unless it checks basenames too (review #345).
  */
 export async function writeRepoFlow(repoPath: string, file: string, doc: FlowDoc): Promise<{ source: string }> {
   // Valid declarations only, matching findDeclaring: an invalid scratch file that happens to claim
@@ -302,5 +309,22 @@ function coerceMeta(raw: unknown, where: string): Record<string, unknown> | unde
 function rejectUnknown(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.has(key)) throw new FlowError(`unknown key "${key}" in ${where}`);
+  }
+}
+
+/**
+ * Delete one flow file (S8). Idempotent: ENOENT is SUCCESS — "already gone" is the state the
+ * caller asked for, and the query pipe's Timed watchdog may retry a killed exchange (a scary
+ * error on the second attempt would be a lie). Anything else (EACCES, EISDIR) throws FlowError.
+ */
+export async function deleteRepoFlow(repoPath: string, file: string): Promise<void> {
+  if (!FLOW_FILE_RE.test(file)) {
+    throw new FlowError(`invalid flow file name "${file}" — expected <name>.hcl`);
+  }
+  try {
+    await unlink(join(flowsDir(repoPath), file));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new FlowError(err instanceof Error ? err.message : String(err));
   }
 }

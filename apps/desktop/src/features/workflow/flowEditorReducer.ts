@@ -131,5 +131,5 @@ function updateStage(state: FlowEditorState, index: number, fn: (s: StageDecl) =
   return { ...state, doc: { ...state.doc, stages }, dirty: true, error: null };
 }
 
-/** The flow-name grammar (mirror of core FLOW_NAME_RE — S5 "one validity predicate"). */
-export const FLOW_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+/** The flow-name grammar, from the generated wire contract (S7 — no more mirror). */
+export { FLOW_NAME_RE } from '../../wire';

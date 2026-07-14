@@ -1,5 +1,7 @@
 import { capabilities } from '../api/capabilities.js';
-import { assertFlowResolvable, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
+import { assertFlowResolvable, deleteRepoFlow, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
+import { fetchTaskSpec, listBoardTasks } from '../tasks/board-list.js';
+import { VanguardError } from '../core/errors.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { assertProvidersResolvable, customEgressHosts, validateProviderChoice, assertEgressCompatible } from '../agents/registry.js';
 import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
@@ -99,6 +101,29 @@ export function productionDeps(): SidecarDeps {
     }),
     readFlow: ({ repoPath, file }) => readRepoFlow(repoPath, file),
     writeFlow: ({ repoPath, file, doc }) => writeRepoFlow(repoPath, file, doc),
+    deleteFlow: async ({ repoPath, file }) => {
+      await deleteRepoFlow(repoPath, file);
+      return {};
+    },
+    // Board read path (S9): user-fixable failures (no source, wrong team key, not logged in,
+    // undetectable remote) arrive as VanguardError — wrap to bad-request so the board shows the
+    // actionable message instead of an 'internal' shrug.
+    listTasks: async ({ repoPath }) => {
+      try {
+        return await listBoardTasks(repoPath);
+      } catch (error) {
+        if (error instanceof VanguardError) throw new BadRequestError(error.message);
+        throw error;
+      }
+    },
+    fetchSpec: async ({ repoPath, taskId }) => {
+      try {
+        return await fetchTaskSpec(repoPath, taskId);
+      } catch (error) {
+        if (error instanceof VanguardError) throw new BadRequestError(error.message);
+        throw error;
+      }
+    },
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       // FIRST statements, before beginRun() and the sandbox: an unresolvable flow (typo, broken or
       // duplicate .hcl) or provider (unknown name, broken customs entry, http custom on this

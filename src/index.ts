@@ -93,6 +93,8 @@ export {
   buildPullRequestReviewComment,
   buildPullRequestReviewIncompleteComment,
   PR_REVIEW_INCOMPLETE_NOTICE,
+  PR_REVIEW_NO_OUTPUT_NOTICE,
+  PullRequestReviewIncompleteError,
   pullRequestReviewMarker,
   hasPullRequestReviewMarker,
   reviewPullRequest,
@@ -108,6 +110,7 @@ export type {
   PullRequestReviewer,
   PullRequestReviewOutcome,
   PullRequestReviewAttempt,
+  PullRequestReviewIncompleteReason,
   ReviewPullRequestDeps,
   ReviewPullRequestResult,
 } from './runners/pr-review.js';

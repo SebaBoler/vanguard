@@ -1,16 +1,6 @@
-/** One doc-chat completion request (the JSON `vanguard __complete` reads on stdin). */
-export interface CompleteRequest {
-  system?: string;
-  messages: { role: 'user' | 'assistant'; content: string }[];
-  model?: string;
-  baseUrl?: string;
-}
-
-/** The single JSON line `vanguard __complete` writes to stdout. */
-export interface CompleteResponse {
-  text?: string;
-  error?: { message: string };
-}
+// CompleteRequest/CompleteResponse live in src/wire.ts (the shared desktop contract — S7).
+export type { CompleteRequest, CompleteResponse } from '../wire.js';
+import type { CompleteRequest, CompleteResponse } from '../wire.js';
 
 /** The async-iterable subset of the agent SDK's `query()` result we consume. */
 type QueryStream = AsyncIterable<{ type: string; subtype?: string; result?: string }>;

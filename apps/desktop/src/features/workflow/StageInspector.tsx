@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button, Input } from '@/ui';
 import { Trash2 } from 'lucide-react';
 import { EnumSelect } from '../inspector/EnumSelect';
@@ -45,6 +45,9 @@ export function StageInspector({
     ...(palette.includes(stage.name) ? [] : [{ value: stage.name, label: `${stage.name} (not in library)` }]),
   ];
   const o = stage.overrides;
+  // Draft for an in-progress invalid max_turns. The PARENT must key this component by the
+  // selected index (WorkflowEditor does) so a lingering draft never displays on another stage.
+  const [maxTurnsDraft, setMaxTurnsDraft] = useState<string | null>(null);
 
   return (
     <div className="space-y-3">
@@ -72,14 +75,28 @@ export function StageInspector({
       <Field label="max_turns">
         <Input
           type="number"
-          value={o.maxTurns ?? ''}
+          value={maxTurnsDraft ?? o.maxTurns ?? ''}
           onChange={(e) => {
-            const n = Number(e.target.value);
-            if (e.target.value === '') onSetOverride('maxTurns', undefined);
-            else if (Number.isInteger(n) && n > 0) onSetOverride('maxTurns', n);
+            const text = e.target.value;
+            const n = Number(text);
+            if (text === '') {
+              setMaxTurnsDraft(null);
+              onSetOverride('maxTurns', undefined);
+            } else if (Number.isInteger(n) && n > 0) {
+              setMaxTurnsDraft(null);
+              onSetOverride('maxTurns', n);
+            } else {
+              // Invalid input previously no-op'd — the field silently snapped back. Hold the
+              // draft and say why instead (S8 item 3).
+              setMaxTurnsDraft(text);
+            }
           }}
+          onBlur={() => setMaxTurnsDraft(null)}
           className="w-full"
         />
+        {maxTurnsDraft !== null && (
+          <span className="text-xs text-rose-600 dark:text-rose-400">positive integer only</span>
+        )}
       </Field>
       <Field label="provider">
         <EnumSelect

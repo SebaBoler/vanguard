@@ -1,4 +1,5 @@
 import { defaultGhRunner } from '../tasks/github.js';
+import { VanguardError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -167,13 +168,29 @@ export function hasPullRequestReviewMarker(body: string, headRefOid: string): bo
 
 export const PR_REVIEW_INCOMPLETE_NOTICE =
   'Vanguard review did not complete; PR likely too large for a single pass. Please split or review manually.';
+export const PR_REVIEW_NO_OUTPUT_NOTICE =
+  'Vanguard review did not complete: the model returned no output (provider error or rate limit). Retry once the provider recovers.';
+
+export type PullRequestReviewIncompleteReason = 'too-large' | 'no-output';
 
 function appendMarker(visible: string, headRefOid?: string): string {
   return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
 }
 
-export function buildPullRequestReviewIncompleteComment(headRefOid?: string): string {
-  return appendMarker(`## Vanguard Review\n\n${PR_REVIEW_INCOMPLETE_NOTICE}`, headRefOid);
+// Deliberately no head-SHA marker: the marker means "this head has a verdict", and an incomplete
+// notice must not block the retry via re-label or the next sweep (the stranded-label no-op, #316).
+export function buildPullRequestReviewIncompleteComment(reason: PullRequestReviewIncompleteReason = 'too-large'): string {
+  return `## Vanguard Review\n\n${reason === 'no-output' ? PR_REVIEW_NO_OUTPUT_NOTICE : PR_REVIEW_INCOMPLETE_NOTICE}`;
+}
+
+/** Both review attempts ended without a verdict. The incomplete notice (when publishing) was already posted. */
+export class PullRequestReviewIncompleteError extends VanguardError {
+  constructor(
+    readonly pr: PullRequestForReview,
+    readonly commentBody: string,
+  ) {
+    super(`Vanguard review of ${pr.repoSlug}#${pr.number} did not complete: no verdict for head ${pr.headRefOid.slice(0, 7)}.`);
+  }
 }
 
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
@@ -236,15 +253,22 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
     outcome = normalizePullRequestReviewOutcome(await deps.reviewer(pr, { isRetry: true }));
   }
 
-  const commentBody = outcome.completed
-    ? buildPullRequestReviewComment(outcome.text, pr.headRefOid)
-    : buildPullRequestReviewIncompleteComment(pr.headRefOid);
+  if (!outcome.completed) {
+    // No output at all = the model call itself failed (provider error / rate limit), not a diff too
+    // large to review — say so, and fail the run instead of dressing the failure up as a review.
+    const reason: PullRequestReviewIncompleteReason = outcome.text.trim() === '' ? 'no-output' : 'too-large';
+    const commentBody = buildPullRequestReviewIncompleteComment(reason);
+    if (deps.publish !== false) {
+      await postPullRequestReview(target, commentBody, 'comment', gh);
+      deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> incomplete notice (${reason})`);
+    }
+    throw new PullRequestReviewIncompleteError(pr, commentBody);
+  }
 
+  const commentBody = buildPullRequestReviewComment(outcome.text, pr.headRefOid);
   if (deps.publish !== false) {
     await postPullRequestReview(target, commentBody, 'comment', gh);
-    deps.log?.(
-      `review-pr ${target.repoSlug}#${target.number}: posted -> ${outcome.completed ? 'pr review' : 'incomplete notice'}`,
-    );
+    deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
   }
   return { pr, commentBody };
 }

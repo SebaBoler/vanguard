@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialTypedRun, reduceTypedRun } from './typedRunReducer';
+import { foldLiveEvent, initialTypedRun, reduceTypedRun } from './typedRunReducer';
 
 const ev = (runId: string, event: unknown): Parameters<typeof reduceTypedRun>[1] =>
   ({ runId, event }) as Parameters<typeof reduceTypedRun>[1];
@@ -20,14 +20,38 @@ describe('reduceTypedRun', () => {
   });
 
   it('cost is last-wins (cumulative), not summed', () => {
-    let s = initialTypedRun();
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
     s = reduceTypedRun(s, ev('r1', { type: 'cost', usdSpent: 0.02 }));
     s = reduceTypedRun(s, ev('r1', { type: 'cost', usdSpent: 0.05 }));
     expect(s.usdSpent).toBe(0.05);
   });
 
+  // S8 item 4 — the narrowed adoption rule: accept-time filtering alone was insufficient because
+  // ANY first event used to adopt a runId into a virgin strip.
+  it('a virgin strip refuses every event except run-accepted (foreign mid-flight events cannot seed it)', () => {
+    const virgin = initialTypedRun();
+    for (const e of [
+      { type: 'run-start', taskId: 't', flow: 'f', provider: 'p', stages: ['a'] },
+      { type: 'stage-start', name: 'a', index: 0, of: 1 },
+      { type: 'cost', usdSpent: 1 },
+      { type: 'run-end' },
+    ] as const) {
+      expect(reduceTypedRun(virgin, ev('rA', e as never))).toBe(virgin);
+    }
+    expect(reduceTypedRun(virgin, ev('rA', { type: 'run-accepted' })).runId).toBe('rA');
+  });
+
+  it("a run-accepted for ANOTHER project's repoPath does not adopt when the strip is scoped", () => {
+    const virgin = initialTypedRun();
+    const foreign = reduceTypedRun(virgin, ev('rA', { type: 'run-accepted', repoPath: '/other' }), '/mine');
+    expect(foreign).toBe(virgin);
+    const ours = reduceTypedRun(virgin, ev('rA', { type: 'run-accepted', repoPath: '/mine' }), '/mine');
+    expect(ours.runId).toBe('rA');
+  });
+
   it('is idempotent on replay (backlog + live overlap)', () => {
     const seq = [
+      ev('r1', { type: 'run-accepted' }),
       ev('r1', { type: 'run-start', taskId: 't1', flow: 'f', provider: 'p', stages: ['a'] }),
       ev('r1', { type: 'stage-start', name: 'a', index: 0, of: 1 }),
       ev('r1', { type: 'cost', usdSpent: 0.03 }),
@@ -40,7 +64,7 @@ describe('reduceTypedRun', () => {
   });
 
   it('drops payloads from a different runId', () => {
-    let s = initialTypedRun();
+    let s = reduceTypedRun(initialTypedRun(), ev('r1', { type: 'run-accepted' }));
     s = reduceTypedRun(s, ev('r1', { type: 'run-start', taskId: 't1', flow: 'f', provider: 'p', stages: ['a'] }));
     s = reduceTypedRun(s, ev('r2', { type: 'cost', usdSpent: 99 }));
     expect(s.usdSpent).toBe(0);
@@ -58,3 +82,21 @@ describe('reduceTypedRun', () => {
 });
 
 type TypedRunTerminal = ReturnType<typeof reduceTypedRun>['terminal'];
+
+// S7: run-accepted stays a desktop extension of the wire RunEvent — this pins the TYPE accepts it
+// (the runtime folds above already exercise it).
+import type { AppRunEvent } from './typedRunReducer';
+const _accepted: AppRunEvent = { type: 'run-accepted' };
+void _accepted;
+
+// r3 blocking: a foreign event must not MATERIALIZE an empty strip out of null — that hides the
+// foreign-run note and renders a blank panel (the bleed in blank form).
+it('foldLiveEvent keeps null null when the reducer declines to adopt', () => {
+  expect(foldLiveEvent(null, ev('rA', { type: 'stage-start', name: 'a', index: 0, of: 1 }), '/mine')).toBeNull();
+  expect(foldLiveEvent(null, ev('rA', { type: 'run-accepted', repoPath: '/other' }), '/mine')).toBeNull();
+  const adopted = foldLiveEvent(null, ev('rA', { type: 'run-accepted', repoPath: '/mine' }), '/mine');
+  expect(adopted?.runId).toBe('rA');
+  // and a non-null strip keeps folding normally
+  const stepped = foldLiveEvent(adopted, ev('rA', { type: 'cost', usdSpent: 1 }), '/mine');
+  expect(stepped?.usdSpent).toBe(1);
+});

@@ -24,6 +24,9 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
   listProviders: async () => ({ providers: [] }),
   readFlow: async () => ({ doc: { name: 'f', label: 'L', stages: [{ name: 'planner', overrides: {} }], loops: [] }, source: 'flow "f" {}' }),
   writeFlow: async () => ({ source: 'flow "f" {}' }),
+  deleteFlow: async () => ({}),
+  listTasks: async () => ({ tasks: [], capped: false }),
+  fetchSpec: async () => ({ spec: '# t' }),
   ...over,
 });
 
@@ -54,6 +57,31 @@ describe('runSidecar', () => {
     const { write, out } = collect();
     await runSidecar(lines(JSON.stringify({ id: 'x', method: 'nope' })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'x', error: { kind: 'bad-request' } });
+  });
+
+  it('dispatches deleteFlow through the validator (absolute repoPath + flow-file grammar)', async () => {
+    const { write, out } = collect();
+    let deleted: unknown = null;
+    const deps = stubDeps({
+      deleteFlow: async (params): Promise<Record<string, never>> => {
+        deleted = params;
+        return {};
+      },
+    });
+    await runSidecar(
+      lines(
+        JSON.stringify({ id: 'd1', method: 'deleteFlow', params: { repoPath: '/repo', file: 'x.hcl' } }),
+        JSON.stringify({ id: 'd2', method: 'deleteFlow', params: { repoPath: 'relative', file: 'x.hcl' } }),
+        JSON.stringify({ id: 'd3', method: 'deleteFlow', params: { repoPath: '/repo', file: '../evil.hcl' } }),
+      ),
+      write,
+      deps,
+    );
+    const parsed = out.map((l) => JSON.parse(l));
+    expect(parsed[0]).toMatchObject({ id: 'd1', result: {} });
+    expect(deleted).toEqual({ repoPath: '/repo', file: 'x.hcl' });
+    expect(parsed[1]).toMatchObject({ id: 'd2', error: { kind: 'bad-request' } });
+    expect(parsed[2]).toMatchObject({ id: 'd3', error: { kind: 'bad-request' } });
   });
 
   // S6 churn: provider is shape-checked only at the protocol boundary (repo customs are legal
