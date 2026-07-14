@@ -45,6 +45,8 @@ export type Command =
       provider?: ProviderName;
       /** Model for the tech-spec stage (e.g. a planner-tier model). */
       specModel?: string;
+      /** Override the tech-spec stage turn cap (default: techSpecStage's own default). Backs --max-turns. */
+      maxTurns?: number;
       /** Branch the spec worktree is cut from — the "baseline" Fable researches against (default: main). */
       baseBranch?: string;
       /** Write the spec to this local file instead of posting an issue comment (no trace on the tracker; pairs with `run --spec-file`). */
@@ -581,6 +583,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -967,7 +970,7 @@ Commands:
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+    --max-turns <n>            Override the implementer (or loop-v1 spec pass's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
     --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
@@ -1071,6 +1074,7 @@ Commands:
     --github <ref>          Issue ref (alternative to positional)
     --github-repo <o/r>     Required for bare issue numbers
     --spec-model <m>        Model for the tech-spec stage (e.g. a planner-tier model)
+    --max-turns <n>         Override the tech-spec stage turn cap (default: 30; opt-in, higher cost)
     --base <branch>         Branch to research against — the "baseline" the spec is written from (default: main)
     --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
     --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused

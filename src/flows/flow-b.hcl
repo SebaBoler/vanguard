@@ -5,7 +5,7 @@ flow "flow-b" {
     name = "planner"
     model = "opus"
     effort = "high"
-    max_turns = 10
+    max_turns = 15
     resume_previous = false
   }
 

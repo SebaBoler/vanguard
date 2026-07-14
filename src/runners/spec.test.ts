@@ -572,13 +572,14 @@ function fakeAgent(finalText: string): AgentProvider {
   };
 }
 
-/** Recording agent: captures the model field from the first run() call, returns a valid spec. */
-function recordingSpecAgent(captured: { model: string | undefined }): AgentProvider {
+/** Recording agent: captures the model + maxTurns of the first run() call, returns a valid spec. */
+function recordingSpecAgent(captured: { model?: string | undefined; maxTurns?: number | undefined }): AgentProvider {
   const finalText = 'Here is the plan <tech_spec>\n## Problem\nRetry 5xx.\n</tech_spec> <promise>COMPLETE</promise>';
   return {
     name: 'recording',
     async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
       captured.model = input.model;
+      captured.maxTurns = input.maxTurns;
       yield { text: finalText };
       return { finalText, turns: 1, sessionId: 's1' };
     },
@@ -739,5 +740,29 @@ describe('runSpecGenerator', () => {
 
     // explicit specModel always wins regardless of provider
     expect(await runWithDeps({ provider: 'zai', specModel: 'sonnet' })).toBe('sonnet');
+  });
+
+  it('threads deps.maxTurns into the tech-spec stage; defaults to 30 when unset', async () => {
+    const task = readyTask('ENG-21');
+
+    async function capturedMaxTurns(overrides: Partial<RunSpecGeneratorDeps>): Promise<number | undefined> {
+      const captured: { model?: string; maxTurns?: number } = {};
+      const { sandbox } = makeSandbox();
+      const deps: RunSpecGeneratorDeps = {
+        auth: { type: 'api', apiKey: 'x' } as never,
+        repoPath: repo,
+        fetcher: fakeFetcher({ [task.id]: task }, [task]),
+        sandboxFactory: () => sandbox,
+        agent: recordingSpecAgent(captured),
+        ...overrides,
+      };
+      await runSpecGenerator(task.id, deps);
+      return captured.maxTurns;
+    }
+
+    // --max-turns override must reach the tech-spec stage (fails if spec.ts drops the spread)
+    expect(await capturedMaxTurns({ maxTurns: 50 })).toBe(50);
+    // default when unset
+    expect(await capturedMaxTurns({})).toBe(30);
   });
 });
