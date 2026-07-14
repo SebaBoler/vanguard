@@ -140,10 +140,29 @@ describe('parseCli', () => {
     expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', 'x'], '/work')).toBe(false);
   });
 
-  it('returns an error for an unknown provider name', () => {
+  // S6 churn: run/watch/doctor --provider relaxes to the name grammar (repo customs are legal and
+  // only dispatch can read app.json). A grammar-VALID unknown name now parses through and fails at
+  // dispatch listing built-ins + customs; grammar-invalid names and every other command still fail
+  // right here. --review-provider stays closed-set everywhere.
+  it('parses a grammar-valid non-built-in provider through for run/watch/doctor (resolved at dispatch)', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work')).toMatchObject({
+      kind: 'run',
+      provider: 'gpt',
+    });
+    expect(parseCli(['watch', '--source', 'github', '--label', 'x', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'watch',
+      provider: 'my-proxy',
+    });
+  });
+
+  it('still rejects grammar-invalid providers, custom names on other commands, and unknown review-providers at parse', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'GPT'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('Unknown provider "gpt"'),
+      message: expect.stringContaining('Unknown provider "GPT"'),
+    });
+    expect(parseCli(['review-pr', '1', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('Unknown provider "my-proxy"'),
     });
     expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work')).toMatchObject({
       kind: 'error',

@@ -5,6 +5,8 @@ import type { RunIssueResult } from '../runners/source-adapter.js';
 import { reapContainers, dockerContainerLister, dockerContainerRemover, pruneWorktrees } from '../core/gc.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
+import { customEgressHosts } from '../agents/registry.js';
+import { loadProviderChoice } from './provider-choice.js';
 import { pickRunOptions } from '../runners/source-adapter.js';
 import type { RunLinearIssueDeps } from '../runners/linear.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
@@ -16,40 +18,46 @@ type RunCommand = Extract<Command, { kind: 'run' }>;
 
 /** Dispatch `vanguard run` to the right source runner, assembling deps from env + flags. */
 export async function runCommand(cmd: RunCommand): Promise<void> {
+  // S6: customs load + re-validate FIRST — before gc, auth, and (critically) startSandboxContext.
+  // The parse-time validateProviderChoice was skipped for a non-built-in --provider (sync parser
+  // can't read app.json); relying on selectAgents' internal validation instead would spin the
+  // enclave — and under --llm-proxy hand the custom's key to an Anthropic-upstream sidecar —
+  // before the directOnly/collision rejection fires.
+  const choice = await loadProviderChoice(cmd);
   if (cmd.gcBefore) {
     const reaped = await reapContainers(dockerContainerLister(), dockerContainerRemover());
     await pruneWorktrees(cmd.repoPath);
     console.log(`gc-before: reaped ${reaped.length} stale container(s), pruned worktrees.`);
   }
 
-  const auth = requireAuth(cmd);
+  const auth = agentAuthFromEnv(choice);
+  const extraEgressHosts = customEgressHosts(choice);
   const ctx = await startSandboxContext({
     egress: cmd.egress,
     llmProxy: cmd.llmProxy === true,
     ...(auth !== undefined ? { auth } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    ...(extraEgressHosts.length > 0 ? { extraEgressHosts } : {}),
   });
+
+  // The runners rebuild the choice from cmd fields, so the loaded customs must ride ON cmd —
+  // pickRunOptions copies field-by-field and would otherwise strip them before selectAgents.
+  const cmdWithCustoms: RunCommand =
+    choice.customProviders !== undefined ? { ...cmd, customProviders: choice.customProviders } : cmd;
 
   try {
     if (cmd.source === 'linear') {
-      await runLinear(cmd, auth, ctx.proxyUrl, ctx.network, ctx.llmProxy);
+      await runLinear(cmdWithCustoms, auth, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else if (cmd.source === 'project') {
-      await runProject(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
+      await runProject(cmdWithCustoms, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else if (cmd.source === 'gitlab') {
-      await runGitlab(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
+      await runGitlab(cmdWithCustoms, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     } else {
-      await runGithub(cmd, ctx.proxyUrl, ctx.network, ctx.llmProxy);
+      await runGithub(cmdWithCustoms, ctx.proxyUrl, ctx.network, ctx.llmProxy);
     }
   } finally {
     await ctx.destroy();
   }
-}
-
-function requireAuth(cmd: RunCommand): AgentAuth | undefined {
-  return agentAuthFromEnv({
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
-  });
 }
 
 export function linearDeps(
@@ -105,7 +113,7 @@ export async function runGithub(
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -127,7 +135,7 @@ export async function runGitlab(
   const projectFromRef = cmd.project === undefined && cmd.id.includes('#')
     ? cmd.id.split('#')[0]
     : undefined;
-  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project ?? projectFromRef, cmd.provider, cmd.reviewProvider);
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project ?? projectFromRef, cmd.provider, cmd.reviewProvider, cmd.customProviders);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -145,7 +153,7 @@ export async function runProject(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   const projectNumber = Number(cmd.id);
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;

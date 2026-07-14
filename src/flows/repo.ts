@@ -5,6 +5,7 @@ import type { PipelineStage } from '../pipeline/pipeline.js';
 import { emitFlowDoc } from './emit-doc.js';
 import { STAGE_LIBRARY } from './library.js';
 import { lowerFlow } from './lower.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { FlowDoc, LoopDecl, StageDecl, StageOverrides } from './types.js';
 
 /**
@@ -129,10 +130,14 @@ async function findDeclaring(name: string, repoPath: string): Promise<{ file: st
 }
 
 /** Resolve a repo flow to runnable stages, or undefined when no valid file declares the name. */
-export async function resolveRepoFlow(name: string, repoPath: string): Promise<PipelineStage[] | undefined> {
+export async function resolveRepoFlow(
+  name: string,
+  repoPath: string,
+  customProviders?: readonly CustomProviderEntry[],
+): Promise<PipelineStage[] | undefined> {
   const match = await findDeclaring(name, repoPath);
   if (match === undefined) return undefined;
-  return lowerFlow(match.doc, { repoPath });
+  return lowerFlow(match.doc, { repoPath, ...(customProviders !== undefined ? { customProviders } : {}) });
 }
 
 /** The unknown-flow error, listing built-ins + the repo's valid flow names. */

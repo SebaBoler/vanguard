@@ -10,7 +10,7 @@ import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import type { Task, SubTask } from '../tasks/fetcher.js';
-import type { ProviderName } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
@@ -106,8 +106,11 @@ export async function runLinearParent(
 }
 
 /** Read the run dependencies from the environment, throwing actionable errors when one is missing. */
-export function linearDepsFromEnv(provider?: ProviderName): RunLinearIssueDeps {
-  const auth = agentAuthFromEnv(provider !== undefined ? { provider } : {});
+export function linearDepsFromEnv(provider?: string, customProviders?: readonly CustomProviderEntry[]): RunLinearIssueDeps {
+  const auth = agentAuthFromEnv({
+    ...(provider !== undefined ? { provider } : {}),
+    ...(customProviders !== undefined ? { customProviders } : {}),
+  });
   const linearKey = process.env.LINEAR_API_KEY;
   if (linearKey === undefined || linearKey === '') {
     throw new Error('Set LINEAR_API_KEY so the in-sandbox linear CLI can read the issue.');

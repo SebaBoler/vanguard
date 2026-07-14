@@ -9,7 +9,6 @@ import { roundUsd } from './budget.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
-import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
 import type { RunEvent } from './events.js';
@@ -615,8 +614,8 @@ export function withStageFallback(
 }
 
 export interface ReviewPipelineDeps {
-  provider?: ProviderName;
-  reviewProvider?: ProviderName;
+  provider?: string;
+  reviewProvider?: string;
   providerModel?: string;
   reviewModel?: string;
   noSimplify?: boolean;

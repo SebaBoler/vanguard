@@ -49,6 +49,15 @@ describe('pickRunOptions', () => {
     });
   });
 
+  it('carries loaded customProviders through the copy — dropping this line strips a valid custom before selectAgents (S6)', () => {
+    const customs = [{ index: 0, name: 'my-proxy', spec: { name: 'my-proxy', baseUrl: 'https://x.example', keyEnv: 'K' } }];
+    expect(pickRunOptions({ provider: 'my-proxy', customProviders: customs })).toEqual({
+      provider: 'my-proxy',
+      customProviders: customs,
+    });
+    expect('customProviders' in pickRunOptions({})).toBe(false);
+  });
+
   it('copies maxTurns and maxRepairIterations when defined, omits when absent', () => {
     expect(pickRunOptions({ maxTurns: 80, maxRepairIterations: 5 })).toEqual({
       maxTurns: 80,

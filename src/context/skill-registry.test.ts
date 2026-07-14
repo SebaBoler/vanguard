@@ -396,6 +396,15 @@ describe('SkillRegistry.injectAll — cross-provider families', () => {
     expect(bodyTarget).toBeDefined();
   });
 
+  it("a custom provider ('custom:<name>', S6) lands in the claude family — customs drive the claude CLI", async () => {
+    const registry = await skillRegistryFromDirectory(dir);
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'custom:my-proxy');
+
+    expect(copies.find(([, s]) => s === '/home/agent/.claude/skills/myskill')).toBeDefined();
+    expect(copies.find(([, s]) => s.endsWith('/AGENTS.md'))).toBeUndefined();
+  });
+
   it('codex-impl / claude-review: injects into both AGENTS.md and ~/.claude/skills', async () => {
     const registry = await skillRegistryFromDirectory(dir);
     const { sandbox, copies } = makeSandbox();
