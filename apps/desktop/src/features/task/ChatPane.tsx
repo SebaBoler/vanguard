@@ -3,17 +3,29 @@ import { Button, Textarea } from '@/ui';
 import { ChatMessage } from './ChatMessage.js';
 import type { DocChatState } from './useDocChat.js';
 
-/** Sidebar chat: transcript + input + (when a proposal is pending) an accept/reject bar.
- * `disabled` freezes input entirely (archived/unreadable drafts, S10) while keeping the transcript. */
+/** Drawer conversation panel: transcript + composer (textarea, model selector, Send) + accept/
+ * reject bar when a proposal is pending. `disabled` freezes input entirely (archived drafts, S10)
+ * while keeping the transcript. */
 export function ChatPane({
   state,
   disabled = false,
+  model,
+  modelOptions,
+  defaultModel,
+  onModelChange,
   onSend,
   onAccept,
   onReject,
 }: {
   state: DocChatState;
   disabled?: boolean;
+  /** Per-conversation override; `undefined` ⇒ the app-wide default. */
+  model: string | undefined;
+  /** Distinct models found in the project's vanguard configuration. */
+  modelOptions: string[];
+  /** What "default" resolves to right now (shown in the selector). */
+  defaultModel: string;
+  onModelChange: (model: string | undefined) => void;
   onSend: (text: string) => void;
   onAccept: () => void;
   onReject: () => void;
@@ -45,18 +57,39 @@ export function ChatPane({
           </Button>
         </div>
       )}
-      <div className="flex gap-2">
+      <div className="rounded border border-border p-2">
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={disabled ? 'This draft is read-only.' : 'Ask for a plan…'}
+          placeholder={disabled ? 'This draft is read-only.' : 'Plan, scope, or refine this draft…'}
           rows={2}
-          className="flex-1"
+          className="w-full border-0 shadow-none focus-visible:ring-0"
           disabled={disabled}
         />
-        <Button onClick={send} disabled={state.busy || disabled}>
-          Send
-        </Button>
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <select
+            aria-label="chat model"
+            value={model ?? ''}
+            onChange={(e) => onModelChange(e.target.value === '' ? undefined : e.target.value)}
+            disabled={disabled || state.busy}
+            className="max-w-[60%] truncate bg-transparent font-mono text-xs text-muted-foreground outline-none"
+          >
+            <option value="">default · {defaultModel}</option>
+            {modelOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+            {model !== undefined && !modelOptions.includes(model) && (
+              // A persisted override no longer in the config must stay visible (and used) — a
+              // value-less <select> would silently RENDER "default" while sending the override.
+              <option value={model}>{model}</option>
+            )}
+          </select>
+          <Button onClick={send} disabled={state.busy || disabled || draft.trim() === ''}>
+            Send
+          </Button>
+        </div>
       </div>
     </div>
   );

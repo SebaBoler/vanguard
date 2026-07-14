@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { MessageSquare } from 'lucide-react';
 import { Button } from '@/ui';
 import { apiComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
@@ -6,6 +7,7 @@ import { relTime } from '../../time.js';
 import { DocEditor } from './DocEditor.js';
 import { ChatPane } from './ChatPane.js';
 import { CreateTaskDialog } from './CreateTaskDialog.js';
+import { TaskDrawer, type DrawerTab, type HistoryRow } from './TaskDrawer.js';
 import { titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
 import { reduceDocChat, initialDocChat } from './useDocChat.js';
 import { DraftWriter, draftLabel, emptyDraft, mintDraftId, parseDraft, type DraftData } from './draftStore.js';
@@ -18,22 +20,36 @@ const PLAN_PRESET =
   'propose changes to the document, return the ENTIRE revised document verbatim inside <doc>...</doc> ' +
   'tags (put any commentary OUTSIDE the tags). If you are only answering a question, omit the tags.';
 
-/** A sidebar entry: `data === undefined` ⇒ unreadable file — visible and deletable, never hidden. */
+/** One completion, fired after a conversation's first exchange, names the tab (handoff §3). */
+const TITLE_PRESET =
+  'Generate a short title (3 to 6 words) for this conversation. Reply with ONLY the title text — ' +
+  'no quotes, no trailing punctuation.';
+
+/** A known draft: `data === undefined` ⇒ unreadable file — listed and deletable, never openable. */
 interface DraftEntry {
   id: string;
   data?: DraftData;
 }
 
-// Session memory (S10 spec §3.2): re-entering the screen restores the draft the user was on;
-// only an explicit New Task click (nonce bump) forces a fresh one. Module-level because the
-// screen unmounts on every screen/project switch.
-const lastSelection = new Map<string, string>();
+// Session memory (handoff §2): re-entering the screen restores the open tabs, active tab and
+// drawer state; only an explicit New Task click (nonce bump) forces a fresh conversation.
+// Module-level because the screen unmounts on every screen/project switch.
+interface TabSession {
+  openTabs: string[];
+  activeId: string | null;
+  drawerOpen: boolean;
+  panel: 'chat' | 'history';
+}
+const sessions = new Map<string, TabSession>();
 const consumedNonce = { value: 0 };
 
 /**
- * The New Task screen (S10): drafts sidebar + markdown editor + chat. One draft = one JSON file
- * under `.vanguard/drafts/` — created lazily on the first non-empty edit or chat send, never on
- * click. Filing the draft as a task archives it in place.
+ * The New Task screen, tabbed-drawer shape (task-page handoff): full-page markdown editor, a
+ * header carrying the primary action, and a chat drawer whose tab strip holds one tab per open
+ * conversation. One conversation == one draft == one JSON file under `.vanguard/drafts/` —
+ * created lazily on the first non-empty edit or chat send, never on click. Filing the draft as a
+ * task archives it in place. All S10 persistence invariants (id-keyed, snapshot-only hand-offs)
+ * are carried over unchanged.
  */
 export function TaskDraftScreen({
   project,
@@ -44,17 +60,29 @@ export function TaskDraftScreen({
   freshNonce: number;
   onOpenBoard: () => void;
 }) {
+  // Captured ONCE per mount, before the session-store effect below can overwrite the map entry
+  // with this mount's initial (pre-restore) state.
+  const initialSession = useRef<TabSession | undefined>(sessions.get(project));
+
   const [entries, setEntries] = useState<DraftEntry[]>([]);
   const entriesRef = useRef<DraftEntry[]>([]);
   entriesRef.current = entries;
-  // null ⇒ a fresh, unsaved draft (no file on disk yet).
+  // null ⇒ a fresh, unsaved draft (no file on disk yet) — rendered as the ephemeral fresh tab.
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeIdRef = useRef<string | null>(null);
-  const [unreadable, setUnreadable] = useState(false);
+  const [openTabs, setOpenTabs] = useState<string[]>(initialSession.current?.openTabs ?? []);
+  const openTabsRef = useRef<string[]>(openTabs);
+  openTabsRef.current = openTabs;
+  const [drawerOpen, setDrawerOpen] = useState(initialSession.current?.drawerOpen ?? false);
+  const [panel, setPanel] = useState<'chat' | 'history'>(initialSession.current?.panel ?? 'chat');
+  // Ids with activity the user hasn't looked at: a reply/proposal that landed while the tab was
+  // unfocused or the drawer closed. Drives the tab dots and the header badge.
+  const [unseen, setUnseen] = useState<ReadonlySet<string>>(new Set());
   const [body, setBody] = useState('');
   const [chat, dispatch] = useReducer(reduceDocChat, undefined, initialDocChat);
   const [archived, setArchived] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
+  const [model, setModel] = useState<string | undefined>(undefined);
   // The authoritative persisted shape for the OPEN draft. A ref, not state: the mint and the
   // first write must see the value the keystroke that triggered them produced — synchronously.
   // Every hand-off to the writer is a SNAPSHOT (`{ ...draftRef.current }`), never the ref itself:
@@ -72,17 +100,21 @@ export function TaskDraftScreen({
   }
   const writer = writerRef.current.writer;
 
-  // Chat / create guards, carried from DocsScreen (S3/S4 review-hardened) — but keyed by draft id
-  // (review #349 r1): a selection-scoped ref is cleared by a switch, so leaving and returning to a
-  // draft mid-completion would let a second send fire and persist a duplicate assistant turn.
+  // Chat / create guards (S3/S4 review-hardened), keyed by draft id (review #349 r1): a
+  // selection-scoped ref is cleared by a switch, so leaving and returning to a draft
+  // mid-completion would let a second send fire and persist a duplicate assistant turn.
+  // `pendingIds` mirrors the ref into state so tab dots and the header badge re-render.
   const pendingTurns = useRef(new Set<string>());
-  // Holds the draft id being filed. NOT cleared on draft switch: persistence is id-keyed now, and
-  // a stale create settling must never disarm a newer one — it releases only its own id.
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+  // Holds the draft id being filed. NOT cleared on draft switch: persistence is id-keyed, and a
+  // stale create settling must never disarm a newer one — it releases only its own id.
   const createInFlight = useRef<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [source, setSource] = useState<string | undefined>(undefined);
+  const [defaultModel, setDefaultModel] = useState(DEFAULT_CHAT_MODEL);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [deleteArm, setDeleteArm] = useState<string | null>(null);
   // Ids the user deleted THIS session. The archive step needs to tell a deliberate delete (silent)
   // from a transient read/parse failure (review #349 r7): both surface as a non-'written' update,
@@ -91,21 +123,56 @@ export function TaskDraftScreen({
 
   useEffect(() => {
     void readAppConfig(project)
-      .then((cfg) => setSource(isTransport(cfg.source ?? 'github') ? (cfg.source ?? 'github') : undefined))
-      .catch(() => setSource(undefined));
+      .then((cfg) => {
+        setSource(isTransport(cfg.source ?? 'github') ? (cfg.source ?? 'github') : undefined);
+        const resolved = cfg.chatModel ?? DEFAULT_CHAT_MODEL;
+        setDefaultModel(resolved);
+        // Every distinct model the vanguard configuration knows about (handoff §4) — the resolved
+        // default is presented by the "default" option, so it is excluded here.
+        const models = (cfg.customProviders ?? [])
+          .map((p) => p.model)
+          .filter((m): m is string => typeof m === 'string' && m.trim() !== '');
+        setModelOptions([...new Set(models)].filter((m) => m !== resolved));
+      })
+      .catch(() => {
+        setSource(undefined);
+        setDefaultModel(DEFAULT_CHAT_MODEL);
+        setModelOptions([]);
+      });
   }, [project]);
 
-  /** Push the open draft's current shape into the sidebar cache (labels, archived section). */
+  // Persist the tab session for this project — but only once the mount has decided its initial
+  // selection, so the pre-restore render can't clobber the remembered session.
+  const sessionReady = useRef(false);
+  useEffect(() => {
+    if (!sessionReady.current) return;
+    sessions.set(project, { openTabs, activeId, drawerOpen, panel });
+  }, [project, openTabs, activeId, drawerOpen, panel]);
+
+  const markUnseen = (id: string): void => {
+    setUnseen((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
+  const clearUnseen = (id: string): void => {
+    setUnseen((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  /** Push the open draft's current shape into the entries cache (labels, History, tab titles). */
   const syncEntry = (id: string): void => {
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, data: { ...draftRef.current } } : e)));
   };
 
   /**
-   * THE switch routine (spec §3.3): every path — sidebar click, New Task nonce, delete fallback,
-   * duplicate — goes through here. Flushes the pending save of the draft being left (a deleted
-   * draft's timer was already discarded, so a delete can't resurrect), resets the in-flight chat
-   * slot and create UI, and loads the target synchronously from the sidebar cache (the app is the
-   * only writer of these files, so the cache is authoritative — no async read to race).
+   * THE switch routine (handoff §6): every focus change — tab click, History row, `[+]`, close,
+   * delete fallback, duplicate, New Task nonce — goes through here. Flushes the pending save of
+   * the draft being left (a deleted draft's timer was already discarded, so a delete can't
+   * resurrect), resets the create UI, ensures the target has a tab, and loads it synchronously
+   * from the entries cache (the app is the only writer of these files — no async read to race).
+   * Never called with an unreadable id: those rows are delete-only and cannot open.
    */
   const switchTo = (id: string | null): void => {
     void writer.flush();
@@ -117,32 +184,28 @@ export function TaskDraftScreen({
     activeIdRef.current = id;
     setActiveId(id);
     if (id === null) {
-      lastSelection.delete(project);
       draftRef.current = emptyDraft();
-      setUnreadable(false);
       setBody('');
       setArchived(false);
       setCreated(null);
+      setModel(undefined);
       dispatch({ type: 'reset' });
       return;
     }
-    lastSelection.set(project, id);
+    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    clearUnseen(id);
     const entry = entriesRef.current.find((e) => e.id === id);
     if (entry?.data === undefined) {
-      // Unreadable: selectable only so it can be deleted.
-      draftRef.current = emptyDraft();
-      setUnreadable(true);
-      setBody('');
-      setArchived(false);
-      setCreated(null);
-      dispatch({ type: 'reset' });
+      // Defensive only (call sites filter unreadable ids): fall back to a fresh draft rather
+      // than render a file we cannot trust.
+      switchRef.current(null);
       return;
     }
     draftRef.current = { ...entry.data };
-    setUnreadable(false);
     setBody(entry.data.body);
     setArchived(entry.data.archived);
     setCreated(entry.data.created ?? null);
+    setModel(entry.data.chatModel);
     // Re-present as busy when this draft's completion is still in flight — its reply will land
     // through the id-keyed path, and a second send meanwhile must stay blocked.
     dispatch({ type: 'load', messages: entry.data.chat, busy: pendingTurns.current.has(id) });
@@ -150,8 +213,9 @@ export function TaskDraftScreen({
   const switchRef = useRef(switchTo);
   switchRef.current = switchTo;
 
-  // Load the sidebar once per mount, then pick the initial selection: a fresh draft when this
-  // mount was caused by a New Task click (unconsumed nonce), the remembered draft otherwise.
+  // Load the drafts once per mount, then pick the initial selection: a fresh conversation when
+  // this mount was caused by a New Task click (unconsumed nonce), the remembered session
+  // otherwise. Open tabs are filtered to drafts that still exist and still parse.
   useEffect(() => {
     let alive = true;
     void listDrafts(project)
@@ -165,12 +229,15 @@ export function TaskDraftScreen({
         );
         if (!alive) return;
         // MERGE, don't replace (review #349 r7): the editor is live before this resolves, and a
-        // draft minted in that window is not in the disk snapshot — replacing would drop it from
-        // the sidebar and the switch below would yank it out from under the user's typing.
+        // draft minted in that window is not in the disk snapshot — replacing would drop it and
+        // the switch below would yank it out from under the user's typing.
         const known = new Set(loaded.map((e) => e.id));
         const merged = [...entriesRef.current.filter((e) => !known.has(e.id)), ...loaded];
         setEntries(merged);
         entriesRef.current = merged;
+        const readable = new Set(merged.filter((e) => e.data !== undefined).map((e) => e.id));
+        setOpenTabs((prev) => prev.filter((id) => readable.has(id)));
+        sessionReady.current = true;
         if (activeIdRef.current !== null) {
           // The user already minted a draft this mount — their selection wins; just consume the
           // nonce so a later prop change still resets.
@@ -180,9 +247,11 @@ export function TaskDraftScreen({
         if (freshNonce !== consumedNonce.value) {
           consumedNonce.value = freshNonce;
           switchRef.current(null);
+          setDrawerOpen(true);
+          setPanel('chat');
         } else {
-          const remembered = lastSelection.get(project);
-          switchRef.current(remembered !== undefined && merged.some((e) => e.id === remembered) ? remembered : null);
+          const remembered = initialSession.current?.activeId ?? null;
+          switchRef.current(remembered !== null && readable.has(remembered) ? remembered : null);
         }
       })
       .catch(() => {});
@@ -192,11 +261,9 @@ export function TaskDraftScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
-  // A New Task click while already mounted resets to a fresh draft — through the switch routine.
-  // Skipped on the initial mount (review #349 r6): the async loader above is the SOLE nonce
-  // authority there, so two consumers never race on consumedNonce. (Even before this gate the
-  // race was benign — switchTo(null) deletes lastSelection[project], so the loader's else-branch
-  // had nothing to restore — but that rested on a non-obvious side effect; this doesn't.)
+  // A New Task click while already mounted resets to a fresh conversation — through the switch
+  // routine — and presents the drawer. Skipped on the initial mount (review #349 r6): the async
+  // loader above is the SOLE nonce authority there, so two consumers never race on consumedNonce.
   const nonceMounted = useRef(false);
   useEffect(() => {
     if (!nonceMounted.current) {
@@ -206,10 +273,18 @@ export function TaskDraftScreen({
     if (freshNonce !== consumedNonce.value) {
       consumedNonce.value = freshNonce;
       switchRef.current(null);
+      setDrawerOpen(true);
+      setPanel('chat');
     }
   }, [freshNonce]);
 
-  // Close-flush (spec §3.3): window close awaits pending writes through the nav-guard flush hook.
+  // Looking at the active conversation consumes its unseen mark.
+  useEffect(() => {
+    if (drawerOpen && panel === 'chat' && activeId !== null) clearUnseen(activeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerOpen, panel, activeId]);
+
+  // Close-flush (S10): window close awaits pending writes through the nav-guard flush hook.
   // Screen/project switches don't need it — the unmount flush's invoke outlives the component in
   // a living webview.
   const navGuard = useNavGuardRegistry();
@@ -230,34 +305,120 @@ export function TaskDraftScreen({
     const id = mintDraftId();
     activeIdRef.current = id;
     setActiveId(id);
-    lastSelection.set(project, id);
+    sessionReady.current = true;
+    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setEntries((prev) => [{ id, data: { ...draftRef.current } }, ...prev]);
     return id;
   };
 
   const onBodyChange = (next: string): void => {
-    if (archived || unreadable) return;
+    if (archived) return;
     setBody(next);
     draftRef.current = { ...draftRef.current, body: next };
-    // Lazy creation: N clicks on New Task write zero files; the first non-empty edit mints one.
+    // Lazy creation: N clicks on New Task / `[+]` write zero files; the first non-empty edit
+    // mints one.
     if (activeIdRef.current === null && next === '') return;
     const id = ensureId();
     syncEntry(id);
     writer.schedule(id, { ...draftRef.current });
   };
 
+  const onModelChange = (next: string | undefined): void => {
+    if (archived) return;
+    setModel(next);
+    draftRef.current = { ...draftRef.current, chatModel: next };
+    // A model choice alone does not mint a file (handoff §4) — it rides draftRef until the first
+    // edit/send carries it along.
+    const id = activeIdRef.current;
+    if (id === null) return;
+    syncEntry(id);
+    writer.schedule(id, { ...draftRef.current });
+  };
+
+  /** Inline tab rename (handoff §3). Empty name clears the override back to the derived label. */
+  const rename = (id: string, raw: string): void => {
+    const name = raw.trim().slice(0, 60);
+    if (id === activeIdRef.current) {
+      draftRef.current = { ...draftRef.current, name: name === '' ? undefined : name };
+      syncEntry(id);
+      void writer.writeNow(id, { ...draftRef.current });
+      return;
+    }
+    // Inactive tab: the file is authoritative (its debounce was flushed on switch-away).
+    void writer
+      .update(id, (d) => ({ ...d, name: name === '' ? undefined : name }))
+      .then((outcome) => {
+        if (outcome !== 'written') return;
+        setEntries((prev) =>
+          prev.map((e) =>
+            e.id === id && e.data !== undefined
+              ? { ...e, data: { ...e.data, name: name === '' ? undefined : name } }
+              : e,
+          ),
+        );
+      });
+  };
+
+  /**
+   * LLM auto-title after the first exchange (handoff §3). Id-keyed and rename-safe: the active
+   * path re-checks `name` on the live draft and writes through `writeNow` (superseding any armed
+   * body debounce, which would otherwise land later WITHOUT the name and erase it); the inactive
+   * path re-checks inside the read-modify-write, so a user rename that lands first wins. Failure
+   * is silent — the derived label stands.
+   */
+  const generateTitle = (id: string, userText: string, reply: string, titleModel: string): void => {
+    void apiComplete(project, {
+      system: TITLE_PRESET,
+      messages: [{ role: 'user', content: `${userText}\n\n${reply}`.slice(0, 4000) }],
+      model: titleModel,
+    })
+      .then((res) => {
+        const title = res.text
+          ?.trim()
+          .replace(/\s+/g, ' ')
+          .replace(/^["'`]+|["'`.]+$/g, '')
+          .slice(0, 60);
+        if (title === undefined || title === '' || res.error !== undefined) return;
+        if (id === activeIdRef.current) {
+          if (draftRef.current.name !== undefined) return;
+          draftRef.current = { ...draftRef.current, name: title };
+          syncEntry(id);
+          void writer.writeNow(id, { ...draftRef.current });
+          return;
+        }
+        void writer
+          .update(id, (d) => (d.name === undefined ? { ...d, name: title } : d))
+          .then((outcome) => {
+            if (outcome !== 'written') return;
+            setEntries((prev) =>
+              prev.map((e) =>
+                e.id === id && e.data !== undefined && e.data.name === undefined
+                  ? { ...e, data: { ...e.data, name: title } }
+                  : e,
+              ),
+            );
+          });
+      })
+      .catch(() => {});
+  };
+
   const send = (text: string): void => {
-    if (archived || unreadable) return;
+    if (archived) return;
     // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
     // draft switch cannot clear another draft's slot.
     if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return;
     const id = ensureId();
     pendingTurns.current.add(id);
+    setPendingIds(new Set(pendingTurns.current));
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
-    // Snapshot the body SYNCHRONOUSLY, like apiMessages (review #349 r5 blocking): the .then below
-    // runs after an IPC round-trip, and a draft switch in that window repoints draftRef — reading
-    // it late would send the newly opened draft's body (possibly secrets) as this turn's <doc>.
+    // Snapshot body AND model SYNCHRONOUSLY, like apiMessages (review #349 r5 blocking): the
+    // .then below runs after an IPC round-trip, and a draft switch in that window repoints
+    // draftRef — reading it late would send the newly opened draft's body (possibly secrets) as
+    // this turn's <doc>, or its model as this turn's model.
     const bodyAtSend = draftRef.current.body;
+    const modelAtSend = draftRef.current.chatModel;
+    // First exchange of an unnamed conversation ⇒ auto-title once the reply lands (handoff §3).
+    const wantsTitle = draftRef.current.chat.length === 0 && draftRef.current.name === undefined;
     dispatch({ type: 'send', text });
     draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
     syncEntry(id);
@@ -268,10 +429,10 @@ export function TaskDraftScreen({
         apiComplete(project, {
           system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
           messages: apiMessages,
-          model: cfg.chatModel ?? DEFAULT_CHAT_MODEL,
-        }),
+          model: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL,
+        }).then((res) => ({ res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL })),
       )
-      .then((res) => {
+      .then(({ res, resolvedModel }) => {
         if (res.error !== undefined) {
           if (id === activeIdRef.current) dispatch({ type: 'fail', message: res.error.message });
           return;
@@ -282,10 +443,12 @@ export function TaskDraftScreen({
           draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'assistant', content: reply }] };
           syncEntry(id);
           void writer.writeNow(id, { ...draftRef.current });
+          // The reply arrived where the user may not be looking — surface it on the tab/badge.
+          markUnseen(id);
         } else {
-          // Late reply after a draft switch: dropped from the UI (the gen rule), but appended to
-          // the file it was issued for — a persisted transcript must not end on a dangling user
-          // turn. `update` skips a deleted file, so this can never resurrect one.
+          // Late reply after a draft switch: dropped from the visible transcript (the gen rule),
+          // but appended to the file it was issued for — a persisted transcript must not end on a
+          // dangling user turn. `update` skips a deleted file, so this can never resurrect one.
           void writer.update(id, (d) => ({ ...d, chat: [...d.chat, { role: 'assistant', content: reply }] }));
           setEntries((prev) =>
             prev.map((e) =>
@@ -294,13 +457,16 @@ export function TaskDraftScreen({
                 : e,
             ),
           );
+          markUnseen(id);
         }
+        if (wantsTitle) generateTitle(id, text, reply, resolvedModel);
       })
       .catch((err: unknown) => {
         if (id === activeIdRef.current) dispatch({ type: 'fail', message: String(err) });
       })
       .finally(() => {
         pendingTurns.current.delete(id);
+        setPendingIds(new Set(pendingTurns.current));
       });
   };
 
@@ -372,10 +538,27 @@ export function TaskDraftScreen({
       });
   };
 
+  /** Close a tab: UI-only — the draft file is untouched (handoff §2). */
+  const closeTab = (id: string): void => {
+    const tabs = openTabsRef.current;
+    const idx = tabs.indexOf(id);
+    const next = tabs.filter((t) => t !== id);
+    setOpenTabs(next);
+    clearUnseen(id);
+    if (id === activeIdRef.current) {
+      // Focus the left neighbor, else the first remaining tab, else the fresh state. switchTo
+      // flushes the closing draft's pending save.
+      const target = idx > 0 ? (next[idx - 1] ?? null) : (next[0] ?? null);
+      switchTo(target);
+    }
+  };
+
   const removeDraft = (id: string): void => {
     setDeleteArm(null);
     deletedIds.current.add(id);
     setEntries((prev) => prev.filter((e) => e.id !== id));
+    setOpenTabs((prev) => prev.filter((t) => t !== id));
+    clearUnseen(id);
     // deleteNow discards the pending debounce first and queues after any in-flight write — the
     // delete wins; the file cannot resurrect (spec G2).
     void writer.deleteNow(id);
@@ -387,160 +570,180 @@ export function TaskDraftScreen({
     const id = mintDraftId();
     activeIdRef.current = id;
     setActiveId(id);
-    lastSelection.set(project, id);
-    // Stamped here too (not just at write): the sidebar row renders this copy's time immediately.
-    draftRef.current = { body: src.body, chat: [...src.chat], archived: false, updatedAt: new Date().toISOString() };
+    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    // Stamped here too (not just at write): the History row renders this copy's time immediately.
+    draftRef.current = {
+      body: src.body,
+      chat: [...src.chat],
+      archived: false,
+      ...(src.chatModel !== undefined ? { chatModel: src.chatModel } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     setBody(src.body);
+    setModel(src.chatModel);
     dispatch({ type: 'load', messages: src.chat });
     setEntries((prev) => [{ id, data: { ...draftRef.current } }, ...prev]);
     void writer.writeNow(id, { ...draftRef.current });
   };
 
-  const rowLabel = useCallback((e: DraftEntry): string => {
-    return e.data === undefined ? `${e.id} (unreadable)` : draftLabel(e.data);
-  }, []);
-  const rowTime = (e: DraftEntry): string | null => {
+  const entryLabel = (e: DraftEntry): string => (e.data === undefined ? `${e.id} (unreadable)` : draftLabel(e.data));
+
+  const rows: HistoryRow[] = entries.map((e) => {
     const ms = e.data !== undefined ? Date.parse(e.data.updatedAt) : NaN;
-    return Number.isNaN(ms) ? null : relTime(ms);
-  };
+    return {
+      id: e.id,
+      label: entryLabel(e),
+      time: Number.isNaN(ms) ? null : relTime(ms),
+      unreadable: e.data === undefined,
+      archived: e.data?.archived === true,
+    };
+  });
 
-  const activeDrafts = entries.filter((e) => e.data === undefined || !e.data.archived);
-  const archivedDrafts = entries.filter((e) => e.data?.archived === true);
+  const tabs: DrawerTab[] = openTabs.flatMap((id) => {
+    const e = entriesRef.current.find((en) => en.id === id);
+    if (e?.data === undefined) return [];
+    return [
+      {
+        id,
+        label: draftLabel(e.data),
+        dot: pendingIds.has(id) || unseen.has(id),
+        archived: e.data.archived,
+      },
+    ];
+  });
 
-  const draftRow = (e: DraftEntry): React.ReactElement => (
-    <div key={e.id} className="group relative">
-      <button
-        onClick={() => {
-          if (e.id !== activeId) switchTo(e.id);
-        }}
-        className={`block w-full truncate rounded px-2 py-1 text-left text-sm ${e.id === activeId ? 'bg-muted/40' : 'hover:bg-muted/20'}`}
-      >
-        <span className={e.data === undefined ? 'text-muted-foreground' : ''}>{rowLabel(e)}</span>
-        {rowTime(e) !== null && <span className="ml-1 text-[11px] text-muted-foreground">{rowTime(e)}</span>}
-      </button>
-      {deleteArm === e.id ? (
-        <span className="absolute right-1 top-1 flex gap-1 rounded bg-background px-1 text-xs shadow">
-          <button className="text-destructive" onClick={() => removeDraft(e.id)}>
-            delete
-          </button>
-          <button className="text-muted-foreground" onClick={() => setDeleteArm(null)}>
-            keep
-          </button>
-        </span>
-      ) : (
-        <button
-          aria-label={`delete ${rowLabel(e)}`}
-          onClick={() => setDeleteArm(e.id)}
-          className="absolute right-1 top-1 hidden rounded px-1 text-xs text-muted-foreground hover:text-destructive group-hover:block"
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
+  const headerLabel = activeId === null && body === '' && chat.messages.length === 0 ? 'New task…' : draftLabel(draftRef.current);
+  const updatedMs = Date.parse(draftRef.current.updatedAt);
+  const activity = openTabs.some((id) => pendingIds.has(id) || unseen.has(id));
+
+  const validation =
+    source === undefined
+      ? "Can't read the task source from app.json — set it in Settings."
+      : titleTooLong
+        ? `Heading is too long to use as a title (max ${MAX_TITLE_BYTES} bytes).`
+        : tooBig
+          ? `Too long to file (${bodyBytes} / ${MAX_BODY_BYTES} bytes).`
+          : docTitle === undefined
+            ? 'Add a `# heading` to name the task.'
+            : null;
 
   return (
-    <div className="flex h-full gap-3">
-      <div className="w-56 shrink-0 space-y-1 overflow-auto border-r border-border pr-2">
-        <Button onClick={() => switchTo(null)} className="w-full">
-          New draft
-        </Button>
-        {activeId === null && (
-          <div className="rounded bg-muted/40 px-2 py-1 text-sm text-muted-foreground">New task…</div>
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 items-center gap-3 border-b border-border pb-2">
+        <h1 className="truncate text-lg font-semibold">{headerLabel}</h1>
+        {archived && created !== null && (
+          <a
+            href={created.url}
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-xs text-primary"
+          >
+            filed as #{created.id}
+          </a>
         )}
-        {activeDrafts.map(draftRow)}
-        {archivedDrafts.length > 0 && (
-          <>
-            <div className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Archived
-            </div>
-            {archivedDrafts.map(draftRow)}
-          </>
-        )}
-      </div>
-      <div className="flex-1" onBlur={() => void writer.flush()}>
-        {unreadable ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            This draft file could not be read — it can only be deleted.
-          </p>
-        ) : (
-          <DocEditor
-            value={body}
-            onChange={onBodyChange}
-            // confirming/creating too (review #349 r4): a keystroke while the create is in flight
-            // would arm an archived:false debounce that lands AFTER the archive write.
-            readOnly={chat.pending !== undefined || archived || confirming || creating}
-          />
-        )}
-      </div>
-      <div className="flex w-80 shrink-0 flex-col gap-2 border-l border-border pl-3">
-        <div className="shrink-0">
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {!Number.isNaN(updatedMs) && relTime(updatedMs)}
+          {archived && ' · archived'}
+        </span>
+        {createError !== null && <span className="truncate text-xs text-destructive">{createError}</span>}
+        {saveError !== null && <span className="truncate text-xs text-destructive">{saveError}</span>}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {archived && created !== null ? (
-            <div className="space-y-2">
-              <p className="truncate text-sm">
-                Filed as{' '}
-                <a href={created.url} target="_blank" rel="noreferrer" className="underline">
-                  {created.id}
-                </a>
-              </p>
-              <div className="flex gap-2">
-                <Button onClick={onOpenBoard} className="flex-1">
-                  Open board
-                </Button>
-                <Button variant="outlined" color="secondary" onClick={() => duplicate(draftRef.current)}>
-                  Duplicate
-                </Button>
-              </div>
-            </div>
+            <>
+              <Button variant="outlined" color="secondary" onClick={onOpenBoard}>
+                Open board
+              </Button>
+              <Button variant="outlined" color="secondary" onClick={() => duplicate(draftRef.current)}>
+                Duplicate
+              </Button>
+            </>
           ) : (
-            !unreadable && (
-              <>
-                <Button
-                  onClick={() => setConfirming(true)}
-                  disabled={
-                    docTitle === undefined ||
-                    tooBig ||
-                    titleTooLong ||
-                    source === undefined ||
-                    chat.pending !== undefined ||
-                    archived
-                  }
-                  className="w-full"
-                >
-                  Create task
-                </Button>
-                {source === undefined && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Can&apos;t read the task source from <code>app.json</code> — set it in Settings.
-                  </p>
-                )}
-                {titleTooLong && (
-                  <p className="mt-1 text-xs text-destructive">
-                    Heading is too long to use as a title (max {MAX_TITLE_BYTES} bytes).
-                  </p>
-                )}
-                {tooBig && (
-                  <p className="mt-1 text-xs text-destructive">
-                    Too long to file ({bodyBytes} / {MAX_BODY_BYTES} bytes).
-                  </p>
-                )}
-                {docTitle === undefined && (
-                  <p className="mt-1 text-xs text-muted-foreground">Add a `# heading` to name the task.</p>
-                )}
-              </>
-            )
+            <Button
+              onClick={() => setConfirming(true)}
+              disabled={
+                docTitle === undefined ||
+                tooBig ||
+                titleTooLong ||
+                source === undefined ||
+                chat.pending !== undefined ||
+                archived
+              }
+            >
+              Create task
+            </Button>
           )}
-          {createError !== null && <p className="mt-1 text-xs text-destructive">{createError}</p>}
-          {saveError !== null && <p className="mt-1 text-xs text-destructive">{saveError}</p>}
+          <Button
+            variant="outlined"
+            color="secondary"
+            aria-expanded={drawerOpen}
+            aria-label="toggle chat drawer"
+            onClick={() => setDrawerOpen((v) => !v)}
+            className="relative"
+          >
+            <MessageSquare size={14} className="mr-1" />
+            Chat
+            {!drawerOpen && activity && (
+              <span aria-label="chat activity" className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-primary" />
+            )}
+          </Button>
         </div>
-        <div className="min-h-0 flex-1">
-          <ChatPane
-            state={chat}
-            disabled={archived || unreadable}
-            onSend={send}
-            onAccept={accept}
-            onReject={() => dispatch({ type: 'reject' })}
-          />
+      </div>
+      {!archived && validation !== null && (body !== '' || activeId !== null) && (
+        <p className="shrink-0 pt-1 text-xs text-muted-foreground">{validation}</p>
+      )}
+
+      <div className="flex min-h-0 flex-1 gap-3 pt-3">
+        <div className="min-w-0 flex-1" onBlur={() => void writer.flush()}>
+          <div className="mx-auto h-full max-w-3xl">
+            <DocEditor
+              value={body}
+              onChange={onBodyChange}
+              // confirming/creating too (review #349 r4): a keystroke while the create is in
+              // flight would arm an archived:false debounce that lands AFTER the archive write.
+              readOnly={chat.pending !== undefined || archived || confirming || creating}
+            />
+          </div>
+        </div>
+        {/* Hidden, not unmounted: closing the drawer is visibility only (handoff §6) — the
+            transcript scroll position and any unsent composer text must survive a toggle. */}
+        <div className={drawerOpen ? 'flex min-h-0' : 'hidden'}>
+          <TaskDrawer
+            panel={panel}
+            tabs={tabs}
+            activeId={activeId}
+            rows={rows}
+            deleteArm={deleteArm}
+            onShowHistory={() => setPanel('history')}
+            onSelectTab={(id) => {
+              setPanel('chat');
+              if (id !== activeIdRef.current) switchTo(id);
+              else clearUnseen(id);
+            }}
+            onCloseTab={closeTab}
+            onNewTab={() => {
+              setPanel('chat');
+              if (activeIdRef.current !== null) switchTo(null);
+            }}
+            onRename={rename}
+            onOpenRow={(id) => {
+              setPanel('chat');
+              if (id !== activeIdRef.current) switchTo(id);
+            }}
+            onArmDelete={setDeleteArm}
+            onDelete={removeDraft}
+          >
+            <ChatPane
+              state={chat}
+              disabled={archived}
+              model={model}
+              modelOptions={modelOptions}
+              defaultModel={defaultModel}
+              onModelChange={onModelChange}
+              onSend={send}
+              onAccept={accept}
+              onReject={() => dispatch({ type: 'reject' })}
+            />
+          </TaskDrawer>
         </div>
       </div>
 
