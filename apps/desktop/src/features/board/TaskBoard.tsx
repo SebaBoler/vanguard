@@ -1,4 +1,5 @@
-import { Card, cn } from '@/ui';
+import { Button, Card, cn } from '@/ui';
+import { FilePlus } from 'lucide-react';
 import { listTasks } from '../../ipc';
 import { useAsync } from '../../hooks';
 
@@ -24,15 +25,36 @@ const COLUMNS: Column[] = [
   { key: 'done', label: 'Done', dot: 'bg-emerald-500', pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', lane: 'bg-emerald-500/[0.06]', cardHover: 'hover:border-emerald-500' },
 ];
 
-export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask: (taskId: string) => void }) {
+export function TaskBoard({
+  project,
+  onOpenTask,
+  onNewTask,
+}: {
+  project: string;
+  onOpenTask: (taskId: string) => void;
+  onNewTask: () => void;
+}) {
   const { data, error, loading } = useAsync(() => listTasks(project), [project]);
   const tasks = data?.tasks;
+
+  // The board is where work starts (S10): authoring a task lives one click away even when the
+  // list itself failed to load.
+  const header = (
+    <div className="mb-2 flex shrink-0 items-center">
+      <Button className="ml-auto" onClick={onNewTask} startIcon={<FilePlus className="size-4" />}>
+        New Task
+      </Button>
+    </div>
+  );
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading tasks…</div>;
   if (error) {
     return (
-      <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-        No task board. {error}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {header}
+        <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          No task board. {error}
+        </div>
       </div>
     );
   }
@@ -42,6 +64,7 @@ export function TaskBoard({ project, onOpenTask }: { project: string; onOpenTask
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {header}
       {capped && (
         <div className="mb-2 shrink-0 text-xs text-muted-foreground">
           Showing the first {tasks?.length ?? 0} tasks — narrow with a label filter in Settings to see the rest.

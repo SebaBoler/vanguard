@@ -22,7 +22,13 @@ pub fn start(app: AppHandle, state: &WatchState, repo_path: String) -> notify::R
 
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if res.is_ok() {
+        if let Ok(event) = res {
+            // Draft autosaves (S10) land under `.vanguard/drafts/` at typing cadence, and nothing
+            // the watcher's consumers show (runs list, active runs) derives from them — forwarding
+            // those events would drive a refresh loop for as long as the user types.
+            if !event.paths.is_empty() && event.paths.iter().all(|p| is_draft_path(p)) {
+                return;
+            }
             // Sender may be gone if the debounce thread exited; ignore.
             let _ = tx.send(());
         }
@@ -55,7 +61,34 @@ pub fn start(app: AppHandle, state: &WatchState, repo_path: String) -> notify::R
     Ok(())
 }
 
+/// True for paths under `<repo>/.vanguard/drafts/` — matched structurally (adjacent components)
+/// so a repo directory that happens to be NAMED `drafts` elsewhere is not filtered.
+fn is_draft_path(p: &Path) -> bool {
+    let mut comps = p.components();
+    while let Some(c) = comps.next() {
+        if c.as_os_str() == ".vanguard" {
+            return comps.next().is_some_and(|n| n.as_os_str() == "drafts");
+        }
+    }
+    false
+}
+
 /// Stop watching a repo (dropping the watcher ends its debounce thread).
 pub fn stop(state: &WatchState, repo_path: &str) {
     state.0.lock().unwrap().remove(repo_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn draft_paths_are_filtered_structurally() {
+        assert!(is_draft_path(Path::new("/r/.vanguard/drafts/draft-a.json")));
+        assert!(is_draft_path(Path::new("/r/.vanguard/drafts/.gitignore")));
+        assert!(!is_draft_path(Path::new("/r/.vanguard/runs/x.json")));
+        assert!(!is_draft_path(Path::new("/r/drafts/.vanguard/x")));
+        assert!(!is_draft_path(Path::new("/r/src/drafts/a.json")));
+        assert!(!is_draft_path(Path::new("/r/.vanguard")));
+    }
 }

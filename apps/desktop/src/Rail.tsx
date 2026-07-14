@@ -6,7 +6,6 @@ import {
   Boxes,
   Cloud,
   Workflow,
-  FileText,
   Settings as SettingsIcon,
   PanelLeft,
   type LucideIcon,
@@ -16,13 +15,14 @@ import type { Project, ActiveRun } from './vanguard-output';
 import { relTime } from './time';
 import { RailTip } from './RailTip';
 
-export type Screen = 'dashboard' | 'runs' | 'board' | 'docs' | 'fleet' | 'remote' | 'workflow' | 'settings';
+// 'task' (S10) is reached by intent — the New Task button on the board and Runs toolbars — so it
+// has no NAV entry; the breadcrumb is its location anchor.
+export type Screen = 'dashboard' | 'runs' | 'board' | 'task' | 'fleet' | 'remote' | 'workflow' | 'settings';
 
 const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'runs', label: 'Runs', icon: List },
   { key: 'board', label: 'Task board', icon: Columns3 },
-  { key: 'docs', label: 'Docs', icon: FileText },
   { key: 'fleet', label: 'Fleet', icon: Boxes },
   { key: 'remote', label: 'Remote', icon: Cloud },
   { key: 'workflow', label: 'Workflow', icon: Workflow },

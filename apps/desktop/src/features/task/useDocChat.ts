@@ -20,7 +20,11 @@ export type DocChatAction =
   | { type: 'acceptApplied' }
   | { type: 'reject' }
   | { type: 'fail'; message: string }
-  | { type: 'reset' };
+  | { type: 'reset' }
+  // Seed a persisted transcript on draft open (S10). Never restores `pending`: the accept/reject
+  // affordance is session-only, but the raw reply (its <doc> block included) is in `messages`.
+  // `busy` re-presents an in-flight completion for THIS draft (per-id guard, review #349 r1).
+  | { type: 'load'; messages: ChatMsg[]; busy?: boolean };
 
 export const initialDocChat = (): DocChatState => ({ messages: [], busy: false });
 
@@ -50,15 +54,19 @@ export function reduceDocChat(state: DocChatState, action: DocChatAction): DocCh
       // proposal so an accept can never write one doc's proposal into another.
       return initialDocChat();
     case 'reply': {
-      const { note, doc } = extractDoc(action.text);
-      const shown = note !== '' ? note : doc !== undefined ? '(proposed a document revision)' : action.text;
+      // Store the RAW reply, <doc> block included: the transcript persists to disk now (S10), and
+      // storing the "(proposed a document revision)" placeholder would destroy the model's primary
+      // output on relaunch. Display derivation lives in ChatMessage.
+      const { doc } = extractDoc(action.text);
       return {
         ...state,
-        messages: [...state.messages, { role: 'assistant', content: shown }],
+        messages: [...state.messages, { role: 'assistant', content: action.text }],
         busy: false,
         ...(doc !== undefined ? { pending: doc } : {}),
       };
     }
+    case 'load':
+      return { messages: action.messages, busy: action.busy === true };
     case 'acceptApplied':
     case 'reject':
       return { ...state, pending: undefined };

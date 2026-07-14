@@ -17,10 +17,22 @@ export interface NavGuardRegistry {
   confirm: () => boolean;
   /** Whether a guard is currently registered (drives the window-close hook). */
   guarded: () => boolean;
+  /**
+   * Async flush hook (S10): a screen with debounced writes registers one so window close can
+   * AWAIT the pending save — the synchronous confirm() cannot, and a fire-and-forget invoke
+   * issued during close races webview teardown. Same last-wins/idempotent-unregister semantics
+   * as the confirm guard.
+   */
+  registerFlush: (flush: () => Promise<void>) => void;
+  unregisterFlush: (flush: () => Promise<void>) => void;
+  hasFlush: () => boolean;
+  /** Run the registered flush, bounded. Resolves false on failure or timeout — never rejects. */
+  flush: (timeoutMs: number) => Promise<boolean>;
 }
 
 export function createNavGuardRegistry(): NavGuardRegistry {
   let current: (() => boolean) | null = null;
+  let currentFlush: (() => Promise<void>) | null = null;
   return {
     register: (guard) => {
       current = guard;
@@ -30,6 +42,25 @@ export function createNavGuardRegistry(): NavGuardRegistry {
     },
     confirm: () => current?.() !== false,
     guarded: () => current !== null,
+    registerFlush: (flush) => {
+      currentFlush = flush;
+    },
+    unregisterFlush: (flush) => {
+      if (currentFlush === flush) currentFlush = null;
+    },
+    hasFlush: () => currentFlush !== null,
+    flush: (timeoutMs) => {
+      if (currentFlush === null) return Promise.resolve(true);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      return Promise.race([
+        currentFlush().then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        }),
+      ])
+        .catch(() => false)
+        .finally(() => clearTimeout(timer));
+    },
   };
 }
 

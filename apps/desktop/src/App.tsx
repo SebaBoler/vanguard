@@ -26,6 +26,9 @@ export default function App() {
   const [focusRunning, setFocusRunning] = useState<ActiveRun | null>(null);
   const [crumb, setCrumb] = useState<string | null>(null);
   const [clearNonce, setClearNonce] = useState(0);
+  // Bumped on every New Task click (S10): the task screen resets to a fresh draft only on an
+  // unconsumed nonce, so returning to the screen by other paths restores the last-open draft.
+  const [newTaskNonce, setNewTaskNonce] = useState(0);
   const [palette, setPalette] = useState(false);
   // Navigation guard (S8, #339): a dirty screen registers a confirm; ALL App-owned navigation
   // routes through navigate(), because a project switch REMOUNTS Inspector (key below) and a
@@ -98,8 +101,19 @@ export default function App() {
   // Window close is the third discard path. Tauri/WKWebView does not reliably fire beforeunload
   // on native close, so onCloseRequested is the primary hook (beforeunload kept as a belt).
   useEffect(() => {
-    const un = getCurrentWindow().onCloseRequested((event) => {
-      if (!navGuard.current.confirm()) event.preventDefault();
+    const un = getCurrentWindow().onCloseRequested(async (event) => {
+      if (!navGuard.current.confirm()) {
+        event.preventDefault();
+        return;
+      }
+      // S10: a screen with debounced writes registered a flush — a fire-and-forget invoke would
+      // race webview teardown, so hold the close, await the flush (bounded), then close for real.
+      // destroy() skips this handler, so there is no re-entry loop.
+      if (navGuard.current.hasFlush()) {
+        event.preventDefault();
+        await navGuard.current.flush(2000);
+        void getCurrentWindow().destroy();
+      }
     });
     const onBeforeUnload = (e: BeforeUnloadEvent): void => {
       if (navGuard.current.guarded()) {
@@ -167,7 +181,7 @@ export default function App() {
     dashboard: 'Home',
     runs: 'Runs',
     board: 'Task board',
-    docs: 'Docs',
+    task: 'New Task',
     fleet: 'Fleet',
     remote: 'Remote',
     workflow: 'Workflow',
@@ -241,7 +255,15 @@ export default function App() {
                 screen={screen}
                 focusRunning={focusRunning}
                 clearNonce={clearNonce}
+                newTaskNonce={newTaskNonce}
                 onCrumb={setCrumb}
+                onNewTask={() =>
+                  navigate(() => {
+                    setScreen('task');
+                    setNewTaskNonce((n) => n + 1);
+                  })
+                }
+                onOpenBoard={() => navigate(() => setScreen('board'))}
               />
             </NavGuardContext.Provider>
           )}

@@ -176,14 +176,19 @@ export function apiCreateTask(repoPath: string, title: string, body: string): Pr
   return invoke('api_create_task', { repoPath, title, body });
 }
 
-export function listDocs(repoPath: string): Promise<string[]> {
-  return invoke<string[]>('list_docs', { repoPath });
+// Task drafts (S10): one JSON file per draft under `.vanguard/drafts/`; the webview owns the shape
+// (see features/task/draftStore.ts), Rust is dumb storage.
+export function listDrafts(repoPath: string): Promise<string[]> {
+  return invoke<string[]>('list_drafts', { repoPath });
 }
-export function readDoc(repoPath: string, name: string): Promise<string> {
-  return invoke<string>('read_doc', { repoPath, name });
+export function readDraft(repoPath: string, id: string): Promise<string> {
+  return invoke<string>('read_draft', { repoPath, id });
 }
-export function writeDoc(repoPath: string, name: string, content: string): Promise<void> {
-  return invoke<void>('write_doc', { repoPath, name, content });
+export function writeDraft(repoPath: string, id: string, content: string): Promise<void> {
+  return invoke<void>('write_draft', { repoPath, id, content });
+}
+export function deleteDraft(repoPath: string, id: string): Promise<void> {
+  return invoke<void>('delete_draft', { repoPath, id });
 }
 
 // Flow-file editing (S5). Types now come from the generated wire (S7).
