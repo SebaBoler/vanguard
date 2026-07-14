@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   assertFlowResolvable,
   coerceFlowDoc,
+  deleteRepoFlow,
   flowDocError,
   FlowError,
   listRepoFlows,
@@ -283,5 +284,28 @@ describe('duplicate semantics are valid-only everywhere (review #336 finding 2)'
         loops: [],
       }),
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('deleteRepoFlow (S8)', () => {
+  it('deletes an existing flow file', async () => {
+    await seed('my-flow.hcl', HEALTHY);
+    await deleteRepoFlow(repo, 'my-flow.hcl');
+    expect(await listRepoFlows(repo)).toEqual([]);
+  });
+
+  it('is idempotent: ENOENT is success (a Timed retry of a killed delete must not scare anyone)', async () => {
+    await expect(deleteRepoFlow(repo, 'never-existed.hcl')).resolves.toBeUndefined();
+  });
+
+  it('rejects a name outside the flow-file grammar (no traversal, no dotfiles)', async () => {
+    await expect(deleteRepoFlow(repo, '../escape.hcl')).rejects.toThrow(FlowError);
+    await expect(deleteRepoFlow(repo, '.hidden.hcl')).rejects.toThrow(FlowError);
+    await expect(deleteRepoFlow(repo, 'not-hcl.txt')).rejects.toThrow(FlowError);
+  });
+
+  it('maps a non-ENOENT failure to FlowError (delete target is a directory)', async () => {
+    await mkdir(join(flowsDir(), 'dir.hcl'), { recursive: true });
+    await expect(deleteRepoFlow(repo, 'dir.hcl')).rejects.toThrow(FlowError);
   });
 });

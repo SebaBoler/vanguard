@@ -202,6 +202,11 @@ export function apiWriteFlow(repoPath: string, file: string, doc: FlowDoc): Prom
   return invoke('api_write_flow', { repoPath, file, doc });
 }
 
+/** Delete one flow file (S8). Idempotent — an already-deleted file succeeds. */
+export function apiDeleteFlow(repoPath: string, file: string): Promise<void> {
+  return invoke('api_delete_flow', { repoPath, file });
+}
+
 /** The in-flight typed run `{runId, repoPath}`, or null when idle. repoPath scopes re-attach to
  *  the owning project (S8 — the sidecar is global, Inspectors are per-project). */
 export function apiActiveRun(): Promise<{ runId: string; repoPath: string } | null> {

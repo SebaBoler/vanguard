@@ -30,7 +30,11 @@ export default function App() {
   // Navigation guard (S8, #339): a dirty screen registers a confirm; ALL App-owned navigation
   // routes through navigate(), because a project switch REMOUNTS Inspector (key below) and a
   // screen switch unmounts the editor — component-local confirms never fire for either.
-  const navGuard = useRef(createNavGuardRegistry());
+  // Lazy init (review #343 r4 nit): useRef(create()) would re-run the factory every render and
+  // discard the result — harmless here, but the idiom avoids the per-render allocation.
+  const navGuardRef = useRef<ReturnType<typeof createNavGuardRegistry> | null>(null);
+  navGuardRef.current ??= createNavGuardRegistry();
+  const navGuard = navGuardRef as { current: ReturnType<typeof createNavGuardRegistry> };
   const navigate = (fn: () => void): void => {
     if (!navGuard.current.confirm()) return;
     fn();

@@ -187,6 +187,7 @@ pub fn run() {
             sidecar::api_list_providers,
             sidecar::api_read_flow,
             sidecar::api_write_flow,
+            sidecar::api_delete_flow,
             sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())

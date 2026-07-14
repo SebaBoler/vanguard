@@ -705,6 +705,14 @@ pub fn api_read_flow(state: State<'_, Sidecar>, repo_path: String, file: String)
     flow_request(&state, "readFlow", serde_json::json!({ "repoPath": repo_path, "file": file }))
 }
 
+/// Delete one flow file (S8). Timed on the query pipe: one local unlink, idempotent (core maps
+/// ENOENT to success), so a watchdog-killed exchange retried converges — Untimed would instead
+/// wedge the query mutex forever on a hang (cancel only reaches the RUN child).
+#[tauri::command(async)]
+pub fn api_delete_flow(state: State<'_, Sidecar>, repo_path: String, file: String) -> Result<serde_json::Value, String> {
+    flow_request(&state, "deleteFlow", serde_json::json!({ "repoPath": repo_path, "file": file }))
+}
+
 /// Validate + emit + atomically write one flow file; returns `{ source }` (the canonical HCL).
 #[tauri::command(async)]
 pub fn api_write_flow(

@@ -1,5 +1,5 @@
 import { capabilities } from '../api/capabilities.js';
-import { assertFlowResolvable, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
+import { assertFlowResolvable, deleteRepoFlow, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { assertProvidersResolvable, customEgressHosts, validateProviderChoice, assertEgressCompatible } from '../agents/registry.js';
 import { createGithubIssue, createGitlabIssue, createLinearIssue } from '../tasks/create.js';
@@ -99,6 +99,10 @@ export function productionDeps(): SidecarDeps {
     }),
     readFlow: ({ repoPath, file }) => readRepoFlow(repoPath, file),
     writeFlow: ({ repoPath, file, doc }) => writeRepoFlow(repoPath, file, doc),
+    deleteFlow: async ({ repoPath, file }) => {
+      await deleteRepoFlow(repoPath, file);
+      return {};
+    },
     createRun: async (params: CreateRunParams, onEvent: (e: RunEvent) => void): Promise<CreateRunResult> => {
       // FIRST statements, before beginRun() and the sandbox: an unresolvable flow (typo, broken or
       // duplicate .hcl) or provider (unknown name, broken customs entry, http custom on this
