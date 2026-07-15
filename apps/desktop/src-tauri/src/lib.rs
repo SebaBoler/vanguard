@@ -184,6 +184,7 @@ pub fn run() {
             unwatch_project,
             sidecar::api_capabilities,
             sidecar::api_complete,
+            sidecar::api_cancel_complete,
             sidecar::api_create_run,
             sidecar::api_active_run,
             sidecar::api_run_backlog,

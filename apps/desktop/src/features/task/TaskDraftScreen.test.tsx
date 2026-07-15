@@ -23,6 +23,7 @@ vi.mock('../../ipc.js', () => ({
   }),
   readAppConfig: vi.fn(async () => ({ source: 'github' })),
   apiComplete: vi.fn(async () => ({ text: 'ok' })),
+  apiCancelComplete: vi.fn(async () => {}),
   apiCreateTask: vi.fn(async () => ({ id: 'gh-7', url: 'https://github.com/o/r/issues/7' })),
 }));
 
@@ -363,6 +364,154 @@ test('an unreadable draft file is listed delete-only — never openable, never h
   expect(screen.queryByLabelText(/open My Draft/)).toBeNull();
 });
 
+// ── stop / edit-regenerate (Editor UX 5/7) ───────────────────────────────────────────────────────
+
+test('Stop cancels the in-flight turn: kills by call id, discards the exchange, keeps the text', async () => {
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveReply = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('plan it');
+  await settle(); // user turn persisted; the completion is in flight
+  const draftId = [...files.keys()][0]!;
+  expect((JSON.parse(files.get(draftId)!) as DraftData).chat).toEqual([{ role: 'user', content: 'plan it' }]);
+  // Stop replaces Send while the turn is in flight.
+  const stop = screen.getByRole('button', { name: /^stop$/i });
+  fireEvent.click(stop);
+  expect(ipc.apiCancelComplete).toHaveBeenCalledTimes(1);
+  expect(typeof vi.mocked(ipc.apiCancelComplete).mock.calls[0]![0]).toBe('string'); // kill-by-call-id
+  await settle();
+  // The partial exchange is discarded — from the transcript AND the persisted file — and no error shows.
+  expect((JSON.parse(files.get(draftId)!) as DraftData).chat).toEqual([]);
+  expect(screen.queryByText('plan it', { selector: 'p' })).toBeNull(); // the transcript bubble is gone
+  expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+  // The composer kept the sent text for retry.
+  expect(screen.getByPlaceholderText(/plan, scope/i)).toHaveValue('plan it');
+  // Even a late reply from the killed child settles inert — no assistant turn appears.
+  resolveReply({ text: 'too late' });
+  await settle();
+  expect((JSON.parse(files.get(draftId)!) as DraftData).chat).toEqual([]);
+  expect(screen.queryByText('too late')).toBeNull();
+});
+
+test('switching away and back during the stop window does not re-latch busy (review r1)', async () => {
+  // Between the Stop click and the killed child's promise settling there is a real async window.
+  // If stop() leaves the id in pendingTurns, a switch-away-and-back re-seeds the reducer with
+  // busy: true, and the settled promise (cancelled ⇒ early-return) never clears it — a permanently
+  // stuck "thinking…" with a no-op Stop button.
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveReply = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('plan it');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+  // The promise has NOT settled yet — switch to a fresh conversation and back.
+  fireEvent.click(screen.getByLabelText('new conversation'));
+  await settle();
+  fireEvent.click(screen.getByLabelText('tab Body'));
+  await settle();
+  // The stopped conversation must be idle: Send rendered (not Stop), no thinking indicator.
+  expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+  expect(screen.queryByText(/thinking/i)).toBeNull();
+  // The abandoned promise settles inert afterwards.
+  resolveReply({ text: 'too late' });
+  await settle();
+  expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+});
+
+test('a stopped turn can be retried through the normal send path', async () => {
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockReturnValueOnce(new Promise((r) => (resolveReply = r)))
+    .mockResolvedValueOnce({ text: 'the answer' });
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('first attempt');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+  resolveReply({ text: 'discarded' }); // the killed child's promise settles
+  await settle();
+  // Retry: the text is already in the composer; send again.
+  fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+  await settle();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.chat).toEqual([
+    { role: 'user', content: 'first attempt' },
+    { role: 'assistant', content: 'the answer' },
+  ]);
+});
+
+test('a fast retry BEFORE the stopped promise settles keeps its own slot — the stale finally must not clobber it (review r3)', async () => {
+  // stop() intentionally frees the slot before the killed child's promise settles, so Send is
+  // clickable inside that window. The retry (callId B) then owns the slot; when A's promise finally
+  // settles, its .finally must release ONLY its own callId — deleting by id alone would strip B's
+  // meta (Stop for B no-ops) and B's pending slot (a third concurrent send becomes possible).
+  let resolveA: (v: { text?: string }) => void = () => {};
+  let resolveB: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockReturnValueOnce(new Promise((r) => (resolveA = r)))
+    .mockReturnValueOnce(new Promise((r) => (resolveB = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('attempt');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+  // Retry while A is still pending.
+  fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+  await settle();
+  expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument(); // B in flight
+  // NOW the killed child's promise settles — it must not touch B's bookkeeping.
+  resolveA({ text: 'discarded' });
+  await settle();
+  // B is still stoppable: Stop is rendered and clicking it kills B (a second cancel IPC call).
+  const stopB = screen.getByRole('button', { name: /^stop$/i });
+  fireEvent.click(stopB);
+  expect(ipc.apiCancelComplete).toHaveBeenCalledTimes(2);
+  resolveB({ text: 'late B' });
+  await settle();
+  // Both exchanges discarded; the draft transcript is clean.
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.chat).toEqual([]);
+});
+
+test('edit & regenerate truncates exactly one exchange and re-sends as a normal turn', async () => {
+  seed('draft-a', {
+    body: '# Alpha\n',
+    name: 'Alpha',
+    chat: [
+      { role: 'user', content: 'first ask' },
+      { role: 'assistant', content: 'first reply' },
+      { role: 'user', content: 'second ask' },
+      { role: 'assistant', content: 'second reply' },
+    ],
+  });
+  vi.mocked(ipc.apiComplete).mockResolvedValueOnce({ text: 'regenerated reply' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  // The edit affordance is on the LAST user message ('second ask').
+  fireEvent.click(screen.getByRole('button', { name: /edit message/i }));
+  // One exchange truncated: 'second ask' + its reply are gone; the text moved to the composer.
+  expect(screen.getByPlaceholderText(/plan, scope/i)).toHaveValue('second ask');
+  expect(screen.queryByText('second reply')).toBeNull();
+  expect(screen.getByText('first reply')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+  await settle();
+  // A regenerate IS a normal send: the (edited) message and the fresh reply land on the transcript.
+  const data = JSON.parse(files.get('draft-a')!) as DraftData;
+  expect(data.chat).toEqual([
+    { role: 'user', content: 'first ask' },
+    { role: 'assistant', content: 'first reply' },
+    { role: 'user', content: 'second ask' },
+    { role: 'assistant', content: 'regenerated reply' },
+  ]);
+});
+
 // ── nonce / session memory ─────────────────────────────────────────────────────────────────────
 
 test('a New Task click (nonce bump) resets to a fresh conversation; the old one stays in History', async () => {
@@ -437,8 +586,10 @@ test('a completion outstanding for a draft blocks a second send after switching 
   // Leave and come back while A's completion is still in flight.
   openRow(/open B/);
   openRow(/open q/);
-  // The reloaded draft must present as busy — and a second send must NOT fire a second completion.
-  sendMsg('q again');
+  // The reloaded draft must present as busy: the composer shows Stop (not Send), so the user
+  // cannot fire a second completion in the first place. The reducer's busy guard is the backstop.
+  expect(screen.queryByRole('button', { name: /^send$/i })).toBeNull();
+  expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument();
   await settle();
   expect(planCalls().length).toBe(1);
   resolveA({ text: 'answer' });

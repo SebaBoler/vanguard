@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { Button, InlineEdit } from '@/ui';
-import { apiComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
+import { apiComplete, apiCancelComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
 import { relTime } from '../../time.js';
 import { DocEditor } from './DocEditor.js';
@@ -9,7 +9,7 @@ import { ChatPane } from './ChatPane.js';
 import { CreateTaskDialog } from './CreateTaskDialog.js';
 import { TaskDrawer, type DrawerTab, type HistoryRow } from './TaskDrawer.js';
 import { retitleDoc, titleFromDoc, isTransport, MAX_BODY_BYTES, MAX_TITLE_BYTES } from './docTask.js';
-import { reduceDocChat, initialDocChat } from './useDocChat.js';
+import { reduceDocChat, initialDocChat, lastUserIndex } from './useDocChat.js';
 import { DraftWriter, draftLabel, emptyDraft, mintDraftId, parseDraft, type DraftData } from './draftStore.js';
 
 const DEFAULT_CHAT_MODEL = 'claude-sonnet-5';
@@ -117,6 +117,12 @@ export function TaskDraftScreen({
   // `pendingIds` mirrors the ref into state so tab dots and the header badge re-render.
   const pendingTurns = useRef(new Set<string>());
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+  // Stop-generation bookkeeping (Editor UX 5/7), keyed by draft id like pendingTurns: the in-flight
+  // turn's cancel handle (`callId`) and the text sent, so Stop can kill exactly this turn's child
+  // and put the text back in the composer for retry. `cancelledCalls` marks a callId the user
+  // stopped, so its (now-erroring) promise settles inert instead of raising a fail toast.
+  const sendMeta = useRef(new Map<string, { callId: string; text: string }>());
+  const cancelledCalls = useRef(new Set<string>());
   // Holds the draft id being filed. NOT cleared on draft switch: persistence is id-keyed, and a
   // stale create settling must never disarm a newer one — it releases only its own id.
   const createInFlight = useRef<string | null>(null);
@@ -466,6 +472,14 @@ export function TaskDraftScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Apply a mutation to the active draft and persist it immediately (chat turns are never debounced
+  // — their loss crosses a process boundary), mirroring the entry into state so tabs re-render.
+  const persistNow = (id: string, updates: Partial<DraftData>): void => {
+    draftRef.current = { ...draftRef.current, ...updates };
+    syncEntry(id);
+    void writer.writeNow(id, { ...draftRef.current });
+  };
+
   const send = (text: string): void => {
     if (archived) return;
     // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
@@ -474,6 +488,10 @@ export function TaskDraftScreen({
     const id = ensureId();
     pendingTurns.current.add(id);
     setPendingIds(new Set(pendingTurns.current));
+    // Per-turn cancel handle (Editor UX 5/7): Rust tracks this turn's `__complete` child under it so
+    // Stop can kill exactly this child. Recorded with the sent text so Stop can restore it for retry.
+    const callId = crypto.randomUUID();
+    sendMeta.current.set(id, { callId, text });
     const apiMessages = [...chat.messages, { role: 'user' as const, content: text }];
     // Snapshot body AND model SYNCHRONOUSLY, like apiMessages (review #349 r5 blocking): the
     // .then below runs after an IPC round-trip, and a draft switch in that window repoints
@@ -500,13 +518,21 @@ export function TaskDraftScreen({
     void writer.writeNow(id, { ...draftRef.current });
     void readAppConfig(project)
       .then((cfg) =>
-        apiComplete(project, {
-          system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
-          messages: apiMessages,
-          model: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL,
-        }).then((res) => ({ res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL })),
+        apiComplete(
+          project,
+          {
+            system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
+            messages: apiMessages,
+            model: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL,
+          },
+          callId,
+        ).then((res) => ({ res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL })),
       )
       .then(({ res, resolvedModel }) => {
+        // A Stop-killed turn resolves here with an error (child stdout closed) — or, if the reply
+        // beat the kill, a normal one. Either way the user cancelled: settle inert, no toast, no
+        // assistant turn appended. `stop` already dropped the user turn and put the text back.
+        if (cancelledCalls.current.has(callId)) return;
         if (res.error !== undefined) {
           if (id === activeIdRef.current) dispatch({ type: 'fail', message: res.error.message });
           return;
@@ -541,12 +567,67 @@ export function TaskDraftScreen({
         if (wantsTitle) generateTitle(id, text, reply, resolvedModel);
       })
       .catch((err: unknown) => {
+        if (cancelledCalls.current.has(callId)) return;
         if (id === activeIdRef.current) dispatch({ type: 'fail', message: String(err) });
       })
       .finally(() => {
-        pendingTurns.current.delete(id);
-        setPendingIds(new Set(pendingTurns.current));
+        // Release the slot ONLY if this turn still owns it (same discipline as createInFlight):
+        // stop() frees the slot early, so a fast retry can own it under a NEW callId before this
+        // stale promise settles — deleting by id alone would strip the retry's meta (its Stop
+        // no-ops) and its pending slot (a third concurrent send becomes possible) (review r3).
+        if (sendMeta.current.get(id)?.callId === callId) {
+          pendingTurns.current.delete(id);
+          setPendingIds(new Set(pendingTurns.current));
+          sendMeta.current.delete(id);
+        }
+        cancelledCalls.current.delete(callId);
       });
+  };
+
+  /** Stop the active conversation's in-flight turn (Editor UX 5/7): kill this turn's `__complete`
+   * child, drop the dangling user message from the transcript AND the persisted file, and restore
+   * the sent text to the composer for retry. The (now-erroring) send promise settles inert. */
+  const stop = (): void => {
+    const id = activeIdRef.current;
+    if (id === null) return;
+    const meta = sendMeta.current.get(id);
+    if (meta === undefined) return;
+    cancelledCalls.current.add(meta.callId);
+    void apiCancelComplete(meta.callId);
+    // Release the turn's slot NOW, not in the abandoned promise's .finally: until the killed child's
+    // promise settles there is a real window where a switch-away-and-back would re-seed the reducer
+    // from pendingTurns with busy: true — and the cancelled promise early-returns without ever
+    // clearing it (permanently stuck "thinking…", review r1). The .finally delete is then a no-op.
+    pendingTurns.current.delete(id);
+    setPendingIds(new Set(pendingTurns.current));
+    dispatch({ type: 'cancel' });
+    setComposerText(meta.text);
+    setComposerFocus((n) => n + 1);
+    // Strip the just-sent user turn from the persisted transcript so a reload doesn't resurrect a
+    // half exchange, and put the text back in the persisted composer snapshot.
+    persistNow(id, {
+      chat: draftRef.current.chat.at(-1)?.role === 'user' ? draftRef.current.chat.slice(0, -1) : draftRef.current.chat,
+      composerText: meta.text,
+    });
+  };
+
+  /** Edit & regenerate the last exchange (Editor UX 5/7): truncate the last user message and its
+   * reply, load that message into the composer, and persist the truncation. The confirmed re-send
+   * runs through the normal `send` path. */
+  const editLast = (): void => {
+    if (archived) return;
+    const id = activeIdRef.current;
+    if (id === null) return;
+    // Index and slice from the SAME source (the persisted transcript). The reducer's messages are
+    // index-aligned with it today, but computing idx there and slicing here would silently truncate
+    // the wrong exchange if the two ever diverged (review r2).
+    const idx = lastUserIndex(draftRef.current.chat);
+    if (idx === -1) return;
+    const text = draftRef.current.chat[idx]?.content ?? '';
+    dispatch({ type: 'editLast' });
+    setComposerText(text);
+    setComposerFocus((n) => n + 1);
+    persistNow(id, { chat: draftRef.current.chat.slice(0, idx), composerText: text });
   };
 
   const accept = (): void => {
@@ -838,6 +919,8 @@ export function TaskDraftScreen({
               onModelChange={onModelChange}
               onComposerChange={onComposerChange}
               onSend={send}
+              onStop={stop}
+              onEditLast={editLast}
               onAccept={accept}
               onReject={() => dispatch({ type: 'reject' })}
             />

@@ -17,6 +17,12 @@ export interface DocChatState {
 export type DocChatAction =
   | { type: 'send'; text: string }
   | { type: 'reply'; text: string }
+  // Stop generation (Editor UX 5/7): discard the in-flight turn — drop its trailing user message
+  // and clear busy WITHOUT an error. The owner restores the sent text to the composer for retry.
+  | { type: 'cancel' }
+  // Edit & regenerate (Editor UX 5/7): truncate after the assistant turn preceding the last user
+  // message. The owner loads that message into the composer; the confirmed re-send is a normal turn.
+  | { type: 'editLast' }
   | { type: 'acceptApplied' }
   | { type: 'reject' }
   | { type: 'fail'; message: string }
@@ -37,6 +43,14 @@ export function extractDoc(text: string): { note: string; doc?: string } {
   const doc = m[1] ?? '';
   const note = (text.slice(0, m.index) + text.slice(m.index + m[0].length)).trim();
   return { note, doc };
+}
+
+/** Index of the last user message, or -1. The edit affordance targets it; edit truncates there. */
+export function lastUserIndex(messages: ChatMsg[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'user') return i;
+  }
+  return -1;
 }
 
 export function reduceDocChat(state: DocChatState, action: DocChatAction): DocChatState {
@@ -64,6 +78,21 @@ export function reduceDocChat(state: DocChatState, action: DocChatAction): DocCh
         busy: false,
         ...(doc !== undefined ? { pending: doc } : {}),
       };
+    }
+    case 'cancel':
+      // The turn's user message is the last one (no reply landed — that's why it's cancellable).
+      // Drop it so the partial exchange leaves nothing behind; clear busy, keep no error.
+      return {
+        ...state,
+        messages: state.messages.at(-1)?.role === 'user' ? state.messages.slice(0, -1) : state.messages,
+        busy: false,
+        error: undefined,
+      };
+    case 'editLast': {
+      // Truncate the last user message, its reply, and any pending proposal — the caller re-sends.
+      const idx = lastUserIndex(state.messages);
+      if (idx === -1) return state;
+      return { ...state, messages: state.messages.slice(0, idx), pending: undefined, error: undefined };
     }
     case 'load':
       return { messages: action.messages, busy: action.busy === true };

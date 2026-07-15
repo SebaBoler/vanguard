@@ -1,7 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { Button, Textarea } from '@/ui';
 import { ChatMessage } from './ChatMessage.js';
-import type { DocChatState } from './useDocChat.js';
+import { lastUserIndex, type DocChatState } from './useDocChat.js';
 
 /** Drawer conversation panel: transcript + composer (textarea, model selector, Send) + accept/
  * reject bar when a proposal is pending. `disabled` freezes input entirely (archived drafts, S10)
@@ -21,6 +21,8 @@ export function ChatPane({
   onModelChange,
   onComposerChange,
   onSend,
+  onStop,
+  onEditLast,
   onAccept,
   onReject,
 }: {
@@ -39,6 +41,10 @@ export function ChatPane({
   onModelChange: (model: string | undefined) => void;
   onComposerChange: (text: string) => void;
   onSend: (text: string) => void;
+  /** Kill the in-flight turn (Stop button). The owner discards the partial exchange and keeps the text. */
+  onStop: () => void;
+  /** Edit & regenerate: truncate the last exchange and load the last user message into the composer. */
+  onEditLast: () => void;
   onAccept: () => void;
   onReject: () => void;
 }) {
@@ -57,10 +63,10 @@ export function ChatPane({
     }
     // Up-arrow in an EMPTY composer recalls the last sent message for editing (single step).
     if (e.key === 'ArrowUp' && composerText === '') {
-      const lastUser = [...state.messages].reverse().find((m) => m.role === 'user');
-      if (lastUser !== undefined) {
+      const idx = lastUserIndex(state.messages);
+      if (idx !== -1) {
         e.preventDefault();
-        onComposerChange(lastUser.content);
+        onComposerChange(state.messages[idx]!.content);
       }
     }
   };
@@ -80,11 +86,15 @@ export function ChatPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- disabled is read, not a trigger
   }, [focusSignal]);
 
+  // The edit affordance sits on the LAST user message only, and only when the composer is free to
+  // take over (not mid-turn, not read-only) — a regenerate IS a fresh send.
+  const editable = !state.busy && !disabled ? lastUserIndex(state.messages) : -1;
+
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex-1 space-y-2 overflow-auto">
         {state.messages.map((m, i) => (
-          <ChatMessage key={i} msg={m} />
+          <ChatMessage key={i} msg={m} onEdit={i === editable ? onEditLast : undefined} />
         ))}
         {state.busy && <p className="text-xs text-muted-foreground">thinking…</p>}
       </div>
@@ -133,9 +143,17 @@ export function ChatPane({
               <option value={model}>{model}</option>
             )}
           </select>
-          <Button onClick={send} disabled={state.busy || disabled || composerText.trim() === ''}>
-            Send
-          </Button>
+          {state.busy ? (
+            // Stop replaces Send while a turn is in flight — it never depends on the composer text
+            // (that's the retry buffer), only on there being something to stop.
+            <Button color="secondary" onClick={onStop}>
+              Stop
+            </Button>
+          ) : (
+            <Button onClick={send} disabled={disabled || composerText.trim() === ''}>
+              Send
+            </Button>
+          )}
         </div>
       </div>
     </div>

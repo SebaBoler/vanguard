@@ -39,6 +39,10 @@ pub struct Sidecar {
     child_pid: Mutex<Option<u32>>,
     /// A runId for which cancel was requested — its terminal is `run-cancelled`, not `run-error`.
     cancelled: Mutex<Option<String>>,
+    /// In-flight `__complete` children keyed by the renderer's call id, so the doc chat's Stop button
+    /// (`api_cancel_complete`) can kill exactly its own turn's child. PID only — kill-by-id is the
+    /// ENTIRE surface: never the run child, never an arbitrary caller-supplied pid.
+    complete_pids: Mutex<HashMap<String, u32>>,
     counter: AtomicU64,
 }
 
@@ -271,7 +275,12 @@ pub fn api_capabilities(state: State<'_, Sidecar>) -> Result<serde_json::Value, 
 /// main thread that freezes the whole webview for the entire wait. `(async)` on a sync fn dispatches it
 /// to the blocking threadpool instead.
 #[tauri::command(async)]
-pub fn api_complete(repo_path: String, req: serde_json::Value) -> Result<serde_json::Value, String> {
+pub fn api_complete(
+    state: State<'_, Sidecar>,
+    repo_path: String,
+    call_id: Option<String>,
+    req: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let mut req = req;
     let trusted = crate::appconfig::read(std::path::Path::new(&repo_path)).chat_base_url;
     set_base_url(&mut req, trusted)?;
@@ -282,14 +291,76 @@ pub fn api_complete(repo_path: String, req: serde_json::Value) -> Result<serde_j
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn vanguard __complete: {e}"))?;
+    // Publish this child's pid under the caller's id so the Stop button can kill THIS turn's child
+    // and no other. `exec` in the shell means child.id() is already the `vanguard` pid (sh replaced
+    // itself), same as the run child — so a plain SIGTERM tears down the whole completion.
+    register_complete(&state, call_id.as_deref(), child.id());
     // Run the exchange, then ALWAYS kill + reap the child — an early `?` return (or a timeout, where
     // the child is still waiting on a stalled network call) would otherwise leave a zombie: Child's
     // Drop neither waits nor kills on Unix. On the happy path the child has already self-terminated
-    // on stdin EOF and the kill is a no-op.
+    // on stdin EOF and the kill is a no-op. A Stop-killed child is already dead here; the kill is a
+    // no-op too, and `complete_exchange` has already returned Err (stdout closed → no response line).
     let result = complete_exchange(&mut child, &req);
+    // Unregister BEFORE the child is reaped so the registry never maps an id to a reaped pid. This
+    // narrows the reuse window but does not close it — a Stop that read the pid before this line
+    // kills after the reap — so `api_cancel_complete` ALSO verifies ownership (ps argv check)
+    // before signalling (review r2). Killing via the still-owned Child handle below is reuse-safe.
+    unregister_complete(&state, call_id.as_deref());
     let _ = child.kill();
     let _ = child.wait();
     result
+}
+
+/// Record the pid of an in-flight `__complete` child under its call id (no-op when the caller sent
+/// no id — the auto-title completion, say, is fire-and-forget and never cancelled).
+fn register_complete(state: &Sidecar, call_id: Option<&str>, pid: u32) {
+    if let Some(id) = call_id {
+        if let Ok(mut m) = state.complete_pids.lock() {
+            m.insert(id.to_string(), pid);
+        }
+    }
+}
+
+/// Drop a finished completion's pid so a later Stop for a reused id can't signal a stale process.
+fn unregister_complete(state: &Sidecar, call_id: Option<&str>) {
+    if let Some(id) = call_id {
+        if let Ok(mut m) = state.complete_pids.lock() {
+            m.remove(id);
+        }
+    }
+}
+
+/// Kill the in-flight `__complete` child for a doc-chat call id — the Stop button. Kill-by-id is the
+/// WHOLE surface: it can only signal a child this process spawned for `api_complete` and tracked
+/// under `call_id`. An unknown id (already finished, never started) signals nothing. It never
+/// touches the run child (`api_cancel` owns that, out-of-band via SIGUSR2) — the two registries are
+/// separate. The killed child closes stdout, `complete_exchange`'s reader hits EOF, and the turn
+/// resolves with no response line; the renderer maps that to a cancelled turn, not an error.
+#[tauri::command]
+pub fn api_cancel_complete(state: State<'_, Sidecar>, call_id: String) -> Result<(), String> {
+    let pid = state
+        .complete_pids
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&call_id)
+        .copied();
+    if let Some(pid) = pid {
+        // The pid was read under the lock, but the child can self-terminate and be reaped between
+        // that read and the kill — the OS may then recycle the pid to a stranger. Mirror the query
+        // watchdog's ownership guard (ps argv check, sidecar.rs Watchdog::arm) before signalling:
+        // `exec vanguard __complete` puts that token in the child's argv by construction.
+        let still_ours = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("__complete"))
+            .unwrap_or(false);
+        if still_ours {
+            // Plain SIGTERM, like the query watchdog: `__complete` installs no signal handler, so
+            // one signal is enough. No libc dep — shell `kill` (the child is spawned via `sh -c`).
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
+    }
+    Ok(())
 }
 
 /// Drop any caller-supplied `baseUrl` and substitute the one from `app.json` (or none). Split out so
@@ -748,7 +819,10 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_run_pid, finish_run, publish_run_pid, resolve_terminal, set_base_url, Pipe, RunGuard, Sidecar};
+    use super::{
+        clear_run_pid, finish_run, publish_run_pid, register_complete, resolve_terminal,
+        set_base_url, unregister_complete, Pipe, RunGuard, Sidecar,
+    };
     use serde_json::json;
 
     /// The bug the query pipe would have introduced, pinned.
@@ -781,6 +855,28 @@ mod tests {
         // Only the run pipe may clear it.
         clear_run_pid(&state, Pipe::Run);
         assert_eq!(*state.child_pid.lock().unwrap(), None);
+    }
+
+    /// The doc-chat Stop button's registry: `api_cancel_complete` can only ever kill a child that
+    /// `api_complete` registered under the caller's id, and killing one leaves the others alone.
+    #[test]
+    fn complete_registry_is_kill_by_id_only() {
+        let state = Sidecar::default();
+        register_complete(&state, Some("a"), 111);
+        register_complete(&state, Some("b"), 222);
+        let pid = |id: &str| state.complete_pids.lock().unwrap().get(id).copied();
+        assert_eq!(pid("a"), Some(111));
+        assert_eq!(pid("b"), Some(222));
+        assert_eq!(pid("missing"), None); // an unknown id (finished / never started) kills nothing
+
+        // Finishing one turn drops only its own pid.
+        unregister_complete(&state, Some("a"));
+        assert_eq!(pid("a"), None);
+        assert_eq!(pid("b"), Some(222));
+
+        // A completion with no call id (fire-and-forget auto-title) registers nothing to cancel.
+        register_complete(&state, None, 999);
+        assert_eq!(state.complete_pids.lock().unwrap().len(), 1);
     }
 
     #[test]

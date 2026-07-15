@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { reduceDocChat, extractDoc, initialDocChat } from './useDocChat.js';
+import { reduceDocChat, extractDoc, initialDocChat, lastUserIndex } from './useDocChat.js';
 
 test('extractDoc splits note and doc', () => {
   expect(extractDoc('here you go <doc>BODY</doc>')).toEqual({ note: 'here you go', doc: 'BODY' });
@@ -76,6 +76,54 @@ test('send is a no-op while busy (no double in-flight)', () => {
   const again = reduceDocChat(busy, { type: 'send', text: 'second' });
   expect(again).toBe(busy);
   expect(again.messages).toHaveLength(1);
+});
+
+test('cancel drops the dangling user turn and clears busy without an error (stop-cancels-turn)', () => {
+  const s0 = reduceDocChat(initialDocChat(), { type: 'send', text: 'plan this' });
+  expect(s0.busy).toBe(true);
+  const s = reduceDocChat(s0, { type: 'cancel' });
+  expect(s.messages).toEqual([]); // the trailing user turn leaves nothing behind
+  expect(s.busy).toBe(false);
+  expect(s.error).toBeUndefined();
+});
+
+test('cancel leaves a completed exchange intact (nothing to drop if last turn is assistant)', () => {
+  const s0 = reduceDocChat(initialDocChat(), { type: 'send', text: 'x' });
+  const replied = reduceDocChat(s0, { type: 'reply', text: 'done' });
+  const s = reduceDocChat(replied, { type: 'cancel' });
+  expect(s.messages).toEqual(replied.messages);
+  expect(s.busy).toBe(false);
+});
+
+test('editLast truncates the last exchange and clears any pending proposal', () => {
+  let s = reduceDocChat(initialDocChat(), { type: 'send', text: 'first' });
+  s = reduceDocChat(s, { type: 'reply', text: 'ok' });
+  s = reduceDocChat(s, { type: 'send', text: 'second' });
+  s = reduceDocChat(s, { type: 'reply', text: 'sure <doc>NEW</doc>' });
+  expect(s.pending).toBe('NEW');
+  const e = reduceDocChat(s, { type: 'editLast' });
+  expect(e.messages).toEqual([
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'ok' },
+  ]);
+  expect(e.pending).toBeUndefined();
+});
+
+test('editLast is a no-op with no user message', () => {
+  const s = initialDocChat();
+  expect(reduceDocChat(s, { type: 'editLast' })).toBe(s);
+});
+
+test('lastUserIndex finds the last user turn, or -1 when there is none', () => {
+  expect(lastUserIndex([])).toBe(-1);
+  expect(
+    lastUserIndex([
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: 'c' },
+      { role: 'assistant', content: 'd' },
+    ]),
+  ).toBe(2);
 });
 
 test('fail sets an error and clears busy, no throw', () => {

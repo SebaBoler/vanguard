@@ -13,6 +13,8 @@ const paneProps = {
   onModelChange: () => {},
   onComposerChange: () => {},
   onSend: () => {},
+  onStop: () => {},
+  onEditLast: () => {},
   onAccept: () => {},
   onReject: () => {},
 };
