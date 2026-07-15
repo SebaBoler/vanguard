@@ -516,10 +516,13 @@ describe('runSourcedIssue', () => {
   });
 
   it('an incomplete implementer (max-turns/timeout) fails the gate and resumes its session — never a straight PR of residue (dogfood #352)', async () => {
-    // Run #352 rerun: the implementer hit its turn cap mid-exploration, leaving only junk in the
-    // tree; conformance had no manifest and the junk passed the verify command, so the gate said
-    // PASS and the pipeline published a garbage PR titled as the feature. Completion must be part
-    // of the gate: incomplete implementer → resume the session to finish, not publish.
+    // Run #352 rerun: the implementer hit the SDK's turn cap mid-exploration, leaving only junk in
+    // the tree; conformance had no manifest and the junk passed the verify command, so the gate
+    // said PASS and the pipeline published a garbage PR titled as the feature. This fixture IS the
+    // real dogfood shape — exitReason 'incomplete' with turns 4, NOT 'maxTurns': the SDK counts
+    // internal steps as turns while vanguard counts real ones, so a genuine cap-out lands below
+    // vanguard's own turns >= maxTurns check. That is exactly why the gate reads `completed`, not
+    // exitReason. Completion must be part of the gate: incomplete → resume to finish, not publish.
     runStages.mockResolvedValueOnce([
       {
         name: 'implementer',
