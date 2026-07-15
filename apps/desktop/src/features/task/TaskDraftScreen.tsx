@@ -12,7 +12,7 @@ import {
   readDraft,
   readAppConfig,
 } from '../../ipc.js';
-import { MAX_INLINE_TOTAL_BYTES } from '../../wire.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES } from '../../wire.js';
 import type { CompleteAttachment } from '../../wire.js';
 import type { ComposerAttachment } from './ChatPane.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
@@ -511,6 +511,10 @@ export function TaskDraftScreen({
   ): Promise<CompleteAttachment[]> => {
     const out: CompleteAttachment[] = [];
     // Dropped text files carry their content already; images are persisted and referenced by path.
+    // Decode images and collect text content FIRST; every throw-capable check runs before any disk
+    // write, so a failed send leaves no orphaned assets behind (review r2). Images are decoded in
+    // memory here and persisted only at the end.
+    const pendingImages: { bytes: Uint8Array; mediaType?: string }[] = [];
     for (const a of attachments) {
       if (a.kind === 'file' && a.content !== undefined) {
         out.push({ kind: 'file', path: a.name, content: a.content });
@@ -519,9 +523,12 @@ export function TaskDraftScreen({
         const bin = atob(base64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        const ext = (a.mediaType ?? 'image/png').split('/')[1] ?? 'png';
-        const path = await writeDraftAsset(project, id, `${crypto.randomUUID()}.${ext}`, bytes);
-        out.push({ kind: 'image', path, ...(a.mediaType !== undefined ? { mediaType: a.mediaType } : {}) });
+        // Client-side mirror of core's MAX_IMAGE_BYTES: fail fast instead of shipping megabytes
+        // over IPC only to be refused in __complete (review r2).
+        if (bytes.length > MAX_IMAGE_BYTES) {
+          throw new Error(`Pasted image is too large (${Math.ceil(bytes.length / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB).`);
+        }
+        pendingImages.push({ bytes, ...(a.mediaType !== undefined ? { mediaType: a.mediaType } : {}) });
       }
     }
     // `@path` mentions: read each tracked file's (capped) content and inline it. Deduped so a path
@@ -541,6 +548,12 @@ export function TaskDraftScreen({
     const total = out.reduce((n, a) => n + (a.content !== undefined ? new TextEncoder().encode(a.content).length : 0), 0);
     if (total > MAX_INLINE_TOTAL_BYTES) {
       throw new Error(`Attached content is too large (${Math.ceil(total / 1000)}KB / ${MAX_INLINE_TOTAL_BYTES / 1000}KB). Remove a file or mention and try again.`);
+    }
+    // All checks passed — NOW persist the images.
+    for (const img of pendingImages) {
+      const ext = (img.mediaType ?? 'image/png').split('/')[1] ?? 'png';
+      const path = await writeDraftAsset(project, id, `${crypto.randomUUID()}.${ext}`, img.bytes);
+      out.push({ kind: 'image', path, ...(img.mediaType !== undefined ? { mediaType: img.mediaType } : {}) });
     }
     return out;
   };

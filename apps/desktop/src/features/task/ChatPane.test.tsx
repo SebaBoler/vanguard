@@ -229,3 +229,22 @@ test('oversize-rejection: a dropped text file over the cap is refused with an in
   expect(await screen.findByText(/too large to attach/i)).toBeInTheDocument();
   expect(screen.queryByTestId('attachment-chip')).toBeNull();
 });
+
+
+test('a small text file WITH spaces attaches as a chip - the binary guard matches NUL only (review r2)', async () => {
+  // The binary check is a literal NUL (\\u0000); if it ever degraded to a space (an easy mangling
+  // of a raw control char), every normal text file would be rejected as binary - and no other test
+  // attached content containing a space.
+  render(<ChatPane state={base} {...paneProps} />);
+  const doc = new File(['hello world, two words'], 'notes.txt', { type: 'text/plain' });
+  fireEvent.drop(composerBox(), { dataTransfer: { files: [doc] } });
+  expect(await screen.findByTestId('attachment-chip')).toHaveTextContent('notes.txt');
+});
+
+test('a file containing a NUL byte is rejected as binary', async () => {
+  render(<ChatPane state={base} {...paneProps} />);
+  const bin = new File(['ab\u0000cd'], 'blob.bin', { type: 'application/octet-stream' });
+  fireEvent.drop(composerBox(), { dataTransfer: { files: [bin] } });
+  expect(await screen.findByText(/binary/i)).toBeInTheDocument();
+  expect(screen.queryByTestId('attachment-chip')).toBeNull();
+});

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, sep } from 'node:path';
 import { execa } from 'execa';
 import { VanguardError, visibleError } from '../core/errors.js';
@@ -61,7 +61,16 @@ export async function readRepoFile(repoPath: string, rel: string): Promise<ReadR
   const abs = resolveRepoFile(repoPath, rel);
   let buf: Buffer;
   try {
-    buf = await readFile(abs);
+    // The lexical check above cannot see symlinks: a tracked `notes.md -> /etc/passwd` (or a
+    // free-typed mention of one) passes it, and readFile would follow the link out of the
+    // checkout — with a custom-provider baseUrl that is an exfiltration channel (review r2).
+    // Canonicalize BOTH sides and require containment, the same realpath discipline as the
+    // image-attachment root in complete.ts.
+    const [realAbs, realRoot] = await Promise.all([realpath(abs), realpath(repoPath)]);
+    if (realAbs !== realRoot && !realAbs.startsWith(realRoot + sep)) {
+      throw new VanguardError(`mention path escapes the repo: ${rel}`);
+    }
+    buf = await readFile(realAbs);
   } catch (error) {
     throw visibleError(error);
   }

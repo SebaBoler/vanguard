@@ -163,6 +163,16 @@ pub fn write_asset(repo: &Path, id: &str, name: &str, bytes: &[u8]) -> Result<St
 pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
     safe_name(id)?;
     assert_not_symlink(repo)?;
+    // The draft's pasted-image assets go with it — leaving `<id>-assets/` behind on the one
+    // operation meant to clean up would be an unbounded on-disk leak (review r2). Same symlink
+    // guard as write_asset: a swapped-in link must not have its TARGET's contents removed.
+    let assets = assets_dir(repo, id);
+    assert_leaf_not_symlink(&assets)?;
+    match fs::remove_dir_all(&assets) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.to_string()),
+    }
     match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -241,6 +251,18 @@ mod tests {
         write(tmp.path(), "draft-x", "{}").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
+    }
+
+    #[test]
+    fn delete_removes_the_assets_dir_with_the_draft() {
+        // Orphaned `<id>-assets/` dirs would grow forever in every repo (review r2).
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        let asset = write_asset(tmp.path(), "draft-x", "pic.png", b"bytes").unwrap();
+        assert!(Path::new(&asset).exists());
+        delete(tmp.path(), "draft-x").unwrap();
+        assert!(!Path::new(&asset).exists());
+        assert!(!assets_dir(tmp.path(), "draft-x").exists());
     }
 
     #[test]

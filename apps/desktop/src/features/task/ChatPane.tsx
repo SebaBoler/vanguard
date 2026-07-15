@@ -207,7 +207,7 @@ export function ChatPane({
     reader.onload = () => {
       const content = String(reader.result);
       // A NUL byte is the cheapest reliable "this is binary" signal — reject rather than inline mojibake.
-      if (content.includes(' ')) {
+      if (content.includes('\u0000')) {
         setDropError(`${file.name} looks binary — only images and text files can be attached.`);
         return;
       }
