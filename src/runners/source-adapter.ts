@@ -4,7 +4,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -365,10 +365,28 @@ export async function runSourcedIssue(
       // so its position in `outcomes` is fixed for the duration.
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
+      // A resumed repair pass inherits the implementer's own turn cap — without this it falls back
+      // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
+      const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
+      const implementerMaxTurns = implementerStage?.maxTurns;
+      // Each resume also gets a per-call USD cap, synthesized as stageCostFraction ×
+      // DEFAULT_RUN_MAX_COST_USD (floored at stageCostFloorUsd) — $3 for the canonical implementer.
+      // Deliberately decoupled from the stage's EFFECTIVE in-stage budget: runStages runs this path
+      // with maxCostUsd = Infinity, so "inherit the stage budget" would mean no cap at all. These
+      // calls run outside runStages' accounting; without this, the only bound would be
+      // iterations × turn cap.
+      const repairBudgetUsd =
+        implementerStage?.stageCostFraction !== undefined
+          ? Math.max(
+              implementerStage.stageCostFraction * DEFAULT_RUN_MAX_COST_USD,
+              implementerStage.stageCostFloorUsd ?? 0,
+            )
+          : undefined;
 
       const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
+      let implementerDone = false;
       let gatePassed = false;
       let repairIterations = 0;
       for (;;) {
@@ -376,7 +394,22 @@ export async function runSourcedIssue(
         // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
         conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
         verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
-        gatePassed = conformance.pass && (verification === undefined || verification.passed);
+        // Completion is part of the gate (dogfood #352): an implementer that hit its turn cap or
+        // timeout mid-task can leave residue that still typechecks and tests green — conformance
+        // (often manifest-less) and verification alone would then PASS the gate and publish a
+        // garbage PR titled as the feature. Incomplete → resume the session to finish the work.
+        // Gate on `completed`, NOT on exitReason === 'maxTurns': the SDK counts internal steps as
+        // turns while vanguard counts real ones, so the actual #352 truncation surfaced as
+        // exitReason 'incomplete' with turns 4 — an exitReason gate would have missed it. The cost
+        // is that a provider that finishes work but never emits <promise>COMPLETE</promise> (glm
+        // prose-stops) is re-nudged and, if it still won't signal, downgraded to a Part-of PR —
+        // an unverifiable "done" must not auto-close the issue.
+        // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
+        // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
+        // here. Each resume here is bounded by the implementer's turn cap AND the per-call
+        // repairBudgetUsd computed above.
+        implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
+        gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
@@ -384,6 +417,9 @@ export async function runSourcedIssue(
           `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
         );
         const feedback = [
+          !implementerDone
+            ? 'The previous session ended before the task was finished (turn cap or timeout). Continue and complete the remaining work.'
+            : undefined,
           !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
           verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
         ]
@@ -393,6 +429,8 @@ export async function runSourcedIssue(
           promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
           agent: agents.agent,
           resumeSessionId,
+          ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
+          ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
           // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
           // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
@@ -462,6 +500,7 @@ export async function runSourcedIssue(
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
         ...(manifest !== undefined ? { conformance, manifest } : {}),
         ...(verificationFailed ? { verificationFailed: true } : {}),
+        ...(!implementerDone ? { implementerIncomplete: true } : {}),
         ...(whiteLabel ? { hideAttribution: true } : {}),
       });
       // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
