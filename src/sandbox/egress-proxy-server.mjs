@@ -15,7 +15,19 @@ const PORT = Number(process.env.PORT ?? '8080');
 
 const allowed = (host) => isAllowed(host, ALLOW);
 
+// The proxy must not die silently mid-run (dogfood #352: a dead proxy bricks every remaining
+// stage with ConnectionRefused). It runs as container PID 1 under `--restart on-failure`, so the
+// right response to the unexpected is: write the reason to stdout (docker logs) and let docker
+// restart a fresh process — never a silent exit, never limping on in unknown state.
+process.on('uncaughtException', (err) => {
+  console.log(`egress proxy crashed: ${err?.stack ?? err}`);
+  process.exit(1);
+});
+
 createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTTPS CONNECT.'))
+  // An accept-level error (e.g. EMFILE) would otherwise throw and take the proxy down.
+  .on('error', (err) => console.log(`egress proxy server error: ${err}`))
+  .on('clientError', (_err, socket) => socket.destroy())
   .on('connect', (req, clientSocket, head) => {
     const target = req.url ?? '';
     const sep = target.lastIndexOf(':');
