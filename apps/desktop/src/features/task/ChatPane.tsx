@@ -1,7 +1,87 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { Button, Textarea } from '@/ui';
+import { useEffect, useMemo, useRef } from 'react';
+import CodeMirror, {
+  EditorSelection,
+  EditorView,
+  Prec,
+  keymap,
+  placeholder as cmPlaceholder,
+  type Extension,
+  type ReactCodeMirrorRef,
+} from '@uiw/react-codemirror';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { languages } from '@codemirror/language-data';
+import { vscodeLight, vscodeDark } from '@uiw/codemirror-theme-vscode';
+import { Button } from '@/ui';
 import { ChatMessage } from './ChatMessage.js';
+import { EDITOR_FONT, useAppDark } from './cmEditor.js';
 import { lastUserIndex, type DocChatState } from './useDocChat.js';
+
+// Borderless composer chrome layered over the vscode base theme: the surrounding box already draws
+// the border/padding, so the editor itself is transparent. Wraps long lines, starts one line high,
+// and grows up to ~8 lines (max-h-44 = 11rem) before scrolling internally.
+function composerTheme(dark: boolean): Extension {
+  const thumb = dark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)';
+  return EditorView.theme(
+    {
+      '&': { backgroundColor: 'transparent', fontFamily: EDITOR_FONT },
+      '&.cm-focused': { outline: 'none' },
+      '.cm-scroller': {
+        fontFamily: EDITOR_FONT,
+        maxHeight: '11rem',
+        scrollbarWidth: 'thin',
+        scrollbarColor: `${thumb} transparent`,
+      },
+      '.cm-content': { fontFamily: EDITOR_FONT, fontVariantLigatures: 'contextual', padding: '2px 0' },
+      '.cm-scroller::-webkit-scrollbar': { width: '8px' },
+      '.cm-scroller::-webkit-scrollbar-thumb': { backgroundColor: thumb, borderRadius: '4px' },
+    },
+    { dark },
+  );
+}
+
+// Toggle a wrapping mark (**, *, `) around every selection range: wrap a bare selection, and unwrap
+// when the mark already surrounds it — whether the marks sit just inside the selection or just
+// outside it. An empty selection becomes `mark|mark`, leaving the caret ready to type.
+function toggleMark(mark: string): (view: EditorView) => boolean {
+  return (view) => {
+    const { state } = view;
+    const tr = state.changeByRange((range) => {
+      const { from, to } = range;
+      const inner = state.sliceDoc(from, to);
+      const wrappedInside =
+        inner.length >= 2 * mark.length && inner.startsWith(mark) && inner.endsWith(mark);
+      const before = state.sliceDoc(Math.max(0, from - mark.length), from);
+      const after = state.sliceDoc(to, Math.min(state.doc.length, to + mark.length));
+      const wrappedOutside = before === mark && after === mark;
+
+      if (wrappedInside) {
+        const stripped = inner.slice(mark.length, inner.length - mark.length);
+        return {
+          changes: { from, to, insert: stripped },
+          range: EditorSelection.range(from, from + stripped.length),
+        };
+      }
+      if (wrappedOutside) {
+        return {
+          changes: [
+            { from: from - mark.length, to: from, insert: '' },
+            { from: to, to: to + mark.length, insert: '' },
+          ],
+          range: EditorSelection.range(from - mark.length, to - mark.length),
+        };
+      }
+      return {
+        changes: [
+          { from, insert: mark },
+          { from: to, insert: mark },
+        ],
+        range: EditorSelection.range(from + mark.length, to + mark.length),
+      };
+    });
+    view.dispatch(state.update(tr, { userEvent: 'input.wrap', scrollIntoView: true }));
+    return true;
+  };
+}
 
 /** Drawer conversation panel: transcript + composer (textarea, model selector, Send) + accept/
  * reject bar when a proposal is pending. `disabled` freezes input entirely (archived drafts, S10)
@@ -48,28 +128,63 @@ export function ChatPane({
   onAccept: () => void;
   onReject: () => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dark = useAppDark();
+  const cmRef = useRef<ReactCodeMirrorRef>(null);
   const send = (): void => {
     const text = composerText.trim();
     if (text === '' || state.busy || disabled) return;
     onSend(text);
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    // Enter sends; Shift+Enter keeps the default (newline).
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send();
-      return;
-    }
-    // Up-arrow in an EMPTY composer recalls the last sent message for editing (single step).
-    if (e.key === 'ArrowUp' && composerText === '') {
-      const idx = lastUserIndex(state.messages);
-      if (idx !== -1) {
-        e.preventDefault();
-        onComposerChange(state.messages[idx]!.content);
-      }
-    }
+
+  // The CM keymap fires from CodeMirror's own keydown handling, which is created once. Route it
+  // through refs so the commands always see the latest props without reconfiguring the editor.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const recallRef = useRef<() => boolean>(() => false);
+  recallRef.current = (): boolean => {
+    // Up-arrow in an EMPTY composer recalls the last sent message for editing (single step); a
+    // non-empty composer lets the arrow fall through to an ordinary caret move.
+    if (composerText !== '') return false;
+    const idx = lastUserIndex(state.messages);
+    if (idx === -1) return false;
+    onComposerChange(state.messages[idx]!.content);
+    return true;
   };
+
+  // Enter sends; Shift+Enter inserts a newline; Cmd/Ctrl+B/I/E toggle markdown wrapping; ArrowUp
+  // recalls in an empty composer. Highest precedence so these win over CM defaults. Rebuilt only
+  // when the theme flips (commands read live props through refs, so they never go stale).
+  const extensions = useMemo<Extension[]>(
+    () => [
+      markdown({ base: markdownLanguage, codeLanguages: languages }),
+      EditorView.lineWrapping,
+      composerTheme(dark),
+      cmPlaceholder(disabled ? 'This draft is read-only.' : 'Plan, scope, or refine this draft…'),
+      Prec.highest(
+        keymap.of([
+          {
+            key: 'Enter',
+            run: () => {
+              sendRef.current();
+              return true;
+            },
+          },
+          {
+            key: 'Shift-Enter',
+            run: (view) => {
+              view.dispatch({ ...view.state.replaceSelection('\n'), scrollIntoView: true, userEvent: 'input' });
+              return true;
+            },
+          },
+          { key: 'ArrowUp', run: () => recallRef.current() },
+          { key: 'Mod-b', run: toggleMark('**'), preventDefault: true },
+          { key: 'Mod-i', run: toggleMark('*'), preventDefault: true },
+          { key: 'Mod-e', run: toggleMark('`'), preventDefault: true },
+        ]),
+      ),
+    ],
+    [dark, disabled],
+  );
 
   // Refocus the composer once the active conversation's reply has landed. Guarded against the
   // initial render so opening the drawer doesn't steal focus; the owner only bumps the signal for
@@ -82,7 +197,7 @@ export function ChatPane({
       focusMounted.current = true;
       return;
     }
-    if (!disabled) textareaRef.current?.focus();
+    if (!disabled) cmRef.current?.view?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- disabled is read, not a trigger
   }, [focusSignal]);
 
@@ -110,18 +225,23 @@ export function ChatPane({
           </Button>
         </div>
       )}
-      <div className="rounded border border-border p-2">
-        <Textarea
-          ref={textareaRef}
+      <div className="rounded border border-border p-2" data-testid="chat-composer">
+        <CodeMirror
+          ref={cmRef}
           value={composerText}
-          onChange={(e) => onComposerChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={disabled ? 'This draft is read-only.' : 'Plan, scope, or refine this draft…'}
-          // Grows with content (field-sizing) up to ~8 lines, then scrolls internally — no fixed
-          // scroll box.
-          autoResize
-          className="max-h-44 min-h-14 w-full resize-none overflow-y-auto border-0 shadow-none focus-visible:ring-0"
-          disabled={disabled}
+          onChange={onComposerChange}
+          editable={!disabled}
+          readOnly={disabled}
+          theme={dark ? vscodeDark : vscodeLight}
+          extensions={extensions}
+          // No gutters/line numbers; auto-grows from one line (capped by composerTheme's maxHeight).
+          basicSetup={{
+            lineNumbers: false,
+            foldGutter: false,
+            highlightActiveLine: false,
+            highlightActiveLineGutter: false,
+            autocompletion: false,
+          }}
         />
         <div className="mt-1 flex items-center justify-between gap-2">
           <select

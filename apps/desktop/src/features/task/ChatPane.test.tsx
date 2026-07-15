@@ -1,7 +1,20 @@
 import { test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { EditorView } from '@uiw/react-codemirror';
 import { ChatPane } from './ChatPane.js';
 import type { DocChatState } from './useDocChat.js';
+
+// The composer is a CodeMirror 6 instance (Editor UX 6/7). CM drives input through a contenteditable
+// that jsdom can't type into, but its keymap runs off ordinary keydown events on `.cm-content`, so we
+// exercise the send/recall/shortcut keys by dispatching keydown there and reach the underlying
+// EditorView (for selection setup) via findFromDOM.
+function composerContent(): HTMLElement {
+  return document.querySelector('[data-testid="chat-composer"] .cm-content') as HTMLElement;
+}
+function composerView(): EditorView {
+  const dom = document.querySelector('[data-testid="chat-composer"] .cm-editor') as HTMLElement;
+  return EditorView.findFromDOM(dom)!;
+}
 
 const base: DocChatState = { messages: [{ role: 'user', content: 'plan this' }], busy: false };
 
@@ -62,11 +75,11 @@ test('send fires onSend with the trimmed draft', () => {
   expect(onSend).toHaveBeenCalledWith('hello');
 });
 
-test('enter-sends-shift-newline: Enter sends; Shift+Enter does not (leaves the default newline)', () => {
+test('enter-sends-regression: Enter sends; Shift+Enter does not (survives the CM migration)', () => {
   const onSend = vi.fn();
   render(<ChatPane state={base} {...paneProps} composerText="hello" onSend={onSend} />);
-  const composer = screen.getByPlaceholderText(/plan, scope/i);
-  // Shift+Enter must NOT send — the browser default (insert a newline) stands.
+  const composer = composerContent();
+  // Shift+Enter must NOT send — it inserts a newline instead.
   fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
   expect(onSend).not.toHaveBeenCalled();
   // Enter alone sends the trimmed text.
@@ -87,14 +100,34 @@ test('ArrowUp in an EMPTY composer recalls the last sent message; a non-empty co
   const { rerender } = render(
     <ChatPane state={state} {...paneProps} composerText="" onComposerChange={onComposerChange} />,
   );
-  fireEvent.keyDown(screen.getByPlaceholderText(/plan, scope/i), { key: 'ArrowUp' });
+  fireEvent.keyDown(composerContent(), { key: 'ArrowUp' });
   expect(onComposerChange).toHaveBeenCalledWith('second ask'); // the LAST user message, not the first
 
   // With text already in the composer, ArrowUp is an ordinary caret move — recall must not clobber it.
   onComposerChange.mockClear();
   rerender(<ChatPane state={state} {...paneProps} composerText="half-typed" onComposerChange={onComposerChange} />);
-  fireEvent.keyDown(screen.getByPlaceholderText(/plan, scope/i), { key: 'ArrowUp' });
+  fireEvent.keyDown(composerContent(), { key: 'ArrowUp' });
   expect(onComposerChange).not.toHaveBeenCalled();
+});
+
+test('bold-toggle: Cmd/Ctrl+B wraps the selection in ** and unwraps an already-bold selection', () => {
+  const onComposerChange = vi.fn();
+  // Wrap: select all of "bold" then Ctrl+B → **bold**.
+  const { unmount } = render(
+    <ChatPane state={base} {...paneProps} composerText="bold" onComposerChange={onComposerChange} />,
+  );
+  act(() => composerView().dispatch({ selection: { anchor: 0, head: 4 } }));
+  fireEvent.keyDown(composerContent(), { key: 'b', ctrlKey: true });
+  // CM's onChange is (value, viewUpdate) — assert on the emitted document text.
+  expect(onComposerChange.mock.calls.at(-1)?.[0]).toBe('**bold**');
+  unmount();
+
+  // Unwrap: an already-wrapped selection toggles back to bare text.
+  onComposerChange.mockClear();
+  render(<ChatPane state={base} {...paneProps} composerText="**bold**" onComposerChange={onComposerChange} />);
+  act(() => composerView().dispatch({ selection: { anchor: 0, head: 8 } }));
+  fireEvent.keyDown(composerContent(), { key: 'b', ctrlKey: true });
+  expect(onComposerChange.mock.calls.at(-1)?.[0]).toBe('bold');
 });
 
 test('shows an error line', () => {

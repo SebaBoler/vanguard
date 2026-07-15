@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useMemo, useState } from 'react';
 import CodeMirror, {
   crosshairCursor,
   Decoration,
@@ -16,27 +16,11 @@ import CodeMirror, {
 import { markdown } from '@codemirror/lang-markdown';
 import { vscodeLight, vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { vscodeKeymap } from '@replit/codemirror-vscode-keymap';
+import { EDITOR_FONT, useAppDark } from './cmEditor.js';
 
-// System coding fonts with ligature support — nothing bundled, graceful fallback to Menlo/monospace.
-const FONT = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Menlo, monospace";
-
-// Visual columns between indent guides. Guides are drawn in `ch` units, so a monospace font (above)
+// Visual columns between indent guides. Guides are drawn in `ch` units, so the monospace EDITOR_FONT
 // keeps them aligned with the text.
 const TAB = 2;
-
-// Track the app theme live: App.tsx toggles the `dark` class on <html>. We subscribe to that class
-// so the editor re-themes in place while mounted (no remount).
-function subscribeToClass(onChange: () => void): () => void {
-  const obs = new MutationObserver(onChange);
-  obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-  return () => obs.disconnect();
-}
-
-function useAppDark(): boolean {
-  return useSyncExternalStore(subscribeToClass, () =>
-    document.documentElement.classList.contains('dark'),
-  );
-}
 
 // Leading-whitespace width of a line in visual columns (tabs snap to the next TAB stop).
 function indentColumns(text: string): number {
@@ -120,14 +104,14 @@ function uiTheme(dark: boolean): Extension {
       '&': {
         border: `1px solid ${border}`,
         borderRadius: '4px',
-        fontFamily: FONT,
+        fontFamily: EDITOR_FONT,
       },
       '&.cm-focused': {
         outline: 'none',
         borderColor: focusBorder,
       },
       '.cm-content': {
-        fontFamily: FONT,
+        fontFamily: EDITOR_FONT,
         fontVariantLigatures: 'contextual',
       },
       '.cm-activeLine': {

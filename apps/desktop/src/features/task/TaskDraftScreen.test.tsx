@@ -1,5 +1,6 @@
 import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { EditorView } from '@uiw/react-codemirror';
 import { TaskDraftScreen } from './TaskDraftScreen.js';
 import type { DraftData } from './draftStore.js';
 import * as ipc from '../../ipc.js';
@@ -74,8 +75,22 @@ const type = (text: string): void => {
   fireEvent.change(screen.getByTestId('editor'), { target: { value: text } });
 };
 
+// The composer is a CodeMirror 6 instance (Editor UX 6/7); jsdom can't type into its
+// contenteditable, so drive it through the underlying EditorView and read its document back.
+const composerView = (): EditorView => {
+  const dom = screen.getByTestId('chat-composer').querySelector('.cm-editor') as HTMLElement;
+  return EditorView.findFromDOM(dom)!;
+};
+const setComposer = (text: string): void => {
+  const view = composerView();
+  act(() => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  });
+};
+const composerValue = (): string => composerView().state.doc.toString();
+
 const sendMsg = (text: string): void => {
-  fireEvent.change(screen.getByPlaceholderText(/plan, scope/i), { target: { value: text } });
+  setComposer(text);
   fireEvent.click(screen.getByRole('button', { name: /send/i }));
 };
 
@@ -334,7 +349,9 @@ test('archived drafts are read-only: chat disabled, header shows chip + Open boa
   await drawerReady();
   openRow(/open Done thing/);
   expect(screen.getByTestId('editor')).toHaveAttribute('data-readonly', 'true');
-  expect(screen.getByPlaceholderText(/read-only/i)).toBeDisabled();
+  // The composer is a read-only CodeMirror: it shows the read-only placeholder and is not editable.
+  expect(screen.getByText('This draft is read-only.')).toBeInTheDocument();
+  expect(composerView().contentDOM.getAttribute('contenteditable')).toBe('false');
   expect(screen.queryByRole('button', { name: /create task/i })).toBeNull();
   expect(screen.getByRole('link', { name: /filed as #gh-3/i })).toHaveAttribute('href', 'https://g/3');
   // Duplicate yields a fresh, filable copy with no `created`.
@@ -387,7 +404,7 @@ test('Stop cancels the in-flight turn: kills by call id, discards the exchange, 
   expect(screen.queryByText('plan it', { selector: 'p' })).toBeNull(); // the transcript bubble is gone
   expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
   // The composer kept the sent text for retry.
-  expect(screen.getByPlaceholderText(/plan, scope/i)).toHaveValue('plan it');
+  expect(composerValue()).toBe('plan it');
   // Even a late reply from the killed child settles inert — no assistant turn appears.
   resolveReply({ text: 'too late' });
   await settle();
@@ -497,7 +514,7 @@ test('edit & regenerate truncates exactly one exchange and re-sends as a normal 
   // The edit affordance is on the LAST user message ('second ask').
   fireEvent.click(screen.getByRole('button', { name: /edit message/i }));
   // One exchange truncated: 'second ask' + its reply are gone; the text moved to the composer.
-  expect(screen.getByPlaceholderText(/plan, scope/i)).toHaveValue('second ask');
+  expect(composerValue()).toBe('second ask');
   expect(screen.queryByText('second reply')).toBeNull();
   expect(screen.getByText('first reply')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
