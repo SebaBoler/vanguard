@@ -571,9 +571,15 @@ export function TaskDraftScreen({
         if (id === activeIdRef.current) dispatch({ type: 'fail', message: String(err) });
       })
       .finally(() => {
-        pendingTurns.current.delete(id);
-        setPendingIds(new Set(pendingTurns.current));
-        sendMeta.current.delete(id);
+        // Release the slot ONLY if this turn still owns it (same discipline as createInFlight):
+        // stop() frees the slot early, so a fast retry can own it under a NEW callId before this
+        // stale promise settles — deleting by id alone would strip the retry's meta (its Stop
+        // no-ops) and its pending slot (a third concurrent send becomes possible) (review r3).
+        if (sendMeta.current.get(id)?.callId === callId) {
+          pendingTurns.current.delete(id);
+          setPendingIds(new Set(pendingTurns.current));
+          sendMeta.current.delete(id);
+        }
         cancelledCalls.current.delete(callId);
       });
   };

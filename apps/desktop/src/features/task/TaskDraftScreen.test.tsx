@@ -445,6 +445,40 @@ test('a stopped turn can be retried through the normal send path', async () => {
   ]);
 });
 
+test('a fast retry BEFORE the stopped promise settles keeps its own slot — the stale finally must not clobber it (review r3)', async () => {
+  // stop() intentionally frees the slot before the killed child's promise settles, so Send is
+  // clickable inside that window. The retry (callId B) then owns the slot; when A's promise finally
+  // settles, its .finally must release ONLY its own callId — deleting by id alone would strip B's
+  // meta (Stop for B no-ops) and B's pending slot (a third concurrent send becomes possible).
+  let resolveA: (v: { text?: string }) => void = () => {};
+  let resolveB: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete)
+    .mockReturnValueOnce(new Promise((r) => (resolveA = r)))
+    .mockReturnValueOnce(new Promise((r) => (resolveB = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('attempt');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+  // Retry while A is still pending.
+  fireEvent.click(screen.getByRole('button', { name: /^send$/i }));
+  await settle();
+  expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument(); // B in flight
+  // NOW the killed child's promise settles — it must not touch B's bookkeeping.
+  resolveA({ text: 'discarded' });
+  await settle();
+  // B is still stoppable: Stop is rendered and clicking it kills B (a second cancel IPC call).
+  const stopB = screen.getByRole('button', { name: /^stop$/i });
+  fireEvent.click(stopB);
+  expect(ipc.apiCancelComplete).toHaveBeenCalledTimes(2);
+  resolveB({ text: 'late B' });
+  await settle();
+  // Both exchanges discarded; the draft transcript is clean.
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.chat).toEqual([]);
+});
+
 test('edit & regenerate truncates exactly one exchange and re-sends as a normal turn', async () => {
   seed('draft-a', {
     body: '# Alpha\n',
