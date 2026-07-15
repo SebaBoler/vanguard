@@ -113,3 +113,78 @@ test('bounded-payload: inlined file content over the 256KB total is refused befo
   expect(r.error?.message).toMatch(/inline limit/);
   expect(called).toBe(false); // refused before the model is ever hit
 });
+
+test('an image path outside the trusted asset root is refused before the model is hit (review r1 security)', async () => {
+  // The renderer hands __complete image PATHS; without containment any request could read an
+  // arbitrary host file (~/.ssh, .env) and exfiltrate it base64'd into the prompt. The sidecar
+  // stamps the TRUSTED assetRoot; every image path must canonicalize under it.
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'vg-assets-'));
+  const outside = mkdtempSync(join(tmpdir(), 'vg-outside-'));
+  const secret = join(outside, 'secret.png');
+  writeFileSync(secret, 'top secret');
+  let called = false;
+  const spy = () => {
+    called = true;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  const r = await runComplete(
+    { messages: msg, assetRoot: root, attachments: [{ kind: 'image', path: secret }] },
+    { query: spy },
+  );
+  expect(r.error?.message).toMatch(/asset root/);
+  expect(called).toBe(false);
+});
+
+test('image attachments without a trusted asset root are refused outright', async () => {
+  const r = await runComplete(
+    { messages: msg, attachments: [{ kind: 'image', path: '/etc/passwd' }] },
+    { query: fakeQuery({ type: 'result', subtype: 'success', result: 'ok' }) },
+  );
+  expect(r.error?.message).toMatch(/asset root/);
+});
+
+test('an oversize image is refused before send (bounded-payload applies to images too)', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'vg-assets-'));
+  const big = join(root, 'big.png');
+  writeFileSync(big, Buffer.alloc(6_000_000));
+  let called = false;
+  const spy = () => {
+    called = true;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  const r = await runComplete(
+    { messages: msg, assetRoot: root, attachments: [{ kind: 'image', path: big }] },
+    { query: spy },
+  );
+  expect(r.error?.message).toMatch(/too large|image/i);
+  expect(called).toBe(false);
+});
+
+test('a contained, small image goes through as a base64 content block', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'vg-assets-'));
+  const ok = join(root, 'draft-1-assets');
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(ok);
+  const img = join(ok, 'pic.png');
+  writeFileSync(img, Buffer.from('img-bytes'));
+  let prompt: unknown;
+  const spy = (params: { prompt: unknown }) => {
+    prompt = params.prompt;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  const r = await runComplete(
+    { messages: msg, assetRoot: root, attachments: [{ kind: 'image', path: img, mediaType: 'image/png' }] },
+    { query: spy },
+  );
+  expect(r.text).toBe('ok');
+  expect(typeof prompt).not.toBe('string'); // streaming-input form with the image block
+});

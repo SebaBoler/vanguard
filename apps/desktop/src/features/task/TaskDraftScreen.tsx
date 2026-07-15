@@ -188,12 +188,6 @@ export function TaskDraftScreen({
       .catch(() => setMentionFiles([]));
   }, [project]);
 
-  useEffect(() => {
-    void apiListRepoFiles(project)
-      .then((r) => setMentionFiles(r.files))
-      .catch(() => setMentionFiles([]));
-  }, [project]);
-
   // Persist the tab session for this project — but only once the mount has decided its initial
   // selection, so the pre-restore render can't clobber the remembered session.
   const sessionReady = useRef(false);

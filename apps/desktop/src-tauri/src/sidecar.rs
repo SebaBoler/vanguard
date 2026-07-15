@@ -284,6 +284,7 @@ pub fn api_complete(
     let mut req = req;
     let trusted = crate::appconfig::read(std::path::Path::new(&repo_path)).chat_base_url;
     set_base_url(&mut req, trusted)?;
+    set_asset_root(&mut req, &repo_path)?;
     let mut child = Command::new("sh")
         .arg("-c")
         .arg("exec vanguard __complete")
@@ -371,6 +372,19 @@ fn set_base_url(req: &mut serde_json::Value, trusted: Option<String>) -> Result<
     if let Some(base_url) = trusted {
         obj.insert("baseUrl".to_string(), serde_json::Value::String(base_url));
     }
+    Ok(())
+}
+
+/// Stamp the TRUSTED image-containment root over anything the renderer sent (same discipline as
+/// `set_base_url`): `__complete` refuses any image path that does not canonicalize under this
+/// drafts dir, and the renderer must not be able to choose the root it is checked against.
+fn set_asset_root(req: &mut serde_json::Value, repo_path: &str) -> Result<(), String> {
+    let obj = req.as_object_mut().ok_or("invalid request")?;
+    let root = std::path::Path::new(repo_path).join(".vanguard").join("drafts");
+    obj.insert(
+        "assetRoot".to_string(),
+        serde_json::Value::String(root.to_string_lossy().into_owned()),
+    );
     Ok(())
 }
 
@@ -835,7 +849,7 @@ pub fn api_repo_ok(repo_path: String) -> bool {
 mod tests {
     use super::{
         clear_run_pid, finish_run, publish_run_pid, register_complete, resolve_terminal,
-        set_base_url, unregister_complete, Pipe, RunGuard, Sidecar,
+        set_asset_root, set_base_url, unregister_complete, Pipe, RunGuard, Sidecar,
     };
     use serde_json::json;
 
@@ -953,6 +967,22 @@ mod tests {
         let mut req = json!({ "messages": [], "baseUrl": "https://attacker.example" });
         set_base_url(&mut req, Some("https://proxy.internal".to_string())).unwrap();
         assert_eq!(req["baseUrl"], json!("https://proxy.internal")); // app.json wins, not the caller
+    }
+
+    #[test]
+    fn set_asset_root_overwrites_a_renderer_supplied_root() {
+        // The image containment check in __complete is only as strong as the root it checks
+        // against — a renderer that could choose the root could point it at `/` and read anything.
+        let mut req = json!({ "messages": [], "assetRoot": "/" });
+        set_asset_root(&mut req, "/repo").unwrap();
+        assert_eq!(
+            req["assetRoot"],
+            json!(std::path::Path::new("/repo")
+                .join(".vanguard")
+                .join("drafts")
+                .to_string_lossy()
+                .into_owned())
+        );
     }
 
     #[test]

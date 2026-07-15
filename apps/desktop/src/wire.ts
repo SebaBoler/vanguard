@@ -149,7 +149,15 @@ export interface CompleteRequest {
   baseUrl?: string;
   /** Pasted images + inlined text files/mentions (Editor UX 7/7). Absent ⇒ text-only completion. */
   attachments?: CompleteAttachment[];
+  /** TRUSTED image-containment root, stamped by the Rust sidecar over anything the renderer sent
+   * (like baseUrl): every image attachment path must canonicalize under it. Absent ⇒ image
+   * attachments are refused. */
+  assetRoot?: string;
 }
+
+/** Ceiling on ONE image attachment file (Editor UX 7/7 review r1) — matches the Anthropic API's
+ * per-image limit; refused before the model is hit. */
+export const MAX_IMAGE_BYTES = 5_000_000;
 
 /** Ceiling on ONE inlined attachment/mention file (Editor UX 7/7) — the drag-drop/mention 64KB cap. */
 export const MAX_ATTACHMENT_BYTES = 64_000;

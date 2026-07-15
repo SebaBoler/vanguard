@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { sep } from 'node:path';
 // CompleteRequest/CompleteResponse live in src/wire.ts (the shared desktop contract — S7).
 export type { CompleteRequest, CompleteResponse } from '../wire.js';
 import type { CompleteRequest, CompleteResponse, CompleteAttachment } from '../wire.js';
-import { MAX_INLINE_TOTAL_BYTES } from '../wire.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES } from '../wire.js';
 
 /** The async-iterable subset of the agent SDK's `query()` result we consume. */
 type QueryStream = AsyncIterable<{ type: string; subtype?: string; result?: string }>;
@@ -62,9 +63,25 @@ function buildPrompt(parsed: CompleteRequest): string | AsyncIterable<unknown> {
   const text = assemblePrompt(parsed);
   const images = (parsed.attachments ?? []).filter((a) => a.kind === 'image');
   if (images.length === 0) return text;
+  // Containment (review r1, security): image paths arrive from the webview, so an unchecked read
+  // is an arbitrary-file-read primitive (~/.ssh, .env → base64'd into the prompt). Every path must
+  // canonicalize under the TRUSTED assetRoot the sidecar stamped (renderer-supplied roots are
+  // overwritten Rust-side, like baseUrl). No root ⇒ no image reads, ever.
+  if (parsed.assetRoot === undefined) {
+    throw new Error('image attachments require a trusted asset root (stamped by the sidecar)');
+  }
+  const root = realpathSync(parsed.assetRoot);
   const content: unknown[] = [{ type: 'text', text }];
   for (const img of images) {
-    const data = readFileSync(img.path).toString('base64');
+    const real = realpathSync(img.path); // resolves symlinks — a link out of the root is refused
+    if (real !== root && !real.startsWith(root + sep)) {
+      throw new Error(`image attachment escapes the asset root: ${img.path}`);
+    }
+    const size = statSync(real).size;
+    if (size > MAX_IMAGE_BYTES) {
+      throw new Error(`image attachment too large (${Math.ceil(size / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB): ${img.path}`);
+    }
+    const data = readFileSync(real).toString('base64');
     content.push({
       type: 'image',
       source: { type: 'base64', media_type: img.mediaType ?? 'image/png', data },
@@ -148,6 +165,7 @@ function validate(req: unknown): CompleteRequest | { error: { message: string } 
     ...(typeof r['model'] === 'string' ? { model: r['model'] } : {}),
     ...(typeof r['baseUrl'] === 'string' ? { baseUrl: r['baseUrl'] } : {}),
     ...(Array.isArray(r['attachments']) ? { attachments: coerceAttachments(r['attachments']) } : {}),
+    ...(typeof r['assetRoot'] === 'string' ? { assetRoot: r['assetRoot'] } : {}),
   };
 }
 
