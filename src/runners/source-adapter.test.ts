@@ -502,7 +502,7 @@ describe('runSourcedIssue', () => {
     vi.mocked(runVerification)
       .mockResolvedValueOnce({ passed: false } as never)
       .mockResolvedValueOnce({ passed: true } as never);
-    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2' } as never);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2', completed: true, exitReason: 'completed' } as never);
 
     const adapter = fakeAdapter([], STAGES);
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
@@ -513,6 +513,62 @@ describe('runSourcedIssue', () => {
     expect(adapter.addFailureLabel).not.toHaveBeenCalledWith(MR_URL, 'verify');
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('an incomplete implementer (max-turns/timeout) fails the gate and resumes its session — never a straight PR of residue (dogfood #352)', async () => {
+    // Run #352 rerun: the implementer hit its turn cap mid-exploration, leaving only junk in the
+    // tree; conformance had no manifest and the junk passed the verify command, so the gate said
+    // PASS and the pipeline published a garbage PR titled as the feature. Completion must be part
+    // of the gate: incomplete implementer → resume the session to finish, not publish.
+    runStages.mockResolvedValueOnce([
+      {
+        name: 'implementer',
+        result: {
+          taskId: 'gl-1', completed: false, exitReason: 'incomplete', turns: 4,
+          worktreePath: '/wt', worktreePreserved: true, finalText: 'Let me check what packages are available.',
+          sessionId: 'sess-1',
+        },
+      },
+      stageOutcome('reviewer'),
+    ]);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2', completed: true, exitReason: 'completed' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    // The resume inherits the implementer's own turn cap — not runAgent's 6-turn default, which
+    // would be useless for finishing work that already exhausted 30 turns.
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', maxTurns: 30 });
+    const prompt = runAgent.mock.calls[0]?.[1]?.promptTemplate as string;
+    expect(prompt).toMatch(/ended before the task was finished/);
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('a persistently incomplete implementer exhausts the repair cap and declares partial scope', async () => {
+    runStages.mockResolvedValueOnce([
+      {
+        name: 'implementer',
+        result: {
+          taskId: 'gl-1', completed: false, exitReason: 'incomplete', turns: 4,
+          worktreePath: '/wt', worktreePreserved: true, finalText: 'still going',
+          sessionId: 'sess-1',
+        },
+      },
+      stageOutcome('reviewer'),
+    ]);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: false, exitReason: 'incomplete' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Part of ${task.id}`);
+    expect(body).not.toContain(`Closes ${task.id}`);
   });
 
   it('exhausts the shared repair cap on persistent red verification and declares partial scope', async () => {
