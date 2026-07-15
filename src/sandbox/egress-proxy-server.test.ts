@@ -40,31 +40,23 @@ test('a bind failure exits NONZERO so --restart on-failure engages — never a s
 });
 
 test('serves after start: disallowed CONNECT gets 403 and the process stays alive', async () => {
-  const child = execa('node', [serverPath], {
+  // PORT=0 ⇒ the OS picks a free port and the banner reports the ACTUAL one — no
+  // release-then-rebind race with parallel test processes.
+  const server = execa('node', [serverPath], {
     env: { PORT: '0', ALLOW: 'a.example' },
     reject: false,
     all: true,
   });
-  // PORT=0 binds an ephemeral port; the banner reports the actual one only as configured, so
-  // grab the real port from the OS via the banner-less route: retry-connect is not possible
-  // without the number — instead pick a free port ourselves.
-  await child.kill();
-  const probe = await occupyPort();
-  const port = probe.port;
-  probe.close();
-  const server = execa('node', [serverPath], {
-    env: { PORT: String(port), ALLOW: 'a.example' },
-    reject: false,
-    all: true,
-  });
   try {
-    // Wait for the banner so the listener is up.
-    await new Promise<void>((resolve, reject) => {
+    const port = await new Promise<number>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error('no banner')), 10_000);
+      let buf = '';
       server.stdout?.on('data', (c: Buffer) => {
-        if (String(c).includes('egress proxy on')) {
+        buf += String(c);
+        const m = /egress proxy on (\d+);/.exec(buf);
+        if (m?.[1] !== undefined) {
           clearTimeout(t);
-          resolve();
+          resolve(Number(m[1]));
         }
       });
     });

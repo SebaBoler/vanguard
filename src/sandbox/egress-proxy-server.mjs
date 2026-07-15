@@ -10,7 +10,15 @@ import { isAllowed } from './egress-allow.mjs';
 
 // Synchronous stdout: `docker logs` reads a pipe, and async console.log buffers can be dropped by
 // process.exit — the crash evidence is the point, so it must flush before death (PR #353 review).
-const log = (line) => writeSync(1, `${line}\n`);
+// Best-effort even so: a saturated non-blocking pipe can make writeSync itself throw (EAGAIN), and
+// a logger that throws while handling a failure would mask the failure.
+const log = (line) => {
+  try {
+    writeSync(1, `${line}\n`);
+  } catch {
+    /* the pipe is gone or full — dying silently here would still exit nonzero below */
+  }
+};
 
 const ALLOW = (process.env.ALLOW ?? '')
   .split(',')
@@ -59,4 +67,7 @@ createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTT
     upstream.on('error', () => clientSocket.destroy());
     clientSocket.on('error', () => upstream.destroy());
   })
-  .listen(PORT, () => console.log(`egress proxy on ${PORT}; allow=${ALLOW.join(',')}`));
+  .listen(PORT, function () {
+    // The ACTUALLY-bound port (PORT=0 ⇒ ephemeral), so the banner is truthful for tests/debugging.
+    log(`egress proxy on ${this.address().port}; allow=${ALLOW.join(',')}`);
+  });
