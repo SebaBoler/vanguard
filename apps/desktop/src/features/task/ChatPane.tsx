@@ -67,7 +67,9 @@ export function ChatPane({
 
   // Refocus the composer once the active conversation's reply has landed. Guarded against the
   // initial render so opening the drawer doesn't steal focus; the owner only bumps the signal for
-  // replies in the conversation the user is actually looking at (viewingRef semantics).
+  // replies in the conversation the user is actually looking at (viewingRef semantics). Keyed on
+  // focusSignal ALONE — reacting to `disabled` too would steal focus whenever a draft un-archives
+  // or the user switches to an editable draft (review r1).
   const focusMounted = useRef(false);
   useEffect(() => {
     if (!focusMounted.current) {
@@ -75,7 +77,8 @@ export function ChatPane({
       return;
     }
     if (!disabled) textareaRef.current?.focus();
-  }, [focusSignal, disabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- disabled is read, not a trigger
+  }, [focusSignal]);
 
   return (
     <div className="flex h-full flex-col gap-2">
