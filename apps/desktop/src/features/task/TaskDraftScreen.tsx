@@ -12,7 +12,7 @@ import {
   readDraft,
   readAppConfig,
 } from '../../ipc.js';
-import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES } from '../../wire.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES } from '../../wire.js';
 import type { CompleteAttachment } from '../../wire.js';
 import type { ComposerAttachment } from './ChatPane.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
@@ -520,6 +520,7 @@ export function TaskDraftScreen({
     // write, so a failed send leaves no orphaned assets behind (review r2). Images are decoded in
     // memory here and persisted only at the end.
     const pendingImages: { bytes: Uint8Array; mediaType?: string }[] = [];
+    let imageBytesTotal = 0;
     for (const a of attachments) {
       if (a.kind === 'file' && a.content !== undefined) {
         out.push({ kind: 'file', path: a.name, content: a.content });
@@ -528,20 +529,27 @@ export function TaskDraftScreen({
         const bin = atob(base64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        // Client-side mirror of core's MAX_IMAGE_BYTES: fail fast instead of shipping megabytes
-        // over IPC only to be refused in __complete (review r2).
+        // Client-side mirror of core's per-image AND aggregate caps: fail fast (keeping the chips —
+        // resolution throws → send rejected) instead of writing assets and shipping megabytes over
+        // IPC only to be refused in __complete (review r2/r4).
         if (bytes.length > MAX_IMAGE_BYTES) {
           throw new Error(`Pasted image is too large (${Math.ceil(bytes.length / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB).`);
+        }
+        imageBytesTotal += bytes.length;
+        if (imageBytesTotal > MAX_IMAGE_TOTAL_BYTES) {
+          throw new Error(`Pasted images exceed the ${MAX_IMAGE_TOTAL_BYTES / 1_000_000}MB total limit. Remove one and try again.`);
         }
         pendingImages.push({ bytes, ...(a.mediaType !== undefined ? { mediaType: a.mediaType } : {}) });
       }
     }
     // `@path` mentions: read each tracked file's (capped) content and inline it. Deduped so a path
-    // typed twice inlines once. Unreadable mentions are skipped, never fatal.
+    // typed twice inlines once. Only tokens that match a KNOWN tracked file are read — this skips a
+    // git subprocess per prose `@word` (review r4), and the server re-validates membership anyway.
+    const tracked = new Set(mentionFiles);
     const seen = new Set<string>();
     for (const m of text.matchAll(/(?:^|\s)@([\w./-]+)/g)) {
       const rel = m[1]!;
-      if (seen.has(rel)) continue;
+      if (seen.has(rel) || !tracked.has(rel)) continue;
       seen.add(rel);
       try {
         const { content } = await apiReadRepoFile(project, rel);

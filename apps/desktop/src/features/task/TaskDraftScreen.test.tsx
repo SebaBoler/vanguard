@@ -970,20 +970,34 @@ test('an @-mention in the sent text inlines the file as a wire attachment on api
 });
 
 test('attachment resolution failing (over the inline ceiling) errors inline BEFORE any completion is sent', async () => {
-  // One mention whose content blows the 256KB ceiling: the turn must fail locally — no apiComplete
-  // call — with the text restored to the composer and no dangling user turn persisted.
+  // A TRACKED mention (src/app.ts is in the mocked file list) whose content blows the 256KB
+  // ceiling: the turn must fail locally — no apiComplete call — with the text restored to the
+  // composer and no dangling user turn persisted.
   vi.mocked(ipc.apiReadRepoFile).mockResolvedValueOnce({
-    path: 'big.txt',
+    path: 'src/app.ts',
     content: 'x'.repeat(300_000),
     truncated: false,
   });
   renderFresh();
   await drawerReady();
-  sendMsg('inline @big.txt please');
+  sendMsg('inline @src/app.ts please');
   await settle();
   expect(planCalls()).toHaveLength(0);
   expect(screen.getByText(/too large/i)).toBeInTheDocument();
   const data = JSON.parse([...files.values()][0]!) as DraftData;
   expect(data.chat).toEqual([]); // dangling user turn stripped
-  expect(data.composerText).toBe('inline @big.txt please'); // restored for retry
+  expect(data.composerText).toBe('inline @src/app.ts please'); // restored for retry
+});
+
+test('an @token that is not a tracked file is not read (no git spawn per prose @-word) (review r4)', async () => {
+  renderFresh();
+  await drawerReady();
+  // @someone/@channel style tokens: not in the tracked-file list, so apiReadRepoFile is never called.
+  sendMsg('hey @someone and @channel, see @not/a/file.ts');
+  await settle();
+  expect(ipc.apiReadRepoFile).not.toHaveBeenCalled();
+  // The plain turn still went through with no attachments.
+  const call = vi.mocked(ipc.apiComplete).mock.calls.at(-1);
+  const req = call![1] as { attachments?: unknown[] };
+  expect(req.attachments).toBeUndefined();
 });
