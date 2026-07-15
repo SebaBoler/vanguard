@@ -69,6 +69,9 @@ export function Inspector({
   // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
+  // Live-run strip minimized to reveal the runs list. Distinct from dismissal: events keep folding,
+  // so restoring the strip (or the run finishing) loses nothing. Dismissal is terminal-only.
+  const [stripMinimized, setStripMinimized] = useState(false);
   const [checkedIdle, setCheckedIdle] = useState(false); // false until apiActiveRun() resolves on mount
   const [foreignRun, setForeignRun] = useState<string | null>(null); // repoPath of another project's live run (S8)
   const typedRunRef = useRef<TypedRunState | null>(null); // latest typedRun, readable in async callbacks
@@ -251,6 +254,7 @@ export function Inspector({
     const started = initialTypedRun();
     typedRunRef.current = started; // sync in-flight marker (the effect-synced ref lags a render)
     setTypedRun(started); // "starting…" — "run live" derives from this
+    setStripMinimized(false); // a fresh launch always shows its strip
     setDetail(null);
     setLiveRun(null);
     void apiCreateRun(params)
@@ -319,6 +323,17 @@ export function Inspector({
         <div className="ml-auto flex items-center gap-3">
           {detail && <span className="tabular-nums text-xs text-muted-foreground">{detail.timestamp}</span>}
           {liveRun && <Chip color="success" variant="outlined">running</Chip>}
+          {typedRun !== null && stripMinimized && (
+            <button
+              onClick={() => setStripMinimized(false)}
+              aria-label={typedRun.terminal === undefined ? 'show live run' : 'show finished run'}
+              className="cursor-pointer"
+            >
+              <Chip color="success" variant="outlined">
+                {typedRun.terminal === undefined ? 'running — view' : 'run finished — view'}
+              </Chip>
+            </button>
+          )}
           {detail && <Chip color={detailPassed ? 'success' : 'destructive'}>{detailPassed ? 'passed' : 'failed'}</Chip>}
           {/* S10 (D3): the toolbar path to the provider form is gone — runs start from the board
               (TaskDetail keeps the only setShowNewRun entry). Authoring starts here instead. */}
@@ -354,21 +369,25 @@ export function Inspector({
           a run is live in <code className="font-mono">{foreignRun}</code> — starting one here will be rejected until it finishes
         </div>
       )}
-      {typedRun !== null && screen === 'runs' ? (
+      {typedRun !== null && screen === 'runs' && !stripMinimized ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          {typedRun.terminal !== undefined && (
-            <button
-              onClick={() => {
+          <button
+            onClick={() => {
+              if (typedRun.terminal !== undefined) {
                 // Record the runId as dismissed so a late event can't resurrect the closed strip.
                 if (typedRun.runId !== undefined) dismissedRunId.current = typedRun.runId;
                 setTypedRun(null);
-              }}
-              className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="size-3.5" />
-              Back to runs
-            </button>
-          )}
+              } else {
+                // Run still live: minimize, don't dismiss — events keep folding and the toolbar
+                // chip restores the strip (dogfood: the live strip trapped the user fullscreen).
+                setStripMinimized(true);
+              }
+            }}
+            className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
+            Back to runs
+          </button>
           <RunStrip state={typedRun} onCancel={() => void apiCancel()} />
         </div>
       ) : detail ? (

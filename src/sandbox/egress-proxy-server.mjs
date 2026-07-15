@@ -50,6 +50,12 @@ createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTT
   })
   .on('clientError', (_err, socket) => socket.destroy())
   .on('connect', (req, clientSocket, head) => {
+    // For 'connect' node hands over a raw socket with NO error listener. A client that RSTs while
+    // the 403 (or 200) is in flight makes the write emit 'error' (EPIPE/ECONNRESET) — unhandled,
+    // that is an uncaughtException → exit 1 → docker restart, and the CLI's aborted CONNECTs to
+    // disallowed telemetry hosts repeat it until the restart cap kills the enclave for good
+    // (dogfood #352, second failure). Absorb socket errors before the first write can happen.
+    clientSocket.on('error', () => clientSocket.destroy());
     const target = req.url ?? '';
     const sep = target.lastIndexOf(':');
     const host = sep > 0 ? target.slice(0, sep) : target;
