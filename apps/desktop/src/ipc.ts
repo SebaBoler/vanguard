@@ -161,8 +161,21 @@ export interface CompleteParams {
 export function apiComplete(
   repoPath: string,
   params: CompleteParams,
+  // Opaque per-turn handle. When present, Rust tracks the spawned `__complete` child under it so
+  // `apiCancelComplete(callId)` can kill exactly this turn (the Stop button). Omitted for
+  // fire-and-forget completions (the auto-title) that are never cancelled.
+  callId?: string,
 ): Promise<{ text?: string; error?: { message: string } }> {
-  return invoke('api_complete', { repoPath, req: params });
+  return invoke('api_complete', { repoPath, req: params, callId });
+}
+
+/**
+ * Stop an in-flight doc-chat completion (Editor UX 5/7): kill the `__complete` child that
+ * `apiComplete` spawned for this `callId`. Kill-by-id is the whole surface — it cannot touch the run
+ * sidecar. An unknown/finished id is a silent no-op.
+ */
+export function apiCancelComplete(callId: string): Promise<void> {
+  return invoke<void>('api_cancel_complete', { callId });
 }
 
 /**
