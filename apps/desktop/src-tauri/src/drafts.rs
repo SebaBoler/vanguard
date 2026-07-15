@@ -179,15 +179,18 @@ pub fn clear_assets(repo: &Path, id: &str) -> Result<(), String> {
 pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
     safe_name(id)?;
     assert_not_symlink(repo)?;
-    // The draft's pasted-image assets go with it — leaving `<id>-assets/` behind on the one
-    // operation meant to clean up would be an unbounded on-disk leak (review r2). Same symlink
-    // guard as write_asset: a swapped-in link must not have its TARGET's contents removed.
-    clear_assets(repo, id)?;
-    match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
+    // Remove the JSON FIRST: "anything list could return must be deletable" (AC6) is the invariant
+    // the whole safe_name leniency protects, so a delete must never be blocked. Asset cleanup is
+    // best-effort AFTER (review r5→r7 regression): a symlinked/locked/permission-denied assets dir
+    // must not resurrect the draft the user asked to remove. A leaked assets dir is a bounded leak;
+    // an undeletable draft is the exact bug S10 exists to prevent.
+    let removed = match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
-    }
+    };
+    let _ = clear_assets(repo, id);
+    removed
 }
 
 #[cfg(test)]
@@ -261,6 +264,20 @@ mod tests {
         write(tmp.path(), "draft-x", "{}").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
+    }
+
+    #[test]
+    fn delete_removes_the_json_even_when_asset_cleanup_fails() {
+        // AC6 regression guard (review r7): a symlinked assets dir makes clear_assets Err, but the
+        // draft the user asked to delete must still be removed — a leaked dir beats an undeletable draft.
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        // Point <id>-assets at an out-of-tree dir via a symlink — clear_assets refuses to touch it.
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), assets_dir(tmp.path(), "draft-x")).unwrap();
+        delete(tmp.path(), "draft-x").unwrap();
+        assert!(read(tmp.path(), "draft-x").is_err()); // the JSON is gone
+        assert!(outside.path().exists()); // the symlink target was NOT followed/removed
     }
 
     #[test]

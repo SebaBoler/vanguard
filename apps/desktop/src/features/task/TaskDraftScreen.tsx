@@ -553,8 +553,11 @@ export function TaskDraftScreen({
       if (seen.has(rel) || !tracked.has(rel)) continue;
       seen.add(rel);
       try {
-        const { content } = await apiReadRepoFile(project, rel);
-        out.push({ kind: 'file', path: rel, content });
+        const { content, truncated } = await apiReadRepoFile(project, rel);
+        // A file over the 64KB cap is inlined head-only; annotate it so the model isn't misled into
+        // treating the truncated head as the whole file (review r7).
+        const annotated = truncated ? `${content}\n\n… (truncated at 64KB)` : content;
+        out.push({ kind: 'file', path: rel, content: annotated });
       } catch {
         // skip a mention that doesn't resolve to a readable tracked file
       }

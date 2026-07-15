@@ -35,7 +35,13 @@ export interface ComposerAttachment {
 }
 
 /** Which models accept image content blocks: the built-in Claude family. A custom provider's model
- * (glm, gpt, …) is assumed text-only, so a pasted image is refused BEFORE send, never dropped. */
+ * (glm, gpt, …) is assumed text-only, so a pasted image is refused BEFORE send, never dropped.
+ *
+ * KNOWN LIMITATION (review r7): a name regex, not a capability flag. A multimodal custom model not
+ * named `claude*` (a proxied gpt-4o, an Anthropic-compatible relay) is wrongly blocked; a custom
+ * model with `claude` in its name pointed at a text-only backend is wrongly allowed. The right fix
+ * is a per-provider `supportsImages` capability in app.json — deferred; this heuristic is the
+ * conservative default until that config exists. */
 export function modelSupportsImages(model: string): boolean {
   return /claude|sonnet|opus|haiku/i.test(model);
 }
@@ -254,9 +260,12 @@ export function ChatPane({
     const text = composerText.trim();
     if ((text === '' && attachments.length === 0) || state.busy || disabled) return;
     if (imageUnsupported) return; // error shown inline; never silently drop the image
-    // Clear the chips ONLY once the parent confirms the send was accepted (review r3): resolution
-    // can fail (256KB ceiling, oversize image), and its error tells the user to "remove a file" —
-    // useless if the chips are already gone. onSend resolves false on a rejected send.
+    // Clear the chips once the parent confirms the send was ACCEPTED (resolution succeeded) —
+    // onSend resolves false on a rejected send (256KB ceiling, oversize image), whose error tells
+    // the user to "remove a file", useless if the chips are already gone (review r3). This tracks
+    // ACCEPTANCE, not completion success: like the composer TEXT (cleared on send, restored only by
+    // Stop), a later completion error keeps the transcript's user turn, not the chips — a resend is
+    // a fresh paste, matching how a failed text turn is re-typed (review r7, deliberate parity).
     const outgoing = attachments;
     setDropError(null);
     void Promise.resolve(outgoing.length > 0 ? onSend(text, outgoing) : onSend(text)).then((ok) => {
