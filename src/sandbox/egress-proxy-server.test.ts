@@ -80,3 +80,62 @@ test('serves after start: disallowed CONNECT gets 403 and the process stays aliv
     await server.catch(() => {});
   }
 });
+
+test('a client that RSTs mid-403 must not kill the proxy (dogfood #352, second failure)', async () => {
+  // The CLI inside the sandbox aborts CONNECTs to disallowed telemetry hosts; the 403 write then
+  // hits a reset socket and emits 'error' (EPIPE/ECONNRESET). Unhandled, that is an
+  // uncaughtException → exit 1 → docker restart — and repeated aborts exhaust the on-failure cap,
+  // leaving the enclave permanently dead. The proxy must absorb the reset and keep serving.
+  const server = execa('node', [serverPath], {
+    env: { PORT: '0', ALLOW: 'a.example' },
+    reject: false,
+    all: true,
+  });
+  try {
+    const port = await new Promise<number>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('no banner')), 10_000);
+      let buf = '';
+      server.stdout?.on('data', (c: Buffer) => {
+        buf += String(c);
+        const m = /egress proxy on (\d+);/.exec(buf);
+        if (m?.[1] !== undefined) {
+          clearTimeout(t);
+          resolve(Number(m[1]));
+        }
+      });
+    });
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve) => {
+        const s = connect(port, '127.0.0.1', () => {
+          s.write('CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n');
+          // RST (not FIN) before the 403 flushes — end() on the server side then errors.
+          setImmediate(() => {
+            s.resetAndDestroy();
+            resolve();
+          });
+        });
+        s.on('error', () => resolve());
+      });
+    }
+    // Give a crash time to surface, then prove the proxy still answers.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(server.exitCode).toBeNull();
+    const status = await new Promise<string>((resolve, reject) => {
+      const s = connect(port, '127.0.0.1', () => {
+        s.write('CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n');
+      });
+      let d = '';
+      s.on('data', (c) => {
+        d += String(c);
+        resolve(d.split('\r\n')[0] ?? '');
+        s.destroy();
+      });
+      s.on('error', reject);
+      setTimeout(() => reject(new Error('probe timeout')), 10_000);
+    });
+    expect(status).toBe('HTTP/1.1 403 Forbidden');
+  } finally {
+    server.kill();
+    await server.catch(() => {});
+  }
+});
