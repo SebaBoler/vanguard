@@ -324,7 +324,11 @@ export function Inspector({
           {detail && <span className="tabular-nums text-xs text-muted-foreground">{detail.timestamp}</span>}
           {liveRun && <Chip color="success" variant="outlined">running</Chip>}
           {typedRun !== null && stripMinimized && (
-            <button onClick={() => setStripMinimized(false)} aria-label="show live run" className="cursor-pointer">
+            <button
+              onClick={() => setStripMinimized(false)}
+              aria-label={typedRun.terminal === undefined ? 'show live run' : 'show finished run'}
+              className="cursor-pointer"
+            >
               <Chip color="success" variant="outlined">
                 {typedRun.terminal === undefined ? 'running — view' : 'run finished — view'}
               </Chip>
