@@ -612,9 +612,12 @@ export function TaskDraftScreen({
     if (archived) return;
     const id = activeIdRef.current;
     if (id === null) return;
-    const idx = lastUserIndex(chat.messages);
+    // Index and slice from the SAME source (the persisted transcript). The reducer's messages are
+    // index-aligned with it today, but computing idx there and slicing here would silently truncate
+    // the wrong exchange if the two ever diverged (review r2).
+    const idx = lastUserIndex(draftRef.current.chat);
     if (idx === -1) return;
-    const text = chat.messages[idx]?.content ?? '';
+    const text = draftRef.current.chat[idx]?.content ?? '';
     dispatch({ type: 'editLast' });
     setComposerText(text);
     setComposerFocus((n) => n + 1);

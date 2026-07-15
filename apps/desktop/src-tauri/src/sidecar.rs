@@ -301,9 +301,10 @@ pub fn api_complete(
     // on stdin EOF and the kill is a no-op. A Stop-killed child is already dead here; the kill is a
     // no-op too, and `complete_exchange` has already returned Err (stdout closed → no response line).
     let result = complete_exchange(&mut child, &req);
-    // Unregister BEFORE the child is reaped: after wait() the OS may recycle the pid, and a
-    // perfectly-timed Stop reading the registry in that sliver would signal an unrelated process
-    // (review r1). Killing via the still-owned Child handle below is reuse-safe.
+    // Unregister BEFORE the child is reaped so the registry never maps an id to a reaped pid. This
+    // narrows the reuse window but does not close it — a Stop that read the pid before this line
+    // kills after the reap — so `api_cancel_complete` ALSO verifies ownership (ps argv check)
+    // before signalling (review r2). Killing via the still-owned Child handle below is reuse-safe.
     unregister_complete(&state, call_id.as_deref());
     let _ = child.kill();
     let _ = child.wait();
@@ -344,9 +345,20 @@ pub fn api_cancel_complete(state: State<'_, Sidecar>, call_id: String) -> Result
         .get(&call_id)
         .copied();
     if let Some(pid) = pid {
-        // Plain SIGTERM, like the query watchdog: `__complete` installs no signal handler, so one
-        // signal is enough. No libc dep — shell `kill` (Unix; the child is spawned via `sh -c`).
-        let _ = Command::new("kill").arg(pid.to_string()).status();
+        // The pid was read under the lock, but the child can self-terminate and be reaped between
+        // that read and the kill — the OS may then recycle the pid to a stranger. Mirror the query
+        // watchdog's ownership guard (ps argv check, sidecar.rs Watchdog::arm) before signalling:
+        // `exec vanguard __complete` puts that token in the child's argv by construction.
+        let still_ours = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("__complete"))
+            .unwrap_or(false);
+        if still_ours {
+            // Plain SIGTERM, like the query watchdog: `__complete` installs no signal handler, so
+            // one signal is enough. No libc dep — shell `kill` (the child is spawned via `sh -c`).
+            let _ = Command::new("kill").arg(pid.to_string()).status();
+        }
     }
     Ok(())
 }
