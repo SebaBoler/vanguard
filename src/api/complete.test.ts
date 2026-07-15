@@ -49,7 +49,7 @@ test('a thrown query → error, not reject', async () => {
 
 test('passes system + model into the query options', async () => {
   let seen: Record<string, unknown> | undefined;
-  const spy = (params: { prompt: string; options?: Record<string, unknown> }) => {
+  const spy = (params: { prompt: string | AsyncIterable<unknown>; options?: Record<string, unknown> }) => {
     seen = params.options;
     return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
   };
@@ -60,4 +60,56 @@ test('passes system + model into the query options', async () => {
   // >1 (dogfood 2026-07-14): the SDK counts internal steps as turns, and maxTurns:1 died with
   // error_max_turns before any text. Tools stay empty, so the cap is only a runaway stop.
   expect(seen?.['maxTurns']).toBe(8);
+});
+
+test('prompt-inlines-mention: a file attachment (@mention / dropped text) is inlined as a fenced block tagged with its path', async () => {
+  let prompt: string | AsyncIterable<unknown> | undefined;
+  const spy = (params: { prompt: string | AsyncIterable<unknown>; options?: Record<string, unknown> }) => {
+    prompt = params.prompt;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  await runComplete(
+    {
+      messages: [{ role: 'user', content: 'summarise @src/wire.ts' }],
+      attachments: [{ kind: 'file', path: 'src/wire.ts', content: 'export const X = 1;' }],
+    },
+    { query: spy },
+  );
+  // Text-only turn ⇒ a string prompt carrying both the message and the fenced file block.
+  expect(typeof prompt).toBe('string');
+  const text = prompt as string;
+  expect(text).toContain('summarise @src/wire.ts');
+  expect(text).toContain('`src/wire.ts`:');
+  expect(text).toContain('```\nexport const X = 1;\n```');
+});
+
+test('a file attachment with no content is not inlined (a bad attachment cannot corrupt the prompt)', async () => {
+  let prompt: string | AsyncIterable<unknown> | undefined;
+  const spy = (params: { prompt: string | AsyncIterable<unknown> }) => {
+    prompt = params.prompt;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  await runComplete({ messages: msg, attachments: [{ kind: 'file', path: 'x.ts' }] }, { query: spy });
+  expect(prompt).toBe('User: hi');
+});
+
+test('bounded-payload: inlined file content over the 256KB total is refused before send, with a clear error', async () => {
+  let called = false;
+  const spy = () => {
+    called = true;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  const r = await runComplete(
+    {
+      messages: msg,
+      attachments: [
+        { kind: 'file', path: 'a.ts', content: 'x'.repeat(200_000) },
+        { kind: 'file', path: 'b.ts', content: 'y'.repeat(100_000) },
+      ],
+    },
+    { query: spy },
+  );
+  expect(r.text).toBeUndefined();
+  expect(r.error?.message).toMatch(/inline limit/);
+  expect(called).toBe(false); // refused before the model is ever hit
 });

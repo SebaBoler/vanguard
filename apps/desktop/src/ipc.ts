@@ -157,6 +157,8 @@ export interface CompleteParams {
   system?: CompleteRequest['system'];
   messages: CompleteRequest['messages'];
   model: string;
+  /** Pasted images + inlined text files/mentions (Editor UX 7/7). Bounded host-side before send. */
+  attachments?: CompleteRequest['attachments'];
 }
 export function apiComplete(
   repoPath: string,
@@ -187,6 +189,21 @@ export function apiCancelComplete(callId: string): Promise<void> {
  */
 export function apiCreateTask(repoPath: string, title: string, body: string): Promise<import('./wire').CreatedTask> {
   return invoke('api_create_task', { repoPath, title, body });
+}
+
+/** Composer `@`-mention autocomplete (Editor UX 7/7): the project repo's tracked files, capped. */
+export function apiListRepoFiles(repoPath: string): Promise<{ files: string[]; capped: boolean }> {
+  return invoke('api_list_repo_files', { repoPath });
+}
+
+/** Read one tracked file for mention inlining (Editor UX 7/7); `path` is repo-relative, capped read. */
+export function apiReadRepoFile(repoPath: string, path: string): Promise<{ path: string; content: string; truncated: boolean }> {
+  return invoke('api_read_repo_file', { repoPath, path });
+}
+
+/** Persist a pasted image under the draft's assets dir (Editor UX 7/7); returns its absolute path. */
+export function writeDraftAsset(repoPath: string, id: string, name: string, bytes: Uint8Array): Promise<string> {
+  return invoke<string>('write_draft_asset', { repoPath, id, name, bytes: Array.from(bytes) });
 }
 
 // Task drafts (S10): one JSON file per draft under `.vanguard/drafts/`; the webview owns the shape

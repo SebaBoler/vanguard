@@ -1,6 +1,7 @@
 import { capabilities } from '../api/capabilities.js';
 import { assertFlowResolvable, deleteRepoFlow, listRepoFlows, readRepoFlow, writeRepoFlow } from '../flows/repo.js';
 import { fetchTaskSpec, listBoardTasks } from '../tasks/board-list.js';
+import { listRepoFiles, readRepoFile } from '../tasks/repo-files.js';
 import { VanguardError } from '../core/errors.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { assertProvidersResolvable, customEgressHosts, validateProviderChoice, assertEgressCompatible } from '../agents/registry.js';
@@ -119,6 +120,25 @@ export function productionDeps(): SidecarDeps {
     fetchSpec: async ({ repoPath, taskId }) => {
       try {
         return await fetchTaskSpec(repoPath, taskId);
+      } catch (error) {
+        if (error instanceof VanguardError) throw new BadRequestError(error.message);
+        throw error;
+      }
+    },
+    // Composer `@`-mention autocomplete + inlining (Editor UX 7/7): repo-scoped reads. A git/FS
+    // failure (not a repo, git absent, unreadable file) is user-fixable — wrap to bad-request so the
+    // picker shows the actionable message instead of an 'internal' shrug, like the board path.
+    listRepoFiles: async ({ repoPath }) => {
+      try {
+        return await listRepoFiles(repoPath);
+      } catch (error) {
+        if (error instanceof VanguardError) throw new BadRequestError(error.message);
+        throw error;
+      }
+    },
+    readRepoFile: async ({ repoPath, path }) => {
+      try {
+        return await readRepoFile(repoPath, path);
       } catch (error) {
         if (error instanceof VanguardError) throw new BadRequestError(error.message);
         throw error;

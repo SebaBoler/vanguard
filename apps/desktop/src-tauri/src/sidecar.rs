@@ -802,6 +802,20 @@ pub fn api_write_flow(
     flow_request(&state, "writeFlow", serde_json::json!({ "repoPath": repo_path, "file": file, "doc": doc }))
 }
 
+/// Composer `@`-mention autocomplete (Editor UX 7/7): the repo's tracked files (`git ls-files`,
+/// capped). Timed on the query pipe — a local idempotent read, same contract as the board methods.
+#[tauri::command(async)]
+pub fn api_list_repo_files(state: State<'_, Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    board_request(&state, "listRepoFiles", serde_json::json!({ "repoPath": repo_path }))
+}
+
+/// Read one tracked file for mention inlining (Editor UX 7/7). `path` is repo-relative; core rejects
+/// traversal and caps the read. Timed query-pipe exchange, like `api_read_flow`.
+#[tauri::command(async)]
+pub fn api_read_repo_file(state: State<'_, Sidecar>, repo_path: String, path: String) -> Result<serde_json::Value, String> {
+    board_request(&state, "readRepoFile", serde_json::json!({ "repoPath": repo_path, "path": path }))
+}
+
 /// Cheap client-side pre-flight: is `repo_path` a git work tree? Lets S1 fail a misconfigured project
 /// at click instead of minutes into a run. `(async)` — it shells out to git, and process spawns do not
 /// belong on the main thread even when they're fast.

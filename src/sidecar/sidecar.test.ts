@@ -27,6 +27,8 @@ const stubDeps = (over: Partial<SidecarDeps> = {}): SidecarDeps => ({
   deleteFlow: async () => ({}),
   listTasks: async () => ({ tasks: [], capped: false }),
   fetchSpec: async () => ({ spec: '# t' }),
+  listRepoFiles: async () => ({ files: [], capped: false }),
+  readRepoFile: async () => ({ path: 'x', content: '', truncated: false }),
   ...over,
 });
 

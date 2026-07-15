@@ -1,7 +1,20 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { Button, InlineEdit } from '@/ui';
-import { apiComplete, apiCancelComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
+import {
+  apiComplete,
+  apiCancelComplete,
+  apiCreateTask,
+  apiListRepoFiles,
+  apiReadRepoFile,
+  writeDraftAsset,
+  listDrafts,
+  readDraft,
+  readAppConfig,
+} from '../../ipc.js';
+import { MAX_INLINE_TOTAL_BYTES } from '../../wire.js';
+import type { CompleteAttachment } from '../../wire.js';
+import type { ComposerAttachment } from './ChatPane.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
 import { relTime } from '../../time.js';
 import { DocEditor } from './DocEditor.js';
@@ -132,6 +145,9 @@ export function TaskDraftScreen({
   const [source, setSource] = useState<string | undefined>(undefined);
   const [defaultModel, setDefaultModel] = useState(DEFAULT_CHAT_MODEL);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
+  // Project repo's tracked files for `@`-mention autocomplete (Editor UX 7/7). Loaded once per
+  // project; a git/FS failure leaves it empty (the picker simply shows nothing), never a throw.
+  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const [deleteArm, setDeleteArm] = useState<string | null>(null);
   // Ids the user deleted THIS session. The archive step needs to tell a deliberate delete (silent)
   // from a transient read/parse failure (review #349 r7): both surface as a non-'written' update,
@@ -165,6 +181,12 @@ export function TaskDraftScreen({
         setDefaultModel(DEFAULT_CHAT_MODEL);
         setModelOptions([]);
       });
+  }, [project]);
+
+  useEffect(() => {
+    void apiListRepoFiles(project)
+      .then((r) => setMentionFiles(r.files))
+      .catch(() => setMentionFiles([]));
   }, [project]);
 
   // Persist the tab session for this project — but only once the mount has decided its initial
@@ -480,7 +502,51 @@ export function TaskDraftScreen({
     void writer.writeNow(id, { ...draftRef.current });
   };
 
-  const send = (text: string): void => {
+  /** Resolve composer attachments + `@`-mentions into wire attachments for `__complete` (Editor UX
+   * 7/7): persist images under the draft's assets dir (→ absolute path), read each `@path` mention's
+   * content, and enforce the 256KB total-inlined-content ceiling. Throws a clear error above it. */
+  const resolveAttachments = async (
+    id: string,
+    text: string,
+    attachments: ComposerAttachment[],
+  ): Promise<CompleteAttachment[]> => {
+    const out: CompleteAttachment[] = [];
+    // Dropped text files carry their content already; images are persisted and referenced by path.
+    for (const a of attachments) {
+      if (a.kind === 'file' && a.content !== undefined) {
+        out.push({ kind: 'file', path: a.name, content: a.content });
+      } else if (a.kind === 'image' && a.dataUrl !== undefined) {
+        const base64 = a.dataUrl.slice(a.dataUrl.indexOf(',') + 1);
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const ext = (a.mediaType ?? 'image/png').split('/')[1] ?? 'png';
+        const path = await writeDraftAsset(project, id, `${crypto.randomUUID()}.${ext}`, bytes);
+        out.push({ kind: 'image', path, ...(a.mediaType !== undefined ? { mediaType: a.mediaType } : {}) });
+      }
+    }
+    // `@path` mentions: read each tracked file's (capped) content and inline it. Deduped so a path
+    // typed twice inlines once. Unreadable mentions are skipped, never fatal.
+    const seen = new Set<string>();
+    for (const m of text.matchAll(/(?:^|\s)@([\w./-]+)/g)) {
+      const rel = m[1]!;
+      if (seen.has(rel)) continue;
+      seen.add(rel);
+      try {
+        const { content } = await apiReadRepoFile(project, rel);
+        out.push({ kind: 'file', path: rel, content });
+      } catch {
+        // skip a mention that doesn't resolve to a readable tracked file
+      }
+    }
+    const total = out.reduce((n, a) => n + (a.content !== undefined ? new TextEncoder().encode(a.content).length : 0), 0);
+    if (total > MAX_INLINE_TOTAL_BYTES) {
+      throw new Error(`Attached content is too large (${Math.ceil(total / 1000)}KB / ${MAX_INLINE_TOTAL_BYTES / 1000}KB). Remove a file or mention and try again.`);
+    }
+    return out;
+  };
+
+  const send = (text: string, attachments: ComposerAttachment[] = []): void => {
     if (archived) return;
     // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
     // draft switch cannot clear another draft's slot.

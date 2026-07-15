@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror, {
   EditorSelection,
   EditorView,
@@ -15,6 +15,49 @@ import { Button } from '@/ui';
 import { ChatMessage } from './ChatMessage.js';
 import { EDITOR_FONT, useAppDark } from './cmEditor.js';
 import { lastUserIndex, type DocChatState } from './useDocChat.js';
+import { MAX_ATTACHMENT_BYTES } from '../../wire.js';
+
+/**
+ * A composer attachment (Editor UX 7/7) held as a removable chip until send. `image` carries a data
+ * URL (thumbnail + the bytes the send path persists); `file` (a dropped text file) carries its
+ * already-read, capped content, inlined into the prompt. `@`-mentions are NOT chips — they live as
+ * `@path` text and the send path resolves their content.
+ */
+export interface ComposerAttachment {
+  id: string;
+  kind: 'image' | 'file';
+  name: string;
+  mediaType?: string;
+  /** image only — `data:<mime>;base64,<data>`. */
+  dataUrl?: string;
+  /** file only — the UTF-8 text. */
+  content?: string;
+}
+
+/** Which models accept image content blocks: the built-in Claude family. A custom provider's model
+ * (glm, gpt, …) is assumed text-only, so a pasted image is refused BEFORE send, never dropped. */
+export function modelSupportsImages(model: string): boolean {
+  return /claude|sonnet|opus|haiku/i.test(model);
+}
+
+/** The tail `@token` being typed (no whitespace after), or null. Drives the mention autocomplete. */
+export function mentionQuery(text: string): string | null {
+  const m = /(?:^|\s)@([\w./-]*)$/.exec(text);
+  return m ? (m[1] ?? '') : null;
+}
+
+/** Subsequence (fuzzy) match, case-insensitive — "wire" matches "src/wire.ts". Empty query matches all. */
+function fuzzyMatch(path: string, query: string): boolean {
+  if (query === '') return true;
+  const hay = path.toLowerCase();
+  const needle = query.toLowerCase();
+  let i = 0;
+  for (const ch of hay) {
+    if (ch === needle[i]) i++;
+    if (i === needle.length) return true;
+  }
+  return false;
+}
 
 // Borderless composer chrome layered over the vscode base theme: the surrounding box already draws
 // the border/padding, so the editor itself is transparent. Wraps long lines, starts one line high,
@@ -98,6 +141,7 @@ export function ChatPane({
   defaultModel,
   composerText,
   focusSignal,
+  mentionFiles = [],
   onModelChange,
   onComposerChange,
   onSend,
@@ -118,9 +162,11 @@ export function ChatPane({
   composerText: string;
   /** Bumped by the owner when a reply lands in the ACTIVE conversation, to refocus the composer. */
   focusSignal?: number;
+  /** Project repo's tracked files for `@`-mention autocomplete (Editor UX 7/7). */
+  mentionFiles?: string[];
   onModelChange: (model: string | undefined) => void;
   onComposerChange: (text: string) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: ComposerAttachment[]) => void;
   /** Kill the in-flight turn (Stop button). The owner discards the partial exchange and keeps the text. */
   onStop: () => void;
   /** Edit & regenerate: truncate the last exchange and load the last user message into the composer. */
@@ -130,10 +176,86 @@ export function ChatPane({
 }) {
   const dark = useAppDark();
   const cmRef = useRef<ReactCodeMirrorRef>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [dropError, setDropError] = useState<string | null>(null);
+
+  const resolvedModel = model ?? defaultModel;
+  const imageUnsupported = attachments.some((a) => a.kind === 'image') && !modelSupportsImages(resolvedModel);
+
+  const removeAttachment = (id: string): void => setAttachments((prev) => prev.filter((a) => a.id !== id));
+
+  const addImageFile = (file: File): void => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      setAttachments((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), kind: 'image', name: file.name || 'pasted-image', mediaType: file.type || 'image/png', dataUrl },
+      ]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const addTextFile = (file: File): void => {
+    // Binary or oversize files never inline: a fenced blob of bytes is noise, and the 64KB cap
+    // bounds the payload. Rejected loudly (inline notice), never silently dropped.
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setDropError(`${file.name} is too large to attach (max ${Math.floor(MAX_ATTACHMENT_BYTES / 1000)}KB).`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = String(reader.result);
+      // A NUL byte is the cheapest reliable "this is binary" signal — reject rather than inline mojibake.
+      if (content.includes(' ')) {
+        setDropError(`${file.name} looks binary — only images and text files can be attached.`);
+        return;
+      }
+      setAttachments((prev) => [...prev, { id: crypto.randomUUID(), kind: 'file', name: file.name, content }]);
+    };
+    reader.readAsText(file);
+  };
+
+  const ingestFile = (file: File): void => {
+    setDropError(null);
+    if (file.type.startsWith('image/')) addImageFile(file);
+    else addTextFile(file);
+  };
+
+  const onPaste = (e: React.ClipboardEvent): void => {
+    const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) return; // let CodeMirror handle ordinary text paste
+    e.preventDefault();
+    for (const f of files) ingestFile(f);
+  };
+
+  const onDrop = (e: React.DragEvent): void => {
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const f of files) ingestFile(f);
+  };
+
+  // `@`-mention autocomplete driven off the controlled composer value (the composer is a
+  // contenteditable jsdom can't type into — deriving from the prop keeps it testable and in sync).
+  const mQuery = disabled ? null : mentionQuery(composerText);
+  const mentionMatches =
+    mQuery === null ? [] : mentionFiles.filter((f) => fuzzyMatch(f, mQuery)).slice(0, 8);
+  const chooseMention = (path: string): void => {
+    // Replace the partial `@token` at the tail with the full `@path` and a trailing space.
+    const next = composerText.replace(/(?:^|\s)@[\w./-]*$/, (m) => `${m.startsWith('@') ? '' : m[0]}@${path} `);
+    onComposerChange(next);
+    cmRef.current?.view?.focus();
+  };
+
   const send = (): void => {
     const text = composerText.trim();
-    if (text === '' || state.busy || disabled) return;
-    onSend(text);
+    if ((text === '' && attachments.length === 0) || state.busy || disabled) return;
+    if (imageUnsupported) return; // error shown inline; never silently drop the image
+    if (attachments.length > 0) onSend(text, attachments);
+    else onSend(text);
+    setAttachments([]);
+    setDropError(null);
   };
 
   // The CM keymap fires from CodeMirror's own keydown handling, which is created once. Route it
@@ -225,7 +347,61 @@ export function ChatPane({
           </Button>
         </div>
       )}
-      <div className="rounded border border-border p-2" data-testid="chat-composer">
+      {dropError !== null && <p className="text-xs text-rose-500">{dropError}</p>}
+      {imageUnsupported && (
+        <p className="text-xs text-rose-500">
+          {resolvedModel} can't read images — remove the image or switch to a Claude model before sending.
+        </p>
+      )}
+      <div
+        className="relative rounded border border-border p-2"
+        data-testid="chat-composer"
+        onPaste={onPaste}
+        onDrop={onDrop}
+        onDragOver={(e) => e.preventDefault()}
+      >
+        {attachments.length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-1" data-testid="composer-attachments">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="flex items-center gap-1 rounded border border-border bg-muted/20 px-1 py-0.5 text-xs"
+                data-testid="attachment-chip"
+              >
+                {a.kind === 'image' && a.dataUrl !== undefined && (
+                  <img src={a.dataUrl} alt="" className="h-4 w-4 rounded object-cover" />
+                )}
+                <span className="max-w-[10rem] truncate">{a.name}</span>
+                <button
+                  type="button"
+                  aria-label={`remove attachment ${a.name}`}
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => removeAttachment(a.id)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {mQuery !== null && mentionMatches.length > 0 && (
+          <ul
+            className="absolute bottom-full left-0 z-10 mb-1 max-h-40 w-full overflow-auto rounded border border-border bg-background text-xs shadow"
+            data-testid="mention-list"
+          >
+            {mentionMatches.map((f) => (
+              <li key={f}>
+                <button
+                  type="button"
+                  className="block w-full truncate px-2 py-1 text-left hover:bg-muted/40"
+                  onClick={() => chooseMention(f)}
+                >
+                  {f}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <CodeMirror
           ref={cmRef}
           value={composerText}
@@ -270,7 +446,10 @@ export function ChatPane({
               Stop
             </Button>
           ) : (
-            <Button onClick={send} disabled={disabled || composerText.trim() === ''}>
+            <Button
+              onClick={send}
+              disabled={disabled || imageUnsupported || (composerText.trim() === '' && attachments.length === 0)}
+            >
               Send
             </Button>
           )}

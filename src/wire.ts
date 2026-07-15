@@ -121,13 +121,40 @@ export interface RepoProviderInfo {
   error?: string;
 }
 
+/**
+ * One composer attachment forwarded with a doc-chat completion (Editor UX 7/7). Additive on the
+ * wire — a caller that sends none is byte-identical to the pre-attachment protocol.
+ *
+ * `kind: 'image'` → a pasted/dropped image persisted under `.vanguard/drafts/<id>-assets/`; `path`
+ * is its absolute path and `mediaType` its IANA type (e.g. `image/png`). `__complete` reads the
+ * file and forwards it to the agent SDK as an image content block.
+ *
+ * `kind: 'file'` → a dropped text file or an `@`-mention; `path` is the fence label (the dropped
+ * filename or the `@path`) and `content` its already-read, host-capped UTF-8 text, inlined into the
+ * prompt as a fenced block. `mediaType`/`content` are per-kind and both optional on the wire.
+ */
+export interface CompleteAttachment {
+  kind: 'image' | 'file';
+  path: string;
+  mediaType?: string;
+  content?: string;
+}
+
 /** One doc-chat completion request (the JSON `vanguard __complete` reads on stdin). */
 export interface CompleteRequest {
   system?: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   model?: string;
   baseUrl?: string;
+  /** Pasted images + inlined text files/mentions (Editor UX 7/7). Absent ⇒ text-only completion. */
+  attachments?: CompleteAttachment[];
 }
+
+/** Ceiling on ONE inlined attachment/mention file (Editor UX 7/7) — the drag-drop/mention 64KB cap. */
+export const MAX_ATTACHMENT_BYTES = 64_000;
+
+/** Ceiling on TOTAL inlined attachment/mention content per send (Editor UX 7/7). Error above. */
+export const MAX_INLINE_TOTAL_BYTES = 256_000;
 
 /** The single JSON line `vanguard __complete` writes to stdout. */
 export interface CompleteResponse {
