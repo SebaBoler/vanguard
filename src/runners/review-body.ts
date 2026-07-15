@@ -42,10 +42,16 @@ export function reviewRequestBody(taskId: string, opts: ReviewRequestBodyOptions
   if (conformance.pass && !red) {
     return join(`Closes ${taskId}`, base, '## Spec conformance', checklist);
   }
+  // Every true reason for partial scope is listed — both red signals can be set at once.
   const gapDetail = conformance.pass
-    ? verificationFailed === true
-      ? 'Spec conformance passed, but verification (typecheck/tests) is currently failing.'
-      : 'Spec conformance passed, but the implementer ended (turn cap or timeout) before signalling the task complete.'
+    ? [
+        verificationFailed === true ? 'Spec conformance passed, but verification (typecheck/tests) is currently failing.' : undefined,
+        opts.implementerIncomplete === true
+          ? 'The implementer ended (turn cap or timeout) before signalling the task complete.'
+          : undefined,
+      ]
+        .filter((s): s is string => s !== undefined)
+        .join('\n')
     : renderConformanceFeedback(conformance);
   return join(
     `Part of ${taskId}`,

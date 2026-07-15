@@ -384,6 +384,11 @@ export async function runSourcedIssue(
         // timeout mid-task can leave residue that still typechecks and tests green — conformance
         // (often manifest-less) and verification alone would then PASS the gate and publish a
         // garbage PR titled as the feature. Incomplete → resume the session to finish the work.
+        // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
+        // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
+        // here. Deliberate: the in-stage pass has budget context this loop lacks, and the global
+        // maxCostUsd cap bounds total spend either way (this loop's resumes carry no per-call
+        // maxBudgetUsd — the global cap is the intended sole guard).
         implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
         gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
