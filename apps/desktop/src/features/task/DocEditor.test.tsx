@@ -1,5 +1,6 @@
 import { test, expect, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
+import { EditorView } from '@uiw/react-codemirror';
 import { DocEditor } from './DocEditor.js';
 
 afterEach(() => {
@@ -39,4 +40,31 @@ test('theme follows the app dark class, switching live', async () => {
     await Promise.resolve();
   });
   expect(editor).toHaveAttribute('data-theme', 'light');
+});
+
+// status-bar-cursor: the bottom status bar shows the live cursor position. We move the selection by
+// dispatching on the underlying EditorView (found via the mounted DOM) and assert the bar's Ln/Col
+// text tracks it. Markdown/UTF-8 labels are static and asserted on mount.
+test('status bar reflects cursor position changes', () => {
+  render(<DocEditor value={'line one\nsecond line\n'} onChange={() => {}} />);
+
+  const bar = screen.getByTestId('doc-statusbar');
+  expect(bar).toHaveTextContent('Markdown');
+  expect(bar).toHaveTextContent('UTF-8');
+  expect(screen.getByTestId('doc-cursor')).toHaveTextContent('Ln 1, Col 1');
+
+  const dom = screen.getByTestId('doc-editor').querySelector('.cm-editor') as HTMLElement;
+  const view = EditorView.findFromDOM(dom)!;
+  expect(view).toBeTruthy();
+
+  // 'line one\n' spans offsets 0..8 ('\n' at 8); offset 11 sits on line 2, third column.
+  act(() => {
+    view.dispatch({ selection: { anchor: 11 } });
+  });
+  expect(screen.getByTestId('doc-cursor')).toHaveTextContent('Ln 2, Col 3');
+
+  act(() => {
+    view.dispatch({ selection: { anchor: 0 } });
+  });
+  expect(screen.getByTestId('doc-cursor')).toHaveTextContent('Ln 1, Col 1');
 });
