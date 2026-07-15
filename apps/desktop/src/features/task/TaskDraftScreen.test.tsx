@@ -29,6 +29,7 @@ vi.mock('../../ipc.js', () => ({
   apiListRepoFiles: vi.fn(async () => ({ files: ['src/app.ts', 'README.md'], capped: false })),
   apiReadRepoFile: vi.fn(async (_p: string, path: string) => ({ path, content: `content of ${path}`, truncated: false })),
   writeDraftAsset: vi.fn(async (_p: string, id: string, name: string) => `/assets/${id}/${name}`),
+  clearDraftAssets: vi.fn(async () => {}),
 }));
 
 vi.mock('./DocEditor.js', () => ({
@@ -1000,4 +1001,32 @@ test('an @token that is not a tracked file is not read (no git spawn per prose @
   const call = vi.mocked(ipc.apiComplete).mock.calls.at(-1);
   const req = call![1] as { attachments?: unknown[] };
   expect(req.attachments).toBeUndefined();
+});
+
+test('an attachment failure that lands AFTER a draft switch corrupts neither draft (review r5)', async () => {
+  // Two drafts. Send an over-ceiling mention on draft A, switch to B before resolution settles.
+  // The failure must strip A's dangling user turn from A's FILE and leave B (active) untouched.
+  seed('draft-b', { body: '# Beta\n', chat: [{ role: 'user', content: 'b-user' }, { role: 'assistant', content: 'b-reply' }] });
+  let resolveRead: (v: { path: string; content: string; truncated: boolean }) => void = () => {};
+  vi.mocked(ipc.apiReadRepoFile).mockImplementationOnce(
+    () => new Promise((res) => (resolveRead = res)),
+  );
+  seed('draft-a', { body: '# Alpha\n' });
+  renderFresh();
+  await drawerReady();
+  openRow(/open Alpha/);
+  sendMsg('inline @src/app.ts now'); // A's user turn persisted; resolution pending
+  await settle();
+  openRow(/open Beta/); // switch to B while A's resolution is in flight
+  await settle();
+  resolveRead({ path: 'src/app.ts', content: 'x'.repeat(300_000), truncated: false }); // over the 256KB ceiling
+  await settle();
+  // A's file: the dangling user turn was stripped, text restored to A's composerText.
+  const a = JSON.parse(files.get('draft-a')!) as DraftData;
+  expect(a.chat).toEqual([]);
+  expect(a.composerText).toBe('inline @src/app.ts now');
+  // B's file is pristine — not clobbered by A's late failure.
+  const b = JSON.parse(files.get('draft-b')!) as DraftData;
+  expect(b.chat).toEqual([{ role: 'user', content: 'b-user' }, { role: 'assistant', content: 'b-reply' }]);
+  expect(b.composerText).toBeUndefined();
 });

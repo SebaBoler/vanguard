@@ -36,7 +36,13 @@ function fileAttachments(attachments: CompleteAttachment[] | undefined): FileAtt
 export function inlineAttachments(attachments: CompleteAttachment[] | undefined): string {
   const files = fileAttachments(attachments);
   if (files.length === 0) return '';
-  const blocks = files.map((f) => `\`${f.path}\`:\n\`\`\`\n${f.content}\n\`\`\``);
+  const blocks = files.map((f) => {
+    // Fence-safe (review r5): a file whose content has a ``` line would break out of a 3-backtick
+    // block. Use a fence one backtick longer than the longest run in the content.
+    const longest = Math.max(0, ...[...f.content.matchAll(/`+/g)].map((m) => m[0].length));
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    return `\`${f.path}\`:\n${fence}\n${f.content}\n${fence}`;
+  });
   return `\n\nAttached files:\n\n${blocks.join('\n\n')}`;
 }
 

@@ -108,6 +108,13 @@ async fn write_draft_asset(repo_path: String, id: String, name: String, bytes: V
     drafts::write_asset(Path::new(&repo_path), &id, &name, &bytes)
 }
 
+/// Remove a draft's pasted-image assets dir (keeping the JSON) when the draft is filed — the images
+/// already rode the chat that produced the task (review r5).
+#[tauri::command]
+async fn clear_draft_assets(repo_path: String, id: String) -> Result<(), String> {
+    drafts::clear_assets(Path::new(&repo_path), &id)
+}
+
 #[tauri::command]
 async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
     remote::list_remote_runs(Path::new(&repo_path))
@@ -183,6 +190,7 @@ pub fn run() {
             write_draft,
             delete_draft,
             write_draft_asset,
+            clear_draft_assets,
             list_remote_runs,
             list_tasks,
             fetch_spec,

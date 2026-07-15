@@ -159,6 +159,22 @@ pub fn write_asset(repo: &Path, id: &str, name: &str, bytes: &[u8]) -> Result<St
     Ok(file.to_string_lossy().into_owned())
 }
 
+/// Remove a draft's pasted-image assets dir, keeping the draft JSON. Called when a draft is FILED
+/// (archived): the images already rode the chat that produced the task, so they are dead weight —
+/// leaving them would leak per-send for the life of every filed draft (review r5). Idempotent; same
+/// symlink guard as `delete`. Split from `delete` so the file itself survives archiving.
+pub fn clear_assets(repo: &Path, id: &str) -> Result<(), String> {
+    safe_name(id)?;
+    assert_not_symlink(repo)?;
+    let assets = assets_dir(repo, id);
+    assert_leaf_not_symlink(&assets)?;
+    match fs::remove_dir_all(&assets) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Idempotent: deleting a missing draft succeeds (a lost race with a second window is not an error).
 pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
     safe_name(id)?;
@@ -166,13 +182,7 @@ pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
     // The draft's pasted-image assets go with it — leaving `<id>-assets/` behind on the one
     // operation meant to clean up would be an unbounded on-disk leak (review r2). Same symlink
     // guard as write_asset: a swapped-in link must not have its TARGET's contents removed.
-    let assets = assets_dir(repo, id);
-    assert_leaf_not_symlink(&assets)?;
-    match fs::remove_dir_all(&assets) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.to_string()),
-    }
+    clear_assets(repo, id)?;
     match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -251,6 +261,19 @@ mod tests {
         write(tmp.path(), "draft-x", "{}").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
+    }
+
+    #[test]
+    fn clear_assets_removes_the_dir_but_keeps_the_draft_json() {
+        // Filing a draft drops its images (they rode the chat) but keeps the draft file (review r5).
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        let asset = write_asset(tmp.path(), "draft-x", "pic.png", b"bytes").unwrap();
+        assert!(Path::new(&asset).exists());
+        clear_assets(tmp.path(), "draft-x").unwrap();
+        assert!(!assets_dir(tmp.path(), "draft-x").exists());
+        assert!(read(tmp.path(), "draft-x").is_ok()); // the JSON survives
+        clear_assets(tmp.path(), "draft-x").unwrap(); // idempotent
     }
 
     #[test]

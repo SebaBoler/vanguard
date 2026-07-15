@@ -210,3 +210,17 @@ test('aggregate image bytes over the total cap are refused before send (bounded-
   expect(r.error?.message).toMatch(/total|aggregate|images/i);
   expect(called).toBe(false);
 });
+
+test('fenced inlining is fence-safe: content with a ``` run gets a longer fence (review r5)', async () => {
+  let prompt: unknown;
+  const spy = (params: { prompt: unknown }) => {
+    prompt = params.prompt;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  await runComplete(
+    { messages: msg, attachments: [{ kind: 'file', path: 'x.md', content: 'a\n```\nfenced\n```\nb' }] },
+    { query: spy },
+  );
+  // The wrapping fence must be longer than the ``` inside so the block can't be broken out of.
+  expect(String(prompt)).toContain('````'); // 4+ backticks
+});

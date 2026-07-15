@@ -206,6 +206,11 @@ export function writeDraftAsset(repoPath: string, id: string, name: string, byte
   return invoke<string>('write_draft_asset', { repoPath, id, name, bytes: Array.from(bytes) });
 }
 
+/** Remove a draft's pasted-image assets dir (keeping the JSON) when the draft is filed (Editor UX 7/7). */
+export function clearDraftAssets(repoPath: string, id: string): Promise<void> {
+  return invoke<void>('clear_draft_assets', { repoPath, id });
+}
+
 // Task drafts (S10): one JSON file per draft under `.vanguard/drafts/`; the webview owns the shape
 // (see features/task/draftStore.ts), Rust is dumb storage.
 export function listDrafts(repoPath: string): Promise<string[]> {

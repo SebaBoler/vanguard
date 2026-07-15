@@ -8,6 +8,7 @@ import {
   apiListRepoFiles,
   apiReadRepoFile,
   writeDraftAsset,
+  clearDraftAssets,
   listDrafts,
   readDraft,
   readAppConfig,
@@ -616,14 +617,27 @@ export function TaskDraftScreen({
         // Attachment resolution failed (256KB ceiling, unreadable image) BEFORE anything was sent:
         // surface the error inline, strip the dangling user turn from the persisted transcript, and
         // put the text back in the composer — the same restore contract as Stop.
+        //
+        // resolveAttachments awaited IPC, so a draft switch may have repointed draftRef/activeId in
+        // the meantime. Strip the user turn from the FILE via writer.update (id-keyed, skip-if-
+        // deleted) — NOT persistNow, which writes draftRef and would serialize the now-active
+        // draft's state into `id` (review r5, the review #349 r2 aliasing class). draftRef/entries
+        // are only touched on the still-active path.
+        void writer.update(id, (d) => ({
+          ...d,
+          chat: d.chat.at(-1)?.role === 'user' ? d.chat.slice(0, -1) : d.chat,
+          composerText: text,
+        }));
         if (id === activeIdRef.current) {
           dispatch({ type: 'fail', message: String(err instanceof Error ? err.message : err) });
           setComposerText(text);
+          draftRef.current = {
+            ...draftRef.current,
+            chat: draftRef.current.chat.at(-1)?.role === 'user' ? draftRef.current.chat.slice(0, -1) : draftRef.current.chat,
+            composerText: text,
+          };
+          syncEntry(id);
         }
-        persistNow(id, {
-          chat: draftRef.current.chat.at(-1)?.role === 'user' ? draftRef.current.chat.slice(0, -1) : draftRef.current.chat,
-          composerText: text,
-        });
         cancelledCalls.current.add(callId); // settle the chain inert below
         accept(false); // the send was rejected — the composer keeps its attachment chips
         return [] as CompleteAttachment[];
@@ -782,6 +796,10 @@ export function TaskDraftScreen({
         // during the flight, an armed archived:false snapshot must not land after the archive.
         writer.discard(id);
         const outcome = await writer.update(id, (d) => ({ ...d, archived: true, created: task }));
+        // Filing is terminal for editing: the pasted-image assets already rode the chat that
+        // produced this task, so drop them now rather than leak them for the archived draft's life
+        // (review r5). Best-effort — a failed cleanup must not fail the (successful) create.
+        void clearDraftAssets(project, id).catch(() => {});
         setEntries((prev) =>
           prev.map((e) =>
             e.id === id && e.data !== undefined ? { ...e, data: { ...e.data, archived: true, created: task } } : e,
