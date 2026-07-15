@@ -542,9 +542,10 @@ describe('runSourcedIssue', () => {
     expect(result.prUrl).toBe(MR_URL);
     expect(runAgent).toHaveBeenCalledTimes(1);
     // The resume inherits the implementer's own turn cap — not runAgent's 6-turn default, which
-    // would be useless for finishing work that already exhausted 30 turns — and the implementer's
-    // own USD cap (stageCostFraction 0.6 × the $5 run default): these calls run outside
-    // runStages' budget accounting, so without a per-call cap spend would be unbounded in USD.
+    // would be useless for finishing work that already exhausted 30 turns — plus a synthesized USD
+    // cap (stageCostFraction 0.6 × DEFAULT_RUN_MAX_COST_USD 5 = $3). Synthesized, not inherited:
+    // runStages runs this path with maxCostUsd = Infinity, and these resumes run outside its
+    // accounting anyway, so without the per-call cap spend would be unbounded in USD.
     expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', maxTurns: 30, maxBudgetUsd: 3 });
     const prompt = runAgent.mock.calls[0]?.[1]?.promptTemplate as string;
     expect(prompt).toMatch(/ended before the task was finished/);

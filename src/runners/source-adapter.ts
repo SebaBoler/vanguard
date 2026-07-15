@@ -369,9 +369,12 @@ export async function runSourcedIssue(
       // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
       const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
       const implementerMaxTurns = implementerStage?.maxTurns;
-      // Each resume also gets the implementer's own USD cap (fraction of the run default, floored)
-      // — these calls run outside runStages' maxCostUsd accounting, so without a per-call budget
-      // the only bound would be iterations × turn cap.
+      // Each resume also gets a per-call USD cap, synthesized as stageCostFraction ×
+      // DEFAULT_RUN_MAX_COST_USD (floored at stageCostFloorUsd) — $3 for the canonical implementer.
+      // Deliberately decoupled from the stage's EFFECTIVE in-stage budget: runStages runs this path
+      // with maxCostUsd = Infinity, so "inherit the stage budget" would mean no cap at all. These
+      // calls run outside runStages' accounting; without this, the only bound would be
+      // iterations × turn cap.
       const repairBudgetUsd =
         implementerStage?.stageCostFraction !== undefined
           ? Math.max(
@@ -403,8 +406,8 @@ export async function runSourcedIssue(
         // an unverifiable "done" must not auto-close the issue.
         // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
         // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
-        // here. This loop's resumes carry no per-call maxBudgetUsd and run OUTSIDE runStages'
-        // maxCostUsd accounting; the bound is maxRepairIterations × the implementer's turn cap.
+        // here. Each resume here is bounded by the implementer's turn cap AND the per-call
+        // repairBudgetUsd computed above.
         implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
         gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
