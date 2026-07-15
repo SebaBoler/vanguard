@@ -5,7 +5,12 @@
 // `docker cp`'s next to this file — the SAME module egress-proxy.ts uses, so the two never drift.
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { writeSync } from 'node:fs';
 import { isAllowed } from './egress-allow.mjs';
+
+// Synchronous stdout: `docker logs` reads a pipe, and async console.log buffers can be dropped by
+// process.exit — the crash evidence is the point, so it must flush before death (PR #353 review).
+const log = (line) => writeSync(1, `${line}\n`);
 
 const ALLOW = (process.env.ALLOW ?? '')
   .split(',')
@@ -20,13 +25,21 @@ const allowed = (host) => isAllowed(host, ALLOW);
 // right response to the unexpected is: write the reason to stdout (docker logs) and let docker
 // restart a fresh process — never a silent exit, never limping on in unknown state.
 process.on('uncaughtException', (err) => {
-  console.log(`egress proxy crashed: ${err?.stack ?? err}`);
+  log(`egress proxy crashed: ${err?.stack ?? err}`);
   process.exit(1);
 });
 
 createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTTPS CONNECT.'))
-  // An accept-level error (e.g. EMFILE) would otherwise throw and take the proxy down.
-  .on('error', (err) => console.log(`egress proxy server error: ${err}`))
+  .on('error', (err) => {
+    // A listen-time failure (EADDRINUSE, EACCES) MUST be fatal-nonzero: swallowing it ends the
+    // process with exit 0, which --restart on-failure reads as success — the port-closed brick
+    // this server exists to prevent (PR #353 review). Accept-level errors (EMFILE) keep serving.
+    if (err.syscall === 'listen') {
+      log(`egress proxy cannot bind: ${err}`);
+      process.exit(1);
+    }
+    log(`egress proxy server error: ${err}`);
+  })
   .on('clientError', (_err, socket) => socket.destroy())
   .on('connect', (req, clientSocket, head) => {
     const target = req.url ?? '';
