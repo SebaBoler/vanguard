@@ -26,6 +26,9 @@ vi.mock('../../ipc.js', () => ({
   apiComplete: vi.fn(async () => ({ text: 'ok' })),
   apiCancelComplete: vi.fn(async () => {}),
   apiCreateTask: vi.fn(async () => ({ id: 'gh-7', url: 'https://github.com/o/r/issues/7' })),
+  apiListRepoFiles: vi.fn(async () => ({ files: ['src/app.ts', 'README.md'], capped: false })),
+  apiReadRepoFile: vi.fn(async (_p: string, path: string) => ({ path, content: `content of ${path}`, truncated: false })),
+  writeDraftAsset: vi.fn(async (_p: string, id: string, name: string) => `/assets/${id}/${name}`),
 }));
 
 vi.mock('./DocEditor.js', () => ({
@@ -951,4 +954,36 @@ test('a fresh conversation is NOT minted by a model choice alone (lazy mint hold
   fireEvent.change(screen.getByLabelText('chat model'), { target: { value: '' } });
   await settle();
   expect(files.size).toBe(0);
+});
+
+test('an @-mention in the sent text inlines the file as a wire attachment on apiComplete (Editor UX 7/7 wiring)', async () => {
+  renderFresh();
+  await drawerReady();
+  sendMsg('please look at @src/app.ts and refactor');
+  await settle();
+  const call = planCalls().at(-1);
+  expect(call).toBeDefined();
+  const req = call![1] as { attachments?: { kind: string; path: string; content?: string }[] };
+  expect(req.attachments).toEqual([
+    { kind: 'file', path: 'src/app.ts', content: 'content of src/app.ts' },
+  ]);
+});
+
+test('attachment resolution failing (over the inline ceiling) errors inline BEFORE any completion is sent', async () => {
+  // One mention whose content blows the 256KB ceiling: the turn must fail locally — no apiComplete
+  // call — with the text restored to the composer and no dangling user turn persisted.
+  vi.mocked(ipc.apiReadRepoFile).mockResolvedValueOnce({
+    path: 'big.txt',
+    content: 'x'.repeat(300_000),
+    truncated: false,
+  });
+  renderFresh();
+  await drawerReady();
+  sendMsg('inline @big.txt please');
+  await settle();
+  expect(planCalls()).toHaveLength(0);
+  expect(screen.getByText(/too large/i)).toBeInTheDocument();
+  const data = JSON.parse([...files.values()][0]!) as DraftData;
+  expect(data.chat).toEqual([]); // dangling user turn stripped
+  expect(data.composerText).toBe('inline @big.txt please'); // restored for retry
 });

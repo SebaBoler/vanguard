@@ -181,6 +181,11 @@ export function TaskDraftScreen({
         setDefaultModel(DEFAULT_CHAT_MODEL);
         setModelOptions([]);
       });
+    // Tracked files for the composer's `@`-mention autocomplete (Editor UX 7/7). A failure just
+    // leaves the picker empty — mentions are an affordance, never a precondition.
+    void apiListRepoFiles(project)
+      .then((r) => setMentionFiles(r.files))
+      .catch(() => setMentionFiles([]));
   }, [project]);
 
   useEffect(() => {
@@ -582,18 +587,37 @@ export function TaskDraftScreen({
     syncEntry(id);
     // Chat turns are written immediately (never debounced): their loss crosses a process boundary.
     void writer.writeNow(id, { ...draftRef.current });
-    void readAppConfig(project)
-      .then((cfg) =>
-        apiComplete(
+    void resolveAttachments(id, text, attachments)
+      .catch((err: unknown) => {
+        // Attachment resolution failed (256KB ceiling, unreadable image) BEFORE anything was sent:
+        // surface the error inline, strip the dangling user turn from the persisted transcript, and
+        // put the text back in the composer — the same restore contract as Stop.
+        if (id === activeIdRef.current) {
+          dispatch({ type: 'fail', message: String(err instanceof Error ? err.message : err) });
+          setComposerText(text);
+        }
+        persistNow(id, {
+          chat: draftRef.current.chat.at(-1)?.role === 'user' ? draftRef.current.chat.slice(0, -1) : draftRef.current.chat,
+          composerText: text,
+        });
+        cancelledCalls.current.add(callId); // settle the chain inert below
+        return [] as CompleteAttachment[];
+      })
+      .then(async (resolved) => {
+        const cfg = await readAppConfig(project);
+        if (cancelledCalls.current.has(callId)) return { res: {} as Awaited<ReturnType<typeof apiComplete>>, resolvedModel: '' };
+        const res = await apiComplete(
           project,
           {
             system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
             messages: apiMessages,
             model: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL,
+            ...(resolved.length > 0 ? { attachments: resolved } : {}),
           },
           callId,
-        ).then((res) => ({ res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL })),
-      )
+        );
+        return { res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL };
+      })
       .then(({ res, resolvedModel }) => {
         // A Stop-killed turn resolves here with an error (child stdout closed) — or, if the reply
         // beat the kill, a normal one. Either way the user cancelled: settle inert, no toast, no
@@ -982,6 +1006,7 @@ export function TaskDraftScreen({
               defaultModel={defaultModel}
               composerText={composerText}
               focusSignal={composerFocus}
+              mentionFiles={mentionFiles}
               onModelChange={onModelChange}
               onComposerChange={onComposerChange}
               onSend={send}
