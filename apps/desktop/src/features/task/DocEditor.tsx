@@ -1,8 +1,13 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import CodeMirror, {
+  crosshairCursor,
   Decoration,
+  EditorState,
   EditorView,
+  keymap,
+  Prec,
   RangeSetBuilder,
+  rectangularSelection,
   ViewPlugin,
   type DecorationSet,
   type Extension,
@@ -10,6 +15,7 @@ import CodeMirror, {
 } from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { vscodeLight, vscodeDark } from '@uiw/codemirror-theme-vscode';
+import { vscodeKeymap } from '@replit/codemirror-vscode-keymap';
 
 // System coding fonts with ligature support — nothing bundled, graceful fallback to Menlo/monospace.
 const FONT = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Menlo, monospace";
@@ -79,6 +85,23 @@ const indentGuides = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.decorations },
 );
+
+// Editor interaction: multiple selections + the VSCode default keymap. Multi-cursor gestures come
+// from CM6 primitives — Alt+Click adds a cursor (clickAddsSelectionRange, VSCode's default modifier
+// rather than CM6's Cmd/Ctrl default), Alt+drag makes a rectangular selection (rectangularSelection)
+// with a crosshair cursor showing the modifier is armed — and `allowMultipleSelections` lets those
+// ranges edit simultaneously. The VSCode keymap layers muscle-memory bindings (Cmd/Ctrl+D select
+// next match, Alt+Up/Down move line, Shift+Alt+Up/Down copy line, Cmd/Ctrl+/ toggle comment,
+// Cmd/Ctrl+Shift+K delete line) at highest precedence so they win over basicSetup's defaults. A CM6
+// keymap only handles keydown on the focused editor's content DOM, so nothing here shadows app-level
+// shortcuts outside the editor.
+const editorInteraction: Extension = [
+  EditorState.allowMultipleSelections.of(true),
+  EditorView.clickAddsSelectionRange.of((e) => e.altKey),
+  rectangularSelection(),
+  crosshairCursor(),
+  Prec.highest(keymap.of(vscodeKeymap)),
+];
 
 // VSCode-style chrome layered over the base theme: monospace/ligature font, a subtle border that
 // changes color on focus (no dotted outline), an active-line highlight, indent guides, matched
@@ -179,6 +202,7 @@ export function DocEditor({
   const extensions = useMemo(
     () => [
       markdown(),
+      editorInteraction,
       indentGuides,
       uiTheme(dark),
       EditorView.updateListener.of((u) => {

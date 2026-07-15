@@ -53,8 +53,7 @@ test('status bar reflects cursor position changes', () => {
   expect(bar).toHaveTextContent('UTF-8');
   expect(screen.getByTestId('doc-cursor')).toHaveTextContent('Ln 1, Col 1');
 
-  const dom = screen.getByTestId('doc-editor').querySelector('.cm-editor') as HTMLElement;
-  const view = EditorView.findFromDOM(dom)!;
+  const view = viewOf();
   expect(view).toBeTruthy();
 
   // 'line one\n' spans offsets 0..8 ('\n' at 8); offset 11 sits on line 2, third column.
@@ -67,4 +66,64 @@ test('status bar reflects cursor position changes', () => {
     view.dispatch({ selection: { anchor: 0 } });
   });
   expect(screen.getByTestId('doc-cursor')).toHaveTextContent('Ln 1, Col 1');
+});
+
+// Dispatch a keydown on the focused editor's content DOM — the path a CM6 keymap actually handles,
+// which also proves the binding is scoped to the editor (no-global-shadowing).
+function pressKey(view: EditorView, init: KeyboardEventInit): void {
+  act(() => {
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }),
+    );
+  });
+}
+
+function viewOf(): EditorView {
+  const dom = screen.getByTestId('doc-editor').querySelector('.cm-editor') as HTMLElement;
+  return EditorView.findFromDOM(dom)!;
+}
+
+// select-next-occurrence: with the first "foo" selected, Cmd/Ctrl+D (VSCode keymap) adds a second
+// selection over the next "foo" — the multi-cursor "select next match" gesture.
+test('Ctrl+D extends selection to the next occurrence', () => {
+  render(<DocEditor value={'foo bar foo baz\n'} onChange={() => {}} />);
+  const view = viewOf();
+
+  // Select the first "foo" (offsets 0..3).
+  act(() => {
+    view.dispatch({ selection: { anchor: 0, head: 3 } });
+  });
+  expect(view.state.selection.ranges).toHaveLength(1);
+
+  pressKey(view, { key: 'd', code: 'KeyD', keyCode: 68, ctrlKey: true });
+
+  const ranges = view.state.selection.ranges.map((r) => [r.from, r.to]);
+  expect(ranges).toHaveLength(2);
+  // The second "foo" spans offsets 8..11.
+  expect(ranges).toContainEqual([8, 11]);
+});
+
+// multi-cursor: Alt+Click adds a cursor (VSCode's modifier). jsdom can't run CM6's coordinate-based
+// mouse selection, so we assert the wired modifier directly: clickAddsSelectionRange returns true for
+// Alt and false for the CM6 default (Cmd/Ctrl), proving the gesture matches VSCode.
+test('Alt is the add-a-cursor click modifier', () => {
+  render(<DocEditor value={'foo bar foo baz\n'} onChange={() => {}} />);
+  const addsRange = viewOf().state.facet(EditorView.clickAddsSelectionRange)[0];
+  expect(addsRange({ altKey: true } as MouseEvent)).toBe(true);
+  expect(addsRange({ altKey: false, ctrlKey: true, metaKey: true } as MouseEvent)).toBe(false);
+});
+
+// move-line: Alt+Up (VSCode keymap) swaps the active line with the one above it.
+test('Alt+Up moves the active line up', () => {
+  render(<DocEditor value={'line one\nsecond line\n'} onChange={() => {}} />);
+  const view = viewOf();
+
+  // Put the cursor on line 2 (offset 11 sits inside "second line").
+  act(() => {
+    view.dispatch({ selection: { anchor: 11 } });
+  });
+
+  pressKey(view, { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38, altKey: true });
+
+  expect(view.state.doc.toString()).toBe('second line\nline one\n');
 });
