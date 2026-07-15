@@ -75,6 +75,24 @@ test('parseDraft bounds name/chatModel size — a hostile file cannot smuggle me
   expect(big?.chatModel).toBeUndefined(); // an over-long model id is no model id — dropped
 });
 
+test('composer-text-roundtrip: composerText survives parse; empty/non-string dropped; length-capped', () => {
+  // Unsent composer text persists per conversation across reload (Editor UX 4/7).
+  const kept = parseDraft(JSON.stringify(draft({ composerText: 'half-written thought' })));
+  expect(kept?.composerText).toBe('half-written thought');
+  // Additive/lenient like name/chatModel: an empty or wrong-typed value is dropped, never a parse
+  // failure — the rest of the draft must survive.
+  const empty = parseDraft(JSON.stringify({ body: '# x', chat: [], composerText: '' }));
+  expect(empty).toBeDefined();
+  expect(empty?.composerText).toBeUndefined();
+  const wrongType = parseDraft(JSON.stringify({ body: '# x', chat: [], composerText: 42 }));
+  expect(wrongType?.composerText).toBeUndefined();
+  // A hostile file cannot smuggle megabytes through the composer slot — capped at 10k chars.
+  const big = parseDraft(JSON.stringify(draft({ composerText: 'z'.repeat(20_000) })));
+  expect(big?.composerText).toBe('z'.repeat(10_000));
+  // A draft with no composer text produces no field at all (no empty string on disk).
+  expect(parseDraft(JSON.stringify(draft()))?.composerText).toBeUndefined();
+});
+
 test('draftLabel: explicit name wins over the heading', () => {
   expect(draftLabel(draft({ name: 'Chosen name', body: '# Some heading\n' }))).toBe('Chosen name');
 });

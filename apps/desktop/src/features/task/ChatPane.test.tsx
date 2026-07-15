@@ -9,7 +9,9 @@ const paneProps = {
   model: undefined as string | undefined,
   modelOptions: [] as string[],
   defaultModel: 'claude-sonnet-5',
+  composerText: '',
   onModelChange: () => {},
+  onComposerChange: () => {},
   onSend: () => {},
   onAccept: () => {},
   onReject: () => {},
@@ -52,10 +54,45 @@ test('accept/reject bar shows with a pending proposal and fires the callbacks', 
 
 test('send fires onSend with the trimmed draft', () => {
   const onSend = vi.fn();
-  render(<ChatPane state={base} {...paneProps} onSend={onSend} />);
-  fireEvent.change(screen.getByPlaceholderText(/plan, scope/i), { target: { value: '  hello  ' } });
+  // The composer is controlled, so the unsent text arrives through the prop; send() trims it.
+  render(<ChatPane state={base} {...paneProps} composerText="  hello  " onSend={onSend} />);
   fireEvent.click(screen.getByRole('button', { name: /send/i }));
   expect(onSend).toHaveBeenCalledWith('hello');
+});
+
+test('enter-sends-shift-newline: Enter sends; Shift+Enter does not (leaves the default newline)', () => {
+  const onSend = vi.fn();
+  render(<ChatPane state={base} {...paneProps} composerText="hello" onSend={onSend} />);
+  const composer = screen.getByPlaceholderText(/plan, scope/i);
+  // Shift+Enter must NOT send — the browser default (insert a newline) stands.
+  fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true });
+  expect(onSend).not.toHaveBeenCalled();
+  // Enter alone sends the trimmed text.
+  fireEvent.keyDown(composer, { key: 'Enter' });
+  expect(onSend).toHaveBeenCalledWith('hello');
+});
+
+test('ArrowUp in an EMPTY composer recalls the last sent message; a non-empty composer is untouched', () => {
+  const onComposerChange = vi.fn();
+  const state: DocChatState = {
+    messages: [
+      { role: 'user', content: 'first ask' },
+      { role: 'assistant', content: 'a reply' },
+      { role: 'user', content: 'second ask' },
+    ],
+    busy: false,
+  };
+  const { rerender } = render(
+    <ChatPane state={state} {...paneProps} composerText="" onComposerChange={onComposerChange} />,
+  );
+  fireEvent.keyDown(screen.getByPlaceholderText(/plan, scope/i), { key: 'ArrowUp' });
+  expect(onComposerChange).toHaveBeenCalledWith('second ask'); // the LAST user message, not the first
+
+  // With text already in the composer, ArrowUp is an ordinary caret move — recall must not clobber it.
+  onComposerChange.mockClear();
+  rerender(<ChatPane state={state} {...paneProps} composerText="half-typed" onComposerChange={onComposerChange} />);
+  fireEvent.keyDown(screen.getByPlaceholderText(/plan, scope/i), { key: 'ArrowUp' });
+  expect(onComposerChange).not.toHaveBeenCalled();
 });
 
 test('shows an error line', () => {

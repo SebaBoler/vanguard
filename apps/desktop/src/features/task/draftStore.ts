@@ -17,6 +17,9 @@ export interface DraftData {
   name?: string;
   /** Per-conversation chat model override. Absent ⇒ the app-wide default from app.json. */
   chatModel?: string;
+  /** Unsent composer text (Editor UX 4/7). Additive/lenient: survives reload per conversation but
+   * never on its own mints a file (an empty composer must not create a draft). */
+  composerText?: string;
   updatedAt: string;
 }
 
@@ -68,6 +71,10 @@ export function parseDraft(raw: string): DraftData | undefined {
     typeof o.chatModel === 'string' && o.chatModel.trim() !== '' && o.chatModel.length <= 200
       ? o.chatModel
       : undefined;
+  // composerText is lenient like name/chatModel and length-capped: a hostile file must not smuggle
+  // megabytes through the unsent-draft slot. An empty string carries no draft — dropped.
+  const composerText =
+    typeof o.composerText === 'string' && o.composerText !== '' ? o.composerText.slice(0, 10_000) : undefined;
   return {
     body: o.body,
     chat,
@@ -77,6 +84,7 @@ export function parseDraft(raw: string): DraftData | undefined {
     ...(created !== undefined ? { created } : {}),
     ...(name !== undefined ? { name } : {}),
     ...(chatModel !== undefined ? { chatModel } : {}),
+    ...(composerText !== undefined ? { composerText } : {}),
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : '',
   };
 }

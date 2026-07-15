@@ -86,6 +86,11 @@ export function TaskDraftScreen({
   const [archived, setArchived] = useState(false);
   const [created, setCreated] = useState<{ id: string; url: string } | null>(null);
   const [model, setModel] = useState<string | undefined>(undefined);
+  // The ACTIVE conversation's unsent composer text (Editor UX 4/7). Persisted per draft through the
+  // debounced writer, re-seeded on switch. A bump of `composerFocus` refocuses the composer after a
+  // reply lands in the conversation the user is looking at.
+  const [composerText, setComposerText] = useState('');
+  const [composerFocus, setComposerFocus] = useState(0);
   // Reactive mirror of the ACTIVE conversation's `name` (draftRef is a ref, not state) — drives
   // the breadcrumb InlineEdit. The doc title is a separate identity (the `# heading`).
   const [convName, setConvName] = useState<string | undefined>(undefined);
@@ -205,6 +210,7 @@ export function TaskDraftScreen({
       setCreated(null);
       setModel(undefined);
       setConvName(undefined);
+      setComposerText('');
       dispatch({ type: 'reset' });
       return;
     }
@@ -223,6 +229,7 @@ export function TaskDraftScreen({
     setCreated(entry.data.created ?? null);
     setModel(entry.data.chatModel);
     setConvName(entry.data.name);
+    setComposerText(entry.data.composerText ?? '');
     // Re-present as busy when this draft's completion is still in flight — its reply will land
     // through the id-keyed path, and a second send meanwhile must stay blocked.
     dispatch({ type: 'load', messages: entry.data.chat, busy: pendingTurns.current.has(id) });
@@ -340,16 +347,29 @@ export function TaskDraftScreen({
     writer.schedule(id, { ...draftRef.current });
   };
 
-  const onModelChange = (next: string | undefined): void => {
-    if (archived) return;
-    setModel(next);
-    draftRef.current = { ...draftRef.current, chatModel: next };
-    // A model choice alone does not mint a file (handoff §4) — it rides draftRef until the first
-    // edit/send carries it along.
+  // Persist the active draft's current draftRef (debounced). A no-op before a file exists: a model
+  // choice or unsent composer text alone does not mint one — it rides draftRef until the first
+  // edit/send carries it along.
+  const persistActive = (): void => {
     const id = activeIdRef.current;
     if (id === null) return;
     syncEntry(id);
     writer.schedule(id, { ...draftRef.current });
+  };
+
+  const onModelChange = (next: string | undefined): void => {
+    if (archived) return;
+    setModel(next);
+    draftRef.current = { ...draftRef.current, chatModel: next };
+    persistActive();
+  };
+
+  const onComposerChange = (next: string): void => {
+    if (archived) return;
+    setComposerText(next);
+    // Empty carries no draft — mirror parseDraft, which drops an empty composerText.
+    draftRef.current = { ...draftRef.current, composerText: next === '' ? undefined : next };
+    persistActive();
   };
 
   /** Inline tab rename (handoff §3). Empty name clears the override back to the derived label. */
@@ -467,7 +487,14 @@ export function TaskDraftScreen({
     const wantsTitle =
       !draftRef.current.chat.some((m) => m.role === 'assistant') && draftRef.current.name === undefined;
     dispatch({ type: 'send', text });
-    draftRef.current = { ...draftRef.current, chat: [...draftRef.current.chat, { role: 'user', content: text }] };
+    // The composer emptied on send — clear it from the persisted snapshot too, so a reload doesn't
+    // resurrect the just-sent text (Editor UX 4/7).
+    setComposerText('');
+    draftRef.current = {
+      ...draftRef.current,
+      chat: [...draftRef.current.chat, { role: 'user', content: text }],
+      composerText: undefined,
+    };
     syncEntry(id);
     // Chat turns are written immediately (never debounced): their loss crosses a process boundary.
     void writer.writeNow(id, { ...draftRef.current });
@@ -491,8 +518,12 @@ export function TaskDraftScreen({
           syncEntry(id);
           void writer.writeNow(id, { ...draftRef.current });
           // Surface the reply on the tab/badge ONLY when the user isn't looking at this
-          // transcript (PR #350 r1-1) — a dot on the tab they just read from never clears.
+          // transcript (PR #350 r1-1) — a dot on the tab they just read from never clears. When the
+          // user IS looking, refocus the composer instead (auto-focus-active-only): a late reply for
+          // a background tab (drawer closed, history panel, or a draft switched away from) takes the
+          // unseen-dot path and never bumps, so it can't steal focus from what's on screen.
           if (!viewingRef.current) markUnseen(id);
+          else setComposerFocus((n) => n + 1);
         } else {
           // Late reply after a draft switch: dropped from the visible transcript (the gen rule),
           // but appended to the file it was issued for — a persisted transcript must not end on a
@@ -802,7 +833,10 @@ export function TaskDraftScreen({
               model={model}
               modelOptions={modelOptions}
               defaultModel={defaultModel}
+              composerText={composerText}
+              focusSignal={composerFocus}
               onModelChange={onModelChange}
+              onComposerChange={onComposerChange}
               onSend={send}
               onAccept={accept}
               onReject={() => dispatch({ type: 'reject' })}
