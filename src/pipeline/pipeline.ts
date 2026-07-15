@@ -218,12 +218,15 @@ const RESUME_NUDGE = [
   'When (and only when) it is genuinely all done and verified, write <promise>COMPLETE</promise>.',
 ].join('\n');
 
+/** Default whole-run USD cap when the caller sets none. Shared with the gate-loop repair budget. */
+export const DEFAULT_RUN_MAX_COST_USD = 5;
+
 export async function runBudgetedStages(
   ctx: RunContext,
   stages: PipelineStage[],
   opts: RunStagesOptions,
 ): Promise<PipelineResult> {
-  const maxCostUsd = opts.maxCostUsd ?? 5;
+  const maxCostUsd = opts.maxCostUsd ?? DEFAULT_RUN_MAX_COST_USD;
   const outcomes: StageOutcome[] = [];
   let previous: RunResult | undefined;
   let prevName = '';

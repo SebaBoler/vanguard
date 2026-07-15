@@ -4,7 +4,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -367,7 +367,18 @@ export async function runSourcedIssue(
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
       // A resumed repair pass inherits the implementer's own turn cap — without this it falls back
       // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
-      const implementerMaxTurns = pipeline.find((s) => s.name === STAGE.IMPLEMENTER)?.maxTurns;
+      const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
+      const implementerMaxTurns = implementerStage?.maxTurns;
+      // Each resume also gets the implementer's own USD cap (fraction of the run default, floored)
+      // — these calls run outside runStages' maxCostUsd accounting, so without a per-call budget
+      // the only bound would be iterations × turn cap.
+      const repairBudgetUsd =
+        implementerStage?.stageCostFraction !== undefined
+          ? Math.max(
+              implementerStage.stageCostFraction * DEFAULT_RUN_MAX_COST_USD,
+              implementerStage.stageCostFloorUsd ?? 0,
+            )
+          : undefined;
 
       const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
@@ -416,6 +427,7 @@ export async function runSourcedIssue(
           agent: agents.agent,
           resumeSessionId,
           ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
+          ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
           // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
           // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
