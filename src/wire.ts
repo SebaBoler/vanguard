@@ -158,6 +158,10 @@ export interface CompleteRequest {
  * per-image limit; refused before the model is hit. */
 export const MAX_IMAGE_BYTES = 5_000_000;
 
+/** Ceiling on the AGGREGATE bytes of all image attachments in one send (Editor UX 7/7 review r3):
+ * bounds the whole prompt, not just each image, so N images can't balloon a single turn. */
+export const MAX_IMAGE_TOTAL_BYTES = 15_000_000;
+
 /** Ceiling on ONE inlined attachment/mention file (Editor UX 7/7) — the drag-drop/mention 64KB cap. */
 export const MAX_ATTACHMENT_BYTES = 64_000;
 

@@ -166,7 +166,9 @@ export function ChatPane({
   mentionFiles?: string[];
   onModelChange: (model: string | undefined) => void;
   onComposerChange: (text: string) => void;
-  onSend: (text: string, attachments?: ComposerAttachment[]) => void;
+  /** Returns false when the send was rejected (attachment resolution failed) so the composer keeps
+   * its chips for retry; void/true ⇒ accepted, chips cleared. */
+  onSend: (text: string, attachments?: ComposerAttachment[]) => void | boolean | Promise<void | boolean>;
   /** Kill the in-flight turn (Stop button). The owner discards the partial exchange and keeps the text. */
   onStop: () => void;
   /** Edit & regenerate: truncate the last exchange and load the last user message into the composer. */
@@ -252,10 +254,16 @@ export function ChatPane({
     const text = composerText.trim();
     if ((text === '' && attachments.length === 0) || state.busy || disabled) return;
     if (imageUnsupported) return; // error shown inline; never silently drop the image
-    if (attachments.length > 0) onSend(text, attachments);
-    else onSend(text);
-    setAttachments([]);
+    // Clear the chips ONLY once the parent confirms the send was accepted (review r3): resolution
+    // can fail (256KB ceiling, oversize image), and its error tells the user to "remove a file" —
+    // useless if the chips are already gone. onSend resolves false on a rejected send.
+    const outgoing = attachments;
     setDropError(null);
+    void Promise.resolve(outgoing.length > 0 ? onSend(text, outgoing) : onSend(text)).then((ok) => {
+      // Remove ONLY the chips that were sent — a fresh paste during this microtask must survive
+      // (clearing the whole array would wipe it).
+      if (ok !== false) setAttachments((prev) => prev.filter((a) => !outgoing.includes(a)));
+    });
   };
 
   // The CM keymap fires from CodeMirror's own keydown handling, which is created once. Route it

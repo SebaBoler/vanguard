@@ -3,7 +3,7 @@ import { sep } from 'node:path';
 // CompleteRequest/CompleteResponse live in src/wire.ts (the shared desktop contract — S7).
 export type { CompleteRequest, CompleteResponse } from '../wire.js';
 import type { CompleteRequest, CompleteResponse, CompleteAttachment } from '../wire.js';
-import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES } from '../wire.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES } from '../wire.js';
 
 /** The async-iterable subset of the agent SDK's `query()` result we consume. */
 type QueryStream = AsyncIterable<{ type: string; subtype?: string; result?: string }>;
@@ -72,6 +72,7 @@ function buildPrompt(parsed: CompleteRequest): string | AsyncIterable<unknown> {
   }
   const root = realpathSync(parsed.assetRoot);
   const content: unknown[] = [{ type: 'text', text }];
+  let imageBytes = 0;
   for (const img of images) {
     const real = realpathSync(img.path); // resolves symlinks — a link out of the root is refused
     if (real !== root && !real.startsWith(root + sep)) {
@@ -80,6 +81,12 @@ function buildPrompt(parsed: CompleteRequest): string | AsyncIterable<unknown> {
     const size = statSync(real).size;
     if (size > MAX_IMAGE_BYTES) {
       throw new Error(`image attachment too large (${Math.ceil(size / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB): ${img.path}`);
+    }
+    // Aggregate ceiling (review r3): each image is under the per-image cap, but N of them would
+    // otherwise base64 into one unbounded prompt. Bound the whole set, not just each member.
+    imageBytes += size;
+    if (imageBytes > MAX_IMAGE_TOTAL_BYTES) {
+      throw new Error(`images exceed the ${MAX_IMAGE_TOTAL_BYTES / 1_000_000}MB total attachment limit`);
     }
     const data = readFileSync(real).toString('base64');
     content.push({

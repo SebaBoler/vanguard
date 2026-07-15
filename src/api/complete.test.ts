@@ -188,3 +188,25 @@ test('a contained, small image goes through as a base64 content block', async ()
   expect(r.text).toBe('ok');
   expect(typeof prompt).not.toBe('string'); // streaming-input form with the image block
 });
+
+test('aggregate image bytes over the total cap are refused before send (bounded-payload for images)', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'vg-assets-'));
+  // Four 4MB images: each is under MAX_IMAGE_BYTES (5MB) but together 16MB > MAX_IMAGE_TOTAL_BYTES.
+  const attachments = [] as { kind: 'image'; path: string }[];
+  for (let i = 0; i < 4; i++) {
+    const p = join(root, `img${i}.png`);
+    writeFileSync(p, Buffer.alloc(4_000_000));
+    attachments.push({ kind: 'image', path: p });
+  }
+  let called = false;
+  const spy = () => {
+    called = true;
+    return fakeQuery({ type: 'result', subtype: 'success', result: 'ok' })();
+  };
+  const r = await runComplete({ messages: msg, assetRoot: root, attachments }, { query: spy });
+  expect(r.error?.message).toMatch(/total|aggregate|images/i);
+  expect(called).toBe(false);
+});

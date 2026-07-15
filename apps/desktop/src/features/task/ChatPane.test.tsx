@@ -180,7 +180,9 @@ test('attach-chip-lifecycle: a pasted image becomes a removable chip and sends a
   expect(attachments).toHaveLength(1);
   expect(attachments[0]).toMatchObject({ kind: 'image', name: 'shot.png', mediaType: 'image/png' });
 
-  // Re-paste, then remove: the × clears the chip so it never sends.
+  // Re-paste, then remove: the × clears the chip so it never sends. (The post-send chip clear
+  // is now an async microtask - flush it before re-pasting so we assert on a clean composer.)
+  await Promise.resolve();
   fireEvent.paste(composerBox(), { clipboardData: { files: [file], items: [] } });
   const chip2 = await screen.findByTestId('attachment-chip');
   expect(chip2).toBeInTheDocument();

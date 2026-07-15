@@ -503,7 +503,12 @@ export function TaskDraftScreen({
 
   /** Resolve composer attachments + `@`-mentions into wire attachments for `__complete` (Editor UX
    * 7/7): persist images under the draft's assets dir (→ absolute path), read each `@path` mention's
-   * content, and enforce the 256KB total-inlined-content ceiling. Throws a clear error above it. */
+   * content, and enforce the 256KB total-inlined-content ceiling. Throws a clear error above it.
+   *
+   * Asset lifecycle (review r3 #4): a persisted image lives with its draft — `drafts::delete` removes
+   * the whole `<id>-assets/` dir (review r2), so accumulation is bounded per draft and self-cleans on
+   * delete. Deliberately NOT deleted per-send: the `__complete` child reads it by path AFTER this
+   * resolves, and a Stop-then-retry re-reads the same chip, so a delete-after-read would race both. */
   const resolveAttachments = async (
     id: string,
     text: string,
@@ -558,11 +563,15 @@ export function TaskDraftScreen({
     return out;
   };
 
-  const send = (text: string, attachments: ComposerAttachment[] = []): void => {
-    if (archived) return;
+  const send = (text: string, attachments: ComposerAttachment[] = []): Promise<boolean> => {
+    if (archived) return Promise.resolve(false);
     // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
     // draft switch cannot clear another draft's slot.
-    if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return;
+    if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return Promise.resolve(false);
+    // Resolves true once attachment resolution succeeds (chips can clear), false if it fails (the
+    // composer keeps its chips for retry — review r3).
+    let accept: (ok: boolean) => void = () => {};
+    const accepted = new Promise<boolean>((r) => (accept = r));
     const id = ensureId();
     pendingTurns.current.add(id);
     setPendingIds(new Set(pendingTurns.current));
@@ -608,9 +617,11 @@ export function TaskDraftScreen({
           composerText: text,
         });
         cancelledCalls.current.add(callId); // settle the chain inert below
+        accept(false); // the send was rejected — the composer keeps its attachment chips
         return [] as CompleteAttachment[];
       })
       .then(async (resolved) => {
+        if (!cancelledCalls.current.has(callId)) accept(true); // resolution succeeded — clear chips
         const cfg = await readAppConfig(project);
         if (cancelledCalls.current.has(callId)) return { res: {} as Awaited<ReturnType<typeof apiComplete>>, resolvedModel: '' };
         const res = await apiComplete(
@@ -679,6 +690,7 @@ export function TaskDraftScreen({
         }
         cancelledCalls.current.delete(callId);
       });
+    return accepted;
   };
 
   /** Stop the active conversation's in-flight turn (Editor UX 5/7): kill this turn's `__complete`

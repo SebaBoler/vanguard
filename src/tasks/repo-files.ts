@@ -61,11 +61,19 @@ export async function readRepoFile(repoPath: string, rel: string): Promise<ReadR
   const abs = resolveRepoFile(repoPath, rel);
   let buf: Buffer;
   try {
-    // The lexical check above cannot see symlinks: a tracked `notes.md -> /etc/passwd` (or a
-    // free-typed mention of one) passes it, and readFile would follow the link out of the
-    // checkout — with a custom-provider baseUrl that is an exfiltration channel (review r2).
-    // Canonicalize BOTH sides and require containment, the same realpath discipline as the
-    // image-attachment root in complete.ts.
+    // Membership FIRST: the mention text is free-form (autocomplete only OFFERS tracked files, it
+    // doesn't constrain what the user types), so `@.env`/`@.git/config` would otherwise inline a
+    // gitignored secret into a prompt bound for a custom-provider baseUrl (review r3). Only tracked
+    // files are readable — `--error-unmatch` exits nonzero for an untracked or ignored path.
+    try {
+      await execa('git', ['-C', repoPath, 'ls-files', '--error-unmatch', '-z', '--', rel]);
+    } catch {
+      throw new VanguardError(`mention path is not a tracked file: ${rel}`);
+    }
+    // The lexical check above cannot see symlinks: a TRACKED `notes.md -> /etc/passwd` passes both
+    // it and the membership check, and readFile would follow the link out of the checkout — with a
+    // custom-provider baseUrl that is an exfiltration channel (review r2). Canonicalize BOTH sides
+    // and require containment, the same realpath discipline as the image root in complete.ts.
     const [realAbs, realRoot] = await Promise.all([realpath(abs), realpath(repoPath)]);
     if (realAbs !== realRoot && !realAbs.startsWith(realRoot + sep)) {
       throw new VanguardError(`mention path escapes the repo: ${rel}`);
