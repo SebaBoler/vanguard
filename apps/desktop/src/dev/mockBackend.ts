@@ -54,6 +54,20 @@ const handlers: Record<string, (args: unknown) => unknown> = {
   read_draft: () => READ_DRAFT,
   write_draft: () => null,
   delete_draft: () => null,
+  // Editor UX 7/7 (composer attachments + mentions).
+  api_list_repo_files: () => ({
+    files: ['src/App.tsx', 'src/main.tsx', 'apps/desktop/README.md', 'package.json'],
+    capped: false,
+  }),
+  api_read_repo_file: (args) => {
+    const { path = 'src/App.tsx' } = (args ?? {}) as { path?: string };
+    return { path, content: `// mock content of ${path}\nexport const answer = 42;\n`, truncated: false };
+  },
+  write_draft_asset: (args) => {
+    const { id = 'draft-001', name = 'pic.png' } = (args ?? {}) as { id?: string; name?: string };
+    return `/mock/.vanguard/drafts/${id}-assets/${name}`;
+  },
+  clear_draft_assets: () => null,
   api_list_flows: () => ({ flows: repoFlows }),
   api_list_providers: () => ({ providers: repoProviders }),
   api_read_flow: () => ({ doc: flowDoc, source: 'flow "plan-implement-review" {\n  label = "Plan → Implement → Review"\n\n  stage "planner" {}\n  stage "implement" { max_turns = 40 }\n  stage "reviewer" {}\n}\n' }),

@@ -1,13 +1,108 @@
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { sep } from 'node:path';
 // CompleteRequest/CompleteResponse live in src/wire.ts (the shared desktop contract — S7).
 export type { CompleteRequest, CompleteResponse } from '../wire.js';
-import type { CompleteRequest, CompleteResponse } from '../wire.js';
+import type { CompleteRequest, CompleteResponse, CompleteAttachment } from '../wire.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES } from '../wire.js';
 
 /** The async-iterable subset of the agent SDK's `query()` result we consume. */
 type QueryStream = AsyncIterable<{ type: string; subtype?: string; result?: string }>;
 
-/** Injected so tests mock the SDK; the CLI branch wires the real `@anthropic-ai/claude-agent-sdk`. */
+/**
+ * Injected so tests mock the SDK; the CLI branch wires the real `@anthropic-ai/claude-agent-sdk`.
+ * `prompt` is a string for a text-only turn; when the turn carries pasted images it is instead the
+ * SDK's streaming-input form (an async-iterable of one user message whose content is text + image
+ * content blocks) — the same value the real `query()` accepts either way.
+ */
 export interface CompleteDeps {
-  query: (params: { prompt: string; options?: Record<string, unknown> }) => QueryStream;
+  query: (params: { prompt: string | AsyncIterable<unknown>; options?: Record<string, unknown> }) => QueryStream;
+}
+
+/** A `file` attachment whose text content is present — the narrowed shape the inliner and the
+ * byte-total guard both operate on. */
+type FileAttachment = CompleteAttachment & { content: string };
+
+/** The `file` attachments carrying inlinable text (dropped files + `@`-mentions), content narrowed
+ * to a string so callers need no fallback. */
+function fileAttachments(attachments: CompleteAttachment[] | undefined): FileAttachment[] {
+  return (attachments ?? []).filter((a): a is FileAttachment => a.kind === 'file' && typeof a.content === 'string');
+}
+
+/**
+ * Inline `file` attachments (dropped text files + `@`-mentions) as fenced blocks tagged with the
+ * filename, appended after the conversation so they read as reference material. Content is already
+ * read + host-capped; this only formats it. Returns '' when there are none.
+ */
+export function inlineAttachments(attachments: CompleteAttachment[] | undefined): string {
+  const files = fileAttachments(attachments);
+  if (files.length === 0) return '';
+  const blocks = files.map((f) => {
+    // Fence-safe (review r5): a file whose content has a ``` line would break out of a 3-backtick
+    // block. Use a fence one backtick longer than the longest run in the content.
+    const longest = Math.max(0, ...[...f.content.matchAll(/`+/g)].map((m) => m[0].length));
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    return `\`${f.path}\`:\n${fence}\n${f.content}\n${fence}`;
+  });
+  return `\n\nAttached files:\n\n${blocks.join('\n\n')}`;
+}
+
+/** Total UTF-8 bytes of inlined file content — guards the per-send inline ceiling (bounded-payload AC). */
+function inlineByteTotal(attachments: CompleteAttachment[] | undefined): number {
+  return fileAttachments(attachments).reduce((n, a) => n + Buffer.byteLength(a.content, 'utf8'), 0);
+}
+
+/** The plain-text prompt: the transcript, then any inlined file attachments. */
+function assemblePrompt(parsed: CompleteRequest): string {
+  const transcript = parsed.messages
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+    .join('\n\n');
+  return transcript + inlineAttachments(parsed.attachments);
+}
+
+/**
+ * Build the SDK `prompt` argument. Text-only ⇒ the plain string. With images ⇒ the streaming-input
+ * form: one user message carrying the text plus a base64 image content block per pasted image (read
+ * from the path `__complete` was handed). A missing/unreadable image throws — the caller's try/catch
+ * turns it into an inline error, never a silently dropped attachment.
+ */
+function buildPrompt(parsed: CompleteRequest): string | AsyncIterable<unknown> {
+  const text = assemblePrompt(parsed);
+  const images = (parsed.attachments ?? []).filter((a) => a.kind === 'image');
+  if (images.length === 0) return text;
+  // Containment (review r1, security): image paths arrive from the webview, so an unchecked read
+  // is an arbitrary-file-read primitive (~/.ssh, .env → base64'd into the prompt). Every path must
+  // canonicalize under the TRUSTED assetRoot the sidecar stamped (renderer-supplied roots are
+  // overwritten Rust-side, like baseUrl). No root ⇒ no image reads, ever.
+  if (parsed.assetRoot === undefined) {
+    throw new Error('image attachments require a trusted asset root (stamped by the sidecar)');
+  }
+  const root = realpathSync(parsed.assetRoot);
+  const content: unknown[] = [{ type: 'text', text }];
+  let imageBytes = 0;
+  for (const img of images) {
+    const real = realpathSync(img.path); // resolves symlinks — a link out of the root is refused
+    if (real !== root && !real.startsWith(root + sep)) {
+      throw new Error(`image attachment escapes the asset root: ${img.path}`);
+    }
+    const size = statSync(real).size;
+    if (size > MAX_IMAGE_BYTES) {
+      throw new Error(`image attachment too large (${Math.ceil(size / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB): ${img.path}`);
+    }
+    // Aggregate ceiling (review r3): each image is under the per-image cap, but N of them would
+    // otherwise base64 into one unbounded prompt. Bound the whole set, not just each member.
+    imageBytes += size;
+    if (imageBytes > MAX_IMAGE_TOTAL_BYTES) {
+      throw new Error(`images exceed the ${MAX_IMAGE_TOTAL_BYTES / 1_000_000}MB total attachment limit`);
+    }
+    const data = readFileSync(real).toString('base64');
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType ?? 'image/png', data },
+    });
+  }
+  return (async function* () {
+    yield { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: '' };
+  })();
 }
 
 /**
@@ -20,10 +115,16 @@ export async function runComplete(req: unknown, deps: CompleteDeps): Promise<Com
   const parsed = validate(req);
   if ('error' in parsed) return parsed;
 
-  const prompt = parsed.messages.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+  // Re-check the total inline budget at the trust boundary: the webview is expected to block over-limit
+  // sends, but mention/attachment content arrives from it and cannot be trusted to be within cap.
+  const inlineTotal = inlineByteTotal(parsed.attachments);
+  if (inlineTotal > MAX_INLINE_TOTAL_BYTES) {
+    return { error: { message: `attached files exceed the ${MAX_INLINE_TOTAL_BYTES}-byte inline limit (${inlineTotal} bytes)` } };
+  }
+
   try {
     const stream = deps.query({
-      prompt,
+      prompt: buildPrompt(parsed),
       options: {
         allowedTools: [], // completion, not an agent — no filesystem/tool access
         settingSources: [], // don't load project/user CLAUDE.md or settings
@@ -76,5 +177,27 @@ function validate(req: unknown): CompleteRequest | { error: { message: string } 
     ...(typeof r['system'] === 'string' ? { system: r['system'] } : {}),
     ...(typeof r['model'] === 'string' ? { model: r['model'] } : {}),
     ...(typeof r['baseUrl'] === 'string' ? { baseUrl: r['baseUrl'] } : {}),
+    ...(Array.isArray(r['attachments']) ? { attachments: coerceAttachments(r['attachments']) } : {}),
+    ...(typeof r['assetRoot'] === 'string' ? { assetRoot: r['assetRoot'] } : {}),
   };
+}
+
+/** Keep only well-formed attachment entries (kind + string path); malformed ones are dropped, never
+ * fatal — a bad attachment must not sink an otherwise valid turn. */
+function coerceAttachments(raw: unknown[]): CompleteAttachment[] {
+  const out: CompleteAttachment[] = [];
+  for (const a of raw) {
+    if (a === null || typeof a !== 'object') continue;
+    const rec = a as Record<string, unknown>;
+    const kind = rec['kind'];
+    const path = rec['path'];
+    if ((kind !== 'image' && kind !== 'file') || typeof path !== 'string') continue;
+    out.push({
+      kind,
+      path,
+      ...(typeof rec['mediaType'] === 'string' ? { mediaType: rec['mediaType'] } : {}),
+      ...(typeof rec['content'] === 'string' ? { content: rec['content'] } : {}),
+    });
+  }
+  return out;
 }

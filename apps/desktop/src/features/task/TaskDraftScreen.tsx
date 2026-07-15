@@ -1,7 +1,21 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { Button, InlineEdit } from '@/ui';
-import { apiComplete, apiCancelComplete, apiCreateTask, listDrafts, readDraft, readAppConfig } from '../../ipc.js';
+import {
+  apiComplete,
+  apiCancelComplete,
+  apiCreateTask,
+  apiListRepoFiles,
+  apiReadRepoFile,
+  writeDraftAsset,
+  clearDraftAssets,
+  listDrafts,
+  readDraft,
+  readAppConfig,
+} from '../../ipc.js';
+import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES } from '../../wire.js';
+import type { CompleteAttachment } from '../../wire.js';
+import type { ComposerAttachment } from './ChatPane.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
 import { relTime } from '../../time.js';
 import { DocEditor } from './DocEditor.js';
@@ -132,6 +146,9 @@ export function TaskDraftScreen({
   const [source, setSource] = useState<string | undefined>(undefined);
   const [defaultModel, setDefaultModel] = useState(DEFAULT_CHAT_MODEL);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
+  // Project repo's tracked files for `@`-mention autocomplete (Editor UX 7/7). Loaded once per
+  // project; a git/FS failure leaves it empty (the picker simply shows nothing), never a throw.
+  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
   const [deleteArm, setDeleteArm] = useState<string | null>(null);
   // Ids the user deleted THIS session. The archive step needs to tell a deliberate delete (silent)
   // from a transient read/parse failure (review #349 r7): both surface as a non-'written' update,
@@ -165,6 +182,11 @@ export function TaskDraftScreen({
         setDefaultModel(DEFAULT_CHAT_MODEL);
         setModelOptions([]);
       });
+    // Tracked files for the composer's `@`-mention autocomplete (Editor UX 7/7). A failure just
+    // leaves the picker empty — mentions are an affordance, never a precondition.
+    void apiListRepoFiles(project)
+      .then((r) => setMentionFiles(r.files))
+      .catch(() => setMentionFiles([]));
   }, [project]);
 
   // Persist the tab session for this project — but only once the mount has decided its initial
@@ -480,11 +502,88 @@ export function TaskDraftScreen({
     void writer.writeNow(id, { ...draftRef.current });
   };
 
-  const send = (text: string): void => {
-    if (archived) return;
+  /** Resolve composer attachments + `@`-mentions into wire attachments for `__complete` (Editor UX
+   * 7/7): persist images under the draft's assets dir (→ absolute path), read each `@path` mention's
+   * content, and enforce the 256KB total-inlined-content ceiling. Throws a clear error above it.
+   *
+   * Asset lifecycle (review r3 #4): a persisted image lives with its draft — `drafts::delete` removes
+   * the whole `<id>-assets/` dir (review r2), so accumulation is bounded per draft and self-cleans on
+   * delete. Deliberately NOT deleted per-send: the `__complete` child reads it by path AFTER this
+   * resolves, and a Stop-then-retry re-reads the same chip, so a delete-after-read would race both. */
+  const resolveAttachments = async (
+    id: string,
+    text: string,
+    attachments: ComposerAttachment[],
+  ): Promise<CompleteAttachment[]> => {
+    const out: CompleteAttachment[] = [];
+    // Dropped text files carry their content already; images are persisted and referenced by path.
+    // Decode images and collect text content FIRST; every throw-capable check runs before any disk
+    // write, so a failed send leaves no orphaned assets behind (review r2). Images are decoded in
+    // memory here and persisted only at the end.
+    const pendingImages: { bytes: Uint8Array; mediaType?: string }[] = [];
+    let imageBytesTotal = 0;
+    for (const a of attachments) {
+      if (a.kind === 'file' && a.content !== undefined) {
+        out.push({ kind: 'file', path: a.name, content: a.content });
+      } else if (a.kind === 'image' && a.dataUrl !== undefined) {
+        const base64 = a.dataUrl.slice(a.dataUrl.indexOf(',') + 1);
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        // Client-side mirror of core's per-image AND aggregate caps: fail fast (keeping the chips —
+        // resolution throws → send rejected) instead of writing assets and shipping megabytes over
+        // IPC only to be refused in __complete (review r2/r4).
+        if (bytes.length > MAX_IMAGE_BYTES) {
+          throw new Error(`Pasted image is too large (${Math.ceil(bytes.length / 1000)}KB / ${MAX_IMAGE_BYTES / 1000}KB).`);
+        }
+        imageBytesTotal += bytes.length;
+        if (imageBytesTotal > MAX_IMAGE_TOTAL_BYTES) {
+          throw new Error(`Pasted images exceed the ${MAX_IMAGE_TOTAL_BYTES / 1_000_000}MB total limit. Remove one and try again.`);
+        }
+        pendingImages.push({ bytes, ...(a.mediaType !== undefined ? { mediaType: a.mediaType } : {}) });
+      }
+    }
+    // `@path` mentions: read each tracked file's (capped) content and inline it. Deduped so a path
+    // typed twice inlines once. Only tokens that match a KNOWN tracked file are read — this skips a
+    // git subprocess per prose `@word` (review r4), and the server re-validates membership anyway.
+    const tracked = new Set(mentionFiles);
+    const seen = new Set<string>();
+    for (const m of text.matchAll(/(?:^|\s)@([\w./-]+)/g)) {
+      const rel = m[1]!;
+      if (seen.has(rel) || !tracked.has(rel)) continue;
+      seen.add(rel);
+      try {
+        const { content, truncated } = await apiReadRepoFile(project, rel);
+        // A file over the 64KB cap is inlined head-only; annotate it so the model isn't misled into
+        // treating the truncated head as the whole file (review r7).
+        const annotated = truncated ? `${content}\n\n… (truncated at 64KB)` : content;
+        out.push({ kind: 'file', path: rel, content: annotated });
+      } catch {
+        // skip a mention that doesn't resolve to a readable tracked file
+      }
+    }
+    const total = out.reduce((n, a) => n + (a.content !== undefined ? new TextEncoder().encode(a.content).length : 0), 0);
+    if (total > MAX_INLINE_TOTAL_BYTES) {
+      throw new Error(`Attached content is too large (${Math.ceil(total / 1000)}KB / ${MAX_INLINE_TOTAL_BYTES / 1000}KB). Remove a file or mention and try again.`);
+    }
+    // All checks passed — NOW persist the images.
+    for (const img of pendingImages) {
+      const ext = (img.mediaType ?? 'image/png').split('/')[1] ?? 'png';
+      const path = await writeDraftAsset(project, id, `${crypto.randomUUID()}.${ext}`, img.bytes);
+      out.push({ kind: 'image', path, ...(img.mediaType !== undefined ? { mediaType: img.mediaType } : {}) });
+    }
+    return out;
+  };
+
+  const send = (text: string, attachments: ComposerAttachment[] = []): Promise<boolean> => {
+    if (archived) return Promise.resolve(false);
     // Per-id single-in-flight: synchronous, so a double click cannot slip between renders, and a
     // draft switch cannot clear another draft's slot.
-    if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return;
+    if (activeIdRef.current !== null && pendingTurns.current.has(activeIdRef.current)) return Promise.resolve(false);
+    // Resolves true once attachment resolution succeeds (chips can clear), false if it fails (the
+    // composer keeps its chips for retry — review r3).
+    let accept: (ok: boolean) => void = () => {};
+    const accepted = new Promise<boolean>((r) => (accept = r));
     const id = ensureId();
     pendingTurns.current.add(id);
     setPendingIds(new Set(pendingTurns.current));
@@ -516,18 +615,52 @@ export function TaskDraftScreen({
     syncEntry(id);
     // Chat turns are written immediately (never debounced): their loss crosses a process boundary.
     void writer.writeNow(id, { ...draftRef.current });
-    void readAppConfig(project)
-      .then((cfg) =>
-        apiComplete(
+    void resolveAttachments(id, text, attachments)
+      .catch((err: unknown) => {
+        // Attachment resolution failed (256KB ceiling, unreadable image) BEFORE anything was sent:
+        // surface the error inline, strip the dangling user turn from the persisted transcript, and
+        // put the text back in the composer — the same restore contract as Stop.
+        //
+        // resolveAttachments awaited IPC, so a draft switch may have repointed draftRef/activeId in
+        // the meantime. Strip the user turn from the FILE via writer.update (id-keyed, skip-if-
+        // deleted) — NOT persistNow, which writes draftRef and would serialize the now-active
+        // draft's state into `id` (review r5, the review #349 r2 aliasing class). draftRef/entries
+        // are only touched on the still-active path.
+        void writer.update(id, (d) => ({
+          ...d,
+          chat: d.chat.at(-1)?.role === 'user' ? d.chat.slice(0, -1) : d.chat,
+          composerText: text,
+        }));
+        if (id === activeIdRef.current) {
+          dispatch({ type: 'fail', message: String(err instanceof Error ? err.message : err) });
+          setComposerText(text);
+          draftRef.current = {
+            ...draftRef.current,
+            chat: draftRef.current.chat.at(-1)?.role === 'user' ? draftRef.current.chat.slice(0, -1) : draftRef.current.chat,
+            composerText: text,
+          };
+          syncEntry(id);
+        }
+        cancelledCalls.current.add(callId); // settle the chain inert below
+        accept(false); // the send was rejected — the composer keeps its attachment chips
+        return [] as CompleteAttachment[];
+      })
+      .then(async (resolved) => {
+        if (!cancelledCalls.current.has(callId)) accept(true); // resolution succeeded — clear chips
+        const cfg = await readAppConfig(project);
+        if (cancelledCalls.current.has(callId)) return { res: {} as Awaited<ReturnType<typeof apiComplete>>, resolvedModel: '' };
+        const res = await apiComplete(
           project,
           {
             system: `${PLAN_PRESET}\n\nThe current document is:\n<doc>${bodyAtSend}</doc>`,
             messages: apiMessages,
             model: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL,
+            ...(resolved.length > 0 ? { attachments: resolved } : {}),
           },
           callId,
-        ).then((res) => ({ res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL })),
-      )
+        );
+        return { res, resolvedModel: modelAtSend ?? cfg.chatModel ?? DEFAULT_CHAT_MODEL };
+      })
       .then(({ res, resolvedModel }) => {
         // A Stop-killed turn resolves here with an error (child stdout closed) — or, if the reply
         // beat the kill, a normal one. Either way the user cancelled: settle inert, no toast, no
@@ -582,6 +715,7 @@ export function TaskDraftScreen({
         }
         cancelledCalls.current.delete(callId);
       });
+    return accepted;
   };
 
   /** Stop the active conversation's in-flight turn (Editor UX 5/7): kill this turn's `__complete`
@@ -665,6 +799,10 @@ export function TaskDraftScreen({
         // during the flight, an armed archived:false snapshot must not land after the archive.
         writer.discard(id);
         const outcome = await writer.update(id, (d) => ({ ...d, archived: true, created: task }));
+        // Filing is terminal for editing: the pasted-image assets already rode the chat that
+        // produced this task, so drop them now rather than leak them for the archived draft's life
+        // (review r5). Best-effort — a failed cleanup must not fail the (successful) create.
+        void clearDraftAssets(project, id).catch(() => {});
         setEntries((prev) =>
           prev.map((e) =>
             e.id === id && e.data !== undefined ? { ...e, data: { ...e.data, archived: true, created: task } } : e,
@@ -916,6 +1054,7 @@ export function TaskDraftScreen({
               defaultModel={defaultModel}
               composerText={composerText}
               focusSignal={composerFocus}
+              mentionFiles={mentionFiles}
               onModelChange={onModelChange}
               onComposerChange={onComposerChange}
               onSend={send}

@@ -36,6 +36,8 @@ export interface SidecarDeps {
   deleteFlow: (params: DeleteFlowParams) => Promise<Record<string, never>>;
   listTasks: (params: ListTasksParams) => Promise<{ tasks: BoardTask[]; capped: boolean }>;
   fetchSpec: (params: FetchSpecParams) => Promise<{ spec: string }>;
+  listRepoFiles: (params: ListRepoFilesParams) => Promise<{ files: string[]; capped: boolean }>;
+  readRepoFile: (params: ReadRepoFileParams) => Promise<{ path: string; content: string; truncated: boolean }>;
 }
 
 /** Repo-scoped flow-file methods (S5). All ride the query pipe, Bound::Timed. */
@@ -75,6 +77,15 @@ export interface ListTasksParams {
 export interface FetchSpecParams {
   repoPath: string;
   taskId: string;
+}
+/** Composer `@`-mention autocomplete (Editor UX 7/7): the repo's tracked files. Query pipe, Timed. */
+export interface ListRepoFilesParams {
+  repoPath: string;
+}
+/** Read one tracked file for mention inlining (Editor UX 7/7). `path` is repo-relative. Timed. */
+export interface ReadRepoFileParams {
+  repoPath: string;
+  path: string;
 }
 
 /**
@@ -206,6 +217,17 @@ export function validateFetchSpec(params: unknown): void {
   }
 }
 
+export function validateListRepoFiles(params: unknown): void {
+  requireAbsoluteRepoPath(params);
+}
+
+export function validateReadRepoFile(params: unknown): void {
+  const p = requireAbsoluteRepoPath(params);
+  if (typeof p.path !== 'string' || p.path.trim() === '') {
+    throw new BadRequestError('path is required and must be a non-blank string');
+  }
+}
+
 /**
  * Validate a writeFlow request and return the coerced doc. Everything pure happens here, before
  * dispatch: shape + unknown-key rejection (the renderer sends a JS object, so parse's typo
@@ -280,6 +302,12 @@ export async function runSidecar(
       } else if (req.method === 'fetchSpec') {
         validateFetchSpec(req.params);
         write(JSON.stringify({ id, result: await deps.fetchSpec(req.params as FetchSpecParams) }));
+      } else if (req.method === 'listRepoFiles') {
+        validateListRepoFiles(req.params);
+        write(JSON.stringify({ id, result: await deps.listRepoFiles(req.params as ListRepoFilesParams) }));
+      } else if (req.method === 'readRepoFile') {
+        validateReadRepoFile(req.params);
+        write(JSON.stringify({ id, result: await deps.readRepoFile(req.params as ReadRepoFileParams) }));
       } else if (req.method === 'deleteFlow') {
         validateDeleteFlow(req.params);
         write(JSON.stringify({ id, result: await deps.deleteFlow(req.params as DeleteFlowParams) }));

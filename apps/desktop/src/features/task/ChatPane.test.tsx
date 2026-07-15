@@ -1,5 +1,5 @@
 import { test, expect, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { EditorView } from '@uiw/react-codemirror';
 import { ChatPane } from './ChatPane.js';
 import type { DocChatState } from './useDocChat.js';
@@ -157,4 +157,96 @@ test('a persisted model override missing from the config still renders (and stay
 test('selector disabled while a turn is in flight', () => {
   render(<ChatPane state={{ ...base, busy: true }} {...paneProps} />);
   expect(screen.getByLabelText('chat model')).toBeDisabled();
+});
+
+function composerBox(): HTMLElement {
+  return document.querySelector('[data-testid="chat-composer"]') as HTMLElement;
+}
+
+test('attach-chip-lifecycle: a pasted image becomes a removable chip and sends as an image attachment', async () => {
+  const onSend = vi.fn();
+  render(<ChatPane state={base} {...paneProps} composerText="look at this" onSend={onSend} />);
+  const file = new File([new Uint8Array([1, 2, 3])], 'shot.png', { type: 'image/png' });
+  // Paste an image into the composer — the chip appears once the FileReader resolves the data URL.
+  fireEvent.paste(composerBox(), { clipboardData: { files: [file], items: [] } });
+  const chip = await screen.findByTestId('attachment-chip');
+  expect(chip).toHaveTextContent('shot.png');
+
+  // The chip rides the send: onSend gets the trimmed text plus one image attachment.
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  expect(onSend).toHaveBeenCalledTimes(1);
+  const [text, attachments] = onSend.mock.calls[0]!;
+  expect(text).toBe('look at this');
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]).toMatchObject({ kind: 'image', name: 'shot.png', mediaType: 'image/png' });
+
+  // Re-paste, then remove: the × clears the chip so it never sends. (The post-send chip clear
+  // is now an async microtask - flush it before re-pasting so we assert on a clean composer.)
+  await Promise.resolve();
+  fireEvent.paste(composerBox(), { clipboardData: { files: [file], items: [] } });
+  const chip2 = await screen.findByTestId('attachment-chip');
+  expect(chip2).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /remove attachment shot.png/i }));
+  await waitFor(() => expect(screen.queryByTestId('attachment-chip')).toBeNull());
+});
+
+test('mention-autocomplete: typing @ filters the tracked-file list and selecting inserts @path', () => {
+  const onComposerChange = vi.fn();
+  const files = ['src/wire.ts', 'src/api/complete.ts', 'README.md'];
+  // The composer is controlled; the mention picker derives from the value. A trailing @wire narrows
+  // to the fuzzy-matching tracked files only.
+  render(
+    <ChatPane
+      state={base}
+      {...paneProps}
+      composerText="see @wire"
+      mentionFiles={files}
+      onComposerChange={onComposerChange}
+    />,
+  );
+  const list = screen.getByTestId('mention-list');
+  expect(list).toHaveTextContent('src/wire.ts');
+  expect(list).not.toHaveTextContent('README.md'); // 'wire' doesn't fuzzy-match README.md
+
+  fireEvent.click(screen.getByRole('button', { name: 'src/wire.ts' }));
+  // The partial @wire is replaced with the full @path and a trailing space.
+  expect(onComposerChange).toHaveBeenCalledWith('see @src/wire.ts ');
+});
+
+test('an image attachment on a non-image model surfaces an inline error and blocks send', async () => {
+  const onSend = vi.fn();
+  render(<ChatPane state={base} {...paneProps} model="glm-5.2" composerText="hi" onSend={onSend} />);
+  const file = new File([new Uint8Array([1])], 'p.png', { type: 'image/png' });
+  fireEvent.paste(composerBox(), { clipboardData: { files: [file], items: [] } });
+  await screen.findByTestId('attachment-chip');
+  expect(screen.getByText(/can't read images/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  expect(onSend).not.toHaveBeenCalled();
+});
+
+test('oversize-rejection: a dropped text file over the cap is refused with an inline notice', async () => {
+  render(<ChatPane state={base} {...paneProps} />);
+  const big = new File(['x'.repeat(70_000)], 'big.txt', { type: 'text/plain' });
+  fireEvent.drop(composerBox(), { dataTransfer: { files: [big] } });
+  expect(await screen.findByText(/too large to attach/i)).toBeInTheDocument();
+  expect(screen.queryByTestId('attachment-chip')).toBeNull();
+});
+
+
+test('a small text file WITH spaces attaches as a chip - the binary guard matches NUL only (review r2)', async () => {
+  // The binary check is a literal NUL (\\u0000); if it ever degraded to a space (an easy mangling
+  // of a raw control char), every normal text file would be rejected as binary - and no other test
+  // attached content containing a space.
+  render(<ChatPane state={base} {...paneProps} />);
+  const doc = new File(['hello world, two words'], 'notes.txt', { type: 'text/plain' });
+  fireEvent.drop(composerBox(), { dataTransfer: { files: [doc] } });
+  expect(await screen.findByTestId('attachment-chip')).toHaveTextContent('notes.txt');
+});
+
+test('a file containing a NUL byte is rejected as binary', async () => {
+  render(<ChatPane state={base} {...paneProps} />);
+  const bin = new File(['ab\u0000cd'], 'blob.bin', { type: 'application/octet-stream' });
+  fireEvent.drop(composerBox(), { dataTransfer: { files: [bin] } });
+  expect(await screen.findByText(/binary/i)).toBeInTheDocument();
+  expect(screen.queryByTestId('attachment-chip')).toBeNull();
 });

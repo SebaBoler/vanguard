@@ -116,15 +116,81 @@ pub fn write(repo: &Path, id: &str, content: &str) -> Result<(), String> {
     fs::rename(&tmp, dir.join(format!("{id}.json"))).map_err(|e| e.to_string())
 }
 
-/// Idempotent: deleting a missing draft succeeds (a lost race with a second window is not an error).
-pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
+/// Composer image attachments (Editor UX 7/7) live beside the draft they belong to, under
+/// `<repo>/.vanguard/drafts/<id>-assets/`. Same tree, same `.gitignore` (`.vanguard/drafts/*` is
+/// already ignored via the drafts `.gitignore`'s `*`), so a pasted image never rides a commit.
+fn assets_dir(repo: &Path, id: &str) -> PathBuf {
+    drafts_dir(repo).join(format!("{id}-assets"))
+}
+
+/// A safe attachment filename: no separators, no traversal, no dotfile. The webview mints these
+/// (`<uuid>.<ext>`), but this seam re-validates — a smuggled `../` or absolute name must never
+/// reach `join`.
+fn safe_asset_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err(format!("invalid asset name: {name}"));
+    }
+    Ok(())
+}
+
+/// Persist an image attachment under the draft's assets dir and return its ABSOLUTE path — the value
+/// the renderer hands to `__complete` as the image content block's source. Symlink-safe like `write`:
+/// the assets dir and the leaf are both checked, so a committed symlink can't redirect the write out
+/// of the checkout. Returns the path so the send path can forward it without re-deriving the layout.
+pub fn write_asset(repo: &Path, id: &str, name: &str, bytes: &[u8]) -> Result<String, String> {
+    writable_id(id)?;
+    safe_asset_name(name)?;
+    assert_not_symlink(repo)?;
+    let dir = assets_dir(repo, id);
+    if let Ok(meta) = fs::symlink_metadata(&dir) {
+        if meta.file_type().is_symlink() {
+            return Err(format!("{} is a symlink — refusing to operate on it", dir.display()));
+        }
+    }
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join(name);
+    assert_leaf_not_symlink(&file)?;
+    fs::write(&file, bytes).map_err(|e| e.to_string())?;
+    Ok(file.to_string_lossy().into_owned())
+}
+
+/// Remove a draft's pasted-image assets dir, keeping the draft JSON. Called when a draft is FILED
+/// (archived): the images already rode the chat that produced the task, so they are dead weight —
+/// leaving them would leak per-send for the life of every filed draft (review r5). Idempotent; same
+/// symlink guard as `delete`. Split from `delete` so the file itself survives archiving.
+pub fn clear_assets(repo: &Path, id: &str) -> Result<(), String> {
     safe_name(id)?;
     assert_not_symlink(repo)?;
-    match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
+    let assets = assets_dir(repo, id);
+    assert_leaf_not_symlink(&assets)?;
+    match fs::remove_dir_all(&assets) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Idempotent: deleting a missing draft succeeds (a lost race with a second window is not an error).
+pub fn delete(repo: &Path, id: &str) -> Result<(), String> {
+    safe_name(id)?;
+    assert_not_symlink(repo)?;
+    // Remove the JSON FIRST: "anything list could return must be deletable" (AC6) is the invariant
+    // the whole safe_name leniency protects, so a delete must never be blocked. Asset cleanup is
+    // best-effort AFTER (review r5→r7 regression): a symlinked/locked/permission-denied assets dir
+    // must not resurrect the draft the user asked to remove. A leaked assets dir is a bounded leak;
+    // an undeletable draft is the exact bug S10 exists to prevent.
+    let removed = match fs::remove_file(drafts_dir(repo).join(format!("{id}.json"))) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    };
+    let _ = clear_assets(repo, id);
+    removed
 }
 
 #[cfg(test)]
@@ -198,6 +264,45 @@ mod tests {
         write(tmp.path(), "draft-x", "{}").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
         delete(tmp.path(), "draft-x").unwrap();
+    }
+
+    #[test]
+    fn delete_removes_the_json_even_when_asset_cleanup_fails() {
+        // AC6 regression guard (review r7): a symlinked assets dir makes clear_assets Err, but the
+        // draft the user asked to delete must still be removed — a leaked dir beats an undeletable draft.
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        // Point <id>-assets at an out-of-tree dir via a symlink — clear_assets refuses to touch it.
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), assets_dir(tmp.path(), "draft-x")).unwrap();
+        delete(tmp.path(), "draft-x").unwrap();
+        assert!(read(tmp.path(), "draft-x").is_err()); // the JSON is gone
+        assert!(outside.path().exists()); // the symlink target was NOT followed/removed
+    }
+
+    #[test]
+    fn clear_assets_removes_the_dir_but_keeps_the_draft_json() {
+        // Filing a draft drops its images (they rode the chat) but keeps the draft file (review r5).
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        let asset = write_asset(tmp.path(), "draft-x", "pic.png", b"bytes").unwrap();
+        assert!(Path::new(&asset).exists());
+        clear_assets(tmp.path(), "draft-x").unwrap();
+        assert!(!assets_dir(tmp.path(), "draft-x").exists());
+        assert!(read(tmp.path(), "draft-x").is_ok()); // the JSON survives
+        clear_assets(tmp.path(), "draft-x").unwrap(); // idempotent
+    }
+
+    #[test]
+    fn delete_removes_the_assets_dir_with_the_draft() {
+        // Orphaned `<id>-assets/` dirs would grow forever in every repo (review r2).
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "draft-x", "{}").unwrap();
+        let asset = write_asset(tmp.path(), "draft-x", "pic.png", b"bytes").unwrap();
+        assert!(Path::new(&asset).exists());
+        delete(tmp.path(), "draft-x").unwrap();
+        assert!(!Path::new(&asset).exists());
+        assert!(!assets_dir(tmp.path(), "draft-x").exists());
     }
 
     #[test]

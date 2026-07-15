@@ -100,6 +100,21 @@ async fn delete_draft(repo_path: String, id: String) -> Result<(), String> {
     drafts::delete(Path::new(&repo_path), &id)
 }
 
+/// Persist a composer image attachment (Editor UX 7/7) under the draft's assets dir; returns the
+/// absolute path the renderer forwards to `__complete`. Bytes arrive as a `Vec<u8>` (no base64
+/// crate), decoded from the pasted image in the webview.
+#[tauri::command]
+async fn write_draft_asset(repo_path: String, id: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    drafts::write_asset(Path::new(&repo_path), &id, &name, &bytes)
+}
+
+/// Remove a draft's pasted-image assets dir (keeping the JSON) when the draft is filed — the images
+/// already rode the chat that produced the task (review r5).
+#[tauri::command]
+async fn clear_draft_assets(repo_path: String, id: String) -> Result<(), String> {
+    drafts::clear_assets(Path::new(&repo_path), &id)
+}
+
 #[tauri::command]
 async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
     remote::list_remote_runs(Path::new(&repo_path))
@@ -174,6 +189,8 @@ pub fn run() {
             read_draft,
             write_draft,
             delete_draft,
+            write_draft_asset,
+            clear_draft_assets,
             list_remote_runs,
             list_tasks,
             fetch_spec,
@@ -195,6 +212,8 @@ pub fn run() {
             sidecar::api_read_flow,
             sidecar::api_write_flow,
             sidecar::api_delete_flow,
+            sidecar::api_list_repo_files,
+            sidecar::api_read_repo_file,
             sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())
