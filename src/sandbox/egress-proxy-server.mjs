@@ -5,7 +5,20 @@
 // `docker cp`'s next to this file — the SAME module egress-proxy.ts uses, so the two never drift.
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { writeSync } from 'node:fs';
 import { isAllowed } from './egress-allow.mjs';
+
+// Synchronous stdout: `docker logs` reads a pipe, and async console.log buffers can be dropped by
+// process.exit — the crash evidence is the point, so it must flush before death (PR #353 review).
+// Best-effort even so: a saturated non-blocking pipe can make writeSync itself throw (EAGAIN), and
+// a logger that throws while handling a failure would mask the failure.
+const log = (line) => {
+  try {
+    writeSync(1, `${line}\n`);
+  } catch {
+    /* the pipe is gone or full — dying silently here would still exit nonzero below */
+  }
+};
 
 const ALLOW = (process.env.ALLOW ?? '')
   .split(',')
@@ -15,7 +28,27 @@ const PORT = Number(process.env.PORT ?? '8080');
 
 const allowed = (host) => isAllowed(host, ALLOW);
 
+// The proxy must not die silently mid-run (dogfood #352: a dead proxy bricks every remaining
+// stage with ConnectionRefused). It runs as container PID 1 under `--restart on-failure`, so the
+// right response to the unexpected is: write the reason to stdout (docker logs) and let docker
+// restart a fresh process — never a silent exit, never limping on in unknown state.
+process.on('uncaughtException', (err) => {
+  log(`egress proxy crashed: ${err?.stack ?? err}`);
+  process.exit(1);
+});
+
 createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTTPS CONNECT.'))
+  .on('error', (err) => {
+    // A listen-time failure (EADDRINUSE, EACCES) MUST be fatal-nonzero: swallowing it ends the
+    // process with exit 0, which --restart on-failure reads as success — the port-closed brick
+    // this server exists to prevent (PR #353 review). Accept-level errors (EMFILE) keep serving.
+    if (err.syscall === 'listen') {
+      log(`egress proxy cannot bind: ${err}`);
+      process.exit(1);
+    }
+    log(`egress proxy server error: ${err}`);
+  })
+  .on('clientError', (_err, socket) => socket.destroy())
   .on('connect', (req, clientSocket, head) => {
     const target = req.url ?? '';
     const sep = target.lastIndexOf(':');
@@ -34,4 +67,7 @@ createServer((_req, res) => res.writeHead(405).end('This proxy only supports HTT
     upstream.on('error', () => clientSocket.destroy());
     clientSocket.on('error', () => upstream.destroy());
   })
-  .listen(PORT, () => console.log(`egress proxy on ${PORT}; allow=${ALLOW.join(',')}`));
+  .listen(PORT, function () {
+    // The ACTUALLY-bound port (PORT=0 ⇒ ephemeral), so the banner is truthful for tests/debugging.
+    log(`egress proxy on ${this.address().port}; allow=${ALLOW.join(',')}`);
+  });
