@@ -395,6 +395,33 @@ test('Stop cancels the in-flight turn: kills by call id, discards the exchange, 
   expect(screen.queryByText('too late')).toBeNull();
 });
 
+test('switching away and back during the stop window does not re-latch busy (review r1)', async () => {
+  // Between the Stop click and the killed child's promise settling there is a real async window.
+  // If stop() leaves the id in pendingTurns, a switch-away-and-back re-seeds the reducer with
+  // busy: true, and the settled promise (cancelled ⇒ early-return) never clears it — a permanently
+  // stuck "thinking…" with a no-op Stop button.
+  let resolveReply: (v: { text?: string }) => void = () => {};
+  vi.mocked(ipc.apiComplete).mockReturnValueOnce(new Promise((r) => (resolveReply = r)));
+  renderFresh();
+  await drawerReady();
+  type('# Body\n');
+  sendMsg('plan it');
+  await settle();
+  fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+  // The promise has NOT settled yet — switch to a fresh conversation and back.
+  fireEvent.click(screen.getByLabelText('new conversation'));
+  await settle();
+  fireEvent.click(screen.getByLabelText('tab Body'));
+  await settle();
+  // The stopped conversation must be idle: Send rendered (not Stop), no thinking indicator.
+  expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+  expect(screen.queryByText(/thinking/i)).toBeNull();
+  // The abandoned promise settles inert afterwards.
+  resolveReply({ text: 'too late' });
+  await settle();
+  expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
+});
+
 test('a stopped turn can be retried through the normal send path', async () => {
   let resolveReply: (v: { text?: string }) => void = () => {};
   vi.mocked(ipc.apiComplete)

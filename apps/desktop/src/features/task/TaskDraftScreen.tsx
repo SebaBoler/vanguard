@@ -588,6 +588,12 @@ export function TaskDraftScreen({
     if (meta === undefined) return;
     cancelledCalls.current.add(meta.callId);
     void apiCancelComplete(meta.callId);
+    // Release the turn's slot NOW, not in the abandoned promise's .finally: until the killed child's
+    // promise settles there is a real window where a switch-away-and-back would re-seed the reducer
+    // from pendingTurns with busy: true — and the cancelled promise early-returns without ever
+    // clearing it (permanently stuck "thinking…", review r1). The .finally delete is then a no-op.
+    pendingTurns.current.delete(id);
+    setPendingIds(new Set(pendingTurns.current));
     dispatch({ type: 'cancel' });
     setComposerText(meta.text);
     setComposerFocus((n) => n + 1);

@@ -301,9 +301,12 @@ pub fn api_complete(
     // on stdin EOF and the kill is a no-op. A Stop-killed child is already dead here; the kill is a
     // no-op too, and `complete_exchange` has already returned Err (stdout closed → no response line).
     let result = complete_exchange(&mut child, &req);
+    // Unregister BEFORE the child is reaped: after wait() the OS may recycle the pid, and a
+    // perfectly-timed Stop reading the registry in that sliver would signal an unrelated process
+    // (review r1). Killing via the still-owned Child handle below is reuse-safe.
+    unregister_complete(&state, call_id.as_deref());
     let _ = child.kill();
     let _ = child.wait();
-    unregister_complete(&state, call_id.as_deref());
     result
 }
 

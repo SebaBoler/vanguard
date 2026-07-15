@@ -1,4 +1,4 @@
-import { test, expect, vi } from 'vitest';
+import { test, expect, vi, onTestFinished } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ChatMessage } from './ChatMessage.js';
 
@@ -11,7 +11,11 @@ test('copy-button-per-block: each fenced code block in an assistant reply gets i
 
 test('the copy button copies the block text and shows a brief confirmation', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
-  Object.assign(navigator, { clipboard: { writeText } });
+  // stubGlobal (not Object.assign on the shared navigator) so the mock cannot leak past this test.
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
   render(<ChatMessage msg={{ role: 'assistant', content: '```ts\nconst x = 1;\n```' }} />);
   const button = screen.getByRole('button', { name: /copy code/i });
   expect(button).toHaveTextContent(/copy/i);
