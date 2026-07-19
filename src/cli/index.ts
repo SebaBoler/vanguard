@@ -104,6 +104,38 @@ async function main(): Promise<void> {
     await runSidecar(rl, (l: string) => void process.stdout.write(l + '\n'), productionDeps());
     return;
   }
+  if (command.kind === 'complete') {
+    // Same stdout discipline as the sidecar: the single JSON response line owns stdout, so a stray
+    // log can't corrupt it. Set the gate BEFORE importing the SDK.
+    process.env.VANGUARD_SIDECAR = '1';
+    console.log = (...args: unknown[]): void => console.error(...args);
+    console.info = (...args: unknown[]): void => console.error(...args);
+    console.debug = (...args: unknown[]): void => console.error(...args);
+    const [{ runComplete }, { query }, { createInterface: mkRl }] = await Promise.all([
+      import('../api/complete.js'),
+      import('@anthropic-ai/claude-agent-sdk'),
+      import('node:readline'),
+    ]);
+    const rlc = mkRl({ input: process.stdin });
+    const input = await new Promise<string>((resolve) => {
+      rlc.once('line', (l: string) => {
+        rlc.close();
+        resolve(l);
+      });
+    });
+    let req: unknown;
+    try {
+      req = JSON.parse(input);
+    } catch {
+      process.stdout.write(JSON.stringify({ error: { message: 'invalid request JSON' } }) + '\n');
+      return;
+    }
+    const res = await runComplete(req, {
+      query: (params) => query(params as Parameters<typeof query>[0]),
+    });
+    process.stdout.write(JSON.stringify(res) + '\n');
+    return;
+  }
   const report = await runGc(command);
   const tag = command.dryRun ? ' (dry-run)' : '';
   const remote = command.remoteRepo !== undefined ? `, ${report.branches.length} merged remote branch(es)` : '';

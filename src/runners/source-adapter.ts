@@ -4,7 +4,9 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
+import { FLOWS } from '../api/capabilities.js';
+import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
@@ -30,7 +32,7 @@ import type { ConformanceResult } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
 import type { RunEvent } from '../pipeline/events.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
@@ -53,6 +55,13 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /**
+   * Named flow key (a `FLOWS` registry entry, e.g. 'flow-b'). Set via `--flow`. `--plan` is the
+   * back-compat alias for `flow: 'plan'`. When set, `FLOWS[flow].build()` supplies the base stages
+   * instead of the adapter's — EXCEPT `'default'`, which means "the adapter's own stages" (an adapter
+   * may customize them; Linear does). Validated at the CLI/sidecar boundary.
+   */
+  flow?: string;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
   baseBranch?: string;
   /**
@@ -84,6 +93,8 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    // Loaded repo customs must survive this copy or selectAgents sees a bare name (S6).
+    ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
@@ -93,6 +104,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.flow !== undefined ? { flow: cmd.flow } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
@@ -211,12 +223,41 @@ export function conventionalCommitMessage(title: string, taskId: string): string
   return `${prefix}${clipped}${suffix}`;
 }
 
+/**
+ * Resolve a flow name to its base stage array. 'default' (and no flow at all) means "this
+ * adapter's own stages", NOT FLOWS.default.build. They are not the same: the Linear adapter's
+ * stages() swaps in an implementer that reads the issue via the linear-cli skill, while
+ * FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting 'default' by name —
+ * the natural thing for a name-driven UI — must not silently downgrade a Linear run to an
+ * implementer that never reads the issue. Non-built-in names resolve from the repo's
+ * `.vanguard/flows/*.hcl` (S5); unknown names throw listing both sets.
+ */
+async function resolveBaseStages(
+  flow: string | undefined,
+  repoPath: string,
+  adapter: SourceAdapter,
+  customProviders?: readonly CustomProviderEntry[],
+): Promise<PipelineStage[]> {
+  if (flow === undefined || flow === 'default') return adapter.stages();
+  if (Object.hasOwn(FLOWS, flow)) return FLOWS[flow]!.build();
+  const stages = await resolveRepoFlow(flow, repoPath, customProviders);
+  if (stages === undefined) throw await unknownFlowError(flow, repoPath);
+  return stages;
+}
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
   deps: RunIssueDeps,
   adapter: SourceAdapter,
 ): Promise<RunIssueResult> {
+  // Named-flow dispatch, resolved FIRST: a flow typo must fail before the tracker fetch, the
+  // provider proxies, and the sandbox spin-up (the CLI mirror of the sidecar fail-fast, S5 D6).
+  // `--flow <name>` selects a FLOWS builder or a repo `.vanguard/flows/*.hcl` flow; `--plan` is
+  // the back-compat alias for flow 'plan'.
+  const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
+  const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter, deps.customProviders);
+
   const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
   // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer
   // prompt ({{COMMENTS}}), triage, and the conformance manifest read it exactly like a posted spec,
@@ -272,9 +313,6 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
-      // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
-      const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
@@ -283,10 +321,20 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
+      // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
+      // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.
+      // Fail at assembly rather than surface nothing the user explicitly asked for. Giving conformance
+      // its own standalone comment would need its own body format + dedupe marker; this error is that TODO.
+      if (pipeline.some((s) => s.name === STAGE.CONFORMANCE) && !pipeline.some((s) => s.name === STAGE.REVIEWER)) {
+        throw new Error(
+          `--conformance needs a flow with a reviewer stage (its verdict rides on the review comment); flow "${flow ?? 'default'}" has none`,
+        );
+      }
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
-        flow: deps.plan === true ? 'plan' : 'default',
+        flow: flow ?? 'default',
         provider: agents.agent.name,
         stages: pipeline.map((s) => s.name),
       });
@@ -317,10 +365,28 @@ export async function runSourcedIssue(
       // so its position in `outcomes` is fixed for the duration.
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
+      // A resumed repair pass inherits the implementer's own turn cap — without this it falls back
+      // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
+      const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
+      const implementerMaxTurns = implementerStage?.maxTurns;
+      // Each resume also gets a per-call USD cap, synthesized as stageCostFraction ×
+      // DEFAULT_RUN_MAX_COST_USD (floored at stageCostFloorUsd) — $3 for the canonical implementer.
+      // Deliberately decoupled from the stage's EFFECTIVE in-stage budget: runStages runs this path
+      // with maxCostUsd = Infinity, so "inherit the stage budget" would mean no cap at all. These
+      // calls run outside runStages' accounting; without this, the only bound would be
+      // iterations × turn cap.
+      const repairBudgetUsd =
+        implementerStage?.stageCostFraction !== undefined
+          ? Math.max(
+              implementerStage.stageCostFraction * DEFAULT_RUN_MAX_COST_USD,
+              implementerStage.stageCostFloorUsd ?? 0,
+            )
+          : undefined;
 
       const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
+      let implementerDone = false;
       let gatePassed = false;
       let repairIterations = 0;
       for (;;) {
@@ -328,7 +394,22 @@ export async function runSourcedIssue(
         // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
         conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
         verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
-        gatePassed = conformance.pass && (verification === undefined || verification.passed);
+        // Completion is part of the gate (dogfood #352): an implementer that hit its turn cap or
+        // timeout mid-task can leave residue that still typechecks and tests green — conformance
+        // (often manifest-less) and verification alone would then PASS the gate and publish a
+        // garbage PR titled as the feature. Incomplete → resume the session to finish the work.
+        // Gate on `completed`, NOT on exitReason === 'maxTurns': the SDK counts internal steps as
+        // turns while vanguard counts real ones, so the actual #352 truncation surfaced as
+        // exitReason 'incomplete' with turns 4 — an exitReason gate would have missed it. The cost
+        // is that a provider that finishes work but never emits <promise>COMPLETE</promise> (glm
+        // prose-stops) is re-nudged and, if it still won't signal, downgraded to a Part-of PR —
+        // an unverifiable "done" must not auto-close the issue.
+        // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
+        // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
+        // here. Each resume here is bounded by the implementer's turn cap AND the per-call
+        // repairBudgetUsd computed above.
+        implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
+        gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
@@ -336,6 +417,9 @@ export async function runSourcedIssue(
           `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
         );
         const feedback = [
+          !implementerDone
+            ? 'The previous session ended before the task was finished (turn cap or timeout). Continue and complete the remaining work.'
+            : undefined,
           !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
           verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
         ]
@@ -345,6 +429,8 @@ export async function runSourcedIssue(
           promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
           agent: agents.agent,
           resumeSessionId,
+          ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
+          ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
           // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
           // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
@@ -414,6 +500,7 @@ export async function runSourcedIssue(
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
         ...(manifest !== undefined ? { conformance, manifest } : {}),
         ...(verificationFailed ? { verificationFailed: true } : {}),
+        ...(!implementerDone ? { implementerIncomplete: true } : {}),
         ...(whiteLabel ? { hideAttribution: true } : {}),
       });
       // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
@@ -441,7 +528,13 @@ export async function runSourcedIssue(
         ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
       });
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
-      if (!whiteLabel) {
+      // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
+      // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
+      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A
+      // conformance stage can only reach here alongside a reviewer — the assembly check above rejects
+      // conformance on a reviewer-less flow — so this skip can never swallow a conformance narrative.)
+      const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
+      if (!whiteLabel && pipelineHasReviewer) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({

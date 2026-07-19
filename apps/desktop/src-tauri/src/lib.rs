@@ -1,13 +1,11 @@
 mod active;
 mod appconfig;
+mod drafts;
 mod projects;
 mod remote;
 mod runs;
 mod sidecar;
 mod spawn;
-mod spec;
-mod taskid;
-mod tasks;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -64,7 +62,17 @@ async fn read_session(session_file: String) -> Result<active::SessionRead, Strin
 
 #[tauri::command]
 async fn read_app_config(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    // Passive read: collapse-to-default. TaskDraftScreen consumes this directly (chat model, task
+    // source) and must keep degrading gracefully on an unreadable file — routing THIS command
+    // through read_strict broke every chat turn on a hand-edit typo (review #341 r2 blocking).
     Ok(appconfig::read(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_app_config_strict(repo_path: String) -> Result<appconfig::AppConfig, String> {
+    // Settings' read (S6 guard b): a file that EXISTS but cannot be read/parsed is an error —
+    // Save stays blocked instead of replacing the user's hand-edited JSON with defaults.
+    appconfig::read_strict(Path::new(&repo_path))
 }
 
 #[tauri::command]
@@ -73,18 +81,56 @@ async fn write_app_config(repo_path: String, config: appconfig::AppConfig) -> Re
 }
 
 #[tauri::command]
+async fn list_drafts(repo_path: String) -> Result<Vec<String>, String> {
+    Ok(drafts::list(Path::new(&repo_path)))
+}
+
+#[tauri::command]
+async fn read_draft(repo_path: String, id: String) -> Result<String, String> {
+    drafts::read(Path::new(&repo_path), &id)
+}
+
+#[tauri::command]
+async fn write_draft(repo_path: String, id: String, content: String) -> Result<(), String> {
+    drafts::write(Path::new(&repo_path), &id, &content)
+}
+
+#[tauri::command]
+async fn delete_draft(repo_path: String, id: String) -> Result<(), String> {
+    drafts::delete(Path::new(&repo_path), &id)
+}
+
+/// Persist a composer image attachment (Editor UX 7/7) under the draft's assets dir; returns the
+/// absolute path the renderer forwards to `__complete`. Bytes arrive as a `Vec<u8>` (no base64
+/// crate), decoded from the pasted image in the webview.
+#[tauri::command]
+async fn write_draft_asset(repo_path: String, id: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    drafts::write_asset(Path::new(&repo_path), &id, &name, &bytes)
+}
+
+/// Remove a draft's pasted-image assets dir (keeping the JSON) when the draft is filed — the images
+/// already rode the chat that produced the task (review r5).
+#[tauri::command]
+async fn clear_draft_assets(repo_path: String, id: String) -> Result<(), String> {
+    drafts::clear_assets(Path::new(&repo_path), &id)
+}
+
+#[tauri::command]
 async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
     remote::list_remote_runs(Path::new(&repo_path))
 }
 
-#[tauri::command]
-async fn list_tasks(repo_path: String) -> Result<Vec<tasks::Task>, String> {
-    tasks::list_tasks(Path::new(&repo_path))
+/// Board read path (S9): one brain — the transports live in core now. Same command name, new
+/// body: a Timed query-pipe exchange (idempotent remote read); the old Rust implementations
+/// (tasks.rs/spec.rs/taskid.rs) are deleted.
+#[tauri::command(async)]
+fn list_tasks(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String) -> Result<serde_json::Value, String> {
+    sidecar::board_request(&state, "listTasks", serde_json::json!({ "repoPath": repo_path }))
 }
 
-#[tauri::command]
-async fn fetch_spec(repo_path: String, task_id: String) -> Result<String, String> {
-    spec::fetch_spec(Path::new(&repo_path), &task_id)
+#[tauri::command(async)]
+fn fetch_spec(state: tauri::State<'_, sidecar::Sidecar>, repo_path: String, task_id: String) -> Result<serde_json::Value, String> {
+    sidecar::board_request(&state, "fetchSpec", serde_json::json!({ "repoPath": repo_path, "taskId": task_id }))
 }
 
 #[tauri::command]
@@ -137,7 +183,14 @@ pub fn run() {
             list_active,
             read_session,
             read_app_config,
+            read_app_config_strict,
             write_app_config,
+            list_drafts,
+            read_draft,
+            write_draft,
+            delete_draft,
+            write_draft_asset,
+            clear_draft_assets,
             list_remote_runs,
             list_tasks,
             fetch_spec,
@@ -147,10 +200,20 @@ pub fn run() {
             watch_project,
             unwatch_project,
             sidecar::api_capabilities,
+            sidecar::api_complete,
+            sidecar::api_cancel_complete,
             sidecar::api_create_run,
             sidecar::api_active_run,
             sidecar::api_run_backlog,
             sidecar::api_cancel,
+            sidecar::api_create_task,
+            sidecar::api_list_flows,
+            sidecar::api_list_providers,
+            sidecar::api_read_flow,
+            sidecar::api_write_flow,
+            sidecar::api_delete_flow,
+            sidecar::api_list_repo_files,
+            sidecar::api_read_repo_file,
             sidecar::api_repo_ok
         ])
         .run(tauri::generate_context!())

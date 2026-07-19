@@ -1,11 +1,13 @@
 import { ClaudeCodeProvider } from './claude-code.js';
 import { CodexProvider } from './codex.js';
 import { CursorProvider } from './cursor.js';
-import { ZaiProvider, ZAI_BASE_URL } from './zai.js';
+import { ZaiProvider, ZAI_BASE_URL, ZAI_DEFAULT_MODEL } from './zai.js';
 import { OpenRouterProvider, OPENROUTER_BASE_URL } from './openrouter.js';
 import { MeridianProvider, MERIDIAN_PLACEHOLDER_TOKEN } from './meridian.js';
+import { CustomProvider } from './custom.js';
 import { AgentError } from '../core/errors.js';
 import type { AgentProvider } from './provider.js';
+import type { CustomProviderEntry } from './custom.js';
 
 /**
  * Real provider keys handed to SECONDARY sidecars (proxy mode) — never injected into the sandbox.
@@ -71,6 +73,16 @@ interface ProviderSpec {
    * host, e.g. Meridian). Without this guard --llm-proxy would fall the sidecar back to api.anthropic.com.
    */
   directOnly?: boolean;
+  /**
+   * Model the provider forces when the run doesn't pick one (zai's glm default; a custom entry's
+   * `model`). Consumed by forcedProviderModel so callers like the spec generator don't hand a
+   * Claude-only model (haiku) to an endpoint that doesn't serve it.
+   */
+  forcedModel?: string;
+  /** Egress-enclave host for a configured endpoint (customs) — appended to the allowlist under --egress. */
+  egressHost?: string;
+  /** The configured base URL scheme is plain http (customs) — cannot traverse the CONNECT-only enclave. */
+  plainHttp?: boolean;
 }
 
 /**
@@ -119,6 +131,7 @@ const PROVIDERS = {
     factory: () => new ZaiProvider(),
     transport: 'anthropic',
     ownsAnthropicTransport: true,
+    forcedModel: ZAI_DEFAULT_MODEL,
     key: {
       hostEnv: ['ZAI_API_KEY'],
       toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: ZAI_BASE_URL, ANTHROPIC_AUTH_TOKEN: key }),
@@ -155,21 +168,60 @@ const PROVIDERS = {
   },
 } satisfies Record<string, ProviderSpec>;
 
-/** The providers selectable on the CLI. Selection is by provider, not by model. Order = table order. */
+/** The BUILT-IN providers selectable everywhere. Selection is by provider, not by model. Order = table order. */
 export const PROVIDER_NAMES = Object.keys(PROVIDERS) as ProviderName[];
 export type ProviderName = keyof typeof PROVIDERS;
 
-/** Typed view of a provider's spec (widens the table's narrow per-key types so optional fields are visible). */
-const spec = (name: ProviderName): ProviderSpec => PROVIDERS[name];
+/** Repo-configured customs, re-exported so choice-carrying callers need one import. */
+export type { CustomProviderEntry } from './custom.js';
 
-/** Narrow an arbitrary string to a known provider name. */
+/** Narrow an arbitrary string to a BUILT-IN provider name. Customs resolve via resolveSpec instead. */
 export function isProviderName(value: string): value is ProviderName {
   return Object.hasOwn(PROVIDERS, value);
 }
 
+/**
+ * Resolve a provider name to its spec: built-in wins (customs cannot shadow one — the loader
+ * error-flags collisions), else a spec synthesized from a healthy custom entry (S6 — a generalized
+ * zai: claude CLI against a configured Anthropic-compatible endpoint, key read from `keyEnv`,
+ * direct-only). Broken entries throw their recorded error; unknown names list what IS selectable.
+ */
+function resolveSpec(name: string, customs?: readonly CustomProviderEntry[]): ProviderSpec {
+  if (isProviderName(name)) return PROVIDERS[name];
+  const entry = customs?.find((e) => e.name === name);
+  if (entry?.spec !== undefined) {
+    const { baseUrl, keyEnv, model } = entry.spec;
+    const custom = entry.spec;
+    return {
+      factory: () => new CustomProvider(custom),
+      transport: 'anthropic',
+      ownsAnthropicTransport: true,
+      directOnly: true,
+      ...(model !== undefined ? { forcedModel: model } : {}),
+      egressHost: new URL(baseUrl).hostname,
+      ...(baseUrl.startsWith('http:') ? { plainHttp: true } : {}),
+      key: {
+        hostEnv: [keyEnv],
+        toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: key }),
+      },
+    };
+  }
+  if (entry?.error !== undefined) throw new AgentError(entry.error);
+  const customNames = (customs ?? []).filter((e) => e.spec !== undefined).map((e) => e.name);
+  throw new AgentError(`Unknown provider "${name}". Choose one of: ${[...PROVIDER_NAMES, ...customNames].join(', ')}.`);
+}
+
 /** Construct an AgentProvider by name (each runs on its own default model). */
-export function makeProvider(name: ProviderName): AgentProvider {
-  return spec(name).factory();
+export function makeProvider(name: string, customs?: readonly CustomProviderEntry[]): AgentProvider {
+  return resolveSpec(name, customs).factory();
+}
+
+/**
+ * Model the named provider forces when the run doesn't pick one (zai → glm; a custom's `model`).
+ * Undefined for providers that pass the CLI default through.
+ */
+export function forcedProviderModel(name: string, customs?: readonly CustomProviderEntry[]): string | undefined {
+  return resolveSpec(name, customs).forcedModel;
 }
 
 /** Options controlling how provider secrets are routed. */
@@ -179,18 +231,18 @@ export interface ProviderSecretOptions {
 }
 
 /** Returns true if the named provider requires an explicit API key (i.e. is not auth-token Claude). */
-export function requiresApiKey(name: ProviderName): boolean {
-  return spec(name).key !== undefined;
+export function requiresApiKey(name: string, customs?: readonly CustomProviderEntry[]): boolean {
+  return resolveSpec(name, customs).key !== undefined;
 }
 
 /**
- * Host env var(s) an Anthropic-transport-owning provider (zai, openrouter) reads its key from, in
- * priority order; undefined for providers that don't own the transport (they use Anthropic authSecrets
- * instead). Lets callers like agentAuthFromEnv resolve a primary-sidecar credential generically instead
- * of hardcoding a per-provider branch.
+ * Host env var(s) an Anthropic-transport-owning provider (zai, openrouter, customs) reads its key
+ * from, in priority order; undefined for providers that don't own the transport (they use Anthropic
+ * authSecrets instead). Lets callers like agentAuthFromEnv resolve a primary-sidecar credential
+ * generically instead of hardcoding a per-provider branch.
  */
-export function anthropicTransportKeyEnv(name: ProviderName): string[] | undefined {
-  const s = spec(name);
+export function anthropicTransportKeyEnv(name: string, customs?: readonly CustomProviderEntry[]): string[] | undefined {
+  const s = resolveSpec(name, customs);
   return s.ownsAnthropicTransport === true ? s.key?.hostEnv : undefined;
 }
 
@@ -212,18 +264,19 @@ export function anthropicTransportKeyEnv(name: ProviderName): string[] | undefin
  * keeps `OPENAI_API_KEY` out (→ `proxySecrets.codex`) and proxy-mode Zai withholds its z.ai key entirely.
  */
 export function providerSecrets(
-  names: Iterable<ProviderName>,
+  names: Iterable<string>,
   env: NodeJS.ProcessEnv = process.env,
   opts: ProviderSecretOptions = {},
+  customs?: readonly CustomProviderEntry[],
 ): { sandboxSecrets: Record<string, string>; proxySecrets: ProviderProxySecrets } {
   const sandboxSecrets: Record<string, string> = {};
   const proxySecrets: ProviderProxySecrets = {};
-  const seen = new Set<ProviderName>();
+  const seen = new Set<string>();
   for (const name of names) {
     if (seen.has(name)) continue; // dedupe (e.g. same provider for both stages)
     seen.add(name);
 
-    const s = spec(name);
+    const s = resolveSpec(name, customs);
     const { key } = s;
     if (key === undefined) continue; // Claude: auth handled by authSecrets, no key to route here.
 
@@ -275,18 +328,24 @@ export function providerSecrets(
 
 /** A run's provider choice: which provider implements, and optionally a different one for review. */
 export interface ProviderChoice {
-  /** Provider that implements (and, absent reviewProvider, runs every stage). Default 'claude'. */
-  provider?: ProviderName;
-  /** When set, run only the review stage on this provider (cross-provider review). */
-  reviewProvider?: ProviderName;
+  /** Provider that implements (and, absent reviewProvider, runs every stage). Built-in or a repo
+   *  custom name (S6). Default 'claude'. */
+  provider?: string;
+  /** When set, run only the review stage on this provider (cross-provider review). Built-ins only. */
+  reviewProvider?: string;
+  /**
+   * Repo customs (S6), loaded ONCE per entry point from the TARGET repo (cmd.repoPath /
+   * params.repoPath) and carried with the choice — registry functions never do IO.
+   */
+  customProviders?: readonly CustomProviderEntry[];
 }
 
 /** True when the run needs an Anthropic-family credential (subscription token / API key). A used
- *  provider that owns the Anthropic transport with its own creds (zai) suppresses the need. */
+ *  provider that owns the Anthropic transport with its own creds (zai, customs) suppresses the need. */
 export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   const provider = choice.provider ?? 'claude';
-  const used: ProviderName[] = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
-  return !used.some((n) => spec(n).ownsAnthropicTransport === true);
+  const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  return !used.some((n) => resolveSpec(n, choice.customProviders).ownsAnthropicTransport === true);
 }
 
 /** A resolved choice: the agents to run plus the secrets split into sandbox-safe and proxy-held buckets. */
@@ -314,22 +373,24 @@ export interface SelectedAgents {
 export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSecretOptions = {}): void {
   const provider = choice.provider ?? 'claude';
   const review = choice.reviewProvider;
+  const customs = choice.customProviders;
+  const specOf = (name: string): ProviderSpec => resolveSpec(name, customs);
 
   // Two distinct providers sharing one transport slot collide in a single sandbox (shared env namespace,
   // e.g. one ANTHROPIC_BASE_URL). Only the implement + review stages can differ, so a single pairwise
   // check suffices: claude+zai (both 'anthropic') is the case this rejects.
-  if (review !== undefined && review !== provider && spec(review).transport === spec(provider).transport) {
+  if (review !== undefined && review !== provider && specOf(review).transport === specOf(provider).transport) {
     const names = [provider, review].sort().map((n) => `"${n}"`).join(' and ');
     throw new AgentError(
-      `Cross-provider review cannot mix ${names}: they share the ${spec(provider).transport} transport and ` +
+      `Cross-provider review cannot mix ${names}: they share the ${specOf(provider).transport} transport and ` +
         `collide in one sandbox. Use the same provider for both stages, or pick providers on different transports.`,
     );
   }
 
-  // A direct-only provider (meridian) has no upstream a sidecar could target, so --llm-proxy would
-  // silently fall the sidecar back to api.anthropic.com. Reject the combination outright.
+  // A direct-only provider (meridian, customs) has no upstream a sidecar could target, so --llm-proxy
+  // would silently fall the sidecar back to api.anthropic.com. Reject the combination outright.
   if (opts.proxyMode === true) {
-    const directOnly = [provider, ...(review !== undefined ? [review] : [])].find((n) => spec(n).directOnly === true);
+    const directOnly = [provider, ...(review !== undefined ? [review] : [])].find((n) => specOf(n).directOnly === true);
     if (directOnly !== undefined) {
       throw new AgentError(
         `Provider "${directOnly}" is direct-mode only and cannot run under --llm-proxy: it authenticates ` +
@@ -341,12 +402,56 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
   // Under --llm-proxy, a provider that owns the Anthropic transport (zai) is served by the PRIMARY sidecar,
   // whose upstream follows --provider only. So such a provider must BE the implementer; as a reviewer-only
   // it has no sidecar and would silently fall back to the implementer's Anthropic upstream + credential.
-  if (opts.proxyMode === true && review !== undefined && review !== provider && spec(review).ownsAnthropicTransport === true) {
+  if (opts.proxyMode === true && review !== undefined && review !== provider && specOf(review).ownsAnthropicTransport === true) {
     throw new AgentError(
       `Cross-provider review with "${review}" under --llm-proxy needs "${review}" as the implementer too ` +
         `(--provider ${review}): it owns the primary sidecar, whose upstream follows --provider. ` +
         `Use --provider ${review}, or run this combination without --llm-proxy.`,
     );
+  }
+}
+
+/**
+ * Resolve every used name, throwing the unknown/broken-provider error without constructing
+ * anything. validateProviderChoice alone is NOT this check: its spec lookups live inside the
+ * review-pairing and proxy-mode branches, so a bare unknown `--provider bogus` sails through it.
+ * Dispatch entry points call this first so the failure precedes every side effect.
+ */
+export function assertProvidersResolvable(choice: ProviderChoice): void {
+  for (const name of [choice.provider ?? 'claude', ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])]) {
+    resolveSpec(name, choice.customProviders);
+  }
+}
+
+/**
+ * The extra egress-enclave hosts a choice needs under --egress: the configured endpoint host of a
+ * used custom (built-ins are already in DEFAULT_EGRESS_ALLOWLIST or sidecar-owned). Pure; computed
+ * at dispatch BEFORE the enclave exists (the allowlist is baked into the proxy container at start).
+ */
+export function customEgressHosts(choice: ProviderChoice): string[] {
+  const used = [choice.provider ?? 'claude', ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  const hosts = new Set<string>();
+  for (const name of used) {
+    const host = resolveSpec(name, choice.customProviders).egressHost;
+    if (host !== undefined) hosts.add(host);
+  }
+  return [...hosts];
+}
+
+/**
+ * Fail fast when a used custom's plain-http endpoint meets the CONNECT-only egress enclave: the
+ * proxy 405s non-CONNECT, so the run would hang/403 instead of erroring. http endpoints work
+ * without --egress (LAN proxies); the desktop path is always-egress, so there they are CLI-only.
+ */
+export function assertEgressCompatible(choice: ProviderChoice): void {
+  const used = [choice.provider ?? 'claude', ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  for (const name of used) {
+    if (resolveSpec(name, choice.customProviders).plainHttp === true) {
+      throw new AgentError(
+        `Provider "${name}" has an http:// endpoint, which cannot traverse the CONNECT-only egress ` +
+          `enclave. Run it without --egress, or give it an https:// endpoint.`,
+      );
+    }
   }
 }
 
@@ -361,16 +466,17 @@ export function selectAgents(
   opts: ProviderSecretOptions = {},
 ): SelectedAgents {
   const provider = choice.provider ?? 'claude';
-  const used: ProviderName[] = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  const customs = choice.customProviders;
+  const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
 
   validateProviderChoice(choice, opts);
 
-  const { sandboxSecrets, proxySecrets } = providerSecrets(used, env, opts);
+  const { sandboxSecrets, proxySecrets } = providerSecrets(used, env, opts, customs);
   return {
-    agent: makeProvider(provider),
-    ...(choice.reviewProvider !== undefined ? { reviewAgent: makeProvider(choice.reviewProvider) } : {}),
+    agent: makeProvider(provider, customs),
+    ...(choice.reviewProvider !== undefined ? { reviewAgent: makeProvider(choice.reviewProvider, customs) } : {}),
     secrets: sandboxSecrets,
     proxySecrets,
-    injectAnthropicAuth: !used.some((name) => spec(name).ownsAnthropicTransport === true),
+    injectAnthropicAuth: !used.some((name) => resolveSpec(name, customs).ownsAnthropicTransport === true),
   };
 }

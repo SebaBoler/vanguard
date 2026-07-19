@@ -2,7 +2,7 @@ import { execa } from 'execa';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
-import { selectAgents } from '../agents/registry.js';
+import { forcedProviderModel, selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
@@ -48,6 +48,8 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
   llmProxy?: LlmProxyDep;
   /** Model for the tech-spec stage (default: techSpecStage's own default). */
   specModel?: string;
+  /** Override the tech-spec stage turn cap (default: techSpecStage's own default). Backs --max-turns. */
+  maxTurns?: number;
   /** Branch the research worktree is cut from — the baseline Fable specs against (default: main). */
   baseBranch?: string;
   logger?: VanguardLogger;
@@ -171,10 +173,12 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       deps.contextDeps ?? {},
     );
     try {
-      // haiku keeps the spec pass cheap on Claude; z.ai doesn't serve haiku, so let ZaiProvider pick its
-      // own default (glm). An explicit --spec-model always wins.
-      const specModel = deps.specModel ?? (deps.provider === 'zai' ? undefined : 'haiku');
-      const outcomes = await runStages(ctx, techSpecStage(specModel !== undefined ? { model: specModel } : {}), {
+      // haiku keeps the spec pass cheap on Claude; a provider that forces its own model (zai's glm,
+      // a custom's configured model) doesn't serve haiku, so let it pick its default instead of
+      // handing it a Claude-only name. An explicit --spec-model always wins.
+      const forcesModel = deps.provider !== undefined && forcedProviderModel(deps.provider, deps.customProviders) !== undefined;
+      const specModel = deps.specModel ?? (forcesModel ? undefined : 'haiku');
+      const outcomes = await runStages(ctx, techSpecStage({ ...(specModel !== undefined ? { model: specModel } : {}), ...(deps.maxTurns !== undefined ? { maxTurns: deps.maxTurns } : {}) }), {
         agent,
         variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),

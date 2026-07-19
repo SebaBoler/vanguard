@@ -2,7 +2,8 @@ import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
 import type { VanguardLogger } from './logger.js';
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type { ReasoningEffort } from '../wire.js';
+import type { ReasoningEffort } from '../wire.js';
 
 export type ExitReason = 'completed' | 'incomplete' | 'maxTurns' | 'timeout' | 'error' | 'needs_human' | 'budget_exceeded';
 

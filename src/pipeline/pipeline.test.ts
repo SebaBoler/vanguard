@@ -326,6 +326,13 @@ describe('implementReviewSimplifyStages', () => {
   });
 });
 
+describe('planImplement stages', () => {
+  it('gives the planner 15 turns (research on a large repo needs more than the old 10)', () => {
+    expect(planImplementReviewStages().find((s) => s.name === 'planner')?.maxTurns).toBe(15);
+    expect(planImplementAdversaryStages().find((s) => s.name === 'planner')?.maxTurns).toBe(15);
+  });
+});
+
 describe('fastStages', () => {
   it('is a single low-effort implementer on a fast model', () => {
     const stages = fastStages();
@@ -667,6 +674,11 @@ describe('techSpecStage', () => {
   it('overrides the model when opts.model is supplied', () => {
     const stages = techSpecStage({ model: 'sonnet' });
     expect(stages[0]?.model).toBe('sonnet');
+  });
+
+  it('defaults maxTurns to 30 (research needs more than the old 15) and honors an explicit override', () => {
+    expect(techSpecStage()[0]?.maxTurns).toBe(30);
+    expect(techSpecStage({ maxTurns: 50 })[0]?.maxTurns).toBe(50);
   });
 
   it('promptTemplate references tech_spec tag and COMPLETE signal', () => {

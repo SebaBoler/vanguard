@@ -1,0 +1,77 @@
+import { test, expect } from 'vitest';
+import { retitleDoc, titleFromDoc } from './docTask';
+
+test('retitleDoc replaces the first real heading and leaves the rest alone', () => {
+  expect(retitleDoc('# Old\n\nbody\n', 'New name')).toBe('# New name\n\nbody\n');
+  // The heading inside a fence is code, not the title — same rule as titleFromDoc.
+  expect(retitleDoc('```\n# in code\n```\n# Real\nbody\n', 'New')).toBe('```\n# in code\n```\n# New\nbody\n');
+  // Round-trips through the reader.
+  expect(titleFromDoc(retitleDoc('# Old\n', 'Renamed'))).toBe('Renamed');
+});
+
+test('retitleDoc targets the same heading titleFromDoc reads — a whitespace-only heading is skipped (PR #351 r1)', () => {
+  // titleFromDoc skips `#   ` (empty after trim) and reads `# Real`; the rewrite must edit that
+  // same line, not leave a second H1 behind.
+  expect(retitleDoc('#   \n\n# Real\nbody\n', 'New')).toBe('#   \n\n# New\nbody\n');
+});
+
+test('retitleDoc prepends a heading when the doc has none, and ignores an empty title', () => {
+  expect(retitleDoc('', 'Fresh')).toBe('# Fresh\n');
+  expect(retitleDoc('just prose\n', 'Fresh')).toBe('# Fresh\n\njust prose\n');
+  expect(retitleDoc('# Keep\n', '   ')).toBe('# Keep\n');
+});
+
+test('takes the first # heading as the title', () => {
+  expect(titleFromDoc('# Add a thing\n\nbody')).toBe('Add a thing');
+  expect(titleFromDoc('intro\n\n# Real title\n\n# Later one')).toBe('Real title');
+});
+
+test('ignores deeper headings — ## is not a title', () => {
+  expect(titleFromDoc('## Sub\n\nbody')).toBeUndefined();
+});
+
+test('returns undefined with no heading, so the caller refuses instead of inventing one', () => {
+  // A filename or first-line fallback would create a real, un-deletable issue called `note-3.md`.
+  expect(titleFromDoc('just prose\nmore prose')).toBeUndefined();
+  expect(titleFromDoc('')).toBeUndefined();
+  expect(titleFromDoc('#\n#   \n')).toBeUndefined(); // an empty heading is not a title
+});
+
+test('ignores a # inside a fenced code block — that is a shell comment, not the title', () => {
+  // Taking it would file a real, un-deletable issue named "install deps".
+  expect(titleFromDoc('```sh\n# install deps\npnpm i\n```\n\n# Real Title\n')).toBe('Real Title');
+  expect(titleFromDoc('```\n# only in code\n```\n')).toBeUndefined();
+  expect(titleFromDoc('~~~\n# tilde fence\n~~~\n# After\n')).toBe('After');
+});
+
+test('strips the trailing hashes of a closed-ATX heading', () => {
+  expect(titleFromDoc('# Title #\n')).toBe('Title');
+  expect(titleFromDoc('# Title ###\n')).toBe('Title');
+});
+
+test('a pathological heading does not stall the renderer', () => {
+  // The old regex mixed a lazy group with three space-matching parts and backtracked quadratically on
+  // this. titleFromDoc runs on EVERY render, before the size gate, so that froze the UI.
+  const evil = `# ${' '.repeat(60_000)}x\n`;
+  const started = performance.now();
+  expect(titleFromDoc(evil)).toBe('x');
+  expect(performance.now() - started).toBeLessThan(100); // was seconds
+});
+
+test('keeps a # that is part of the title, not a closing sequence', () => {
+  // A closed-ATX closer is a #-run preceded by whitespace. `C#` is content — filing "Support C" would
+  // corrupt the title of a real, un-deletable issue.
+  expect(titleFromDoc('# Support C#\n')).toBe('Support C#');
+  expect(titleFromDoc('# Add C# support\n')).toBe('Add C# support');
+  expect(titleFromDoc('# Issue#\n')).toBe('Issue#');
+  // ...while a genuine closing sequence is still removed.
+  expect(titleFromDoc('# Title #\n')).toBe('Title');
+  expect(titleFromDoc('# Title ###\n')).toBe('Title');
+});
+
+test('reads a heading in a CRLF document', () => {
+  // `.` does not match `\r`, so splitting on '\n' alone left "# Title\r" unmatchable — every heading
+  // missed and Create task silently disabled on a doc that plainly has one.
+  expect(titleFromDoc('# Title\r\n\r\nbody\r\n')).toBe('Title');
+  expect(titleFromDoc('```\r\n# in code\r\n```\r\n# Real\r\n')).toBe('Real');
+});

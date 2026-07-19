@@ -3,6 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reviewPrCommand } from './review-pr.js';
+import { PullRequestReviewIncompleteError } from '../runners/pr-review.js';
 import type { Command } from './args.js';
 import type { ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
 
@@ -99,6 +100,28 @@ describe('reviewPrCommand', () => {
       await reviewPrCommand(cmd, { reviewer: vi.fn(), reviewPullRequest, log: () => {} });
       expect(seenPublish).toBe(false);
       expect(await readFile(outPath, 'utf8')).toBe('## Vanguard Review\n\nNo blocking findings.');
+    } finally {
+      await rm(outPath, { force: true });
+    }
+  });
+
+  it('--out writes the incomplete notice and rethrows so the exit code stays truthful', async () => {
+    const outPath = join(tmpdir(), `vanguard-review-out-${process.pid}-${Math.random().toString(36).slice(2)}.md`);
+    const incomplete = new PullRequestReviewIncompleteError(fakeResult().pr, '## Vanguard Review\n\nnotice');
+    const reviewPullRequest = vi.fn(async (): Promise<ReviewPullRequestResult> => {
+      throw incomplete;
+    });
+    const cmd: Extract<Command, { kind: 'review-pr' }> = {
+      kind: 'review-pr',
+      prRef: '12',
+      repoSlug: 'o/r',
+      repoPath: '/repo',
+      egress: false,
+      out: outPath,
+    };
+    try {
+      await expect(reviewPrCommand(cmd, { reviewer: vi.fn(), reviewPullRequest, log: () => {} })).rejects.toBe(incomplete);
+      expect(await readFile(outPath, 'utf8')).toBe('## Vanguard Review\n\nnotice');
     } finally {
       await rm(outPath, { force: true });
     }

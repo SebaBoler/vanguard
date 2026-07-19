@@ -13,6 +13,8 @@ export interface GitLabIssue {
   title: string;
   description: string | null;
   labels: string[];
+  /** glab always includes it; carried for the board (S9). */
+  state?: string;
 }
 
 /** Runs a `glab` subcommand and returns its stdout. Injected so unit tests never call real glab. */
@@ -43,6 +45,8 @@ function toGitLabTask(project: string, issue: GitLabIssue, notes: GitLabNote[] =
     labels: issue.labels,
     children: [],
     comments,
+    ref: String(issue.iid),
+    ...(issue.state !== undefined ? { state: issue.state } : {}),
   };
 }
 
@@ -73,6 +77,7 @@ export class GitLabTaskFetcher implements TaskFetcher {
     const state = filter?.state ?? 'opened';
     if (state === 'closed') args.push('--closed');
     else if (state === 'all') args.push('--all');
+    if (filter?.limit !== undefined) args.push('-P', String(filter.limit)); // conditional — see TaskFilter.limit
     for (const label of filter?.labels ?? []) args.push('--label', label);
     const out = await this.glab(args);
     // comments are not fetched on bulk list() — avoids N+1; only fetch() returns them

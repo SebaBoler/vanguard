@@ -9,7 +9,6 @@ import { roundUsd } from './budget.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
-import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
 import type { RunEvent } from './events.js';
@@ -219,12 +218,15 @@ const RESUME_NUDGE = [
   'When (and only when) it is genuinely all done and verified, write <promise>COMPLETE</promise>.',
 ].join('\n');
 
+/** Default whole-run USD cap when the caller sets none. Shared with the gate-loop repair budget. */
+export const DEFAULT_RUN_MAX_COST_USD = 5;
+
 export async function runBudgetedStages(
   ctx: RunContext,
   stages: PipelineStage[],
   opts: RunStagesOptions,
 ): Promise<PipelineResult> {
-  const maxCostUsd = opts.maxCostUsd ?? 5;
+  const maxCostUsd = opts.maxCostUsd ?? DEFAULT_RUN_MAX_COST_USD;
   const outcomes: StageOutcome[] = [];
   let previous: RunResult | undefined;
   let prevName = '';
@@ -615,8 +617,8 @@ export function withStageFallback(
 }
 
 export interface ReviewPipelineDeps {
-  provider?: ProviderName;
-  reviewProvider?: ProviderName;
+  provider?: string;
+  reviewProvider?: string;
   providerModel?: string;
   reviewModel?: string;
   noSimplify?: boolean;
@@ -719,7 +721,7 @@ export function planImplementReviewStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
@@ -843,7 +845,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       systemPrompt,
       promptTemplate:
@@ -907,14 +909,16 @@ export function techSpecSystemPrompt(): string {
  * Model is omitted from the stage unless explicitly supplied via opts.model; the caller owns the
  * provider-aware default (e.g. 'haiku' for Claude, omitted for z.ai so ZaiProvider picks glm).
  */
-export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
+export function techSpecStage(opts?: { model?: string; maxTurns?: number }): PipelineStage[] {
   return [
     {
       name: STAGE.TECH_SPEC,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
-      maxTurns: 15,
+      // Research over a whole codebase needs more turns than implementation; 15 silently starved
+      // large tickets (hit maxTurns mid-research, no <tech_spec> emitted). Overridable via --max-turns.
+      maxTurns: opts?.maxTurns ?? 30,
       systemPrompt: techSpecSystemPrompt(),
       promptTemplate: [
         'Task: {{TITLE}}',

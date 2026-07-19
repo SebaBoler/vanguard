@@ -11,7 +11,7 @@ export function DiffView({ diff }: { diff?: string }) {
     return <div className="text-sm text-muted-foreground">No diff captured.</div>;
   }
   return (
-    <pre className="max-h-[32rem] overflow-auto rounded border border-border bg-muted/40 py-2 font-mono text-xs leading-relaxed">
+    <pre className="overflow-x-auto rounded border border-border bg-muted/40 py-2 font-mono text-xs leading-relaxed">
       {diff.split('\n').map((line, i) => (
         <div key={i} className={`px-3 ${lineClass(line)}`}>
           {line || ' '}

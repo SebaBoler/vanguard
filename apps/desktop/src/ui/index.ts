@@ -14,6 +14,7 @@ export {
   cn,
   Empty,
   Input,
+  Select,
   Table,
   Tabs,
   Textarea,
@@ -22,6 +23,7 @@ export {
 } from 'chunks-ui';
 export { Callout } from './Callout';
 export { CodeBlock } from './CodeBlock';
+export { InlineEdit } from './InlineEdit';
 export { Logo } from './Logo';
 // The app's own presentational components, alongside the kit re-exports above.
 export { Markdown } from './Markdown';

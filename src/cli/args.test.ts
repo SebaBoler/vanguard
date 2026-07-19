@@ -41,6 +41,10 @@ describe('parseCli', () => {
     expect(parseCli(['__sidecar'], '/work')).toEqual({ kind: 'sidecar' });
   });
 
+  it('parses the hidden __complete entrypoint (no flags)', () => {
+    expect(parseCli(['__complete'], '/work')).toEqual({ kind: 'complete' });
+  });
+
   it('parses a linear run with parent fan-out', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--parent', '--skills', '/s', '--concurrency', '3'], '/work')).toEqual({
       kind: 'run',
@@ -136,10 +140,29 @@ describe('parseCli', () => {
     expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', 'x'], '/work')).toBe(false);
   });
 
-  it('returns an error for an unknown provider name', () => {
+  // S6 churn: run/watch/doctor --provider relaxes to the name grammar (repo customs are legal and
+  // only dispatch can read app.json). A grammar-VALID unknown name now parses through and fails at
+  // dispatch listing built-ins + customs; grammar-invalid names and every other command still fail
+  // right here. --review-provider stays closed-set everywhere.
+  it('parses a grammar-valid non-built-in provider through for run/watch/doctor (resolved at dispatch)', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work')).toMatchObject({
+      kind: 'run',
+      provider: 'gpt',
+    });
+    expect(parseCli(['watch', '--source', 'github', '--label', 'x', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'watch',
+      provider: 'my-proxy',
+    });
+  });
+
+  it('still rejects grammar-invalid providers, custom names on other commands, and unknown review-providers at parse', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'GPT'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('Unknown provider "gpt"'),
+      message: expect.stringContaining('Unknown provider "GPT"'),
+    });
+    expect(parseCli(['review-pr', '1', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('Unknown provider "my-proxy"'),
     });
     expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work')).toMatchObject({
       kind: 'error',
@@ -306,6 +329,20 @@ describe('parseCli', () => {
   it('requires watch-prs to have an explicit repo and trigger label', () => {
     expect(parseCli(['watch-prs', '--github-repo', 'o/r'], '/work')).toMatchObject({ kind: 'error' });
     expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work')).toMatchObject({ kind: 'error' });
+  });
+
+  it('parses watch-prs --pr as a pinned PR number', () => {
+    const cmd = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '316'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch-prs', pr: 316 });
+  });
+
+  it('rejects a watch-prs --pr that is not a positive PR number', () => {
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', 'abc'], '/work')).toMatchObject({
+      kind: 'error',
+    });
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '0'], '/work')).toMatchObject({
+      kind: 'error',
+    });
   });
 
   it('parses doctor-prs with PR review label defaults', () => {
@@ -622,6 +659,31 @@ describe('parseCli', () => {
 
     const noPlan = parseCli(['run', '--github', 'o/r#1'], '/work');
     expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
+  });
+
+  it('parses --flow on run and watch (a FLOWS key)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'flow-b'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('flow-b');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'flow-b'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('flow-b');
+
+    const noFlow = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noFlow.kind === 'run' && 'flow' in noFlow).toBe(false);
+  });
+
+  it('lets an unknown --flow through as a string — repo .vanguard/flows flows resolve in the async dispatch (S5)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'my-custom'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('my-custom');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'my-custom'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('my-custom');
+  });
+
+  it('rejects --plan and --flow together', () => {
+    const cmd = parseCli(['run', '--github', 'o/r#1', '--plan', '--flow', 'flow-b'], '/work');
+    expect(cmd.kind).toBe('error');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/not both/);
   });
 
   it('parses --base on run and watch (defaults to undefined)', () => {

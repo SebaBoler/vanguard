@@ -6,10 +6,10 @@ function runner(payload: unknown): LinearCliRunner {
   return async (): Promise<string> => JSON.stringify(payload);
 }
 
-// Real linear-cli 2.0 shapes: `issue view` returns one object with description,
-// children.nodes (sub-issues) and comments (by default) but no labels; `issue query` returns
-// { nodes: [...] } with labels.nodes (no description/children). The comments field shape varies
-// (array vs { nodes: [...] }), so it is parsed defensively.
+// `issue view <id> --json` returns one object with description, children.nodes (sub-issues) and
+// comments (by default) but no labels — the shape fetch() parses. The comments field varies (array vs
+// { nodes: [...] }), so it is parsed defensively. list() no longer uses the CLI at all; its GraphQL
+// node shape is exercised in the "list (GraphQL)" block below.
 const viewIssue = {
   identifier: 'TES-1',
   title: 'Test task',
@@ -17,7 +17,6 @@ const viewIssue = {
   state: { name: 'Todo' },
   children: { nodes: [{ identifier: 'TES-2', title: 'Sub one' }] },
 };
-const queryIssue = { identifier: 'TES-1', title: 'Test task', labels: { nodes: [{ name: 'bug' }, { name: 'p1' }] } };
 
 describe('LinearCliTaskFetcher', () => {
   it('fetches via issue view, mapping identifier/title/description and children', async () => {
@@ -29,6 +28,8 @@ describe('LinearCliTaskFetcher', () => {
       labels: [],
       children: [{ id: 'TES-2', title: 'Sub one' }],
       comments: [],
+      ref: 'TES-1', // additive (S9)
+      ...(viewIssue.state !== undefined ? { state: viewIssue.state.name } : {}),
     });
   });
 
@@ -62,17 +63,145 @@ describe('LinearCliTaskFetcher', () => {
     expect(task.comments).toEqual([{ author: 'Bob Builder', body: 'Another comment' }]);
   });
 
-  it('lists via issue query, mapping labels.nodes and filtering by label', async () => {
-    const fetcher = new LinearCliTaskFetcher({ linear: runner({ nodes: [queryIssue] }) });
-    const all = await fetcher.list();
-    expect(all).toHaveLength(1);
-    expect(all[0]?.labels).toEqual(['bug', 'p1']);
-    expect(all[0]?.children).toEqual([]);
-    expect(await fetcher.list({ labels: ['nope'] })).toHaveLength(0);
-  });
-
   it('throws when the issue is not found', async () => {
     await expect(new LinearCliTaskFetcher({ linear: runner({}) }).fetch('TES-99')).rejects.toThrow(/not found/);
+  });
+});
+
+// list() goes to Linear's GraphQL API, NOT the `linear` CLI: the CLI has no machine-readable issue
+// list (schpet v1.11.1 has no `issue query`, and `issue list` has no --json), and which flags exist
+// varies by CLI version. The API does not.
+describe('LinearCliTaskFetcher.list (GraphQL)', () => {
+  /** A fake GraphQL transport that records the bodies it was sent and replays canned pages. */
+  function graphqlFake(pages: { nodes: unknown[]; hasNextPage?: boolean; endCursor?: string }[]) {
+    const sent: { query: string; variables: Record<string, unknown> }[] = [];
+    let call = 0;
+    const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+      sent.push(body);
+      const page = pages[call++] ?? { nodes: [] };
+      return {
+        data: {
+          issues: {
+            pageInfo: { hasNextPage: page.hasNextPage ?? false, endCursor: page.endCursor ?? null },
+            nodes: page.nodes,
+          },
+        },
+      };
+    };
+    return { graphql, sent };
+  }
+
+  const node = (identifier: string, labels: string[] = [], state = 'Todo') => ({
+    identifier,
+    title: `T ${identifier}`,
+    description: 'body',
+    state: { name: state, type: 'unstarted' },
+    labels: { nodes: labels.map((name) => ({ name })) },
+  });
+
+  it('lists over GraphQL and never shells the CLI for a list', async () => {
+    const { graphql } = graphqlFake([{ nodes: [node('TES-1', ['bug', 'p1'])] }]);
+    // A runner that fails loudly: list() must not touch the CLI at all (the original bug shelled a
+    // command that does not exist, and a permissive fake is exactly what hid it).
+    const linear: LinearCliRunner = async (args) => {
+      throw new Error(`list() must not shell the CLI, but ran: linear ${args.join(' ')}`);
+    };
+    const all = await new LinearCliTaskFetcher({ linear, graphql }).list();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.id).toBe('TES-1');
+    expect(all[0]?.labels).toEqual(['bug', 'p1']);
+  });
+
+  it('pushes the state filter into the query — the watcher must not see completed issues', async () => {
+    const { graphql, sent } = graphqlFake([{ nodes: [node('TES-1')] }]);
+    await new LinearCliTaskFetcher({ linear: runner({}), graphql }).list({ state: 'unstarted' });
+    // TaskFilter.state is a Linear state TYPE. Dropping it would make watch --linear poll every issue
+    // in the team and claim already-completed ones.
+    expect(sent[0]?.variables['f']).toMatchObject({ state: { type: { eq: 'unstarted' } } });
+  });
+
+  it('scopes to the team when one is configured', async () => {
+    const { graphql, sent } = graphqlFake([{ nodes: [] }]);
+    await new LinearCliTaskFetcher({ linear: runner({}), team: 'DEV', graphql }).list();
+    expect(sent[0]?.variables['f']).toMatchObject({ team: { key: { eq: 'DEV' } } });
+  });
+
+  it('follows pagination to exhaustion — a watcher must not silently cap its work queue', async () => {
+    const { graphql, sent } = graphqlFake([
+      { nodes: [node('TES-1'), node('TES-2')], hasNextPage: true, endCursor: 'cur-1' },
+      { nodes: [node('TES-3')] },
+    ]);
+    const all = await new LinearCliTaskFetcher({ linear: runner({}), graphql }).list();
+    expect(all.map((t) => t.id)).toEqual(['TES-1', 'TES-2', 'TES-3']);
+    expect(sent[1]?.variables['after']).toBe('cur-1'); // second page asked for, from the cursor
+  });
+
+  it('filters by label client-side', async () => {
+    const { graphql } = graphqlFake([{ nodes: [node('TES-1', ['bug']), node('TES-2', ['chore'])] }]);
+    const fetcher = new LinearCliTaskFetcher({ linear: runner({}), graphql });
+    expect((await fetcher.list({ labels: ['bug'] })).map((t) => t.id)).toEqual(['TES-1']);
+  });
+
+  it('resolves the credential ONCE per list, not once per page', async () => {
+    // With LINEAR_API_KEY unset (the desktop path), resolving per page would spawn
+    // `linear auth token` once per page — on every watch poll, forever.
+    let tokenCalls = 0;
+    const linear: LinearCliRunner = async (args) => {
+      if (args[0] === 'auth' && args[1] === 'token') {
+        tokenCalls++;
+        return 'lin_fake';
+      }
+      throw new Error(`unexpected: linear ${args.join(' ')}`);
+    };
+    const pages = [
+      { hasNextPage: true, endCursor: 'c1' },
+      { hasNextPage: true, endCursor: 'c2' },
+      { hasNextPage: false, endCursor: null },
+    ];
+    let page = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: { issues: { pageInfo: pages[page++], nodes: [] } } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+
+    const prevKey = process.env['LINEAR_API_KEY'];
+    delete process.env['LINEAR_API_KEY']; // force the CLI fallback — the expensive path
+    try {
+      await new LinearCliTaskFetcher({ linear }).list();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (prevKey !== undefined) process.env['LINEAR_API_KEY'] = prevKey;
+    }
+
+    expect(page).toBe(3); // it really did paginate...
+    expect(tokenCalls).toBe(1); // ...on a single credential resolution
+  });
+
+  it('stops instead of looping forever when the cursor does not advance', async () => {
+    // hasNextPage: true with a stuck cursor (server bug, proxy, hostile response) would spin forever
+    // and grow `issues` without bound — a hung watcher is strictly worse than the crash this replaced.
+    const graphql = async (): Promise<unknown> => ({
+      data: { issues: { pageInfo: { hasNextPage: true, endCursor: 'stuck' }, nodes: [node('TES-1')] } },
+    });
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(/cursor/i);
+  });
+
+  it('refuses a well-formed 200 that carries no issue connection', async () => {
+    // No `errors`, but no `data.issues` either (a proxy, or `{"data":{"issues":null}}`). Returning []
+    // here is indistinguishable from "no work to do" and idles the watcher forever — the exact failure
+    // this change exists to kill, so the malformed-SUCCESS case must fail loudly too.
+    const graphql = async (): Promise<unknown> => ({ data: { issues: null } });
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(
+      /no issue connection/i,
+    );
+  });
+
+  it('surfaces a GraphQL error instead of returning an empty list', async () => {
+    const graphql = async (): Promise<unknown> => ({ errors: [{ message: 'boom' }] });
+    // Silently returning [] would look exactly like "no work to do" — the watcher would idle forever.
+    await expect(new LinearCliTaskFetcher({ linear: runner({}), graphql }).list()).rejects.toThrow(/boom/);
   });
 });
 
@@ -86,4 +215,47 @@ describe('linkLinearIssue', () => {
     expect(seen).toEqual(expect.arrayContaining(['issue', 'comment', 'add', 'TES-1', '--body']));
     expect(seen.join(' ')).toContain('https://example/pr/1');
   });
+});
+
+// S9: limit caps the Linear list to ONE page (the board's watchdog budget); unset stays exhaustive.
+it('list() with limit fetches a single page at first:<limit> and stops despite hasNextPage', async () => {
+  const bodies: { query: string; variables: Record<string, unknown> }[] = [];
+  const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+    bodies.push(body);
+    return {
+      data: {
+        issues: {
+          pageInfo: { hasNextPage: true, endCursor: 'more' },
+          nodes: Array.from({ length: 50 }, (_, i) => ({ identifier: `DEV-${i}`, title: 't', state: { name: 'Todo' } })),
+        },
+      },
+    };
+  };
+  const tasks = await new LinearCliTaskFetcher({ team: 'DEV', graphql }).list({ limit: 50 });
+  expect(bodies).toHaveLength(1); // ONE page — no pagination past the cap
+  expect(bodies[0]?.variables['first']).toBe(50);
+  expect(bodies[0]?.variables['f']).toEqual({ team: { key: { eq: 'DEV' } } }); // NO state filter on the board call
+  expect(tasks).toHaveLength(50);
+  expect(tasks[0]).toMatchObject({ ref: 'DEV-0', state: 'Todo' });
+});
+
+it('list() without limit keeps first:100 and paginates to exhaustion (watch contract)', async () => {
+  const bodies: { variables: Record<string, unknown> }[] = [];
+  let page = 0;
+  const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+    bodies.push(body);
+    page += 1;
+    return {
+      data: {
+        issues: {
+          pageInfo: { hasNextPage: page < 2, endCursor: `c${page}` },
+          nodes: [{ identifier: `DEV-${page}`, title: 't', state: { name: 'Todo' } }],
+        },
+      },
+    };
+  };
+  const tasks = await new LinearCliTaskFetcher({ team: 'DEV', graphql }).list();
+  expect(bodies).toHaveLength(2); // exhaustive
+  expect(bodies[0]?.variables['first']).toBe(100);
+  expect(tasks).toHaveLength(2);
 });

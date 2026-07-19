@@ -1,8 +1,9 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { loadCustomProviders } from '../agents/custom.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
-import type { ProviderName } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
@@ -198,12 +199,12 @@ function codexAuthOk(env: NodeJS.ProcessEnv): PreflightCheck | undefined {
  * Collect the set of providers that need a host-key check (i.e. non-claude providers that
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
-function collectProviders(cmd: PreflightCommand): ProviderName[] {
+function collectProviders(cmd: PreflightCommand, customs: readonly CustomProviderEntry[]): string[] {
   const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
   const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, reviewProvider];
   // Zai is excluded here: it rides the Claude transport and its key is already covered by the
   // provider-aware 'llm auth' check above. Codex/Cursor still get a dedicated 'provider auth' check.
-  return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
+  return candidates.filter((name): name is string => name !== undefined && requiresApiKey(name, customs));
 }
 
 /** Run AFK-readiness checks before a watch loop can claim work. */
@@ -220,16 +221,33 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       : check('node 24', false, `found ${nodeVersion}`),
   );
 
-  // The primary LLM auth: Anthropic token by default, or ZAI_API_KEY for --provider zai (zai owns its
-  // transport and never needs an Anthropic credential). Reported concisely as 'missing' so the
-  // preflight summary stays one line; the detailed requirement surfaces when the runner runs.
-  const llmAuthPresent = cmd.provider === 'zai' ? hasEnv(env, 'ZAI_API_KEY') : authFromEnv(env) !== undefined;
+  // Repo customs (S6): resolved once here so every provider-aware check below sees them. A watch
+  // then validates exactly what its runs will resolve. Load failures never break preflight for
+  // built-in providers — broken entries only surface when a custom name is actually selected.
+  const customs = await loadCustomProviders(cmd.repoPath);
+
+  // The primary LLM auth: Anthropic token by default, or the transport-owning provider's own key
+  // env (zai, openrouter, meridian, customs — generalized from a stale zai-only literal in S6).
+  // Reported concisely as 'missing' so the preflight summary stays one line.
+  let llmAuthPresent: boolean;
+  try {
+    const keyEnvs = cmd.provider !== undefined ? anthropicTransportKeyEnv(cmd.provider, customs) : undefined;
+    llmAuthPresent = keyEnvs !== undefined ? keyEnvs.some((name) => hasEnv(env, name)) : authFromEnv(env) !== undefined;
+  } catch {
+    llmAuthPresent = false; // unknown/broken provider name — the 'provider combo' check reports the why
+  }
   checks.push(llmAuthPresent ? check('llm auth', true) : check('llm auth', false, 'missing'));
 
-  const usedProviders = collectProviders(cmd);
+  let usedProviders: string[];
+  try {
+    usedProviders = collectProviders(cmd, customs);
+  } catch (error) {
+    usedProviders = [];
+    checks.push(check('provider auth', false, error instanceof Error ? error.message : String(error)));
+  }
   if (usedProviders.length > 0) {
     try {
-      providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true });
+      providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true }, customs);
       checks.push(check('provider auth', true));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -245,13 +263,15 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
 
   try {
     const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
-    validateProviderChoice(
-      {
-        ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-        ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-      },
-      { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true },
-    );
+    const choice = {
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(customs.length > 0 ? { customProviders: customs } : {}),
+    };
+    // Resolvability first: validateProviderChoice's lookups live inside its pairing/proxy branches,
+    // so a bare unknown name would pass it (same guard as the dispatch entry points).
+    assertProvidersResolvable(choice);
+    validateProviderChoice(choice, { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true });
     checks.push(check('provider combo', true));
   } catch (error) {
     checks.push(check('provider combo', false, error instanceof Error ? error.message : String(error)));
