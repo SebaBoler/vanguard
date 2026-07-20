@@ -1,21 +1,35 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Vanguard - Autonomous Software Factory" width="820" />
+  <img src="assets/banner.png" alt="Vanguard — Autonomous Software Factory" width="820" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D24-3c873a" alt="Node >=24" />
-  <img src="https://img.shields.io/badge/TypeScript-strict-3178c6" alt="TypeScript strict" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
+  <b>Autonomous software factory</b> — fetches tasks from GitHub, GitLab, or Linear,<br/>
+  implements them with an AI agent pipeline in an isolated sandbox, and opens draft PRs/MRs for human review.
 </p>
 
 <p align="center">
-  A self-improving software factory: take a task (Linear / GitHub), run a Claude Code agent in an
-  isolated Docker sandbox on its own <code>git worktree</code>, and get back a reviewed, verifiable
-  pull request. When the agent fails, you fix the <em>harness</em> — the prompt, the skill, the tool,
-  the limit — not the agent's output, so the same failure can't happen twice. A standalone TypeScript
-  framework, not a wrapper around another tool.
+  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8B5CF6.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-22D3EE" alt="Node >= 24">
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript">
+  <img src="https://img.shields.io/badge/built%20with-Claude%20Agent%20SDK-D97757" alt="Claude Agent SDK">
+  <img src="https://img.shields.io/badge/sandboxed-Docker-2496ED" alt="Docker sandbox">
 </p>
+
+<p align="center">
+  <code>Task ticket&nbsp;&nbsp;→&nbsp;&nbsp;Agent pipeline (plan · implement · review · repair)&nbsp;&nbsp;→&nbsp;&nbsp;Draft PR</code>
+</p>
+
+## What is Vanguard?
+
+Vanguard turns work items into reviewed code changes — autonomously:
+
+1. **Fetch** — pulls a Task from a pluggable Task Source: GitHub Issues, GitLab Issues, or Linear.
+2. **Run** — an AI agent pipeline (planner → implementer → reviewer → adversary → repairer) implements it inside an isolated Docker sandbox.
+3. **Verify** — a Proof-of-Work command runs after the agent finishes; failures flag the PR/MR instead of silently passing.
+4. **Deliver** — opens a **draft PR/MR**. Humans review and merge; Vanguard does the toil.
+
+Run it once per ticket — or let the **Watch Loop** autonomously list ready Tasks, claim them, and process them end to end.
 
 Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested. Runs autonomously (AFK) as a `watch` loop; deployed always-on on Docker (Synology / Hetzner / any host).
 
