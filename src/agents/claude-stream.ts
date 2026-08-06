@@ -73,7 +73,10 @@ export async function* runClaudeCli(
       }
     } else if (msg.type === 'result') {
       sawResult = true;
-      if (typeof msg.result === 'string') finalText = msg.result;
+      // Keep the accumulated assistant text when the terminal event carries an empty result: the CLI
+      // can end a run on a thinking-only message and report result:"" even though real text already
+      // streamed. Overwriting here would silently discard it (and any <tech_spec> it contained).
+      if (typeof msg.result === 'string' && msg.result !== '') finalText = msg.result;
       usage = toUsage(msg.usage);
       if (typeof msg.total_cost_usd === 'number') costUsd = msg.total_cost_usd;
     }

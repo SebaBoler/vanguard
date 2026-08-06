@@ -88,6 +88,19 @@ describe('runClaudeCli', () => {
     expect(out.costUsd).toBe(0.01);
   });
 
+  // Observed on data-controls-engine#2489: the CLI ended on a thinking-only message and reported
+  // result:"" after real text had streamed. Overwriting finalText there discards the run's output.
+  it('keeps the streamed assistant text when the result event carries an empty string', async () => {
+    const emptyResult = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '<tech_spec>S</tech_spec>' }] } }),
+      JSON.stringify({ type: 'result', result: '', total_cost_usd: 1.67 }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(emptyResult, 0));
+    expect(out.finalText).toBe('<tech_spec>S</tech_spec>');
+    expect(out.costUsd).toBe(1.67); // the rest of the result event is still honoured
+  });
+
   it('does not throw on a non-zero exit when a result was produced (graceful stop e.g. max_turns)', async () => {
     const { out } = await drain(fakeSandbox(streamJson, 1));
     expect(out.finalText).toBe('done');

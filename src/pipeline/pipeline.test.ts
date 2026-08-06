@@ -727,6 +727,33 @@ describe('techSpecStage', () => {
 
     expect(workdirCopyOutCalled).toBe(false);
   });
+
+  // Regression: research over a large monorepo ended "incomplete" with an empty finalText — the whole
+  // exploration sat in a live session but resumeUntilComplete was 0, so the run threw it all away.
+  it('auto-resumes an incomplete spec run with a spec-shaped nudge, not the disk-oriented default', async () => {
+    const wm = new WorktreeManager(repo);
+    const received: AgentRunInput[] = [];
+    const agent: AgentProvider = {
+      name: 'stalls-once',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        received.push(input);
+        // First pass burns its turns on research and emits nothing; the resume produces the spec.
+        return received.length === 1
+          ? { finalText: '', turns: 25, sessionId: 'sess' }
+          : { finalText: '<tech_spec>S</tech_spec> <promise>COMPLETE</promise>', turns: 1, sessionId: 'sess' };
+      },
+    };
+
+    const ctx = await prepareContext({ taskId: 'ts-resume', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const outcomes = await runStages(ctx, techSpecStage(), { agent, variables: { TITLE: 'T', DESCRIPTION: 'D' } });
+    await disposeContext(ctx);
+
+    expect(received).toHaveLength(2);
+    expect(received[1]?.resumeSessionId).toBe('sess');
+    expect(received[1]?.prompt).toMatch(/Stop researching/);
+    expect(received[1]?.prompt).not.toMatch(/check your own diff/);
+    expect(outcomes[0]?.result.finalText).toContain('<tech_spec>');
+  });
 });
 
 describe('retrospectiveMemoryBlock', () => {

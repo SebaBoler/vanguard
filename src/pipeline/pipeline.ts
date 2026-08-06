@@ -61,6 +61,12 @@ export interface PipelineStage {
    */
   resumeUntilComplete?: number;
   /**
+   * Prompt sent on each auto-resume. Defaults to RESUME_NUDGE, which talks about files written to
+   * disk — wrong for a read-only stage that produces a text block rather than a diff. Override it
+   * there so the nudge names what the stage actually owes.
+   */
+  resumeNudge?: string;
+  /**
    * When this stage's provider throws AgentError (unavailable/rate-limited/non-zero exit), re-run
    * the stage once on this provider+model instead of failing the entire run. Used for the reviewer:
    * degrade to the planning provider rather than blowing up the task on a transient Codex outage.
@@ -218,6 +224,18 @@ const RESUME_NUDGE = [
   'When (and only when) it is genuinely all done and verified, write <promise>COMPLETE</promise>.',
 ].join('\n');
 
+/**
+ * Resume nudge for the tech-spec stage. The default nudge points at files on disk; this stage writes
+ * none, so it is told to stop researching and emit the block it already has the material for.
+ */
+const SPEC_RESUME_NUDGE = [
+  'You stopped before emitting the specification. Stop researching now — you already have enough.',
+  'Write the complete <tech_spec>...</tech_spec> block from what you have learned, followed by the',
+  '<spec_manifest>{...}</spec_manifest> JSON. Mark anything you could not verify as an explicit',
+  'assumption or risk inside the spec rather than going back to explore it.',
+  'Then write <promise>COMPLETE</promise>.',
+].join('\n');
+
 /** Default whole-run USD cap when the caller sets none. Shared with the gate-loop repair budget. */
 export const DEFAULT_RUN_MAX_COST_USD = 5;
 
@@ -367,7 +385,7 @@ export async function runBudgetedStages(
       );
       result = await runAgent(ctx, {
         ...stageOpts,
-        promptTemplate: RESUME_NUDGE,
+        promptTemplate: stage.resumeNudge ?? RESUME_NUDGE,
         agent: effectiveAgent,
         ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         resumeSessionId: result.sessionId,
@@ -919,6 +937,11 @@ export function techSpecStage(opts?: { model?: string; maxTurns?: number }): Pip
       // Research over a whole codebase needs more turns than implementation; 15 silently starved
       // large tickets (hit maxTurns mid-research, no <tech_spec> emitted). Overridable via --max-turns.
       maxTurns: opts?.maxTurns ?? 30,
+      // Research over a large monorepo can end "incomplete" with the whole exploration still in the
+      // session but nothing emitted — the run then throws and every turn of research is discarded.
+      // Resuming the SAME session costs one nudge and turns that sunk cost into a spec.
+      resumeUntilComplete: 2,
+      resumeNudge: SPEC_RESUME_NUDGE,
       systemPrompt: techSpecSystemPrompt(),
       promptTemplate: [
         'Task: {{TITLE}}',
@@ -931,6 +954,11 @@ export function techSpecStage(opts?: { model?: string; maxTurns?: number }): Pip
         retrospectiveMemoryBlock(),
         '',
         'Research the existing codebase read-only (do not edit any files). Produce a technical specification for this task.',
+        '',
+        // Observed on data-controls-engine#2489: the model announced "I'll continue the research",
+        // then ended its turn on a thinking-only message having emitted nothing — 25 turns discarded.
+        'Never end a turn without either calling a tool or emitting output. If you are running low on',
+        'room, stop exploring and write the spec from what you have, marking anything unverified as a risk.',
         '',
         'The spec MUST include:',
         '- **Problem** — what exactly needs to be solved and why',
