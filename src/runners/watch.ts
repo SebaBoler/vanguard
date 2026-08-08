@@ -7,6 +7,7 @@ import { runGitlabIssue } from './gitlab.js';
 import { runSpecGenerator } from './spec.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
+import { formatFailureComment } from '../core/errors.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
@@ -249,7 +250,7 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
         commentLinearIssue(id, NO_CHANGE_MSG, opts.linear),
         opts.triggerStateName !== undefined ? setLinearState(id, opts.triggerStateName, opts.linear) : undefined,
       ),
-    onFailure: (id, error) => commentLinearIssue(id, `Vanguard run failed: ${String(error)}`, opts.linear),
+    onFailure: (id, error) => commentLinearIssue(id, formatFailureComment('Vanguard run failed', error), opts.linear),
   };
 }
 
@@ -373,7 +374,7 @@ export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentLinearIssue(id, `Vanguard spec failed: ${String(error)}`, opts.linear);
+      await commentLinearIssue(id, formatFailureComment('Vanguard spec failed', error), opts.linear);
       await setLinearState(id, opts.specTriggerStateName, opts.linear);
     },
   };
@@ -532,7 +533,7 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
-    onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, opts.gh),
+    onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
 
@@ -584,7 +585,7 @@ export function githubSpecPrimitives(opts: WatchGithubSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentGithubIssue(repo, id, `Vanguard spec failed: ${String(error)}`, opts.gh);
+      await commentGithubIssue(repo, id, formatFailureComment('Vanguard spec failed', error), opts.gh);
       await editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, opts.gh);
     },
   };
@@ -716,7 +717,7 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
     onNoChange: (id) => commentAndRevert(commentGithubIssue(repo, id, NO_CHANGE_MSG, gh), setStatus(id, opts.triggerStatus)),
-    onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, gh),
+    onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), gh),
   };
 }
 
@@ -782,7 +783,7 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
     onFailure: (id, error) =>
-      commentGitlabIssue(project, id, `Vanguard run failed: ${String(error)}`, glab),
+      commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),
   };
 }
 
@@ -834,7 +835,7 @@ export function gitlabSpecPrimitives(opts: WatchGitlabSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentGitlabIssue(opts.project, id, `Vanguard spec failed: ${String(error)}`, glab);
+      await commentGitlabIssue(opts.project, id, formatFailureComment('Vanguard spec failed', error), glab);
       // Restore spec label so next poll retries
       await editGitlabLabels(opts.project, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, glab);
     },
