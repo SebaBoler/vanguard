@@ -3,7 +3,7 @@ import { execa, execaSync } from 'execa';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DockerSandboxProvider } from './docker.js';
+import { DockerSandboxProvider, toExecResult } from './docker.js';
 import { sandboxSecurityOpts } from './limits.js';
 
 const hasDocker = ((): boolean => {
@@ -16,6 +16,34 @@ const hasDocker = ((): boolean => {
 })();
 
 const suite = hasDocker ? describe : describe.skip;
+
+// Ungated on purpose: the coercion is pure, and it guards the seam whose broken contract crashed a
+// codex review run with a bare `undefined.split` (see toExecResult's comment).
+describe('toExecResult', () => {
+  it('substitutes empty strings when execa buffered nothing (cancelled or never-spawned subprocess)', () => {
+    expect(toExecResult({ stdout: undefined, stderr: undefined, exitCode: undefined })).toEqual({
+      stdout: '',
+      stderr: '',
+      exitCode: 1,
+    });
+  });
+
+  it('passes real streams through untouched', () => {
+    expect(toExecResult({ stdout: 'out', stderr: 'err', exitCode: 3 })).toEqual({
+      stdout: 'out',
+      stderr: 'err',
+      exitCode: 3,
+    });
+  });
+
+  it('keeps a zero exit code (a falsy-check here would report failure on success)', () => {
+    expect(toExecResult({ stdout: '', stderr: '', exitCode: 0 }).exitCode).toBe(0);
+  });
+
+  it('yields a splittable stdout, which is what the consumer actually relies on', () => {
+    expect(() => toExecResult({ stdout: undefined }).stdout.split('\n')).not.toThrow();
+  });
+});
 
 suite('DockerSandboxProvider', () => {
   const sb = new DockerSandboxProvider({ image: 'alpine:3.20', workdir: '/workspace' });
