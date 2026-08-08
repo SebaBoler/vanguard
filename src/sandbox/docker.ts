@@ -8,6 +8,25 @@ import { SandboxError } from '../core/errors.js';
 import { sandboxSecurityOpts } from './limits.js';
 import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, SandboxConfig } from './provider.js';
 
+/**
+ * Normalise an execa result into an `ExecResult`.
+ *
+ * With `reject: false`, execa hands back its error object for a subprocess that never ran or was
+ * cancelled, and those carry `stdout`/`stderr` as `undefined` — nothing was ever buffered. The
+ * declared `string` then lies to every consumer, and the first `.split('\n')` downstream throws a
+ * bare `TypeError: Cannot read properties of undefined` from inside the consumer, burying the real
+ * failure: `agents/codex.ts` crashed there on line 88 instead of reaching its own guard 35 lines
+ * later, which would have reported the exit code and stderr. Coerce at the seam that declares the
+ * contract, so callers can keep trusting the type.
+ */
+export function toExecResult(raw: {
+  stdout?: string | undefined;
+  stderr?: string | undefined;
+  exitCode?: number | undefined;
+}): ExecResult {
+  return { stdout: raw.stdout ?? '', stderr: raw.stderr ?? '', exitCode: raw.exitCode ?? 1 };
+}
+
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 const DEFAULT_WORKDIR = '/workspace';
 const DEFAULT_HOME = '/home/agent';
@@ -156,7 +175,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
       ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
     });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+    return toExecResult(result);
   }
 
   execStream(command: string, options: ExecOptions = {}): ExecStream {
@@ -173,11 +192,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       if (child.stdout === undefined || child.stdout === null) return;
       for await (const line of createInterface({ input: child.stdout })) yield line;
     })();
-    const result: Promise<ExecResult> = child.then((r) => ({
-      stdout: r.stdout,
-      stderr: r.stderr,
-      exitCode: r.exitCode ?? 1,
-    }));
+    const result: Promise<ExecResult> = child.then((r) => toExecResult(r));
     return { stdout, result };
   }
 
