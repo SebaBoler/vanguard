@@ -205,9 +205,9 @@ Models are set once, in the `run:` line of the implement workflow — globally f
 |---|---|---|
 | Plan (spec) | `--spec-model` | `opus` |
 | Implement + simplify | `--provider` / `--provider-model` | `claude` / `sonnet` |
-| Review | `--review-provider` (+ `--review-model`) | `codex` |
+| Review | `--review-provider` (+ `--review-model`) | `codex` / `gpt-5.6-sol` |
 
-To change which models run, edit the workflow's `run:` line. A cross-provider reviewer (e.g. Codex) uses its own default model; never pass it an Anthropic model name.
+To change which models run, edit the workflow's `run:` line. A cross-provider reviewer (e.g. Codex) takes its own model names — never pass it an Anthropic model name. On a ChatGPT subscription only Codex-flavoured names work (e.g. `gpt-5.6-sol`); a bare `gpt-5.6` is rejected with a 400.
 
 ### Full: cross-provider on a Codex subscription
 
@@ -223,7 +223,7 @@ To run **Opus** spec / **Sonnet** impl / **Codex** review with Codex on a ChatGP
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
         run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex --review-model gpt-5.6-sol
    ```
 
 The stored `CODEX_AUTH_JSON` is a snapshot; Codex refreshes the access token from the embedded refresh token each run, so the secret must carry a live refresh token. Re-run `gh secret set` if a run ever fails to authenticate.
