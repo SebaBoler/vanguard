@@ -59,7 +59,7 @@ A ticket meeting neither is moved to **Needs Info** with a clarification comment
   ```bash
   export CODEX_AUTH_JSON="$(cat ~/.codex/auth.json)"   # ChatGPT subscription credential (see onboarding-another-repo.md)
   vanguard watch --loop-v1 --label vanguard --repo /path/to/repo \
-    --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+    --spec-model opus --provider claude --provider-model sonnet --review-provider codex --review-model gpt-5.6-sol
   ```
 
 Models are chosen the same way as GitHub (`--spec-model` plans, `--provider`/`--provider-model` implement + simplify, `--review-provider` reviews). The Codex subscription credential and its CI caveat are identical — see [onboarding-another-repo.md](onboarding-another-repo.md#full-cross-provider-on-a-codex-subscription).
