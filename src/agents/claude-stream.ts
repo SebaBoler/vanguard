@@ -13,6 +13,9 @@ interface StreamMessage {
   total_cost_usd?: number;
 }
 
+/** Model id the CLI stamps on messages it fabricates locally (API errors), never on real output. */
+const SYNTHETIC_MODEL = '<synthetic>';
+
 function toUsage(raw: StreamMessage['usage']): AgentUsage | undefined {
   if (raw === undefined) return undefined;
   return {
@@ -50,6 +53,7 @@ export async function* runClaudeCli(
   let model: string | undefined;
   let sawResult = false;
   let parsedAny = false;
+  let realTurns = 0;
 
   for (const line of res.stdout.split('\n')) {
     const trimmed = line.trim();
@@ -68,6 +72,7 @@ export async function* runClaudeCli(
       const text = assistantText(msg);
       if (text !== '') {
         turns += 1;
+        if (msg.message?.model !== SYNTHETIC_MODEL) realTurns += 1;
         finalText = text;
         yield sessionId !== undefined ? { text, sessionId } : { text };
       }
@@ -98,6 +103,14 @@ export async function* runClaudeCli(
     console.warn(
       `vanguard: claude stream ended without a result event (exit 0, ${turns} turns) — treating the stage as incomplete and resumable`,
     );
+  }
+
+  // Every assistant message came back stamped `<synthetic>`: the CLI never reached the model and
+  // fabricated the text itself (an API/gateway error), which is why such runs report zero tokens and
+  // zero cost. Resuming replays the same failing request, so fail loudly with the CLI's own message
+  // instead of surfacing it as an `incomplete` stage and spending the resume budget on it.
+  if (turns > 0 && realTurns === 0) {
+    throw new AgentError(`Provider returned no completion (exit ${res.exitCode}): ${finalText.trim().slice(0, 600)}`);
   }
 
   const output: AgentRunOutput = { finalText, turns, transcript: res.stdout };

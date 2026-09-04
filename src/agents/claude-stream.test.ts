@@ -143,6 +143,47 @@ describe('runClaudeCli', () => {
     await expectRunRejects(fakeSandbox('', 1), /no parseable output/);
   });
 
+  it('throws with the CLI error text when every assistant turn is synthetic (gateway never answered)', async () => {
+    // Shape of a real Meridian failure: init reports the requested model, the only assistant message is
+    // one the CLI fabricated itself, and the result event carries zero tokens and zero cost.
+    const syntheticOnly = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', model: 'claude-fable-5-1' }),
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 500 upstream stream closed' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-1',
+        result: '',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+        total_cost_usd: 0,
+      }),
+    ].join('\n');
+    await expectRunRejects(fakeSandbox(syntheticOnly, 0), /Provider returned no completion/);
+    await expectRunRejects(fakeSandbox(syntheticOnly, 0), /API Error: 500 upstream stream closed/);
+  });
+
+  it('does not fire the synthetic guard when a real assistant turn also streamed', async () => {
+    const mixed = [
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: overloaded' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: 'claude-fable-5-1', content: [{ type: 'text', text: 'real output' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 'sess-1', result: 'real output' }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(mixed));
+    expect(out.finalText).toBe('real output');
+  });
+
   it('skips interleaved non-JSON diagnostic lines without failing the parse', async () => {
     const withDiagnostics = `WARN: something noisy\n${streamJson}\nWARN: trailer`;
     const { out } = await drain(fakeSandbox(withDiagnostics));
