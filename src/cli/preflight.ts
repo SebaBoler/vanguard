@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
+import { SANDBOX_CLAUDE_VERSION, isOlderVersion } from '../sandbox/docker.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -38,13 +39,6 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
-/**
- * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
- * ARG CLAUDE_CLI_VERSION. A built image drifts silently as this pin moves, and a stale CLI fails
- * deep inside a run against a gateway (live case: 2.1.165 answered every Meridian request with
- * `400 This session advanced while the request was waiting`), so the mismatch is worth a preflight.
- */
-const SANDBOX_CLAUDE_VERSION = '2.1.260';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
@@ -54,19 +48,6 @@ const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
 
 function check(name: string, ok: boolean, reason?: string): PreflightCheck {
   return reason === undefined ? { name, ok } : { name, ok, reason };
-}
-
-/** True when `actual` sorts below `expected`; unparseable parts count as older. */
-function isOlderVersion(actual: string, expected: string): boolean {
-  const a = actual.split('.');
-  const e = expected.split('.');
-  for (let i = 0; i < Math.max(a.length, e.length); i += 1) {
-    const x = Number(a[i] ?? 0);
-    const y = Number(e[i] ?? 0);
-    if (Number.isNaN(x)) return true;
-    if (x !== y) return x < y;
-  }
-  return false;
 }
 
 function parseNodeMajor(version: string): number {
