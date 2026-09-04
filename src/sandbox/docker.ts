@@ -28,6 +28,77 @@ export function toExecResult(raw: {
 }
 
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
+
+/**
+ * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
+ * ARG CLAUDE_CLI_VERSION. The pin moves in the repo but a built image does not, and the drift only
+ * surfaces deep inside a run as a gateway error (live case: 2.1.165 answered every Meridian request
+ * with `400 This session advanced while the request was waiting`, burning ~50 min per attempt).
+ */
+export const SANDBOX_CLAUDE_VERSION = '2.1.260';
+
+/** True when `actual` sorts below `expected`; unparseable parts count as older. */
+export function isOlderVersion(actual: string, expected: string): boolean {
+  const a = actual.split('.');
+  const e = expected.split('.');
+  for (let i = 0; i < Math.max(a.length, e.length); i += 1) {
+    const x = Number(a[i] ?? 0);
+    const y = Number(e[i] ?? 0);
+    if (Number.isNaN(x)) return true;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+/** Minimal command runner, injectable so the refresh can be exercised without Docker. */
+export type DockerRunner = (cmd: string, args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
+
+const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
+  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  return { stdout };
+};
+
+/**
+ * Install the pinned claude CLI into an existing sandbox image, in place. Cheaper and far more
+ * reliable than a rebuild behind a corporate MITM proxy, which breaks on the linear-cli release
+ * tarball. The npm install needs root, but `docker commit` snapshots the CONTAINER's config — so the
+ * original USER/WorkingDir are read first and restored, or the image would silently start running as
+ * root and the CLI would then refuse to launch at all.
+ */
+export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
+  const run = opts.run ?? defaultDockerRunner;
+  const image = opts.image ?? DEFAULT_IMAGE;
+  const helper = 'vg-cli-refresh';
+  const { cwd } = opts;
+
+  const inspect = async (field: string): Promise<string> => {
+    const { stdout } = await run('docker', ['image', 'inspect', image, '--format', `{{${field}}}`], { cwd });
+    return stdout.trim();
+  };
+  const user = await inspect('.Config.User');
+  const workdir = await inspect('.Config.WorkingDir');
+
+  await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  try {
+    await run('docker', ['run', '--name', helper, '-u', '0', image, 'npm', 'install', '-g', `@anthropic-ai/claude-code@${SANDBOX_CLAUDE_VERSION}`], { cwd });
+    const changes = [
+      ...(user !== '' ? ['--change', `USER ${user}`] : []),
+      ...(workdir !== '' ? ['--change', `WORKDIR ${workdir}`] : []),
+    ];
+    await run('docker', ['commit', ...changes, helper, image], { cwd });
+  } finally {
+    await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  }
+  return SANDBOX_CLAUDE_VERSION;
+}
+
+/**
+ * Once per process: refuse to run against an image whose bundled claude CLI predates the repo pin.
+ * Checked here rather than in preflight because preflight only covers `watch`/`doctor` — `spec` and
+ * `run` reach a sandbox without it. An image with no runnable `claude` is a deliberate custom image,
+ * so it is skipped rather than failed. Escape hatch: VANGUARD_SKIP_IMAGE_CHECK=1.
+ */
+let claudeVersionChecked = false;
 const DEFAULT_WORKDIR = '/workspace';
 const DEFAULT_HOME = '/home/agent';
 const SECRETS_DIR = '/run/vanguard';
@@ -150,6 +221,8 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       throw new SandboxError(`Failed to start container ${this.name}`, { cause });
     }
 
+    await this.assertClaudeCliCurrent();
+
     if (this.hasSecrets && this.secretsMode === 'tmpfs') {
       // Write the secrets file via stdin (umask 077) so the value never appears in argv.
       const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
@@ -161,6 +234,23 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
         throw new SandboxError(`Failed to write secrets to tmpfs: ${write.stderr}`);
       }
     }
+  }
+
+  private async assertClaudeCliCurrent(): Promise<void> {
+    if (claudeVersionChecked || process.env['VANGUARD_SKIP_IMAGE_CHECK'] === '1') return;
+    claudeVersionChecked = true;
+    const probe = await execa('docker', ['exec', this.name, 'claude', '--version'], { reject: false });
+    const found = probe.exitCode === 0 ? /(\d+\.\d+\.\d+)/.exec(probe.stdout)?.[1] : undefined;
+    if (found === undefined) return; // custom image without the claude CLI — not our business
+    if (!isOlderVersion(found, SANDBOX_CLAUDE_VERSION)) return;
+    await this.destroy();
+    throw new SandboxError(
+      `Sandbox image ${this.image} has claude ${found}, but this repo pins ${SANDBOX_CLAUDE_VERSION}. ` +
+        `A stale CLI fails mid-run against a gateway. Fix it with:\n` +
+        `  vanguard doctor --fix\n` +
+        `or rebuild: CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh. ` +
+        `Set VANGUARD_SKIP_IMAGE_CHECK=1 to bypass.`,
+    );
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {

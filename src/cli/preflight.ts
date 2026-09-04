@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
+import { SANDBOX_CLAUDE_VERSION, isOlderVersion } from '../sandbox/docker.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -38,6 +39,8 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
+/** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
+export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
@@ -286,6 +289,23 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
 
   const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
   checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
+
+  if (sandboxImage.ok) {
+    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', SANDBOX_IMAGE, 'claude', '--version']);
+    const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
+    checks.push(
+      found === undefined
+        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
+        : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
+          ? check(
+              SANDBOX_CLI_CHECK,
+              false,
+              `image has ${found}, repo pins ${SANDBOX_CLAUDE_VERSION} — run \`vanguard doctor --fix\`, ` +
+                `or rebuild with CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh`,
+            )
+          : check(SANDBOX_CLI_CHECK, true),
+    );
+  }
 
   const isGitlabBacked =
     cmd.kind === 'doctor-mrs' ||

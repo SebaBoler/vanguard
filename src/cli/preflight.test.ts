@@ -24,12 +24,16 @@ function githubDoctor(overrides: Partial<DoctorCommand> = {}): DoctorCommand {
   };
 }
 
-function makeRunner(labels: string[] = ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL]): PreflightRunner {
+function makeRunner(
+  labels: string[] = ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL],
+  cliVersion = '2.1.260',
+): PreflightRunner {
   return async (cmd, args) => {
     if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
     if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
     if (cmd === 'docker' && args[0] === 'info') return { stdout: '' };
     if (cmd === 'docker' && args[0] === 'image') return { stdout: '' };
+    if (cmd === 'docker' && args[0] === 'run') return { stdout: `${cliVersion} (Claude Code)` };
     if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
     if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify(labels.map((name) => ({ name }))) };
     throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
@@ -103,9 +107,34 @@ describe('runPreflight', () => {
       'preflight: repo remote ok',
       'preflight: docker daemon ok',
       'preflight: sandbox image ok',
+      'preflight: sandbox claude cli ok',
       'preflight: github auth ok',
       'preflight: github labels ok',
     ]);
+  });
+
+  it('fails when the sandbox image carries a claude CLI older than the repo pin', async () => {
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(undefined, '2.1.165'),
+    });
+
+    expect(report.ok).toBe(false);
+    const cli = report.checks.find((c) => c.name === 'sandbox claude cli');
+    expect(cli?.ok).toBe(false);
+    expect(cli?.reason).toContain('image has 2.1.165');
+    expect(cli?.reason).toContain('./docker/build.sh');
+  });
+
+  it('accepts a sandbox image whose claude CLI is newer than the pin', async () => {
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(undefined, '2.2.0'),
+    });
+
+    expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
   });
 
   it('checks PR review loop labels before watch-prs can claim a PR', async () => {

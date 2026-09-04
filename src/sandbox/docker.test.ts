@@ -3,7 +3,7 @@ import { execa, execaSync } from 'execa';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DockerSandboxProvider, toExecResult } from './docker.js';
+import { DockerSandboxProvider, toExecResult, isOlderVersion, SANDBOX_CLAUDE_VERSION } from './docker.js';
 import { sandboxSecurityOpts } from './limits.js';
 
 const hasDocker = ((): boolean => {
@@ -16,6 +16,25 @@ const hasDocker = ((): boolean => {
 })();
 
 const suite = hasDocker ? describe : describe.skip;
+
+// Ungated on purpose: the comparison is pure, and it gates every sandbox start — a wrong verdict
+// either blocks a healthy image or lets a stale CLI fail deep inside a run (see assertClaudeCliCurrent).
+describe('isOlderVersion', () => {
+  it('orders released CLI versions numerically, not lexically', () => {
+    // '2.1.165' > '2.1.260' as strings; the whole check hinges on this not being a string compare.
+    expect(isOlderVersion('2.1.165', '2.1.260')).toBe(true);
+    expect(isOlderVersion('2.1.260', '2.1.260')).toBe(false);
+    expect(isOlderVersion('2.1.261', '2.1.260')).toBe(false);
+    expect(isOlderVersion('2.2.0', '2.1.260')).toBe(false);
+    expect(isOlderVersion('1.99.99', '2.1.260')).toBe(true);
+  });
+
+  it('treats a missing part as zero and an unparseable one as older', () => {
+    expect(isOlderVersion('2.1', '2.1.260')).toBe(true);
+    expect(isOlderVersion('2.2', '2.1.260')).toBe(false);
+    expect(isOlderVersion('nightly', SANDBOX_CLAUDE_VERSION)).toBe(true);
+  });
+});
 
 // Ungated on purpose: the coercion is pure, and it guards the seam whose broken contract crashed a
 // codex review run with a bare `undefined.split` (see toExecResult's comment).
