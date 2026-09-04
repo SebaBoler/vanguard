@@ -100,6 +100,8 @@ export type Command =
     }
   | {
       kind: 'doctor';
+      /** Repair what the checks can repair (today: refresh the sandbox image's claude CLI). */
+      fix?: boolean;
       source: 'linear' | 'github' | 'project' | 'gitlab';
       label?: string;
       projectNumber?: number;
@@ -355,6 +357,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        fix: { type: 'boolean' },
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
         'spec-label': { type: 'string' },
@@ -896,7 +899,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
 
     if (commandKind === 'doctor') {
-      return { kind: 'doctor', ...common };
+      return { kind: 'doctor', ...common, ...(values.fix === true ? { fix: true } : {}) };
     }
 
     return {

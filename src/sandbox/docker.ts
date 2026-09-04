@@ -50,6 +50,48 @@ export function isOlderVersion(actual: string, expected: string): boolean {
   return false;
 }
 
+/** Minimal command runner, injectable so the refresh can be exercised without Docker. */
+export type DockerRunner = (cmd: string, args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
+
+const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
+  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  return { stdout };
+};
+
+/**
+ * Install the pinned claude CLI into an existing sandbox image, in place. Cheaper and far more
+ * reliable than a rebuild behind a corporate MITM proxy, which breaks on the linear-cli release
+ * tarball. The npm install needs root, but `docker commit` snapshots the CONTAINER's config — so the
+ * original USER/WorkingDir are read first and restored, or the image would silently start running as
+ * root and the CLI would then refuse to launch at all.
+ */
+export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
+  const run = opts.run ?? defaultDockerRunner;
+  const image = opts.image ?? DEFAULT_IMAGE;
+  const helper = 'vg-cli-refresh';
+  const { cwd } = opts;
+
+  const inspect = async (field: string): Promise<string> => {
+    const { stdout } = await run('docker', ['image', 'inspect', image, '--format', `{{${field}}}`], { cwd });
+    return stdout.trim();
+  };
+  const user = await inspect('.Config.User');
+  const workdir = await inspect('.Config.WorkingDir');
+
+  await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  try {
+    await run('docker', ['run', '--name', helper, '-u', '0', image, 'npm', 'install', '-g', `@anthropic-ai/claude-code@${SANDBOX_CLAUDE_VERSION}`], { cwd });
+    const changes = [
+      ...(user !== '' ? ['--change', `USER ${user}`] : []),
+      ...(workdir !== '' ? ['--change', `WORKDIR ${workdir}`] : []),
+    ];
+    await run('docker', ['commit', ...changes, helper, image], { cwd });
+  } finally {
+    await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  }
+  return SANDBOX_CLAUDE_VERSION;
+}
+
 /**
  * Once per process: refuse to run against an image whose bundled claude CLI predates the repo pin.
  * Checked here rather than in preflight because preflight only covers `watch`/`doctor` — `spec` and
@@ -204,9 +246,8 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
     await this.destroy();
     throw new SandboxError(
       `Sandbox image ${this.image} has claude ${found}, but this repo pins ${SANDBOX_CLAUDE_VERSION}. ` +
-        `A stale CLI fails mid-run against a gateway. Refresh it with:\n` +
-        `  docker run --name vg-upd -u 0 ${this.image} npm install -g @anthropic-ai/claude-code@${SANDBOX_CLAUDE_VERSION} && \\\n` +
-        `  docker commit --change 'USER agent' --change 'WORKDIR ${DEFAULT_WORKDIR}' vg-upd ${this.image} && docker rm vg-upd\n` +
+        `A stale CLI fails mid-run against a gateway. Fix it with:\n` +
+        `  vanguard doctor --fix\n` +
         `or rebuild: CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh. ` +
         `Set VANGUARD_SKIP_IMAGE_CHECK=1 to bypass.`,
     );

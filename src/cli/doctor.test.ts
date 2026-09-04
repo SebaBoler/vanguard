@@ -16,6 +16,23 @@ const cmd: DoctorCommand = {
   needsInfoLabel: 'needs info',
 };
 
+function selfHealingRunner(): { run: PreflightRunner; calls: string[] } {
+  const calls: string[] = [];
+  let version = '2.1.165';
+  const run: PreflightRunner = async (name, args) => {
+    calls.push(`${name} ${args.join(' ')}`);
+    if (name === 'docker' && args[0] === 'run' && args.includes('npm')) {
+      version = '2.1.260';
+      return { stdout: '' };
+    }
+    if (name === 'docker' && args[0] === 'run') return { stdout: `${version} (Claude Code)` };
+    if (name === 'docker' && args[0] === 'image' && args.includes('{{.Config.User}}')) return { stdout: 'agent\n' };
+    if (name === 'docker' && args[0] === 'image' && args.includes('{{.Config.WorkingDir}}')) return { stdout: '/workspace\n' };
+    return runner(name, args, { cwd: '/repo' });
+  };
+  return { run, calls };
+}
+
 const runner: PreflightRunner = async (name, args) => {
   if (name === 'git' && args[0] === 'rev-parse') return { stdout: '/repo' };
   if (name === 'git' && args[0] === 'remote') return { stdout: 'https://github.com/owner/repo.git' };
@@ -77,5 +94,38 @@ describe('doctorCommand', () => {
     expect(logs).toContain(
       'preflight: provider auth Provider "codex" needs CODEX_API_KEY or OPENAI_API_KEY in the environment. -> stop before claim',
     );
+  });
+});
+
+describe('doctorCommand --fix', () => {
+  it('refreshes a stale sandbox CLI, then re-runs the checks and passes', async () => {
+    const { run, calls } = selfHealingRunner();
+    const lines: string[] = [];
+
+    await doctorCommand(
+      { ...cmd, fix: true },
+      { env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run, log: (l) => lines.push(l) },
+    );
+
+    expect(calls.some((c) => c.includes('npm install -g @anthropic-ai/claude-code@2.1.260'))).toBe(true);
+    // USER/WorkingDir are restored from the original image, never hardcoded — a commit without them
+    // bakes root into the image and the new CLI then refuses to start.
+    expect(calls.some((c) => c.startsWith('docker commit') && c.includes('USER '))).toBe(true);
+    expect(lines).toContain('preflight: sandbox claude cli ok');
+  });
+
+  it('leaves a stale image alone without --fix', async () => {
+    const { run, calls } = selfHealingRunner();
+
+    await expect(
+      doctorCommand(cmd, {
+        env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+        nodeVersion: '24.11.1',
+        run,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow('preflight failed');
+
+    expect(calls.some((c) => c.includes('npm install'))).toBe(false);
   });
 });

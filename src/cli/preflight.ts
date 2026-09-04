@@ -39,6 +39,8 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
+/** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
+export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
@@ -293,15 +295,15 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
     checks.push(
       found === undefined
-        ? check('sandbox claude cli', false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
+        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
         : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
           ? check(
-              'sandbox claude cli',
+              SANDBOX_CLI_CHECK,
               false,
-              `image has ${found}, repo pins ${SANDBOX_CLAUDE_VERSION} — rebuild with ` +
-                `CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh`,
+              `image has ${found}, repo pins ${SANDBOX_CLAUDE_VERSION} — run \`vanguard doctor --fix\`, ` +
+                `or rebuild with CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh`,
             )
-          : check('sandbox claude cli', true),
+          : check(SANDBOX_CLI_CHECK, true),
     );
   }
 
