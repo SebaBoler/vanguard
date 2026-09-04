@@ -19,6 +19,7 @@ const cmd: DoctorCommand = {
 const runner: PreflightRunner = async (name, args) => {
   if (name === 'git' && args[0] === 'rev-parse') return { stdout: '/repo' };
   if (name === 'git' && args[0] === 'remote') return { stdout: 'https://github.com/owner/repo.git' };
+  if (name === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
   if (name === 'docker') return { stdout: '' };
   if (name === 'gh' && args[0] === 'label') {
     return {

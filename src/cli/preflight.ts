@@ -38,6 +38,13 @@ export interface PreflightReport {
 
 const MIN_NODE_MAJOR = 24;
 const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
+/**
+ * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
+ * ARG CLAUDE_CLI_VERSION. A built image drifts silently as this pin moves, and a stale CLI fails
+ * deep inside a run against a gateway (live case: 2.1.165 answered every Meridian request with
+ * `400 This session advanced while the request was waiting`), so the mismatch is worth a preflight.
+ */
+const SANDBOX_CLAUDE_VERSION = '2.1.260';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
@@ -47,6 +54,19 @@ const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
 
 function check(name: string, ok: boolean, reason?: string): PreflightCheck {
   return reason === undefined ? { name, ok } : { name, ok, reason };
+}
+
+/** True when `actual` sorts below `expected`; unparseable parts count as older. */
+function isOlderVersion(actual: string, expected: string): boolean {
+  const a = actual.split('.');
+  const e = expected.split('.');
+  for (let i = 0; i < Math.max(a.length, e.length); i += 1) {
+    const x = Number(a[i] ?? 0);
+    const y = Number(e[i] ?? 0);
+    if (Number.isNaN(x)) return true;
+    if (x !== y) return x < y;
+  }
+  return false;
 }
 
 function parseNodeMajor(version: string): number {
@@ -286,6 +306,23 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
 
   const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
   checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
+
+  if (sandboxImage.ok) {
+    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', SANDBOX_IMAGE, 'claude', '--version']);
+    const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
+    checks.push(
+      found === undefined
+        ? check('sandbox claude cli', false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
+        : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
+          ? check(
+              'sandbox claude cli',
+              false,
+              `image has ${found}, repo pins ${SANDBOX_CLAUDE_VERSION} — rebuild with ` +
+                `CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh`,
+            )
+          : check('sandbox claude cli', true),
+    );
+  }
 
   const isGitlabBacked =
     cmd.kind === 'doctor-mrs' ||
