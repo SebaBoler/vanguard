@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reapContainers, reapEgressNetworks, reapRemoteBranches } from './gc.js';
+import { isStaleEmptyNetwork, reapContainers, reapEgressNetworks, reapRemoteBranches } from './gc.js';
 import type { ContainerInfo, RemoteBranchInfo } from './gc.js';
 
 describe('reapContainers', () => {
@@ -46,6 +46,28 @@ describe('reapEgressNetworks', () => {
   it('returns empty array when no orphaned networks', async () => {
     const result = await reapEgressNetworks(async () => [], async () => {});
     expect(result).toEqual([]);
+  });
+});
+
+describe('isStaleEmptyNetwork', () => {
+  const now = Date.parse('2026-09-25T12:00:00Z');
+  const hour = 60 * 60 * 1000;
+
+  it('reaps an empty network older than the threshold, with Docker nanosecond timestamps', () => {
+    expect(isStaleEmptyNetwork('0 2026-09-25T06:59:59.123456789Z\n', 4 * hour, now)).toBe(true);
+  });
+
+  it('keeps an empty network younger than the threshold, so a concurrent job can still attach to it', () => {
+    expect(isStaleEmptyNetwork('0 2026-09-25T11:59:58.5Z', 4 * hour, now)).toBe(false);
+  });
+
+  it('keeps a network with containers attached', () => {
+    expect(isStaleEmptyNetwork('2 2026-09-20T00:00:00Z', 4 * hour, now)).toBe(false);
+  });
+
+  it('keeps a network whose creation time cannot be read', () => {
+    expect(isStaleEmptyNetwork('0', 0, now)).toBe(false);
+    expect(isStaleEmptyNetwork('0 not-a-date', 0, now)).toBe(false);
   });
 });
 

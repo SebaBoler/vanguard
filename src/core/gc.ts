@@ -71,8 +71,21 @@ export async function reapEgressNetworks(lister: NetworkLister, remover: Network
   return orphans;
 }
 
-/** Docker-backed lister of vg-egr-* networks that have no attached containers. */
-export function dockerEgressNetworkLister(): NetworkLister {
+/**
+ * Whether `docker network inspect --format '{{len .Containers}} {{.Created}}'` output describes a network
+ * with no containers that is older than maxAgeMs. The age check keeps a gc in one job from removing a
+ * network another job created moments ago and has not attached its first container to yet. An unreadable
+ * creation time counts as young, so the network is kept.
+ */
+export function isStaleEmptyNetwork(inspect: string, maxAgeMs: number, now: number): boolean {
+  const [count, createdAt] = inspect.trim().split(' ');
+  if (count !== '0' || createdAt === undefined) return false;
+  const created = Date.parse(createdAt.replace(/(\.\d{3})\d+/, '$1'));
+  return !Number.isNaN(created) && now - created > maxAgeMs;
+}
+
+/** Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs. */
+export function dockerEgressNetworkLister(maxAgeMs = 0, now: () => number = Date.now): NetworkLister {
   return async (): Promise<string[]> => {
     const { stdout } = await execa('docker', ['network', 'ls', '--filter', 'name=vg-egr-', '--format', '{{.Name}}']);
     if (stdout.trim() === '') return [];
@@ -81,10 +94,10 @@ export function dockerEgressNetworkLister(): NetworkLister {
       names.map(async (name) => {
         const { stdout: count } = await execa(
           'docker',
-          ['network', 'inspect', name, '--format', '{{len .Containers}}'],
+          ['network', 'inspect', name, '--format', '{{len .Containers}} {{.Created}}'],
           { reject: false },
         );
-        return count.trim() === '0' ? name : null;
+        return isStaleEmptyNetwork(count, maxAgeMs, now()) ? name : null;
       }),
     );
     return results.filter((name): name is string => name !== null);

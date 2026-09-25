@@ -42,7 +42,7 @@ export async function runGc(opts: GcCliOptions): Promise<GcReport> {
     opts.maxAgeMs,
   );
   const networks = await reapEgressNetworks(
-    dockerEgressNetworkLister(),
+    dockerEgressNetworkLister(opts.maxAgeMs),
     opts.dryRun ? noop : dockerEgressNetworkRemover(),
   );
   if (!opts.dryRun) await pruneWorktrees(opts.repoPath);
