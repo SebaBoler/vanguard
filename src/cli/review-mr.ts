@@ -33,19 +33,22 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
   }
 
   const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
-  const sandboxContext = await startSandboxContext({
-    egress: cmd.egress,
-    llmProxy: cmd.llmProxy === true,
-    ...(auth !== undefined ? { auth } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-  });
-  try {
-    const reviewer: MergeRequestReviewer = (mr) => runDefaultMrReviewer(mr, cmd, auth, sandboxContext);
-    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log });
-    log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
-  } finally {
-    await sandboxContext.destroy();
-  }
+  // Provisioned inside the reviewer, so a head that is already reviewed never starts a sandbox.
+  const reviewer: MergeRequestReviewer = async (mr) => {
+    const sandboxContext = await startSandboxContext({
+      egress: cmd.egress,
+      llmProxy: cmd.llmProxy === true,
+      ...(auth !== undefined ? { auth } : {}),
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    });
+    try {
+      return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext);
+    } finally {
+      await sandboxContext.destroy();
+    }
+  };
+  const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log });
+  log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
 }
 
 async function runDefaultMrReviewer(

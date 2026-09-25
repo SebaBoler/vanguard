@@ -1,5 +1,5 @@
 import type { GlabRunner } from '../tasks/gitlab.js';
-import { defaultGlabRunner } from '../tasks/gitlab.js';
+import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -28,7 +28,8 @@ export interface ReviewMergeRequestDeps {
 
 export interface ReviewMergeRequestResult {
   mr: MergeRequestForReview;
-  commentBody: string;
+  /** Absent when the head SHA already carries a Vanguard review, so nothing was posted. */
+  commentBody?: string;
 }
 
 const MR_URL_RE = /^https?:\/\/[^/]+\/(.+?)\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/;
@@ -47,6 +48,11 @@ export function parseMergeRequestRef(ref: string, project?: string): MergeReques
     return { project, iid: Number(trimmed) };
   }
   throw new Error(`Unsupported MR ref: ${ref}`);
+}
+
+interface GlabMrNoteItem {
+  body?: string | null;
+  system?: boolean;
 }
 
 interface GlabMrView {
@@ -117,6 +123,22 @@ export function hasMergeRequestReviewMarker(body: string, sha: string): boolean 
   return Array.from(body.matchAll(MR_REVIEW_MARKER_RE)).some((m) => m[1] === sha);
 }
 
+/** Whether one of the MR's latest 100 notes carries the Vanguard review marker for `sha`. Throws when the notes cannot be read. */
+export async function hasMergeRequestReviewForHead(
+  target: MergeRequestReviewTarget,
+  sha: string,
+  glab: GlabRunner = defaultGlabRunner,
+): Promise<boolean> {
+  const out = await glab([
+    'api',
+    `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
+  ]);
+  const notes = JSON.parse(out) as GlabMrNoteItem[];
+  return notes.some(
+    (n) => !n.system && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
+  );
+}
+
 export function buildMergeRequestReviewComment(agentText: string, sha?: string): string {
   const body = agentText.replace(PROMISE_RE, '').trim();
   const visible = `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
@@ -145,6 +167,21 @@ export async function reviewMergeRequest(
   const target = parseMergeRequestRef(ref, deps.project);
   deps.log?.(`review-mr ${target.project}!${target.iid}: fetch -> diff`);
   const mr = await fetchMergeRequestForReview(target, glab);
+  // A CI retry re-runs review-mr on the same head. Skip when that head is already reviewed, and fail
+  // when that cannot be established: a guess of "not reviewed yet" would post a second review.
+  const id = `${target.project}!${target.iid}`;
+  if (mr.sha === '') throw new Error(`review-mr ${id}: glab returned no head SHA, so an earlier review cannot be ruled out; nothing posted.`);
+  let reviewed: boolean;
+  try {
+    reviewed = await hasMergeRequestReviewForHead(target, mr.sha, glab);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`review-mr ${id}: cannot read the MR notes to check for a review of ${mr.sha}; nothing posted (${reason})`, { cause: error });
+  }
+  if (reviewed) {
+    deps.log?.(`review-mr ${id}: head ${mr.sha} already reviewed -> skip`);
+    return { mr };
+  }
   deps.log?.(`review-mr ${target.project}!${target.iid}: agent -> reviewing`);
   const reviewText = await deps.reviewer(mr);
   const commentBody = buildMergeRequestReviewComment(reviewText, mr.sha);
