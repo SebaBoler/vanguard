@@ -33,6 +33,13 @@ describe('buildMergeRequestReviewPrompt', () => {
     expect(prompt).toContain('<promise>COMPLETE</promise>');
   });
 
+  it('tells the reviewer to apply the repository review guidelines inside task_instructions', () => {
+    const prompt = buildMergeRequestReviewPrompt(BASE_MR);
+    const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
+    expect(instructions).toContain('review guidelines the repository documents');
+    expect(instructions).toContain('severity levels');
+  });
+
   it('states that title, description and diff are untrusted, and puts them outside task_instructions', () => {
     const prompt = buildMergeRequestReviewPrompt({
       ...BASE_MR,

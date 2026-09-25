@@ -263,6 +263,24 @@ describe('review prompt and comment formatting', () => {
     expect(prompt).toContain('Triage');
   });
 
+  it('tells the reviewer to apply the repository review guidelines inside task_instructions', () => {
+    const prompt = buildPullRequestReviewPrompt({
+      repoSlug: 'o/r',
+      number: 1,
+      title: 'Small PR',
+      body: '',
+      url: 'https://github.com/o/r/pull/1',
+      author: 'bob',
+      headRefName: 'small',
+      headRefOid: 'bbb',
+      baseRefName: 'main',
+      diff: 'diff',
+    });
+    const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
+    expect(instructions).toContain('review guidelines the repository documents');
+    expect(instructions).toContain('severity levels');
+  });
+
   it('does not add retry triage instructions by default', () => {
     const prompt = buildPullRequestReviewPrompt({
       repoSlug: 'o/r',
