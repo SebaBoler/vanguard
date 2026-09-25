@@ -3,6 +3,7 @@ import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion } from '../sandbox/docker.js';
+import { gitlabProjectFromRemote } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -343,6 +344,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
       checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+      // A Linear run opens its MR/PR on whatever host origin points at (see runLinearIssue).
+      const gitlabOrigin = remote.ok && gitlabProjectFromRemote(remote.stdout) !== undefined;
+      checks.push(gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env));
     }
   }
 

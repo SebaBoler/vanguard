@@ -171,6 +171,55 @@ describe('runPreflight', () => {
     expect(formatPreflightReport(report)).toContain('preflight: linear skills missing -> stop before claim');
   });
 
+  describe('Linear review-surface auth', () => {
+    const linearDoctor: DoctorCommand = { kind: 'doctor', source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills' };
+    const env = { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' };
+
+    function linearRunner(origin: string, glabAuthOk = true): { run: PreflightRunner; calls: string[] } {
+      const calls: string[] = [];
+      const run: PreflightRunner = async (cmd, args) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (cmd === 'git' && args[0] === 'remote') return { stdout: origin };
+        if (cmd === 'glab' && args[0] === 'auth') {
+          if (!glabAuthOk) throw new Error('not logged in');
+          return { stdout: '' };
+        }
+        if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+        return { stdout: '' };
+      };
+      return { run, calls };
+    }
+
+    it('checks glab auth when origin is a GitLab remote', async () => {
+      const { run, calls } = linearRunner('git@gitlab.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(true);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(report.checks.some((c) => c.name === 'github auth')).toBe(false);
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
+    });
+
+    it('fails before claim when glab is not authenticated for a GitLab remote', async () => {
+      const { run } = linearRunner('git@gitlab.com:group/project.git', false);
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    });
+
+    it('checks gh auth when origin is a GitHub remote', async () => {
+      const { run, calls } = linearRunner('https://github.com/owner/repo.git');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
+      expect(report.checks.some((c) => c.name === 'gitlab auth')).toBe(false);
+      expect(calls).toContain('gh auth status');
+      expect(calls).not.toContain('glab auth status');
+    });
+  });
+
   it('fails provider auth when doctor uses codex but CODEX_API_KEY/OPENAI_API_KEY are absent', async () => {
     const report = await runPreflight(githubDoctor({ provider: 'codex' }), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
