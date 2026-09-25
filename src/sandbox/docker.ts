@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { SandboxError } from '../core/errors.js';
-import { sandboxSecurityOpts } from './limits.js';
+import { ownerLabelArgs, sandboxSecurityOpts } from './limits.js';
 import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, SandboxConfig } from './provider.js';
 
 /**
@@ -180,7 +180,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   /** Pure `docker run` argv assembly (no docker invocation), so hardening flags are unit-testable
    * without Docker installed. */
   buildRunArgs(): string[] {
-    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`];
+    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`, ...ownerLabelArgs()];
     // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
     // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
     args.push('--add-host', 'host.docker.internal:host-gateway');

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
 import { sandboxImage } from './docker.js';
-import { sidecarMemoryArgs } from './limits.js';
+import { ownerLabelArgs, sidecarMemoryArgs } from './limits.js';
 import type { ProviderProxySecrets } from '../agents/registry.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
 
@@ -82,7 +82,7 @@ export async function startLlmProxy(opts: {
 
   try {
     // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
-    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
+    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...ownerLabelArgs(), ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
     await docker(['network', 'connect', opts.network, name]);
     await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
     // The shared logic must sit next to the server so its relative import resolves.

@@ -266,6 +266,24 @@ describe('DockerSandboxProvider buildRunArgs (hardening flags)', () => {
     const args = sb.buildRunArgs();
     expect(args).not.toContain('--read-only');
   });
+
+  it('has no vanguard.owner label by default', () => {
+    const sb = new DockerSandboxProvider({});
+    expect(sb.buildRunArgs()).not.toContain('vanguard.owner=');
+  });
+
+  it('adds the vanguard.owner label when VANGUARD_OWNER_LABEL is set', () => {
+    const prev = process.env.VANGUARD_OWNER_LABEL;
+    process.env.VANGUARD_OWNER_LABEL = 'ci-job-42';
+    try {
+      const sb = new DockerSandboxProvider({});
+      const args = sb.buildRunArgs();
+      expect(args).toContain('vanguard.owner=ci-job-42');
+    } finally {
+      if (prev === undefined) delete process.env.VANGUARD_OWNER_LABEL;
+      else process.env.VANGUARD_OWNER_LABEL = prev;
+    }
+  });
 });
 
 // Runs without Docker: the validation throws in the constructor, before any docker invocation.

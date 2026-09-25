@@ -53,6 +53,28 @@ test('the proxy sidecar runs on VANGUARD_SANDBOX_IMAGE when set — it is the sa
   }
 });
 
+test('adds the vanguard.owner label to both the network and the proxy container when VANGUARD_OWNER_LABEL is set', async () => {
+  const prev = process.env.VANGUARD_OWNER_LABEL;
+  process.env.VANGUARD_OWNER_LABEL = 'ci-job-42';
+  try {
+    const { calls, docker } = recordingDocker();
+    await startEgressEnclave({ allowlist: ['a.example'], docker });
+    const networkCreate = calls.find((c) => c[0] === 'network' && c[1] === 'create');
+    const proxyCreate = calls.find((c) => c[0] === 'create');
+    expect(networkCreate).toContain('vanguard.owner=ci-job-42');
+    expect(proxyCreate).toContain('vanguard.owner=ci-job-42');
+  } finally {
+    if (prev === undefined) delete process.env.VANGUARD_OWNER_LABEL;
+    else process.env.VANGUARD_OWNER_LABEL = prev;
+  }
+});
+
+test('has no vanguard.owner label by default', async () => {
+  const { calls, docker } = recordingDocker();
+  await startEgressEnclave({ allowlist: ['a.example'], docker });
+  expect(calls.flat().join(' ')).not.toContain('vanguard.owner=');
+});
+
 test('a failed docker step tears the enclave down and throws SandboxError', async () => {
   const { calls, docker } = recordingDocker('cp');
   await expect(startEgressEnclave({ docker })).rejects.toThrow(/egress enclave/);
