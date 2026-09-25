@@ -81,6 +81,8 @@ interface WatchLogOptions {
 
 interface WatchOnceOptions extends WatchLogOptions {
   concurrency?: number;
+  /** Cap the number of ready tasks claimed and processed this poll (unset: process all). */
+  maxTasks?: number;
 }
 
 function operatorLog(opts: WatchLogOptions, msg: string): void {
@@ -94,10 +96,13 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
  */
 export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOptions = {}): Promise<WatchTick> {
   const ready = await primitives.listReady();
+  // Cap in fetcher order: the rest are left unclaimed for the next poll, not reordered or dropped.
+  const toProcess = opts.maxTasks !== undefined ? ready.slice(0, opts.maxTasks) : ready;
   const phase = opts.phase ?? 'watch';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
+  const cappedNote = toProcess.length < ready.length ? ` (capped to ${toProcess.length} by --max-tasks)` : '';
+  operatorLog(opts, `${phase}: poll -> ${ready.length} ready${cappedNote}`);
   const results = await fanOut(
-    ready,
+    toProcess,
     async (item): Promise<{ id: string; kind: Kind }> => {
       try {
         await primitives.claim(item.id);
@@ -221,6 +226,8 @@ export interface WatchLinearOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   linear?: LinearCliRunner;
 }
@@ -399,6 +406,8 @@ interface LoopControls {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -409,6 +418,7 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
     if (opts.signal?.aborted === true) return;
     const tick = await watchOnce(primitives, {
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      ...(opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {}),
       log,
       phase: 'watch',
     });
@@ -459,7 +469,12 @@ export async function runLoopV1(
       ...agentPrimitives,
       listReady: async () => agentReady,
     };
-    const agent = await watchOnce(agentThisTick, { ...concurrency, log, phase: 'watch' });
+    const agent = await watchOnce(agentThisTick, {
+      ...concurrency,
+      ...(opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {}),
+      log,
+      phase: 'watch',
+    });
     log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
@@ -474,6 +489,8 @@ export interface WatchLinearLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -506,6 +523,8 @@ export interface WatchGithubOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -604,6 +623,8 @@ export interface WatchGithubLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -628,6 +649,8 @@ export interface WatchGithubProjectOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -748,6 +771,8 @@ export interface WatchGitlabOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   /** Injectable runner for tests. Defaults to `defaultGlabRunner`. */
   gl?: GlabRunner;
@@ -850,6 +875,8 @@ export interface WatchGitlabLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 

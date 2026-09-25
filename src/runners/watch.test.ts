@@ -108,6 +108,44 @@ describe('watchOnce', () => {
       'watch D: skipped -> already claimed',
     ]);
   });
+
+  it('claims and processes only the first maxTasks ready items, leaving the rest untouched', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1, maxTasks: 2 });
+
+    expect(claimed).toEqual(['A', 'B']);
+    expect(tick.opened).toEqual(['A', 'B']);
+  });
+
+  it('processes every ready item when maxTasks is unset', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1 });
+
+    expect(claimed).toEqual(['A', 'B', 'C']);
+    expect(tick.opened).toEqual(['A', 'B', 'C']);
+  });
 });
 
 describe('specOnce', () => {

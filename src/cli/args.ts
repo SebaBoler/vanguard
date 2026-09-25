@@ -173,6 +173,8 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
+      /** Cap the number of ready tasks claimed and processed per poll. Unset: process all of them. */
+      maxTasks?: number;
       /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       // --- Loop v1 flags ---
@@ -357,6 +359,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        'max-tasks': { type: 'string' },
         fix: { type: 'boolean' },
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
@@ -858,10 +861,12 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
+    const maxTasks = parseLimit(values['max-tasks']);
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
       repoPath,
+      ...(maxTasks !== undefined ? { maxTasks } : {}),
       ...(label !== undefined ? { label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values['gitlab-project'] === 'string' ? { project: values['gitlab-project'] } : {}),
@@ -953,6 +958,8 @@ Commands:
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";
                            linear: "In Review"; github: "vanguard:needs-human-review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
+    --max-tasks <n>        Cap the ready tasks claimed and processed per poll; the rest stay
+                           unclaimed for the next poll (default: unlimited)
     --loop-v1              Use Loop v1 defaults (GitHub labels "ready for spec"/"ready for agent"/
                            "needs info"; Linear ownership label "vanguard", state type "triage",
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
