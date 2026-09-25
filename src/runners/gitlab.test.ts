@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseGitlabProjectFromRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
+import { parseGitlabProjectFromRemote, gitlabProjectFromRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
 import type { RunGitlabIssueDeps } from './gitlab.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
@@ -31,6 +31,19 @@ describe('parseGitlabProjectFromRemote', () => {
   });
   it('returns undefined for unrecognised format', () => {
     expect(parseGitlabProjectFromRemote('not-a-remote')).toBeUndefined();
+  });
+});
+
+describe('gitlabProjectFromRemote', () => {
+  it('detects gitlab.com and self-hosted GitLab remotes', () => {
+    expect(gitlabProjectFromRemote('git@gitlab.com:group/project.git')).toBe('group/project');
+    expect(gitlabProjectFromRemote('https://git.example.com/group/sub/project.git')).toBe('group/sub/project');
+  });
+  it('rejects GitHub, Bitbucket and Azure DevOps remotes', () => {
+    expect(gitlabProjectFromRemote('https://github.com/owner/repo.git')).toBeUndefined();
+    expect(gitlabProjectFromRemote('git@github.com:owner/repo.git')).toBeUndefined();
+    expect(gitlabProjectFromRemote('git@bitbucket.org:team/repo.git')).toBeUndefined();
+    expect(gitlabProjectFromRemote('https://dev.azure.com/org/project/_git/repo')).toBeUndefined();
   });
 });
 

@@ -36,53 +36,8 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
     stages: implementReviewSimplifyStages,
     closeIssueOnMerge: true,
     reviewCli: 'glab',
-    async publishVerdict(input: PublishVerdictInput) {
-      if (input.reviewerOutcome === undefined) {
-        throw new Error(`publishVerdict: no reviewer outcome for ${input.prUrl} — silence is not ok`);
-      }
-      const target = parseMergeRequestRef(input.prUrl);
-      const verdictText = input.reviewerOutcome.result.finalText;
-      // Build the comment body with attribution header and MR dedupe marker.
-      const body = verdictText.replace(/<promise>\s*COMPLETE\s*<\/promise>/gi, '').trim();
-      const sha7 = input.headSha.slice(0, 7);
-      const header = `Reviewed by ${input.attribution} @ ${sha7}`;
-      const visible = body === ''
-        ? `## Vanguard Review\n\n${header}: no blocking issues`
-        : `## Vanguard Review\n\n${header}:\n\n${body}`;
-      let commentBody = `${visible}\n\n${mergeRequestReviewMarker(input.headSha)}`;
-
-      const conformanceResult = input.conformanceOutcome?.result;
-      if (conformanceResult !== undefined) {
-        const section = renderConformanceSection(conformanceResult);
-        if (section !== undefined) {
-          commentBody = `${commentBody}\n\n## Conformance\n\n${section}`;
-        }
-      }
-
-      // Gate degrades to a plain note on GitLab — no --request-changes equivalent.
-      // Warn when blocking findings exist so silence ≠ enforcement.
-      if (input.gate === true) {
-        const conformanceGateText = conformanceResult?.completed === false ? undefined : conformanceResult?.finalText;
-        const blocking =
-          hasBlockingFinding(verdictText) || (conformanceGateText !== undefined && hasBlockingFinding(conformanceGateText));
-        if (blocking) {
-          commentBody = `${commentBody}\n\n> ⚠️ Blocking findings detected — review gate is not enforced on GitLab (no \`--request-changes\` equivalent). Please review manually.`;
-        }
-      }
-
-      await postMergeRequestNote(target, commentBody, glab);
-    },
-    async addFailureLabel(mrUrl: string, kind: ProofFailureKind) {
-      const label = kind === 'verify' ? GITLAB_VERIFY_FAILED_LABEL : GITLAB_VISUAL_PROOF_FAILED_LABEL;
-      // Best-effort: a bad URL must never block the run (publishVerdict uses the same parser).
-      let target: MergeRequestReviewTarget;
-      try {
-        target = parseMergeRequestRef(mrUrl);
-      } catch {
-        return;
-      }
-      await addMrFailureLabel(target.project, target.iid, label, glab);
-    },
+    publishVerdict: (input: PublishVerdictInput) => publishGitlabVerdict(deps.project, input, glab),
+    addFailureLabel: (mrUrl: string, kind: ProofFailureKind) => addGitlabFailureLabel(deps.project, mrUrl, kind, glab),
     async linkPr(issueRef: string, _task: Task, mrUrl: string) {
       await linkMergeRequest(deps.project, issueRef, mrUrl, glab);
     },
@@ -93,6 +48,65 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
       ]);
     },
   };
+}
+
+/**
+ * Post the reviewer verdict (+ optional conformance section) as a note on a GitLab MR. Shared by
+ * every source whose review surface is GitLab; `project` resolves a bare MR iid.
+ */
+export async function publishGitlabVerdict(project: string, input: PublishVerdictInput, glab?: GlabRunner): Promise<void> {
+  if (input.reviewerOutcome === undefined) {
+    throw new Error(`publishVerdict: no reviewer outcome for ${input.prUrl} — silence is not ok`);
+  }
+  const target = parseMergeRequestRef(input.prUrl, project);
+  const verdictText = input.reviewerOutcome.result.finalText;
+  // Build the comment body with attribution header and MR dedupe marker.
+  const body = verdictText.replace(/<promise>\s*COMPLETE\s*<\/promise>/gi, '').trim();
+  const sha7 = input.headSha.slice(0, 7);
+  const header = `Reviewed by ${input.attribution} @ ${sha7}`;
+  const visible = body === ''
+    ? `## Vanguard Review\n\n${header}: no blocking issues`
+    : `## Vanguard Review\n\n${header}:\n\n${body}`;
+  let commentBody = `${visible}\n\n${mergeRequestReviewMarker(input.headSha)}`;
+
+  const conformanceResult = input.conformanceOutcome?.result;
+  if (conformanceResult !== undefined) {
+    const section = renderConformanceSection(conformanceResult);
+    if (section !== undefined) {
+      commentBody = `${commentBody}\n\n## Conformance\n\n${section}`;
+    }
+  }
+
+  // Gate degrades to a plain note on GitLab — no --request-changes equivalent.
+  // Warn when blocking findings exist so silence ≠ enforcement.
+  if (input.gate === true) {
+    const conformanceGateText = conformanceResult?.completed === false ? undefined : conformanceResult?.finalText;
+    const blocking =
+      hasBlockingFinding(verdictText) || (conformanceGateText !== undefined && hasBlockingFinding(conformanceGateText));
+    if (blocking) {
+      commentBody = `${commentBody}\n\n> ⚠️ Blocking findings detected — review gate is not enforced on GitLab (no \`--request-changes\` equivalent). Please review manually.`;
+    }
+  }
+
+  await postMergeRequestNote(target, commentBody, glab);
+}
+
+/** Add a proof-failure label to a GitLab MR; `project` resolves a bare MR iid. */
+export async function addGitlabFailureLabel(
+  project: string,
+  mrUrl: string,
+  kind: ProofFailureKind,
+  glab?: GlabRunner,
+): Promise<void> {
+  const label = kind === 'verify' ? GITLAB_VERIFY_FAILED_LABEL : GITLAB_VISUAL_PROOF_FAILED_LABEL;
+  // Best-effort: a bad URL must never block the run (publishGitlabVerdict uses the same parser).
+  let target: MergeRequestReviewTarget;
+  try {
+    target = parseMergeRequestRef(mrUrl, project);
+  } catch {
+    return;
+  }
+  await addMrFailureLabel(target.project, target.iid, label, glab);
 }
 
 /**
@@ -107,6 +121,26 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
 /** Extract `group/project` from an SSH or HTTPS git remote URL. */
 export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefined {
   return remoteUrl.trim().match(/(?:https?:\/\/[^/]+\/|^[^:]+:)(.+?)(?:\.git)?$/)?.[1];
+}
+
+/**
+ * The GitLab project a git remote URL points at, or undefined for a known non-GitLab host
+ * (GitHub, Bitbucket, Azure DevOps) or an unparseable URL. Any other host counts as GitLab,
+ * so self-hosted instances are detected.
+ */
+export function gitlabProjectFromRemote(remoteUrl: string): string | undefined {
+  if (/github\.com|bitbucket\.org|dev\.azure\.com/.test(remoteUrl)) return undefined;
+  return parseGitlabProjectFromRemote(remoteUrl);
+}
+
+/** The GitLab project the `origin` remote of `repoPath` points at; undefined when origin is unreadable or not GitLab. */
+export async function gitlabProjectFromOrigin(repoPath: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
+    return gitlabProjectFromRemote(stdout);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Assemble `RunGitlabIssueDeps` from environment + CLI flags (mirrors `githubDepsFromEnv`). */
@@ -129,11 +163,10 @@ export async function gitlabDepsFromEnv(
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
     const remote = stdout.trim();
-    if (/github\.com|bitbucket\.org|dev\.azure\.com/.test(remote)) {
-      throw new Error(`origin remote (${remote}) does not look like a GitLab host. Pass --gitlab-project explicitly.`);
+    resolvedProject = gitlabProjectFromRemote(remote);
+    if (resolvedProject === undefined) {
+      throw new Error(`Cannot detect a GitLab project from the origin remote (${remote}). Pass --gitlab-project explicitly.`);
     }
-    resolvedProject = parseGitlabProjectFromRemote(remote);
-    if (resolvedProject === undefined) throw new Error('Cannot detect GitLab project from origin remote. Pass --gitlab-project.');
   }
   return {
     ...(auth !== undefined ? { auth } : {}),
