@@ -209,14 +209,27 @@ describe('runPreflight', () => {
       expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
     });
 
-    it('checks gh auth when origin is a GitHub remote', async () => {
-      const { run, calls } = linearRunner('https://github.com/owner/repo.git');
+    it.each([
+      ['a GitHub remote', 'https://github.com/owner/repo.git'],
+      ['a GitHub Enterprise remote', 'git@github.corp.com:o/r.git'],
+      ['a self-hosted remote without GITLAB_HOST', 'git@git.example.com:group/project.git'],
+    ])('checks gh auth when origin is %s', async (_label, origin) => {
+      const { run, calls } = linearRunner(origin);
       const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
 
       expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
       expect(report.checks.some((c) => c.name === 'gitlab auth')).toBe(false);
       expect(calls).toContain('gh auth status');
       expect(calls).not.toContain('glab auth status');
+    });
+
+    it('checks glab auth for a self-hosted remote that matches GITLAB_HOST', async () => {
+      const { run, calls } = linearRunner('git@git.example.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env: { ...env, GITLAB_HOST: 'https://git.example.com:8443' }, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
     });
   });
 

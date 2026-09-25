@@ -6,7 +6,7 @@ import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import { runSourcedIssue } from './source-adapter.js';
-import { gitlabProjectFromOrigin, publishGitlabVerdict, addGitlabFailureLabel } from './gitlab.js';
+import { knownGitlabProjectFromOrigin, publishGitlabVerdict, addGitlabFailureLabel } from './gitlab.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
@@ -56,7 +56,8 @@ function linearStages(): PipelineStage[] {
 
 /**
  * @internal Exported for unit tests; production callers use runLinearIssue. `gitlabProject` is set
- * when origin is a GitLab remote: the draft MR, verdict note and failure labels then go through glab.
+ * when origin is on gitlab.com or GITLAB_HOST: the draft MR, verdict note and failure labels then go
+ * through glab.
  */
 export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, glab?: GlabRunner): SourceAdapter {
   return {
@@ -95,12 +96,12 @@ export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, 
 /**
  * Run one Linear issue end to end: the agent reads it from inside the sandbox via the injected
  * linear-cli skill, runs the canonical implement/review/simplify pipeline, opens a draft GitHub PR
- * (a draft GitLab MR when origin is a GitLab remote), and comments the PR/MR link back onto the
- * issue. Each call provisions its own sandbox, so callers can fan several out concurrently (see
- * runLinearParent).
+ * (a draft GitLab MR when origin is on gitlab.com or GITLAB_HOST), and comments the PR/MR link back
+ * onto the issue. Each call provisions its own sandbox, so callers can fan several out concurrently
+ * (see runLinearParent).
  */
 export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps): Promise<RunLinearIssueResult> {
-  return runSourcedIssue(issueRef, deps, linearAdapter(deps, await gitlabProjectFromOrigin(deps.repoPath)));
+  return runSourcedIssue(issueRef, deps, linearAdapter(deps, await knownGitlabProjectFromOrigin(deps.repoPath)));
 }
 
 /** Fan a Linear parent issue out into one independent run (and PR) per sub-issue. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseGitlabProjectFromRemote, gitlabProjectFromRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
+import { parseGitlabProjectFromRemote, gitlabProjectFromRemote, isKnownGitlabRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
 import type { RunGitlabIssueDeps } from './gitlab.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
@@ -44,6 +44,28 @@ describe('gitlabProjectFromRemote', () => {
     expect(gitlabProjectFromRemote('git@github.com:owner/repo.git')).toBeUndefined();
     expect(gitlabProjectFromRemote('git@bitbucket.org:team/repo.git')).toBeUndefined();
     expect(gitlabProjectFromRemote('https://dev.azure.com/org/project/_git/repo')).toBeUndefined();
+  });
+});
+
+describe('isKnownGitlabRemote', () => {
+  it('accepts gitlab.com over SSH and HTTPS', () => {
+    expect(isKnownGitlabRemote('git@gitlab.com:group/project.git', {})).toBe(true);
+    expect(isKnownGitlabRemote('https://gitlab.com/group/project.git', {})).toBe(true);
+    expect(isKnownGitlabRemote('https://oauth2:tok@GitLab.com/group/project.git', {})).toBe(true);
+  });
+  it('rejects a GitHub Enterprise host', () => {
+    expect(isKnownGitlabRemote('git@github.corp.com:o/r.git', {})).toBe(false);
+    expect(isKnownGitlabRemote('https://github.com/o/r.git', {})).toBe(false);
+  });
+  it('accepts a self-hosted host only when it matches GITLAB_HOST, ignoring scheme and port', () => {
+    expect(isKnownGitlabRemote('git@git.example.com:group/project.git', {})).toBe(false);
+    expect(isKnownGitlabRemote('git@git.example.com:group/project.git', { GITLAB_HOST: 'https://git.example.com:8443' })).toBe(true);
+    expect(isKnownGitlabRemote('ssh://git@git.example.com:2222/group/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(true);
+    expect(isKnownGitlabRemote('https://git.example.com:8443/group/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(true);
+    expect(isKnownGitlabRemote('git@other.example.com:group/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(false);
+  });
+  it('rejects a local path', () => {
+    expect(isKnownGitlabRemote('/srv/git/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(false);
   });
 });
 

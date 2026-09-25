@@ -87,10 +87,12 @@ describe('linearAdapter on a GitHub remote', () => {
 describe('runLinearIssue review surface', () => {
   let repo: string;
   beforeEach(async () => {
+    vi.stubEnv('GITLAB_HOST', undefined);
     repo = await mkdtemp(join(tmpdir(), 'vanguard-linear-'));
     await execa('git', ['init', '-q'], { cwd: repo });
   });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(repo, { recursive: true, force: true });
   });
 
@@ -102,10 +104,28 @@ describe('runLinearIssue review surface', () => {
     return adapter;
   }
 
-  it('picks glab when origin is a GitLab remote', async () => {
+  it('picks glab when origin is on gitlab.com', async () => {
     const adapter = await adapterFor('git@gitlab.com:group/project.git');
     expect(adapter.reviewCli).toBe('glab');
     expect(adapter.publishVerdict).not.toBe(publishReviewVerdict);
+  });
+
+  it('keeps the GitHub path for a GitHub Enterprise remote', async () => {
+    const adapter = await adapterFor('git@github.corp.com:o/r.git');
+    expect('reviewCli' in adapter).toBe(false);
+    expect(adapter.publishVerdict).toBe(publishReviewVerdict);
+  });
+
+  it('picks glab for a self-hosted remote that matches GITLAB_HOST', async () => {
+    vi.stubEnv('GITLAB_HOST', 'https://git.example.com:8443');
+    const adapter = await adapterFor('git@git.example.com:group/project.git');
+    expect(adapter.reviewCli).toBe('glab');
+  });
+
+  it('keeps the GitHub path for a self-hosted remote when GITLAB_HOST is unset', async () => {
+    const adapter = await adapterFor('git@git.example.com:group/project.git');
+    expect('reviewCli' in adapter).toBe(false);
+    expect(adapter.publishVerdict).toBe(publishReviewVerdict);
   });
 
   it('keeps the GitHub path when origin is a GitHub remote', async () => {

@@ -133,11 +133,40 @@ export function gitlabProjectFromRemote(remoteUrl: string): string | undefined {
   return parseGitlabProjectFromRemote(remoteUrl);
 }
 
-/** The GitLab project the `origin` remote of `repoPath` points at; undefined when origin is unreadable or not GitLab. */
-export async function gitlabProjectFromOrigin(repoPath: string): Promise<string | undefined> {
+/** Lower-cased hostname of a git remote URL or a GITLAB_HOST value, without scheme, user or port. */
+function hostnameOf(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.includes('://')) {
+    try {
+      return new URL(trimmed).hostname.toLowerCase() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  // scp-like `user@host:path`, or a bare `host[:port]`.
+  return /^(?:[^@/]+@)?([^:/]+)/.exec(trimmed)?.[1]?.toLowerCase();
+}
+
+/**
+ * Whether a remote's host is GitLab by explicit signal: gitlab.com, or the host in glab's
+ * GITLAB_HOST. Stricter than gitlabProjectFromRemote because it serves sources whose review surface
+ * defaults to GitHub (Linear): a GitHub Enterprise or other unknown host must keep that default.
+ */
+export function isKnownGitlabRemote(remoteUrl: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const host = hostnameOf(remoteUrl);
+  if (host === undefined) return false;
+  const selfHosted = env.GITLAB_HOST === undefined ? undefined : hostnameOf(env.GITLAB_HOST);
+  return host === 'gitlab.com' || host === selfHosted;
+}
+
+/**
+ * The GitLab project the `origin` remote of `repoPath` points at when isKnownGitlabRemote accepts
+ * it; undefined for any other host or when origin is unreadable.
+ */
+export async function knownGitlabProjectFromOrigin(repoPath: string): Promise<string | undefined> {
   try {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
-    return gitlabProjectFromRemote(stdout);
+    return isKnownGitlabRemote(stdout) ? parseGitlabProjectFromRemote(stdout) : undefined;
   } catch {
     return undefined;
   }
