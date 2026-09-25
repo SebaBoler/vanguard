@@ -10,7 +10,14 @@ import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildMergeRequestReviewPrompt, reviewMergeRequest } from '../runners/mr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { MergeRequestForReview, MergeRequestReviewer, ReviewMergeRequestDeps, ReviewMergeRequestResult } from '../runners/mr-review.js';
+import type {
+  MergeRequestForReview,
+  MergeRequestReviewAttempt,
+  MergeRequestReviewOutcome,
+  MergeRequestReviewer,
+  ReviewMergeRequestDeps,
+  ReviewMergeRequestResult,
+} from '../runners/mr-review.js';
 import type { Command } from './args.js';
 
 type ReviewMrCommand = Extract<Command, { kind: 'review-mr' }>;
@@ -34,7 +41,7 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
 
   const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
   // Provisioned inside the reviewer, so a head that is already reviewed never starts a sandbox.
-  const reviewer: MergeRequestReviewer = async (mr) => {
+  const reviewer: MergeRequestReviewer = async (mr, opts) => {
     const sandboxContext = await startSandboxContext({
       egress: cmd.egress,
       llmProxy: cmd.llmProxy === true,
@@ -42,7 +49,7 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     });
     try {
-      return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext);
+      return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext, opts);
     } finally {
       await sandboxContext.destroy();
     }
@@ -56,7 +63,8 @@ async function runDefaultMrReviewer(
   cmd: ReviewMrCommand,
   auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
-): Promise<string> {
+  opts: MergeRequestReviewAttempt,
+): Promise<MergeRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
   // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
@@ -85,12 +93,12 @@ async function runDefaultMrReviewer(
         agent: agents.agent,
         promptTemplate: buildMergeRequestReviewPrompt(mr),
         systemPrompt: adversarySystemPrompt(),
-        effort: 'high',
-        maxTurns: 8,
+        effort: opts.isRetry ? 'xhigh' : 'high',
+        maxTurns: opts.isRetry ? 24 : 16,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });
-      return result.finalText;
+      return { text: result.finalText, completed: result.completed };
     } finally {
       await disposeContext(ctx);
     }

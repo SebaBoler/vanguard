@@ -5,6 +5,7 @@ import {
   hasMergeRequestReviewMarker,
   buildMergeRequestReviewComment,
   reviewMergeRequest,
+  MergeRequestReviewIncompleteError,
 } from './mr-review.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 
@@ -126,5 +127,60 @@ describe('reviewMergeRequest head dedupe', () => {
     await expect(reviewMergeRequest('5', { project: 'g/p', glab, reviewer })).rejects.toThrow(/no head SHA/);
     expect(reviewer).not.toHaveBeenCalled();
     expect(posted(calls)).toEqual([]);
+  });
+});
+
+describe('reviewMergeRequest incomplete retry', () => {
+  const HEAD = 'abc123def4567890';
+
+  function makeGlab(): { glab: GlabRunner; calls: string[][] } {
+    const calls: string[][] = [];
+    const glab: GlabRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, title: 'T', sha: HEAD });
+      if (args[0] === 'mr' && args[1] === 'diff') return 'diff --git a/x b/x';
+      if (args[0] === 'api') return '[]';
+      return '';
+    };
+    return { glab, calls };
+  }
+
+  const posted = (calls: string[][]): string[][] => calls.filter((c) => c[0] === 'mr' && c[1] === 'note');
+
+  it('retries once with a larger budget when the first attempt is incomplete, then posts with the marker', async () => {
+    const { glab, calls } = makeGlab();
+    const reviewer = vi.fn(async (_mr, opts: { isRetry: boolean }) =>
+      opts.isRetry ? { text: 'No blocking findings.', completed: true } : { text: 'partial...', completed: false },
+    );
+    const lines: string[] = [];
+
+    const result = await reviewMergeRequest('5', { project: 'g/p', glab, reviewer, log: (l) => lines.push(l) });
+
+    expect(reviewer).toHaveBeenCalledTimes(2);
+    expect(reviewer).toHaveBeenNthCalledWith(1, expect.anything(), { isRetry: false });
+    expect(reviewer).toHaveBeenNthCalledWith(2, expect.anything(), { isRetry: true });
+    expect(lines).toContain(`review-mr g/p!5: incomplete -> retry (larger budget)`);
+    expect(posted(calls)).toHaveLength(1);
+    expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
+  });
+
+  it('throws and posts nothing when both attempts are incomplete', async () => {
+    const { glab, calls } = makeGlab();
+    const reviewer = vi.fn(async () => ({ text: 'partial...', completed: false }));
+
+    await expect(reviewMergeRequest('5', { project: 'g/p', glab, reviewer })).rejects.toThrow(MergeRequestReviewIncompleteError);
+    expect(reviewer).toHaveBeenCalledTimes(2);
+    expect(posted(calls)).toEqual([]);
+  });
+
+  it('treats a string-returning reviewer as complete on the first attempt', async () => {
+    const { glab, calls } = makeGlab();
+    const reviewer = vi.fn(async () => 'No blocking findings.');
+
+    const result = await reviewMergeRequest('5', { project: 'g/p', glab, reviewer });
+
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(posted(calls)).toHaveLength(1);
+    expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
   });
 });

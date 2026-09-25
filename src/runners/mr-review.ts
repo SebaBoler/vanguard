@@ -1,3 +1,4 @@
+import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
 
@@ -17,7 +18,23 @@ export interface MergeRequestForReview extends MergeRequestReviewTarget {
   diff: string;
 }
 
-export type MergeRequestReviewer = (mr: MergeRequestForReview) => Promise<string>;
+export interface MergeRequestReviewOutcome {
+  text: string;
+  completed: boolean;
+}
+
+export interface MergeRequestReviewAttempt {
+  isRetry: boolean;
+}
+
+export type MergeRequestReviewer = (
+  mr: MergeRequestForReview,
+  opts: MergeRequestReviewAttempt,
+) => Promise<string | MergeRequestReviewOutcome>;
+
+function normalizeMergeRequestReviewOutcome(outcome: string | MergeRequestReviewOutcome): MergeRequestReviewOutcome {
+  return typeof outcome === 'string' ? { text: outcome, completed: true } : outcome;
+}
 
 export interface ReviewMergeRequestDeps {
   project?: string;
@@ -159,6 +176,18 @@ export async function postMergeRequestNote(
   ]);
 }
 
+/**
+ * Both review attempts ended without a verdict. Deliberately posts nothing — unlike review-pr, which
+ * posts an incomplete notice — so no note ever carries the review marker for an incomplete review; the
+ * CI caller surfaces this failure with its own note (no marker), and a retried job can review the head
+ * again instead of being permanently skipped by the per-head dedupe.
+ */
+export class MergeRequestReviewIncompleteError extends VanguardError {
+  constructor(readonly mr: MergeRequestForReview) {
+    super(`Vanguard review of ${mr.project}!${mr.iid} did not complete: no verdict for head ${mr.sha.slice(0, 7)}.`);
+  }
+}
+
 export async function reviewMergeRequest(
   ref: string,
   deps: ReviewMergeRequestDeps,
@@ -183,8 +212,15 @@ export async function reviewMergeRequest(
     return { mr };
   }
   deps.log?.(`review-mr ${target.project}!${target.iid}: agent -> reviewing`);
-  const reviewText = await deps.reviewer(mr);
-  const commentBody = buildMergeRequestReviewComment(reviewText, mr.sha);
+  let outcome = normalizeMergeRequestReviewOutcome(await deps.reviewer(mr, { isRetry: false }));
+  if (!outcome.completed) {
+    deps.log?.(`review-mr ${id}: incomplete -> retry (larger budget)`);
+    outcome = normalizeMergeRequestReviewOutcome(await deps.reviewer(mr, { isRetry: true }));
+  }
+  if (!outcome.completed) {
+    throw new MergeRequestReviewIncompleteError(mr);
+  }
+  const commentBody = buildMergeRequestReviewComment(outcome.text, mr.sha);
   await postMergeRequestNote(target, commentBody, glab);
   deps.log?.(`review-mr ${target.project}!${target.iid}: posted -> mr note`);
   return { mr, commentBody };
