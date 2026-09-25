@@ -119,6 +119,8 @@ const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitH
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
 
+A Linear task in a repo whose `origin` is a GitLab remote opens a draft GitLab MR through `glab` instead, and the review verdict lands as an MR note. `vanguard review-mr` skips an MR head it already reviewed, so a CI retry never posts a second review; when it cannot read the MR notes, it fails and posts nothing.
+
 `LinearCliTaskFetcher` drives Linear entirely through the `linear` CLI (from schpet/linear-cli; authenticate with `linear auth login` or set `LINEAR_API_KEY`), covering fetch/list/comment with no SDK dependency. The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
 
 ## Auth
