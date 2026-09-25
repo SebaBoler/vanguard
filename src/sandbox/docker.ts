@@ -30,6 +30,16 @@ export function toExecResult(raw: {
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
 
 /**
+ * The sandbox image to run: `VANGUARD_SANDBOX_IMAGE` when set (CI passes the exact `sha256:...` ID it
+ * just built, since the shared mutable `vanguard-sandbox:latest` tag on a shared Docker host can be
+ * overwritten by another pipeline between build and run), else the mutable tag for local/dev use.
+ */
+export function sandboxImage(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env['VANGUARD_SANDBOX_IMAGE'];
+  return override !== undefined && override !== '' ? override : DEFAULT_IMAGE;
+}
+
+/**
  * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
  * ARG CLAUDE_CLI_VERSION. The pin moves in the repo but a built image does not, and the drift only
  * surfaces deep inside a run as a gateway error (live case: 2.1.165 answered every Meridian request
@@ -67,7 +77,7 @@ const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
  */
 export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
   const run = opts.run ?? defaultDockerRunner;
-  const image = opts.image ?? DEFAULT_IMAGE;
+  const image = opts.image ?? sandboxImage();
   const helper = 'vg-cli-refresh';
   const { cwd } = opts;
 
@@ -121,7 +131,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   constructor(config: SandboxConfig = {}) {
     this.config = config;
     this.id = randomUUID();
-    this.image = config.image ?? DEFAULT_IMAGE;
+    this.image = config.image ?? sandboxImage();
     this.workdir = config.workdir ?? DEFAULT_WORKDIR;
     this.secretsMode = config.secretsMode ?? 'tmpfs';
     this.secrets = { ...config.secrets };

@@ -35,7 +35,7 @@ import {
   STAGE,
 } from '../pipeline/pipeline.js';
 import { defaultGhRunner } from '../tasks/github.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -201,7 +201,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     const sandbox =
       deps._sandbox ??
       new DockerSandboxProvider({
-        image: 'vanguard-sandbox:latest',
+        image: sandboxImage(),
         secrets: {
           ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth
             ? authSecrets(deps.auth)

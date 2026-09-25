@@ -38,6 +38,7 @@ vi.mock('../sandbox/docker.js', () => ({
     destroy = async (): Promise<void> => {};
     shellCommand = (): string => 'docker exec -it vg-fake bash';
   },
+  sandboxImage: (): string => 'vanguard-sandbox:latest',
 }));
 
 let repo: string;

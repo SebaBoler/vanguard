@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
+import { sandboxImage } from './docker.js';
 import { DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
 import { sidecarMemoryArgs } from './limits.js';
 import type { DockerRunner } from './llm-proxy.js';
@@ -47,7 +48,9 @@ export async function startEgressEnclave(
 ): Promise<EgressEnclave> {
   const docker = opts.docker ?? defaultDocker;
   const allowlist = opts.allowlist ?? DEFAULT_EGRESS_ALLOWLIST;
-  const image = opts.image ?? 'vanguard-sandbox:latest';
+  // The proxy sidecar runs its node script inside the sandbox image itself (no dedicated proxy
+  // image), so it must follow the same CI-pinned override as the main sandbox.
+  const image = opts.image ?? sandboxImage();
   const id = randomUUID().slice(0, 8);
   const network = `vg-egr-${id}`;
   const proxy = `vg-proxy-${id}`;

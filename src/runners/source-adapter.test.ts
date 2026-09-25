@@ -84,7 +84,18 @@ vi.mock('../sandbox/llm-proxy.js', () => ({
   startProviderProxies: vi.fn(async () => ({ openai: undefined, destroy: vi.fn(async () => {}) })),
 }));
 vi.mock('../sandbox/egress-proxy.js', () => ({ llmProxySandboxEnv: vi.fn(() => undefined) }));
-vi.mock('../sandbox/docker.js', () => ({ DockerSandboxProvider: class { constructor(_opts?: unknown) {} } }));
+const { sandboxImage, capturedSandboxOpts } = vi.hoisted(() => ({
+  sandboxImage: vi.fn(() => 'vanguard-sandbox:latest'),
+  capturedSandboxOpts: [] as Array<{ image?: string }>,
+}));
+vi.mock('../sandbox/docker.js', () => ({
+  DockerSandboxProvider: class {
+    constructor(opts?: { image?: string }) {
+      capturedSandboxOpts.push(opts ?? {});
+    }
+  },
+  sandboxImage,
+}));
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
@@ -176,6 +187,8 @@ const STAGES: PipelineStage[] = [
 describe('runSourcedIssue', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    capturedSandboxOpts.length = 0;
+    sandboxImage.mockReturnValue('vanguard-sandbox:latest');
     runStages.mockResolvedValue([stageOutcome('reviewer')]);
     commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
     publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
@@ -201,6 +214,15 @@ describe('runSourcedIssue', () => {
     // assembleReviewPipeline appends the conformance stage when deps.conformance is true.
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
+  });
+
+  it('builds the sandbox with the shared sandboxImage() resolver, so a VANGUARD_SANDBOX_IMAGE override reaches it too', async () => {
+    sandboxImage.mockReturnValue('sha256:deadbeef');
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(sandboxImage).toHaveBeenCalled();
+    expect(capturedSandboxOpts).toContainEqual(expect.objectContaining({ image: 'sha256:deadbeef' }));
   });
 
   it('--plan swaps in the plan-implement-review pipeline (a dedicated planner stage runs first)', async () => {

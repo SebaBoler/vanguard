@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
+import { sandboxImage } from './docker.js';
 import { sidecarMemoryArgs } from './limits.js';
 import type { ProviderProxySecrets } from '../agents/registry.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
@@ -66,7 +67,9 @@ export async function startLlmProxy(opts: {
   docker?: DockerRunner;
 }): Promise<LlmProxy> {
   const docker = opts.docker ?? defaultDocker;
-  const image = opts.image ?? 'vanguard-sandbox:latest';
+  // The sidecar runs a small node script inside the sandbox image itself (no dedicated proxy
+  // image), so it must follow the same CI-pinned override as the main sandbox.
+  const image = opts.image ?? sandboxImage();
   const upstream: Upstream = opts.upstream ?? 'anthropic';
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;

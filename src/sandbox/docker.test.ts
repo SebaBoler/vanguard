@@ -1,10 +1,43 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import { execa, execaSync } from 'execa';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DockerSandboxProvider, toExecResult, isOlderVersion, SANDBOX_CLAUDE_VERSION } from './docker.js';
+import { DockerSandboxProvider, toExecResult, isOlderVersion, sandboxImage, SANDBOX_CLAUDE_VERSION } from './docker.js';
 import { sandboxSecurityOpts } from './limits.js';
+
+const ENV_VAR = 'VANGUARD_SANDBOX_IMAGE';
+
+// Ungated on purpose: pure env resolution, no Docker needed. Every sandbox start and sidecar reads
+// this — a wrong verdict either strands CI on the mutable `:latest` tag it was meant to pin past, or
+// silently drops a deliberate override.
+describe('sandboxImage', () => {
+  const prev = process.env[ENV_VAR];
+  afterEach(() => {
+    if (prev === undefined) delete process.env[ENV_VAR];
+    else process.env[ENV_VAR] = prev;
+  });
+
+  it('honours VANGUARD_SANDBOX_IMAGE when set', () => {
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    expect(sandboxImage()).toBe('sha256:deadbeef');
+  });
+
+  it('falls back to the mutable tag when the env var is empty', () => {
+    process.env[ENV_VAR] = '';
+    expect(sandboxImage()).toBe('vanguard-sandbox:latest');
+  });
+
+  it('falls back to the mutable tag when the env var is unset', () => {
+    delete process.env[ENV_VAR];
+    expect(sandboxImage()).toBe('vanguard-sandbox:latest');
+  });
+
+  it('reads from an injected env map rather than process.env when given one', () => {
+    expect(sandboxImage({ [ENV_VAR]: 'sha256:cafef00d' })).toBe('sha256:cafef00d');
+    expect(sandboxImage({})).toBe('vanguard-sandbox:latest');
+  });
+});
 
 const hasDocker = ((): boolean => {
   try {
@@ -174,6 +207,30 @@ describe('DockerSandboxProvider buildRunArgs (hardening flags)', () => {
     expect(args).toContain('--security-opt');
     expect(args.filter((a) => a === '--tmpfs').length).toBeGreaterThanOrEqual(1);
     expect(args.slice(-3)).toEqual(['vanguard-sandbox:latest', 'sleep', 'infinity']);
+  });
+
+  it('defaults to VANGUARD_SANDBOX_IMAGE over the mutable tag when no explicit image is given', () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const sb = new DockerSandboxProvider({});
+      expect(sb.buildRunArgs().slice(-3)).toEqual(['sha256:deadbeef', 'sleep', 'infinity']);
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
+  });
+
+  it('an explicit config.image still wins over VANGUARD_SANDBOX_IMAGE', () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const sb = new DockerSandboxProvider({ image: 'alpine:3.20' });
+      expect(sb.buildRunArgs().slice(-3)).toEqual(['alpine:3.20', 'sleep', 'infinity']);
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
   });
 
   it('config.security override disables hardening', () => {

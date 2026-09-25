@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { startLlmProxy, startProviderProxies } from './llm-proxy.js';
 import { SandboxError } from '../core/errors.js';
 
+const ENV_VAR = 'VANGUARD_SANDBOX_IMAGE';
+
 function fakeDocker(): { calls: { args: string[]; input?: string }[]; run: (args: string[], opts?: { input?: string }) => Promise<{ exitCode: number; stdout: string; stderr: string }> } {
   const calls: { args: string[]; input?: string }[] = [];
   const run = async (args: string[], opts?: { input?: string }): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
@@ -96,6 +98,35 @@ describe('startLlmProxy', () => {
     const a = await startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: d.run });
     const b = await startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: d.run });
     expect(a.nonce).not.toBe(b.nonce);
+  });
+
+  it('runs the sidecar on VANGUARD_SANDBOX_IMAGE when set — it is the sandbox image, not a dedicated proxy image', async () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const d = fakeDocker();
+      await startLlmProxy({ network: 'vg-egr-x', auth: { mode: 'api', secret: 's' }, docker: d.run });
+      const runCall = d.calls.find((c) => c.args[0] === 'run');
+      expect(runCall?.args).toContain('sha256:deadbeef');
+      expect(runCall?.args).not.toContain('vanguard-sandbox:latest');
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
+  });
+
+  it('an explicit image option still wins over VANGUARD_SANDBOX_IMAGE', async () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const d = fakeDocker();
+      await startLlmProxy({ network: 'vg-egr-x', auth: { mode: 'api', secret: 's' }, image: 'custom:1', docker: d.run });
+      const runCall = d.calls.find((c) => c.args[0] === 'run');
+      expect(runCall?.args).toContain('custom:1');
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
   });
 
   it('tears down the sidecar and wraps failures in SandboxError', async () => {

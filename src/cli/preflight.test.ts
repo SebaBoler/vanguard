@@ -137,6 +137,36 @@ describe('runPreflight', () => {
     expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
   });
 
+  it('inspects VANGUARD_SANDBOX_IMAGE, not the mutable tag, when the override is set', async () => {
+    const inspected: string[] = [];
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
+      if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
+      if (cmd === 'docker' && args[0] === 'info') return { stdout: '' };
+      if (cmd === 'docker' && args[0] === 'image') {
+        inspected.push(args[2]!);
+        return { stdout: '' };
+      }
+      if (cmd === 'docker' && args[0] === 'run') {
+        inspected.push(args[2]!);
+        return { stdout: '2.1.260 (Claude Code)' };
+      }
+      if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
+      if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify([]) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+    };
+
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', VANGUARD_SANDBOX_IMAGE: 'sha256:deadbeef' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(inspected).toEqual(['sha256:deadbeef', 'sha256:deadbeef']);
+    expect(report.checks.find((c) => c.name === 'sandbox image')?.ok).toBe(true);
+    expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
+  });
+
   it('checks PR review loop labels before watch-prs can claim a PR', async () => {
     const report = await runPreflight(doctorPrs(), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
