@@ -121,9 +121,9 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
 /** Extract `group/project` from a scp-like SSH remote or any `scheme://` remote URL (HTTPS, `ssh://` with a port). */
 export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefined {
   const trimmed = remoteUrl.trim();
-  if (!trimmed.includes('://')) return trimmed.match(/^[^:]+:(.+?)(?:\.git)?$/)?.[1];
+  if (!trimmed.includes('://')) return trimmed.match(/^[^:]+:(.+?)(?:\.git)?\/*$/)?.[1];
   try {
-    return new URL(trimmed).pathname.replace(/^\/+/, '').replace(/\.git$/, '') || undefined;
+    return new URL(trimmed).pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/, '') || undefined;
   } catch {
     return undefined;
   }

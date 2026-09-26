@@ -41,6 +41,10 @@ describe('parseGitlabProjectFromRemote', () => {
   it('parses an ssh:// remote with a port', () => {
     expect(parseGitlabProjectFromRemote('ssh://git@gitlab.com:2222/group/project.git')).toBe('group/project');
   });
+  it('drops a trailing slash', () => {
+    expect(parseGitlabProjectFromRemote('https://gitlab.com/group/project/')).toBe('group/project');
+    expect(parseGitlabProjectFromRemote('git@gitlab.com:group/project/')).toBe('group/project');
+  });
   it('returns undefined for a URL with no path', () => {
     expect(parseGitlabProjectFromRemote('https://gitlab.com/')).toBeUndefined();
   });
