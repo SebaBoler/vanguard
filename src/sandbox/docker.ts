@@ -78,10 +78,10 @@ const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
 export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
   const run = opts.run ?? defaultDockerRunner;
   const image = opts.image ?? sandboxImage();
-  // `docker commit` onto an image ID creates a stray `sha256` repository and leaves the ID unchanged.
-  if (/^(sha256:)?[a-f0-9]{12,64}$/.test(image)) {
+  // `docker commit` onto an image ID or a digest reference cannot change what it names.
+  if (/^(sha256:)?[a-f0-9]{12,64}$|@sha256:[a-f0-9]{64}$/.test(image)) {
     throw new SandboxError(
-      `Cannot refresh ${image}: an image ID is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
+      `Cannot refresh ${image}: an image ID or digest is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
     );
   }
   const helper = 'vg-cli-refresh';

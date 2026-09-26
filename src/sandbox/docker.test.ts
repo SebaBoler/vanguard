@@ -60,7 +60,10 @@ describe('refreshSandboxClaudeCli', () => {
       return { stdout: '' };
     };
 
-    await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: `sha256:${'a'.repeat(64)}`, run })).rejects.toThrow(/image ID is immutable/);
+    await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: `sha256:${'a'.repeat(64)}`, run })).rejects.toThrow(/immutable/);
+    await expect(
+      refreshSandboxClaudeCli({ cwd: '/repo', image: `registry.example.com/vanguard-sandbox@sha256:${'b'.repeat(64)}`, run }),
+    ).rejects.toThrow(/immutable/);
     expect(calls).toEqual([]);
   });
 });
