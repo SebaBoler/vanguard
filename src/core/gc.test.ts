@@ -53,21 +53,24 @@ describe('isStaleEmptyNetwork', () => {
   const now = Date.parse('2026-09-25T12:00:00Z');
   const hour = 60 * 60 * 1000;
 
-  it('reaps an empty network older than the threshold, with Docker nanosecond timestamps', () => {
-    expect(isStaleEmptyNetwork('0 2026-09-25T06:59:59.123456789Z\n', 4 * hour, now)).toBe(true);
+  const unix = (iso: string): string => String(Date.parse(iso) / 1000);
+
+  it('reaps an empty network older than the threshold', () => {
+    expect(isStaleEmptyNetwork(`0 ${unix('2026-09-25T06:59:59Z')}\n`, 4 * hour, now)).toBe(true);
   });
 
   it('keeps an empty network younger than the threshold, so a concurrent job can still attach to it', () => {
-    expect(isStaleEmptyNetwork('0 2026-09-25T11:59:58.5Z', 4 * hour, now)).toBe(false);
+    expect(isStaleEmptyNetwork(`0 ${unix('2026-09-25T11:59:58Z')}`, 4 * hour, now)).toBe(false);
   });
 
   it('keeps a network with containers attached', () => {
-    expect(isStaleEmptyNetwork('2 2026-09-20T00:00:00Z', 4 * hour, now)).toBe(false);
+    expect(isStaleEmptyNetwork(`2 ${unix('2026-09-20T00:00:00Z')}`, 4 * hour, now)).toBe(false);
   });
 
-  it('keeps a network whose creation time cannot be read', () => {
+  it('keeps a network whose creation time cannot be read, including the Go-rendered {{.Created}} string', () => {
     expect(isStaleEmptyNetwork('0', 0, now)).toBe(false);
     expect(isStaleEmptyNetwork('0 not-a-date', 0, now)).toBe(false);
+    expect(isStaleEmptyNetwork('0 2026-09-25 06:59:59.123456789 +0000 UTC', 0, now)).toBe(false);
   });
 });
 

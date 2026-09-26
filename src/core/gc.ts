@@ -72,16 +72,16 @@ export async function reapEgressNetworks(lister: NetworkLister, remover: Network
 }
 
 /**
- * Whether `docker network inspect --format '{{len .Containers}} {{.Created}}'` output describes a network
- * with no containers that is older than maxAgeMs. The age check keeps a gc in one job from removing a
+ * Whether `docker network inspect --format '{{len .Containers}} {{.Created.Unix}}'` output describes a network
+ * with no containers that is older than maxAgeMs. Unix seconds, because a network's `{{.Created}}` renders
+ * Go's `2026-09-25 06:59:59.123456789 +0000 UTC`, which has spaces and no reliable Date.parse reading. The age check keeps a gc in one job from removing a
  * network another job created moments ago and has not attached its first container to yet. An unreadable
  * creation time counts as young, so the network is kept.
  */
 export function isStaleEmptyNetwork(inspect: string, maxAgeMs: number, now: number): boolean {
   const [count, createdAt] = inspect.trim().split(' ');
-  if (count !== '0' || createdAt === undefined) return false;
-  const created = Date.parse(createdAt.replace(/(\.\d{3})\d+/, '$1'));
-  return !Number.isNaN(created) && now - created > maxAgeMs;
+  if (count !== '0' || createdAt === undefined || !/^\d+$/.test(createdAt)) return false;
+  return now - Number(createdAt) * 1000 > maxAgeMs;
 }
 
 /** Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs. */
@@ -94,7 +94,7 @@ export function dockerEgressNetworkLister(maxAgeMs = 0, now: () => number = Date
       names.map(async (name) => {
         const { stdout: count } = await execa(
           'docker',
-          ['network', 'inspect', name, '--format', '{{len .Containers}} {{.Created}}'],
+          ['network', 'inspect', name, '--format', '{{len .Containers}} {{.Created.Unix}}'],
           { reject: false },
         );
         return isStaleEmptyNetwork(count, maxAgeMs, now()) ? name : null;
