@@ -862,6 +862,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
     const maxTasks = parseLimit(values['max-tasks']);
+    // A blast-radius cap must not fall through to "process all" on a typo, 0 or a negative.
+    if (values['max-tasks'] !== undefined && maxTasks === undefined) {
+      return fail(`--max-tasks needs a positive integer, got "${String(values['max-tasks'])}".`);
+    }
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,

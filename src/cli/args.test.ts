@@ -432,9 +432,11 @@ describe('parseCli', () => {
     });
   });
 
-  it('falls back to no maxTasks field on an invalid --max-tasks', () => {
-    const cmd = parseCli(['watch', '--label', 'vanguard', '--max-tasks', 'soon'], '/work');
-    expect(cmd.kind === 'watch' && cmd.maxTasks === undefined).toBe(true);
+  it('rejects a --max-tasks that is not a positive integer instead of processing everything', () => {
+    for (const raw of ['soon', '0', '-2']) {
+      const cmd = parseCli(['watch', '--label', 'vanguard', `--max-tasks=${raw}`], '/work');
+      expect(cmd).toEqual({ kind: 'error', message: `--max-tasks needs a positive integer, got "${raw}".` });
+    }
   });
 
   it('leaves maxTasks unset when --max-tasks is absent', () => {
