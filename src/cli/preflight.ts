@@ -322,6 +322,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     } else {
       checks.push(await gitlabLabelsOk(run, cmd.repoPath, project, gitlabLabelsFor(cmd)));
     }
+    // The MR review dedupe counts only markers written by this user, and review-mr fails closed without it.
+    if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
+      const user = await runOk(run, cmd.repoPath, 'glab', ['api', 'user']);
+      checks.push(user.ok ? check('gitlab user', true) : check('gitlab user', false, 'unreadable (token cannot read GET /user)'));
+    }
   }
 
   if (isLoopCommand(cmd)) {

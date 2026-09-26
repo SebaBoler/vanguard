@@ -361,6 +361,23 @@ describe('runPreflight gitlab source', () => {
     expect(glabAuthCalled).toBe(true);
   });
 
+  it('fails doctor-mrs when the token cannot read the GitLab user the review dedupe needs', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'api' && args[1] === 'user') throw new Error('403 Forbidden');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: '[]' };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { kind: 'doctor-mrs', project: 'g/p', repoPath: '/repo', label: 'r', reviewingLabel: 'a', reviewedLabel: 'b' },
+      { env: { GITLAB_TOKEN: 'token', CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: gitlab user unreadable (token cannot read GET /user) -> stop before claim',
+    );
+  });
+
   it('skips glab auth check when GITLAB_TOKEN is set', async () => {
     let glabAuthCalled = false;
     const run: PreflightRunner = async (cmd, args) => {
