@@ -3,7 +3,7 @@ import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
-import { isKnownGitlabRemote } from '../runners/gitlab.js';
+import { isKnownGitlabRemote, parseGitlabProjectFromRemote } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -347,6 +347,10 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
       const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
       checks.push(gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env));
+      // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
+      if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
+        checks.push(check('gitlab project', false, `origin ${remote.stdout.trim()} names no group/project`));
+      }
     }
   }
 

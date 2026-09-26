@@ -239,6 +239,16 @@ describe('runPreflight', () => {
       expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
     });
 
+    it('fails before claim when a GitLab origin names no project', async () => {
+      const { run } = linearRunner('https://gitlab.com/');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: gitlab project origin https://gitlab.com/ names no group/project -> stop before claim',
+      );
+    });
+
     it.each([
       ['a GitHub remote', 'https://github.com/owner/repo.git'],
       ['a GitHub Enterprise remote', 'git@github.corp.com:o/r.git'],
