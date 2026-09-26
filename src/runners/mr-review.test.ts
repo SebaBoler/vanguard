@@ -3,6 +3,7 @@ import {
   parseMergeRequestRef,
   mergeRequestReviewMarker,
   hasMergeRequestReviewMarker,
+  hasMergeRequestReviewForHead,
   buildMergeRequestReviewComment,
   buildMergeRequestReviewPrompt,
   reviewMergeRequest,
@@ -185,6 +186,13 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(reviewer).toHaveBeenCalledOnce();
     expect(posted(calls)).toHaveLength(1);
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
+  });
+
+  it('reads the glab user once per runner, however many MRs it checks', async () => {
+    const { glab, calls } = makeGlab('[]');
+    await hasMergeRequestReviewForHead({ project: 'g/p', iid: 5 }, HEAD, glab);
+    await hasMergeRequestReviewForHead({ project: 'g/p', iid: 6 }, HEAD, glab);
+    expect(calls.filter((c) => c[0] === 'api' && c[1] === 'user')).toHaveLength(1);
   });
 
   it('ignores a marker another user posted, so a participant cannot suppress the review', async () => {

@@ -164,6 +164,23 @@ export function hasMergeRequestReviewMarker(body: string, sha: string): boolean 
   return Array.from(body.matchAll(MR_REVIEW_MARKER_RE)).some((m) => m[1] === sha);
 }
 
+// The glab user is constant for the process, and watch-mrs checks every MR on every poll. A failed
+// lookup is dropped from the cache so the next call retries it.
+const glabUsers = new WeakMap<GlabRunner, Promise<string>>();
+
+function glabUser(glab: GlabRunner): Promise<string> {
+  const cached = glabUsers.get(glab);
+  if (cached !== undefined) return cached;
+  const user = glab(['api', 'user']).then((out) => {
+    const name = (JSON.parse(out) as { username?: string }).username;
+    if (name === undefined || name === '') throw new Error('glab api user returned no username');
+    return name;
+  });
+  glabUsers.set(glab, user);
+  user.catch(() => glabUsers.delete(glab));
+  return user;
+}
+
 /**
  * Whether one of the MR's latest 100 notes carries the Vanguard review marker for `sha` and was written by
  * the user glab runs as. Only that author counts: anyone on the MR can post an invisible marker note to
@@ -174,8 +191,7 @@ export async function hasMergeRequestReviewForHead(
   sha: string,
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<boolean> {
-  const self = (JSON.parse(await glab(['api', 'user'])) as { username?: string }).username;
-  if (self === undefined || self === '') throw new Error('glab api user returned no username');
+  const self = await glabUser(glab);
   const out = await glab([
     'api',
     `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
