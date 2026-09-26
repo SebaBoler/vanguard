@@ -1176,8 +1176,8 @@ Commands:
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
-    --max-age-hours <n>    Only reap resources older than n hours (default: 6); empty egress
-                           networks always wait 10 minutes, even with 0
+    --max-age-hours <n>    Only reap resources older than n hours (default: 6). Does not apply
+                           to empty egress networks: they are reaped after 10 minutes
     --remote <owner/repo>  Also delete merged remote chore/vanguard-* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)
