@@ -119,6 +119,8 @@ const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitH
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
 
+A Linear task in a repo whose `origin` is on gitlab.com, or on the self-hosted host named by `GITLAB_HOST`, opens a draft GitLab MR through `glab` instead, and the review verdict lands as an MR note. Agent runs never write CI config: `.github/workflows/`, `.gitlab-ci.yml` and every `.yml`/`.yaml` under `.gitlab/`, including insights, dashboards and Kubernetes agent config, are dropped on copy-back with a warning, so a task that only edits those files ends with no changes; make such edits by hand. `vanguard review-mr` skips an MR head it already reviewed, so a CI retry after a completed review posts no second review. Two runs on the same head that overlap can both post, since the check runs before the review and the note is posted after it. Only a marker in a note by the user `glab` runs as counts, so another participant cannot suppress the review; after a switch to a token of another user, earlier reviews stop counting and each open MR head is reviewed once more. When it cannot read that user (the token needs `GET /user`) or the MR notes, it fails and posts nothing, and the error says which. An incomplete review is retried once with a larger budget; if the retry is also incomplete, `review-mr` posts nothing and exits non-zero, so the head is never marked as reviewed.
+
 `LinearCliTaskFetcher` drives Linear entirely through the `linear` CLI (from schpet/linear-cli; authenticate with `linear auth login` or set `LINEAR_API_KEY`), covering fetch/list/comment with no SDK dependency. The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
 
 ## Auth
@@ -344,6 +346,8 @@ vanguard run --linear TES-1 --fork 3
 
 The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
 
+`VANGUARD_OWNER_LABEL=<id>` labels every container and network with `vanguard.owner=<id>`, so a CI job can remove its own leftovers with `docker rm -f $(docker ps -aq --filter label=vanguard.owner=<id>)`.
+
 ### Host LLM proxy
 
 `vanguard run --llm-proxy` (also on `watch`) keeps the real Anthropic credential out of the sandbox entirely. A trusted reverse-proxy sidecar holds the credential; the sandbox is handed only a random **per-run nonce** as `ANTHROPIC_AUTH_TOKEN` and points `ANTHROPIC_BASE_URL` at the sidecar. The sidecar validates the nonce, swaps in the real credential (OAuth `Authorization: Bearer` or `x-api-key`), and is the only thing that talks to `api.anthropic.com`.
@@ -477,6 +481,8 @@ CLAUDE_CLI_VERSION=2.1.260 ./docker/build.sh
 
 The check is deliberately **not** an auto-update. Refreshing an image needs the network at run start and rewrites an image that concurrent sandboxes share — on the machines where this drift actually bites, the build is itself the unreliable step, so doing it automatically would turn a rare manual command into a recurring mid-run failure. `VANGUARD_SKIP_IMAGE_CHECK=1` bypasses the gate if you are deliberately running an older image.
 
+`VANGUARD_SANDBOX_IMAGE` overrides the image name used everywhere the sandbox runs (main sandbox, preflight, and the llm-proxy/egress sidecars) — set it to an image ID (`sha256:...`) in CI so a job pins the exact image it just built instead of the mutable `vanguard-sandbox:latest` tag, which another pipeline on a shared Docker host could overwrite between build and run.
+
 **Shared behaviour (both sources):**
 
 - `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest` (including the Claude CLI version inside it — see [Keeping the sandbox image current](#keeping-the-sandbox-image-current)), source auth, GitHub routing labels, and Linear env/skills setup. On a GitHub repo it also verifies the "Allow GitHub Actions to create and approve pull requests" setting (best-effort — skipped if the token cannot read it) and, when Codex is selected with a `CODEX_AUTH_JSON` subscription credential, validates its shape before the run.
@@ -581,7 +587,7 @@ Three tiers, each building on the last — for the full copy-paste setup (both w
 - **Intermediate** — [run it on another repo](#run-it-on-another-repo): cross-repo checkout + `ready for spec` (spec → build in one run) + custom skills.
 - **Full** — [cross-provider on a Codex subscription](#cross-provider-on-a-codex-subscription-no-openai-key): Opus plans, Sonnet implements, Codex reviews.
 
-The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
+The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)). Add `--max-tasks <n>` to cap how many ready issues a single poll claims and runs in each phase (spec, then agent), so a mislabelled batch can't flood one CI runner with sandboxed runs and PRs in one pass.
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 

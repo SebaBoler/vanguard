@@ -71,22 +71,59 @@ export async function reapEgressNetworks(lister: NetworkLister, remover: Network
   return orphans;
 }
 
-/** Docker-backed lister of vg-egr-* networks that have no attached containers. */
-export function dockerEgressNetworkLister(): NetworkLister {
+/**
+ * Whether `docker network inspect --format '{{len .Containers}} {{.Created.Unix}}'` output describes a network
+ * with no containers that is older than maxAgeMs. Unix seconds, because a network's `{{.Created}}` renders
+ * Go's `2026-09-25 06:59:59.123456789 +0000 UTC`, which has spaces and no reliable Date.parse reading. The age check keeps a gc in one job from removing a
+ * network another job created moments ago and has not attached its first container to yet. An unreadable
+ * creation time counts as young, so the network is kept.
+ */
+export function isStaleEmptyNetwork(inspect: string, maxAgeMs: number, now: number): boolean {
+  const [count, createdAt] = inspect.trim().split(' ');
+  if (count !== '0' || createdAt === undefined || !/^\d+$/.test(createdAt)) return false;
+  return now - Number(createdAt) * 1000 > maxAgeMs;
+}
+
+/**
+ * How long an empty egress network is kept. The race it covers (a concurrent job between `network create`
+ * and its first `network connect`) is seconds wide, so minutes, independent of --max-age-hours: a
+ * `--max-age-hours 0` cleanup must not reopen that race.
+ */
+export const EGRESS_NETWORK_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs.
+ * Networks whose inspect output cannot be read are kept, and one warning names them, so an engine that
+ * rejects the template shows up instead of quietly reaping nothing.
+ */
+export function dockerEgressNetworkLister(
+  maxAgeMs = EGRESS_NETWORK_GRACE_MS,
+  now: () => number = Date.now,
+  warn: (line: string) => void = console.warn,
+): NetworkLister {
   return async (): Promise<string[]> => {
     const { stdout } = await execa('docker', ['network', 'ls', '--filter', 'name=vg-egr-', '--format', '{{.Name}}']);
     if (stdout.trim() === '') return [];
     const names = stdout.split('\n').filter((n) => n.startsWith('vg-egr-'));
+    const unreadable: string[] = [];
     const results = await Promise.all(
       names.map(async (name) => {
-        const { stdout: count } = await execa(
+        const inspect = await execa(
           'docker',
-          ['network', 'inspect', name, '--format', '{{len .Containers}}'],
+          ['network', 'inspect', name, '--format', '{{len .Containers}} {{.Created.Unix}}'],
           { reject: false },
         );
-        return count.trim() === '0' ? name : null;
+        const out = inspect.stdout ?? '';
+        if (!/^\d+ \d+$/.test(out.trim())) {
+          unreadable.push(`${name} (${(inspect.stderr ?? '').trim() || 'no output'})`);
+          return null;
+        }
+        return isStaleEmptyNetwork(out, maxAgeMs, now()) ? name : null;
       }),
     );
+    if (unreadable.length > 0) {
+      warn(`gc: kept ${unreadable.length} vg-egr-* network(s) whose inspect output could not be read: ${unreadable.join(', ')}`);
+    }
     return results.filter((name): name is string => name !== null);
   };
 }

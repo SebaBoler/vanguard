@@ -19,6 +19,7 @@ import {
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
@@ -35,7 +36,7 @@ import {
   STAGE,
 } from '../pipeline/pipeline.js';
 import { defaultGhRunner } from '../tasks/github.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -201,7 +202,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     const sandbox =
       deps._sandbox ??
       new DockerSandboxProvider({
-        image: 'vanguard-sandbox:latest',
+        image: sandboxImage(),
         secrets: {
           ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth
             ? authSecrets(deps.auth)
@@ -246,14 +247,15 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         });
       }
 
-      const prompt = buildRevisionPrompt(pr, actionable);
-      // Override the implementer's promptTemplate with the revision prompt.
+      // Override the implementer's promptTemplate with the revision prompt. It holds review comments and
+      // the diff, so it goes in as a variable and is never expanded as a template (see literalPrompt).
+      const { promptTemplate, variables } = literalPrompt(buildRevisionPrompt(pr, actionable));
       pipeline = pipeline.map((stage) =>
-        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate: prompt } : stage,
+        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate } : stage,
       );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
-      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent });
+      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent, variables });
 
       // Run the resolved verification command after applying changes and before pushing, with one
       // bounded repair iteration on red — reusing renderVerificationFeedback and the same resume
@@ -272,7 +274,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           verifyRepairs += 1;
           log(`revise-pr ${target.repoSlug}#${target.number}: verify FAILED (attempt ${verifyRepairs}/${MAX_VERIFY_REPAIRS}) — resuming implement session`);
           const repaired = await runAgent(ctx, {
-            promptTemplate: `${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`,
+            ...literalPrompt(`${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`),
             agent: agents.agent,
             resumeSessionId,
           });

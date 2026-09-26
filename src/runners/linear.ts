@@ -6,6 +6,7 @@ import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import { runSourcedIssue } from './source-adapter.js';
+import { knownGitlabProjectFromOrigin, publishGitlabVerdict, addGitlabFailureLabel } from './gitlab.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL } from '../github-labels.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
@@ -13,7 +14,8 @@ import type { Task, SubTask } from '../tasks/fetcher.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
-import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
+import type { GlabRunner } from '../tasks/gitlab.js';
+import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps extends RunIssueDeps {
@@ -52,7 +54,12 @@ function linearStages(): PipelineStage[] {
   return [{ ...implementer, promptTemplate: readAndImplement }, ...base.slice(1)];
 }
 
-function linearAdapter(deps: RunLinearIssueDeps): SourceAdapter {
+/**
+ * @internal Exported for unit tests; production callers use runLinearIssue. `gitlabProject` is set
+ * when origin is on gitlab.com or GITLAB_HOST: the draft MR, verdict note and failure labels then go
+ * through glab.
+ */
+export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, glab?: GlabRunner): SourceAdapter {
   return {
     async prepare(issueRef: string) {
       const [task, skills] = await Promise.all([
@@ -65,8 +72,12 @@ function linearAdapter(deps: RunLinearIssueDeps): SourceAdapter {
     taskId: (task) => `linear-${task.id.toLowerCase()}`,
     stages: linearStages,
     variables: (issueRef: string) => ({ ISSUE: issueRef }),
-    publishVerdict: publishReviewVerdict,
+    ...(gitlabProject !== undefined ? { reviewCli: 'glab' as const } : {}),
+    publishVerdict: gitlabProject === undefined
+      ? publishReviewVerdict
+      : (input: PublishVerdictInput) => publishGitlabVerdict(gitlabProject, input, glab),
     async addFailureLabel(prUrl: string, kind: ProofFailureKind) {
+      if (gitlabProject !== undefined) return addGitlabFailureLabel(gitlabProject, prUrl, kind, glab);
       const label = kind === 'verify' ? GITHUB_VERIFY_FAILED_LABEL : GITHUB_VISUAL_PROOF_FAILED_LABEL;
       await addPrFailureLabel(deps.repoPath, prUrl, label);
     },
@@ -84,12 +95,13 @@ function linearAdapter(deps: RunLinearIssueDeps): SourceAdapter {
 
 /**
  * Run one Linear issue end to end: the agent reads it from inside the sandbox via the injected
- * linear-cli skill, runs the canonical implement/review/simplify pipeline, opens a draft GitHub PR,
- * and comments the PR link back onto the issue. Each call provisions its own sandbox, so callers can
- * fan several out concurrently (see runLinearParent).
+ * linear-cli skill, runs the canonical implement/review/simplify pipeline, opens a draft GitHub PR
+ * (a draft GitLab MR when origin is on gitlab.com or GITLAB_HOST), and comments the PR/MR link back
+ * onto the issue. Each call provisions its own sandbox, so callers can fan several out concurrently
+ * (see runLinearParent).
  */
 export async function runLinearIssue(issueRef: string, deps: RunLinearIssueDeps): Promise<RunLinearIssueResult> {
-  return runSourcedIssue(issueRef, deps, linearAdapter(deps));
+  return runSourcedIssue(issueRef, deps, linearAdapter(deps, await knownGitlabProjectFromOrigin(deps.repoPath)));
 }
 
 /** Fan a Linear parent issue out into one independent run (and PR) per sub-issue. */

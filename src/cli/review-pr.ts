@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -8,6 +8,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewPullRequest } from '../runners/pr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -100,7 +101,7 @@ async function runDefaultReviewer(
   try {
     const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       secrets: {
         ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
@@ -115,7 +116,7 @@ async function runDefaultReviewer(
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
         agent: agents.agent,
-        promptTemplate: buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry }),
+        ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? 24 : 16,

@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
@@ -286,7 +287,7 @@ export async function runSourcedIssue(
   try {
     const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
         ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
@@ -426,7 +427,8 @@ export async function runSourcedIssue(
           .filter((s): s is string => s !== undefined)
           .join('\n\n');
         const repaired = await runAgent(ctx, {
-          promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          // Test output is author-controlled text; see literalPrompt.
+          ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
           agent: agents.agent,
           resumeSessionId,
           ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),

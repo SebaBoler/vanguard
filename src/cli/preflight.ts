@@ -2,7 +2,8 @@ import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
-import { SANDBOX_CLAUDE_VERSION, isOlderVersion } from '../sandbox/docker.js';
+import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
+import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -38,7 +39,6 @@ export interface PreflightReport {
 }
 
 const MIN_NODE_MAJOR = 24;
-const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
 /** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
 export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
@@ -287,15 +287,16 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const dockerInfo = await runOk(run, cmd.repoPath, 'docker', ['info']);
   checks.push(dockerInfo.ok ? check('docker daemon', true) : check('docker daemon', false, 'unavailable'));
 
-  const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
-  checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
+  const image = sandboxImage(env);
+  const sandboxImageCheck = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', image]);
+  checks.push(sandboxImageCheck.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${image}`));
 
-  if (sandboxImage.ok) {
-    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', SANDBOX_IMAGE, 'claude', '--version']);
+  if (sandboxImageCheck.ok) {
+    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', image, 'claude', '--version']);
     const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
     checks.push(
       found === undefined
-        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
+        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${image}`)
         : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
           ? check(
               SANDBOX_CLI_CHECK,
@@ -321,6 +322,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     } else {
       checks.push(await gitlabLabelsOk(run, cmd.repoPath, project, gitlabLabelsFor(cmd)));
     }
+    // The MR review dedupe counts only markers written by this user, and review-mr fails closed without it.
+    if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
+      const user = await runOk(run, cmd.repoPath, 'glab', ['api', 'user']);
+      checks.push(user.ok ? check('gitlab user', true) : check('gitlab user', false, 'unreadable (token cannot read GET /user)'));
+    }
   }
 
   if (isLoopCommand(cmd)) {
@@ -343,6 +349,13 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
       checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+      // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
+      const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
+      checks.push(gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env));
+      // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
+      if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
+        checks.push(check('gitlab project', false, `origin ${redactRemote(remote.stdout)} names no group/project`));
+      }
     }
   }
 

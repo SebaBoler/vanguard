@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sandboxResourceLimits, sandboxSecurityOpts, sidecarMemoryArgs } from './limits.js';
+import { ownerLabelArgs, sandboxResourceLimits, sandboxSecurityOpts, sidecarMemoryArgs } from './limits.js';
 
 describe('sandboxResourceLimits', () => {
   it('uses defaults when no env is set', () => {
@@ -76,5 +76,22 @@ describe('sidecarMemoryArgs', () => {
   it('omits the cap on 0 / invalid', () => {
     expect(sidecarMemoryArgs({ VANGUARD_SIDECAR_MEMORY_MB: '0' } as NodeJS.ProcessEnv)).toEqual([]);
     expect(sidecarMemoryArgs({ VANGUARD_SIDECAR_MEMORY_MB: 'off' } as NodeJS.ProcessEnv)).toEqual([]);
+  });
+});
+
+describe('ownerLabelArgs', () => {
+  it('returns nothing when VANGUARD_OWNER_LABEL is unset', () => {
+    expect(ownerLabelArgs({})).toEqual([]);
+  });
+
+  it('returns nothing when VANGUARD_OWNER_LABEL is empty', () => {
+    expect(ownerLabelArgs({ VANGUARD_OWNER_LABEL: '' } as NodeJS.ProcessEnv)).toEqual([]);
+  });
+
+  it('returns the label flag when VANGUARD_OWNER_LABEL is set', () => {
+    expect(ownerLabelArgs({ VANGUARD_OWNER_LABEL: 'ci-job-42' } as NodeJS.ProcessEnv)).toEqual([
+      '--label',
+      'vanguard.owner=ci-job-42',
+    ]);
   });
 });

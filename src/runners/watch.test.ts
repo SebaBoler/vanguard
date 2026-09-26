@@ -108,6 +108,44 @@ describe('watchOnce', () => {
       'watch D: skipped -> already claimed',
     ]);
   });
+
+  it('claims and processes only the first maxTasks ready items, leaving the rest untouched', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1, maxTasks: 2 });
+
+    expect(claimed).toEqual(['A', 'B']);
+    expect(tick.opened).toEqual(['A', 'B']);
+  });
+
+  it('processes every ready item when maxTasks is unset', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1 });
+
+    expect(claimed).toEqual(['A', 'B', 'C']);
+    expect(tick.opened).toEqual(['A', 'B', 'C']);
+  });
 });
 
 describe('specOnce', () => {
@@ -138,6 +176,25 @@ describe('specOnce', () => {
       'spec C: failed -> retry later',
       'spec D: skipped -> already claimed',
     ]);
+  });
+
+  it('claims and specs only the first maxTasks ready items', async () => {
+    const claimed: string[] = [];
+    const logs: string[] = [];
+    const primitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    const tick = await specOnce(primitives, { concurrency: 1, maxTasks: 1, log: (msg) => logs.push(msg) });
+
+    expect(claimed).toEqual(['A']);
+    expect(tick.advanced).toEqual(['A']);
+    expect(logs[0]).toBe('spec: poll -> 3 ready (capped to 1 by --max-tasks)');
   });
 });
 

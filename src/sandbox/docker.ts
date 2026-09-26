@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { SandboxError } from '../core/errors.js';
-import { sandboxSecurityOpts } from './limits.js';
+import { ownerLabelArgs, sandboxSecurityOpts } from './limits.js';
 import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, SandboxConfig } from './provider.js';
 
 /**
@@ -28,6 +28,16 @@ export function toExecResult(raw: {
 }
 
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
+
+/**
+ * The sandbox image to run: `VANGUARD_SANDBOX_IMAGE` when set (CI passes the exact `sha256:...` ID it
+ * just built, since the shared mutable `vanguard-sandbox:latest` tag on a shared Docker host can be
+ * overwritten by another pipeline between build and run), else the mutable tag for local/dev use.
+ */
+export function sandboxImage(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env['VANGUARD_SANDBOX_IMAGE'];
+  return override !== undefined && override !== '' ? override : DEFAULT_IMAGE;
+}
 
 /**
  * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
@@ -67,7 +77,13 @@ const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
  */
 export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
   const run = opts.run ?? defaultDockerRunner;
-  const image = opts.image ?? DEFAULT_IMAGE;
+  const image = opts.image ?? sandboxImage();
+  // `docker commit` onto an image ID or a digest reference cannot change what it names.
+  if (/^(sha256:)?[a-f0-9]{12,64}$|@sha256:[a-f0-9]{64}$/.test(image)) {
+    throw new SandboxError(
+      `Cannot refresh ${image}: an image ID or digest is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
+    );
+  }
   const helper = 'vg-cli-refresh';
   const { cwd } = opts;
 
@@ -121,7 +137,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   constructor(config: SandboxConfig = {}) {
     this.config = config;
     this.id = randomUUID();
-    this.image = config.image ?? DEFAULT_IMAGE;
+    this.image = config.image ?? sandboxImage();
     this.workdir = config.workdir ?? DEFAULT_WORKDIR;
     this.secretsMode = config.secretsMode ?? 'tmpfs';
     this.secrets = { ...config.secrets };
@@ -170,7 +186,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   /** Pure `docker run` argv assembly (no docker invocation), so hardening flags are unit-testable
    * without Docker installed. */
   buildRunArgs(): string[] {
-    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`];
+    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`, ...ownerLabelArgs()];
     // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
     // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
     args.push('--add-host', 'host.docker.internal:host-gateway');

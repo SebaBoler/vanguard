@@ -1,4 +1,4 @@
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -6,11 +6,19 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildMergeRequestReviewPrompt, reviewMergeRequest } from '../runners/mr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { MergeRequestForReview, MergeRequestReviewer, ReviewMergeRequestDeps, ReviewMergeRequestResult } from '../runners/mr-review.js';
+import type {
+  MergeRequestForReview,
+  MergeRequestReviewAttempt,
+  MergeRequestReviewOutcome,
+  MergeRequestReviewer,
+  ReviewMergeRequestDeps,
+  ReviewMergeRequestResult,
+} from '../runners/mr-review.js';
 import type { Command } from './args.js';
 
 type ReviewMrCommand = Extract<Command, { kind: 'review-mr' }>;
@@ -20,32 +28,45 @@ export interface ReviewMrCommandDeps {
   reviewer?: MergeRequestReviewer;
   reviewMergeRequest?: ReviewMergeRequestRunner;
   log?: (line: string) => void;
+  /** See ReviewMergeRequestDeps.headDedupe. */
+  headDedupe?: boolean;
 }
 
 /** Review an existing GitLab MR and post a non-blocking Vanguard review note. */
 export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrCommandDeps = {}): Promise<void> {
   const log = deps.log ?? console.log;
   const runReview = deps.reviewMergeRequest ?? reviewMergeRequest;
+  const headDedupe = deps.headDedupe !== undefined ? { headDedupe: deps.headDedupe } : {};
   if (deps.reviewer !== undefined) {
-    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, log });
-    log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
+    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, log, ...headDedupe });
+    logDone(result, log);
     return;
   }
 
   const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
-  const sandboxContext = await startSandboxContext({
-    egress: cmd.egress,
-    llmProxy: cmd.llmProxy === true,
-    ...(auth !== undefined ? { auth } : {}),
-    ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-  });
+  // Started on the first reviewer call, so an already-reviewed head never starts a sandbox, and shared by
+  // the incomplete-retry so it does not rebuild the egress network and llm-proxy sidecar.
+  let sandboxContext: SandboxContext | undefined;
+  const reviewer: MergeRequestReviewer = async (mr, opts) => {
+    sandboxContext ??= await startSandboxContext({
+      egress: cmd.egress,
+      llmProxy: cmd.llmProxy === true,
+      ...(auth !== undefined ? { auth } : {}),
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+    });
+    return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext, opts);
+  };
   try {
-    const reviewer: MergeRequestReviewer = (mr) => runDefaultMrReviewer(mr, cmd, auth, sandboxContext);
-    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log });
-    log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
+    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log, ...headDedupe });
+    logDone(result, log);
   } finally {
-    await sandboxContext.destroy();
+    await sandboxContext?.destroy();
   }
+}
+
+/** A skipped head already logged "already reviewed -> skip"; "done" would read as a fresh review. */
+function logDone(result: ReviewMergeRequestResult, log: (line: string) => void): void {
+  if (result.commentBody !== undefined) log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
 }
 
 async function runDefaultMrReviewer(
@@ -53,7 +74,8 @@ async function runDefaultMrReviewer(
   cmd: ReviewMrCommand,
   auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
-): Promise<string> {
+  opts: MergeRequestReviewAttempt,
+): Promise<MergeRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
   // Per-run provider sidecars (e.g. OpenAI for Codex) hold the real key out of the sandbox. Created
@@ -65,7 +87,7 @@ async function runDefaultMrReviewer(
   try {
     const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       secrets: {
         ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
@@ -80,14 +102,14 @@ async function runDefaultMrReviewer(
       const result = await runAgent(ctx, {
         stageName: 'mr-review',
         agent: agents.agent,
-        promptTemplate: buildMergeRequestReviewPrompt(mr),
+        ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
-        effort: 'high',
-        maxTurns: 8,
+        effort: opts.isRetry ? 'xhigh' : 'high',
+        maxTurns: opts.isRetry ? 24 : 16,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });
-      return result.finalText;
+      return { text: result.finalText, completed: result.completed };
     } finally {
       await disposeContext(ctx);
     }

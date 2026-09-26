@@ -137,6 +137,36 @@ describe('runPreflight', () => {
     expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
   });
 
+  it('inspects VANGUARD_SANDBOX_IMAGE, not the mutable tag, when the override is set', async () => {
+    const inspected: string[] = [];
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
+      if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
+      if (cmd === 'docker' && args[0] === 'info') return { stdout: '' };
+      if (cmd === 'docker' && args[0] === 'image') {
+        inspected.push(args[2]!);
+        return { stdout: '' };
+      }
+      if (cmd === 'docker' && args[0] === 'run') {
+        inspected.push(args[2]!);
+        return { stdout: '2.1.260 (Claude Code)' };
+      }
+      if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
+      if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify([]) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+    };
+
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', VANGUARD_SANDBOX_IMAGE: 'sha256:deadbeef' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(inspected).toEqual(['sha256:deadbeef', 'sha256:deadbeef']);
+    expect(report.checks.find((c) => c.name === 'sandbox image')?.ok).toBe(true);
+    expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
+  });
+
   it('checks PR review loop labels before watch-prs can claim a PR', async () => {
     const report = await runPreflight(doctorPrs(), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
@@ -169,6 +199,78 @@ describe('runPreflight', () => {
     expect(report.ok).toBe(false);
     expect(formatPreflightReport(report)).toContain('preflight: linear api missing -> stop before claim');
     expect(formatPreflightReport(report)).toContain('preflight: linear skills missing -> stop before claim');
+  });
+
+  describe('Linear review-surface auth', () => {
+    const linearDoctor: DoctorCommand = { kind: 'doctor', source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills' };
+    const env = { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' };
+
+    function linearRunner(origin: string, glabAuthOk = true): { run: PreflightRunner; calls: string[] } {
+      const calls: string[] = [];
+      const run: PreflightRunner = async (cmd, args) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (cmd === 'git' && args[0] === 'remote') return { stdout: origin };
+        if (cmd === 'glab' && args[0] === 'auth') {
+          if (!glabAuthOk) throw new Error('not logged in');
+          return { stdout: '' };
+        }
+        if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+        return { stdout: '' };
+      };
+      return { run, calls };
+    }
+
+    it('checks glab auth when origin is a GitLab remote', async () => {
+      const { run, calls } = linearRunner('git@gitlab.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(true);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(report.checks.some((c) => c.name === 'github auth')).toBe(false);
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
+    });
+
+    it('fails before claim when glab is not authenticated for a GitLab remote', async () => {
+      const { run } = linearRunner('git@gitlab.com:group/project.git', false);
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    });
+
+    it('fails before claim when a GitLab origin names no project', async () => {
+      const { run } = linearRunner('https://gitlab.com/');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: gitlab project origin https://gitlab.com/ names no group/project -> stop before claim',
+      );
+    });
+
+    it.each([
+      ['a GitHub remote', 'https://github.com/owner/repo.git'],
+      ['a GitHub Enterprise remote', 'git@github.corp.com:o/r.git'],
+      ['a self-hosted remote without GITLAB_HOST', 'git@git.example.com:group/project.git'],
+    ])('checks gh auth when origin is %s', async (_label, origin) => {
+      const { run, calls } = linearRunner(origin);
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
+      expect(report.checks.some((c) => c.name === 'gitlab auth')).toBe(false);
+      expect(calls).toContain('gh auth status');
+      expect(calls).not.toContain('glab auth status');
+    });
+
+    it('checks glab auth for a self-hosted remote that matches GITLAB_HOST', async () => {
+      const { run, calls } = linearRunner('git@git.example.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env: { ...env, GITLAB_HOST: 'https://git.example.com:8443' }, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
+    });
   });
 
   it('fails provider auth when doctor uses codex but CODEX_API_KEY/OPENAI_API_KEY are absent', async () => {
@@ -257,6 +359,23 @@ describe('runPreflight gitlab source', () => {
     };
     await runPreflight(baseCmd, { env: {}, nodeVersion: '24.0.0', run });
     expect(glabAuthCalled).toBe(true);
+  });
+
+  it('fails doctor-mrs when the token cannot read the GitLab user the review dedupe needs', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'api' && args[1] === 'user') throw new Error('403 Forbidden');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: '[]' };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { kind: 'doctor-mrs', project: 'g/p', repoPath: '/repo', label: 'r', reviewingLabel: 'a', reviewedLabel: 'b' },
+      { env: { GITLAB_TOKEN: 'token', CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: gitlab user unreadable (token cannot read GET /user) -> stop before claim',
+    );
   });
 
   it('skips glab auth check when GITLAB_TOKEN is set', async () => {

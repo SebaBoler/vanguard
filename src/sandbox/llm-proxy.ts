@@ -2,7 +2,8 @@ import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
-import { sidecarMemoryArgs } from './limits.js';
+import { sandboxImage } from './docker.js';
+import { ownerLabelArgs, sidecarMemoryArgs } from './limits.js';
 import type { ProviderProxySecrets } from '../agents/registry.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
 
@@ -66,7 +67,9 @@ export async function startLlmProxy(opts: {
   docker?: DockerRunner;
 }): Promise<LlmProxy> {
   const docker = opts.docker ?? defaultDocker;
-  const image = opts.image ?? 'vanguard-sandbox:latest';
+  // The sidecar runs a small node script inside the sandbox image itself (no dedicated proxy
+  // image), so it must follow the same CI-pinned override as the main sandbox.
+  const image = opts.image ?? sandboxImage();
   const upstream: Upstream = opts.upstream ?? 'anthropic';
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;
@@ -79,7 +82,7 @@ export async function startLlmProxy(opts: {
 
   try {
     // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
-    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
+    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...ownerLabelArgs(), ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
     await docker(['network', 'connect', opts.network, name]);
     await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
     // The shared logic must sit next to the server so its relative import resolves.

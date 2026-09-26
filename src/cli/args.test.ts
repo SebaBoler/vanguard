@@ -418,6 +418,32 @@ describe('parseCli', () => {
     });
   });
 
+  it('parses a valid --max-tasks on watch', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--max-tasks', '3'], '/work')).toEqual({
+      kind: 'watch',
+      source: 'linear',
+      label: 'vanguard',
+      maxTasks: 3,
+      repoPath: '/work',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+    });
+  });
+
+  it('rejects a --max-tasks that is not a positive integer instead of processing everything', () => {
+    for (const raw of ['soon', '0', '-2']) {
+      const cmd = parseCli(['watch', '--label', 'vanguard', `--max-tasks=${raw}`], '/work');
+      expect(cmd).toEqual({ kind: 'error', message: `--max-tasks needs a positive integer, got "${raw}".` });
+    }
+  });
+
+  it('leaves maxTasks unset when --max-tasks is absent', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard'], '/work');
+    expect(cmd.kind === 'watch' && cmd.maxTasks === undefined).toBe(true);
+  });
+
   it('parses a github watch with markers and interval', () => {
     expect(
       parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--claimed-state', 'wip', '--interval', '30', '--once'], '/work'),

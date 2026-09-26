@@ -81,10 +81,20 @@ interface WatchLogOptions {
 
 interface WatchOnceOptions extends WatchLogOptions {
   concurrency?: number;
+  /** Cap the number of ready tasks claimed and processed this poll, per phase (unset: process all). */
+  maxTasks?: number;
 }
 
 function operatorLog(opts: WatchLogOptions, msg: string): void {
   opts.log?.(msg);
+}
+
+/** Apply --max-tasks in fetcher order and log the poll: the rest are left unclaimed for the next poll. */
+function capReady<T>(ready: T[], opts: WatchOnceOptions, phase: string): T[] {
+  const toProcess = opts.maxTasks !== undefined ? ready.slice(0, opts.maxTasks) : ready;
+  const cappedNote = toProcess.length < ready.length ? ` (capped to ${toProcess.length} by --max-tasks)` : '';
+  operatorLog(opts, `${phase}: poll -> ${ready.length} ready${cappedNote}`);
+  return toProcess;
 }
 
 /**
@@ -93,11 +103,10 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
  * claim-before-run ordering and dedup are unit-testable without Linear.
  */
 export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOptions = {}): Promise<WatchTick> {
-  const ready = await primitives.listReady();
   const phase = opts.phase ?? 'watch';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
+  const toProcess = capReady(await primitives.listReady(), opts, phase);
   const results = await fanOut(
-    ready,
+    toProcess,
     async (item): Promise<{ id: string; kind: Kind }> => {
       try {
         await primitives.claim(item.id);
@@ -160,11 +169,10 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
  * with honest spec semantics instead of PR semantics — it never opens a PR.
  */
 export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
-  const ready = await primitives.listReady();
   const phase = opts.phase ?? 'spec';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
+  const toProcess = capReady(await primitives.listReady(), opts, phase);
   const results = await fanOut(
-    ready,
+    toProcess,
     async (item): Promise<{ id: string; kind: SpecKind }> => {
       try {
         await primitives.claim(item.id);
@@ -221,6 +229,8 @@ export interface WatchLinearOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   linear?: LinearCliRunner;
 }
@@ -399,6 +409,8 @@ interface LoopControls {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -409,6 +421,7 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
     if (opts.signal?.aborted === true) return;
     const tick = await watchOnce(primitives, {
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      ...(opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {}),
       log,
       phase: 'watch',
     });
@@ -441,7 +454,8 @@ export async function runLoopV1(
   const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
   for (;;) {
     if (opts.signal?.aborted === true) return;
-    const spec = await specOnce(specPrimitives, { ...concurrency, log, phase: 'spec' });
+    const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
+    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
     // GitHub's label index is eventually consistent: a label written by the spec pass may not
     // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
@@ -459,7 +473,7 @@ export async function runLoopV1(
       ...agentPrimitives,
       listReady: async () => agentReady,
     };
-    const agent = await watchOnce(agentThisTick, { ...concurrency, log, phase: 'watch' });
+    const agent = await watchOnce(agentThisTick, { ...concurrency, ...maxTasks, log, phase: 'watch' });
     log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
@@ -474,6 +488,8 @@ export interface WatchLinearLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -506,6 +522,8 @@ export interface WatchGithubOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -604,6 +622,8 @@ export interface WatchGithubLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 
@@ -628,6 +648,8 @@ export interface WatchGithubProjectOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -748,6 +770,8 @@ export interface WatchGitlabOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   /** Injectable runner for tests. Defaults to `defaultGlabRunner`. */
   gl?: GlabRunner;
@@ -850,6 +874,8 @@ export interface WatchGitlabLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
 }
 

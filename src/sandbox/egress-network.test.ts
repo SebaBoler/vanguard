@@ -38,6 +38,43 @@ test('the proxy runs as PID 1 under a restart policy — not an exec into a slee
   expect(calls.filter((c) => c[0] === 'rm' || c[1] === 'rm').length).toBeGreaterThan(0);
 });
 
+test('the proxy sidecar runs on VANGUARD_SANDBOX_IMAGE when set — it is the sandbox image, not a dedicated proxy image', async () => {
+  const ENV_VAR = 'VANGUARD_SANDBOX_IMAGE';
+  const prev = process.env[ENV_VAR];
+  process.env[ENV_VAR] = 'sha256:deadbeef';
+  try {
+    const { calls, docker } = recordingDocker();
+    await startEgressEnclave({ allowlist: ['a.example'], docker });
+    const create = calls.find((c) => c[0] === 'create');
+    expect(create!.slice(-3)).toEqual(['sha256:deadbeef', 'node', '/tmp/egress-proxy.mjs']);
+  } finally {
+    if (prev === undefined) delete process.env[ENV_VAR];
+    else process.env[ENV_VAR] = prev;
+  }
+});
+
+test('adds the vanguard.owner label to both the network and the proxy container when VANGUARD_OWNER_LABEL is set', async () => {
+  const prev = process.env.VANGUARD_OWNER_LABEL;
+  process.env.VANGUARD_OWNER_LABEL = 'ci-job-42';
+  try {
+    const { calls, docker } = recordingDocker();
+    await startEgressEnclave({ allowlist: ['a.example'], docker });
+    const networkCreate = calls.find((c) => c[0] === 'network' && c[1] === 'create');
+    const proxyCreate = calls.find((c) => c[0] === 'create');
+    expect(networkCreate).toContain('vanguard.owner=ci-job-42');
+    expect(proxyCreate).toContain('vanguard.owner=ci-job-42');
+  } finally {
+    if (prev === undefined) delete process.env.VANGUARD_OWNER_LABEL;
+    else process.env.VANGUARD_OWNER_LABEL = prev;
+  }
+});
+
+test('has no vanguard.owner label by default', async () => {
+  const { calls, docker } = recordingDocker();
+  await startEgressEnclave({ allowlist: ['a.example'], docker });
+  expect(calls.flat().join(' ')).not.toContain('vanguard.owner=');
+});
+
 test('a failed docker step tears the enclave down and throws SandboxError', async () => {
   const { calls, docker } = recordingDocker('cp');
   await expect(startEgressEnclave({ docker })).rejects.toThrow(/egress enclave/);

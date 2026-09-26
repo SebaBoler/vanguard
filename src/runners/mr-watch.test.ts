@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gitlabMergeRequestWatchPrimitives, watchMergeRequestsOnce } from './mr-watch.js';
+import { MergeRequestReviewIncompleteError } from './mr-review.js';
 
 describe('gitlabMergeRequestWatchPrimitives', () => {
   function makeGlab(mrListJson = '[]', existingNotes = '[]') {
@@ -46,6 +47,35 @@ describe('gitlabMergeRequestWatchPrimitives', () => {
     const updateCall = calls.find((c) => c[0] === 'mr' && c[1] === 'update');
     expect(updateCall).toBeDefined();
     expect(updateCall).toContain('vanguard::reviewing');
+  });
+
+  describe('onFailure', () => {
+    const item = { project: 'g/p', iid: 1, title: 'T', draft: false, author: 'alice', sha: 'abc', labels: [] };
+    const primitivesWith = (glab: (args: string[]) => Promise<string>) =>
+      gitlabMergeRequestWatchPrimitives({
+        project: 'g/p',
+        label: 'ready for review',
+        reviewingLabel: 'vanguard::reviewing',
+        reviewedLabel: 'vanguard::reviewed',
+        glab,
+        reviewOne: async () => {},
+      });
+    const update = (calls: string[][]): string[] | undefined => calls.find((c) => c[0] === 'mr' && c[1] === 'update');
+
+    it('restores the trigger label after an ordinary failure, so the next poll retries', async () => {
+      const { glab, calls } = makeGlab();
+      await primitivesWith(glab).onFailure(item, new Error('sandbox died'));
+      expect(update(calls)).toEqual(['mr', 'update', '1', '--repo', 'g/p', '--unlabel', 'vanguard::reviewing', '--label', 'ready for review']);
+    });
+
+    it('leaves the trigger label off after an incomplete review, so the MR is not reviewed again every poll', async () => {
+      const { glab, calls } = makeGlab();
+      const incomplete = new MergeRequestReviewIncompleteError({ ...item, description: '', webUrl: '', sourceBranch: 'b', targetBranch: 'main', diff: '' });
+      await primitivesWith(glab).onFailure(item, incomplete);
+      expect(update(calls)).toEqual(['mr', 'update', '1', '--repo', 'g/p', '--unlabel', 'vanguard::reviewing']);
+      const note = calls.find((c) => c[0] === 'mr' && c[1] === 'note');
+      expect(note?.at(-1)).toContain('Re-add the "ready for review" label to retry.');
+    });
   });
 });
 

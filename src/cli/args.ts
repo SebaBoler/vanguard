@@ -173,6 +173,8 @@ export type Command =
       intervalMs: number;
       once: boolean;
       egress: boolean;
+      /** Cap the number of ready tasks claimed and processed per poll. Unset: process all of them. */
+      maxTasks?: number;
       /** Hold the provider credential (Anthropic, or z.ai with --provider zai) in a trusted sidecar; the sandbox gets only a per-run nonce (implies egress). */
       llmProxy?: boolean;
       // --- Loop v1 flags ---
@@ -357,6 +359,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-state': { type: 'string' },
         interval: { type: 'string' },
         once: { type: 'boolean' },
+        'max-tasks': { type: 'string' },
         fix: { type: 'boolean' },
         'loop-v1': { type: 'boolean' },
         // watch loop-v1
@@ -858,10 +861,16 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     const interval = Number(values.interval);
     const concurrency = Number(values.concurrency);
+    const maxTasks = parseLimit(values['max-tasks']);
+    // A blast-radius cap must not fall through to "process all" on a typo, 0 or a negative.
+    if (values['max-tasks'] !== undefined && maxTasks === undefined) {
+      return fail(`--max-tasks needs a positive integer, got "${String(values['max-tasks'])}".`);
+    }
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
       repoPath,
+      ...(maxTasks !== undefined ? { maxTasks } : {}),
       ...(label !== undefined ? { label } : {}),
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(typeof values['gitlab-project'] === 'string' ? { project: values['gitlab-project'] } : {}),
@@ -953,6 +962,9 @@ Commands:
     --review-state <x>     Status/label set after a PR opens (project default: "In Review";
                            linear: "In Review"; github: "vanguard:needs-human-review")
     --interval <seconds>   Poll interval (default: 60); --once does a single pass
+    --max-tasks <n>        Cap the ready tasks claimed and processed per poll, for each phase
+                           (spec, then agent); the rest stay unclaimed for the next poll
+                           (default: unlimited)
     --loop-v1              Use Loop v1 defaults (GitHub labels "ready for spec"/"ready for agent"/
                            "needs info"; Linear ownership label "vanguard", state type "triage",
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
@@ -1164,7 +1176,8 @@ Commands:
 
   gc options:
     --repo <path>          Git repo to prune worktrees / reap branches in (default: cwd)
-    --max-age-hours <n>    Only reap resources older than n hours (default: 6)
+    --max-age-hours <n>    Only reap resources older than n hours (default: 6). Does not apply
+                           to empty egress networks: they are reaped after 10 minutes
     --remote <owner/repo>  Also delete merged remote chore/vanguard-* branches (needs gh)
     --dry-run              List what would be reaped without removing anything
     --abandoned            Also delete branches whose PR is closed-unmerged (not just merged)

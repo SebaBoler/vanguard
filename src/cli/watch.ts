@@ -136,6 +136,7 @@ export async function watchLinearSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
       signal,
     });
     return;
@@ -151,6 +152,7 @@ export async function watchLinearSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
     ...(cmd.team !== undefined ? { team: cmd.team } : {}),
   });
@@ -214,6 +216,7 @@ async function watchGithubSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
       signal,
     });
     return;
@@ -229,6 +232,7 @@ async function watchGithubSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }
@@ -252,6 +256,7 @@ async function watchGithubProjectSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }
@@ -308,6 +313,7 @@ export async function watchGitlabSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
       signal,
     });
     return;
@@ -322,6 +328,7 @@ export async function watchGitlabSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }

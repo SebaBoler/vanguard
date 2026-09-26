@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { startLlmProxy, startProviderProxies } from './llm-proxy.js';
 import { SandboxError } from '../core/errors.js';
 
+const ENV_VAR = 'VANGUARD_SANDBOX_IMAGE';
+
 function fakeDocker(): { calls: { args: string[]; input?: string }[]; run: (args: string[], opts?: { input?: string }) => Promise<{ exitCode: number; stdout: string; stderr: string }> } {
   const calls: { args: string[]; input?: string }[] = [];
   const run = async (args: string[], opts?: { input?: string }): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
@@ -45,6 +47,35 @@ describe('startLlmProxy', () => {
     // The secret travels only via stdin, never via -e or argv.
     expect(flat).not.toContain('sk-ant-secret');
     expect(d.calls.some((c) => c.input?.includes('sk-ant-secret'))).toBe(true);
+  });
+
+  it('adds the vanguard.owner label when VANGUARD_OWNER_LABEL is set', async () => {
+    const prev = process.env.VANGUARD_OWNER_LABEL;
+    process.env.VANGUARD_OWNER_LABEL = 'ci-job-42';
+    try {
+      const d = fakeDocker();
+      await startLlmProxy({
+        network: 'vg-egr-x',
+        auth: { mode: 'api', secret: 'sk-ant-secret' },
+        docker: d.run,
+      });
+      const runCall = d.calls.find((c) => c.args[0] === 'run');
+      expect(runCall?.args).toContain('vanguard.owner=ci-job-42');
+    } finally {
+      if (prev === undefined) delete process.env.VANGUARD_OWNER_LABEL;
+      else process.env.VANGUARD_OWNER_LABEL = prev;
+    }
+  });
+
+  it('has no vanguard.owner label by default', async () => {
+    const d = fakeDocker();
+    await startLlmProxy({
+      network: 'vg-egr-x',
+      auth: { mode: 'api', secret: 'sk-ant-secret' },
+      docker: d.run,
+    });
+    const flat = d.calls.flatMap((c) => c.args).join(' ');
+    expect(flat).not.toContain('vanguard.owner=');
   });
 
   it('stands up an OpenAI sidecar tagged UPSTREAM=openai with the real key only via stdin', async () => {
@@ -96,6 +127,35 @@ describe('startLlmProxy', () => {
     const a = await startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: d.run });
     const b = await startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: d.run });
     expect(a.nonce).not.toBe(b.nonce);
+  });
+
+  it('runs the sidecar on VANGUARD_SANDBOX_IMAGE when set — it is the sandbox image, not a dedicated proxy image', async () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const d = fakeDocker();
+      await startLlmProxy({ network: 'vg-egr-x', auth: { mode: 'api', secret: 's' }, docker: d.run });
+      const runCall = d.calls.find((c) => c.args[0] === 'run');
+      expect(runCall?.args).toContain('sha256:deadbeef');
+      expect(runCall?.args).not.toContain('vanguard-sandbox:latest');
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
+  });
+
+  it('an explicit image option still wins over VANGUARD_SANDBOX_IMAGE', async () => {
+    const prev = process.env[ENV_VAR];
+    process.env[ENV_VAR] = 'sha256:deadbeef';
+    try {
+      const d = fakeDocker();
+      await startLlmProxy({ network: 'vg-egr-x', auth: { mode: 'api', secret: 's' }, image: 'custom:1', docker: d.run });
+      const runCall = d.calls.find((c) => c.args[0] === 'run');
+      expect(runCall?.args).toContain('custom:1');
+    } finally {
+      if (prev === undefined) delete process.env[ENV_VAR];
+      else process.env[ENV_VAR] = prev;
+    }
   });
 
   it('tears down the sidecar and wraps failures in SandboxError', async () => {
