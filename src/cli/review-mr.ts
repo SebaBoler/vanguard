@@ -6,6 +6,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildMergeRequestReviewPrompt, reviewMergeRequest } from '../runners/mr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -99,7 +100,7 @@ async function runDefaultMrReviewer(
       const result = await runAgent(ctx, {
         stageName: 'mr-review',
         agent: agents.agent,
-        promptTemplate: buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry }),
+        ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? 24 : 16,

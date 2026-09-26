@@ -6,6 +6,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { runResearch } from '../runners/research.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -91,7 +92,7 @@ async function runDefaultResearcher(
       const result = await runAgent(ctx, {
         stageName: 'research',
         agent: agents.agent,
-        promptTemplate: prompt,
+        ...literalPrompt(prompt),
         maxTurns: 12,
         copyBack: false,
         ...(cmd.researchModel !== undefined ? { model: cmd.researchModel } : {}),
