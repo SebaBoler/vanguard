@@ -4,11 +4,14 @@
 export const RETRY_TRIAGE_INSTRUCTION =
   'This is a large diff. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). Produce your verdict within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, but you MUST finish with a verdict and <promise>COMPLETE</promise>.';
 
-const PROMPT_TAG_RE = /<(\/?)(task_instructions|input_handling|(?:mr|pr)_(?:metadata|description)|diff|promise)\b/gi;
+// The review prompt's own tags, plus those of adversarySystemPrompt and the stage prompts it sits beside.
+// review-prompt.test.ts fails when a tag the reviewer sees is missing here.
+const PROMPT_TAG_RE =
+  /<(\/?)(task_instructions|input_handling|(?:mr|pr)_(?:metadata|description)|diff|promise|role|policy|guidelines|tradeoffs|findings|plan|verdict)\b/gi;
 
 /**
- * Escape the review prompt's own tag syntax inside untrusted text, so an author cannot close a data
- * block and open a second instruction block. `promise` is included because a quoted
+ * Escape the prompt's tag syntax inside untrusted text, so an author cannot close a data block and open
+ * a second instruction or policy block. `promise` is included because a quoted
  * `<promise>COMPLETE</promise>` in the final message marks a partial review as complete. Other angle
  * brackets (generics, HTML) stay as written.
  */
