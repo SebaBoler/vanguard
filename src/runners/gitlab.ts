@@ -136,13 +136,15 @@ export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefi
  * so self-hosted instances are detected.
  */
 export function gitlabProjectFromRemote(remoteUrl: string): string | undefined {
-  if (/github\.com|bitbucket\.org|dev\.azure\.com/.test(remoteUrl)) return undefined;
+  const host = hostnameOf(remoteUrl);
+  if (host !== undefined && /(^|\.)(github\.com|bitbucket\.org|dev\.azure\.com)$/.test(host)) return undefined;
   return parseGitlabProjectFromRemote(remoteUrl);
 }
 
 /** A remote URL fit for logs: `scheme://user:token@host/...` loses its userinfo (CI remotes carry a job token). */
 export function redactRemote(remoteUrl: string): string {
-  return remoteUrl.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1');
+  // Greedy to the last `@` before the path, so an unencoded `@` in the password cannot leave a fragment.
+  return remoteUrl.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1');
 }
 
 /** Lower-cased hostname of a git remote URL or a GITLAB_HOST value, without scheme, user or port. */

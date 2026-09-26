@@ -67,6 +67,10 @@ describe('gitlabProjectFromRemote', () => {
     expect(gitlabProjectFromRemote('git@github.com:owner/repo.git')).toBeUndefined();
     expect(gitlabProjectFromRemote('git@bitbucket.org:team/repo.git')).toBeUndefined();
     expect(gitlabProjectFromRemote('https://dev.azure.com/org/project/_git/repo')).toBeUndefined();
+    expect(gitlabProjectFromRemote('git@ssh.dev.azure.com:v3/org/project/repo')).toBeUndefined();
+  });
+  it('judges the host only, so a GitLab path that names another forge is kept', () => {
+    expect(gitlabProjectFromRemote('https://gitlab.com/group/github.com-mirror.git')).toBe('group/github.com-mirror');
   });
 });
 
@@ -96,6 +100,7 @@ describe('redactRemote', () => {
   it('drops userinfo from a scheme URL and leaves scp-like and plain remotes alone', () => {
     expect(redactRemote('https://gitlab-ci-token:glcbt-secret@gitlab.com/g/p.git')).toBe('https://gitlab.com/g/p.git');
     expect(redactRemote('https://oauth2:tok@gitlab.com/')).toBe('https://gitlab.com/');
+    expect(redactRemote('https://user:p@ss@gitlab.com/g/p.git')).toBe('https://gitlab.com/g/p.git');
     expect(redactRemote('git@gitlab.com:g/p.git')).toBe('git@gitlab.com:g/p.git');
     expect(redactRemote('https://gitlab.com/g/p.git\n')).toBe('https://gitlab.com/g/p.git');
   });
