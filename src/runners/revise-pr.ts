@@ -29,6 +29,7 @@ import {
   runStages,
   commitStage,
   pushToExistingBranch,
+  droppedCiPathsNote,
   withStageProvider,
   withStageModel,
   withStageModelExcept,
@@ -387,7 +388,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         verification: { typecheck: verificationStatus, test: verificationStatus },
         whiteLabel,
       });
-      await commentPullRequest(target, summaryText, gh);
+      await commentPullRequest(target, [summaryText, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== '').join('\n\n'), gh);
 
       log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);
       await gh(['pr', 'ready', String(target.number), '--repo', target.repoSlug]);

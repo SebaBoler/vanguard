@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, readdir, readlink, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
@@ -68,6 +68,8 @@ export interface RunContext {
   localRepoPath: string;
   wm: WorktreeManager;
   log: VanguardLogger;
+  /** CI config files the agent added or edited in the sandbox, which copy-back dropped. The PR/MR description or revision summary lists them. */
+  droppedCiPaths?: Set<string>;
 }
 
 export interface StageInput {
@@ -201,28 +203,58 @@ export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskI
   throw new WorkflowGuardError(`Diff touches forbidden CI config path(s): ${offending.join(', ')}`);
 }
 
+/**
+ * Files under a dropped CI path whose sandbox copy is new or differs from the worktree. Unchanged CI
+ * files are dropped on every copy-back; only these mean the agent's work is missing from the diff.
+ */
+async function changedFiles(staging: string, worktree: string, rel: string): Promise<string[]> {
+  const src = join(staging, rel);
+  const dest = join(worktree, rel);
+  const info = await lstat(src);
+  if (info.isDirectory()) {
+    const names = await readdir(src);
+    return (await Promise.all(names.map((name) => changedFiles(staging, worktree, join(rel, name))))).flat();
+  }
+  // Compare a symlink by its target and never read through it: the sandbox chose where it points.
+  if (info.isSymbolicLink()) {
+    const [a, b] = await Promise.all([readlink(src), readlink(dest).catch(() => undefined)]);
+    return a === b ? [] : [rel];
+  }
+  if (!info.isFile()) return [rel];
+  const [a, b] = await Promise.all([readFile(src), readFile(dest).catch(() => undefined)]);
+  return b !== undefined && a.equals(b) ? [] : [rel];
+}
+
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
 async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
   const staging = join(ctx.localRepoPath, '.vanguard', 'staging', ctx.taskId);
   await mkdir(staging, { recursive: true });
   try {
     await ctx.sandbox.copyFileOut(WORKDIR, staging);
+    const dropped: string[] = [];
     await cp(staging, ctx.worktreePath, {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
       filter: (src) => {
         // Relative, so a `.gitlab` or `.github` directory above the repo does not match.
-        if (WORKFLOW_PATH.test(relative(staging, src))) {
-          ctx.log.warn(
-            { taskId: ctx.taskId, path: src },
-            'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
-          );
+        const rel = relative(staging, src);
+        if (WORKFLOW_PATH.test(rel)) {
+          dropped.push(rel);
           return false;
         }
         return !COPY_BACK_SKIP.test(src);
       },
     });
+    // A comparison that fails reports the whole dropped path, so an edit is never hidden.
+    const changed = await Promise.all(dropped.map((rel) => changedFiles(staging, ctx.worktreePath, rel).catch(() => [rel])));
+    for (const path of changed.flat()) {
+      ctx.log.warn(
+        { taskId: ctx.taskId, path },
+        'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
+      );
+      (ctx.droppedCiPaths ??= new Set()).add(path);
+    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }

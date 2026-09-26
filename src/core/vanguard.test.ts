@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import {
   run,
@@ -481,6 +481,39 @@ describe('vanguard.run', () => {
     await disposeContext(ctx);
 
     expect(result.diff).toContain('dependabot.yml');
+  });
+
+  it('records the CI config the agent added or edited, not unchanged copies of it', async () => {
+    await mkdir(join(repo, '.github', 'workflows'), { recursive: true });
+    await mkdir(join(repo, '.gitlab'), { recursive: true });
+    await writeFile(join(repo, '.gitlab-ci.yml'), 'stages: [test]\n');
+    await writeFile(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+    await writeFile(join(repo, '.gitlab', 'linked.yml'), 'same\n');
+    await execa('git', ['add', '.'], { cwd: repo });
+    await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ci'], { cwd: repo });
+    const outside = join(repo, '..', `${basename(repo)}-target.yml`);
+    await writeFile(outside, 'same\n');
+    const wm = new WorktreeManager(repo);
+    const { logger, entries } = captureLogger();
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, '.github', 'workflows'), { recursive: true });
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab-ci.yml'), 'stages: [test]\n');
+      await writeFile(join(hostPath, '.github', 'workflows', 'ci.yml'), 'on: pull_request\n');
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'new.yml'), 'new:\n  script: [env]\n');
+      // Same bytes through the link, but a symlink is compared by target, never read through.
+      await symlink(outside, join(hostPath, '.gitlab', 'linked.yml'));
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-changed', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+    await rm(outside, { force: true });
+
+    const expected = ['.github/workflows/ci.yml', '.gitlab/ci/new.yml', '.gitlab/linked.yml'];
+    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(expected);
+    const warned = entries.filter((e) => e.msg.includes('dropped CI config path')).map((e) => String(e.obj.path));
+    expect(warned.sort()).toEqual(expected);
   });
 
   describe('workflowPathsInDiff', () => {
