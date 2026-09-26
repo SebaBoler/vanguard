@@ -274,7 +274,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           verifyRepairs += 1;
           log(`revise-pr ${target.repoSlug}#${target.number}: verify FAILED (attempt ${verifyRepairs}/${MAX_VERIFY_REPAIRS}) — resuming implement session`);
           const repaired = await runAgent(ctx, {
-            promptTemplate: `${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`,
+            ...literalPrompt(`${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`),
             agent: agents.agent,
             resumeSessionId,
           });

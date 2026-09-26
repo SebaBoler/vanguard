@@ -4,6 +4,7 @@ import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
@@ -426,7 +427,8 @@ export async function runSourcedIssue(
           .filter((s): s is string => s !== undefined)
           .join('\n\n');
         const repaired = await runAgent(ctx, {
-          promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          // Test output is author-controlled text; see literalPrompt.
+          ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
           agent: agents.agent,
           resumeSessionId,
           ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),

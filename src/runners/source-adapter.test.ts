@@ -569,7 +569,7 @@ describe('runSourcedIssue', () => {
     // runStages runs this path with maxCostUsd = Infinity, and these resumes run outside its
     // accounting anyway, so without the per-call cap spend would be unbounded in USD.
     expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', maxTurns: 30, maxBudgetUsd: 3 });
-    const prompt = runAgent.mock.calls[0]?.[1]?.promptTemplate as string;
+    const prompt = runAgent.mock.calls[0]?.[1]?.variables?.['PROMPT'] as string;
     expect(prompt).toMatch(/ended before the task was finished/);
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Closes ${task.id}`);
