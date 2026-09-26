@@ -19,6 +19,7 @@ import {
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
@@ -246,14 +247,15 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         });
       }
 
-      const prompt = buildRevisionPrompt(pr, actionable);
-      // Override the implementer's promptTemplate with the revision prompt.
+      // Override the implementer's promptTemplate with the revision prompt. It holds review comments and
+      // the diff, so it goes in as a variable and is never expanded as a template (see literalPrompt).
+      const { promptTemplate, variables } = literalPrompt(buildRevisionPrompt(pr, actionable));
       pipeline = pipeline.map((stage) =>
-        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate: prompt } : stage,
+        stage.name === STAGE.IMPLEMENTER ? { ...stage, promptTemplate } : stage,
       );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
-      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent });
+      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent, variables });
 
       // Run the resolved verification command after applying changes and before pushing, with one
       // bounded repair iteration on red — reusing renderVerificationFeedback and the same resume
