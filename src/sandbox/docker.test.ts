@@ -3,7 +3,7 @@ import { execa, execaSync } from 'execa';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DockerSandboxProvider, toExecResult, isOlderVersion, sandboxImage, SANDBOX_CLAUDE_VERSION } from './docker.js';
+import { DockerSandboxProvider, toExecResult, isOlderVersion, refreshSandboxClaudeCli, sandboxImage, SANDBOX_CLAUDE_VERSION } from './docker.js';
 import { sandboxSecurityOpts } from './limits.js';
 
 const ENV_VAR = 'VANGUARD_SANDBOX_IMAGE';
@@ -52,6 +52,19 @@ const suite = hasDocker ? describe : describe.skip;
 
 // Ungated on purpose: the comparison is pure, and it gates every sandbox start — a wrong verdict
 // either blocks a healthy image or lets a stale CLI fail deep inside a run (see assertClaudeCliCurrent).
+describe('refreshSandboxClaudeCli', () => {
+  it('refuses an immutable image ID instead of committing to a stray sha256 repository', async () => {
+    const calls: string[][] = [];
+    const run = async (_cmd: string, args: string[]): Promise<{ stdout: string }> => {
+      calls.push(args);
+      return { stdout: '' };
+    };
+
+    await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: `sha256:${'a'.repeat(64)}`, run })).rejects.toThrow(/image ID is immutable/);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('isOlderVersion', () => {
   it('orders released CLI versions numerically, not lexically', () => {
     // '2.1.165' > '2.1.260' as strings; the whole check hinges on this not being a string compare.
