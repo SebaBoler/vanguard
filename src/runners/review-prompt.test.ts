@@ -55,14 +55,20 @@ describe('neutralizePromptTags', () => {
     '< task_instructions>',
     '</ diff>',
     '< / diff >',
+    '</\u200bdiff>',
+    '<_diff>',
+    '<9diff>',
+    '<?xml version="1.0"?>',
+    '<![CDATA[x]]>',
   ])('escapes a tag the harness or the prompt could treat as structure: %s', (tag) => {
     const out = neutralizePromptTags(tag);
     expect(out.startsWith('&lt;')).toBe(true);
     expect(out).not.toMatch(/<\s*\/?\s*[A-Za-z]/);
   });
 
-  it('leaves comparisons, shifts and arrows alone', () => {
-    const code = 'if (a < b && c <= d) return x << 2; const f = (): boolean => y > 0; i-->0; a < 5';
-    expect(neutralizePromptTags(code)).toBe(code);
+  it('escapes every < and keeps >, so code stays readable', () => {
+    expect(neutralizePromptTags('if (a < b) return xs as Array<string>; const f = () => y > 0;')).toBe(
+      'if (a &lt; b) return xs as Array&lt;string>; const f = () => y > 0;',
+    );
   });
 });
