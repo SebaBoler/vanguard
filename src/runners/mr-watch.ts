@@ -1,6 +1,6 @@
 import { fanOut } from '../pipeline/fan-out.js';
 import { defaultGlabRunner } from '../tasks/gitlab.js';
-import { hasMergeRequestReviewForHead } from './mr-review.js';
+import { MergeRequestReviewIncompleteError, hasMergeRequestReviewForHead } from './mr-review.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 
@@ -178,19 +178,22 @@ export function gitlabMergeRequestWatchPrimitives(
         add: [opts.reviewedLabel],
       }).then(() => {}),
     onFailure: async (item, error) => {
+      // An incomplete review (typically a diff too large for the budget) would fail the same way on every
+      // poll, at two agent runs each. Leave the trigger label off so it waits for a human to re-add it.
+      const terminal = error instanceof MergeRequestReviewIncompleteError;
       try {
         await glab([
           'mr', 'note', 'create',
           String(item.iid),
           '--repo', item.project,
-          '-m', `Vanguard MR review failed: ${String(error)}`,
+          '-m', `Vanguard MR review failed: ${String(error)}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`,
         ]);
       } catch {
-        // note posting is best-effort; always restore the trigger label
+        // note posting is best-effort; always fix the labels
       }
       await editMrLabels(glab, item.project, item.iid, {
         remove: [opts.reviewingLabel],
-        add: [opts.label],
+        ...(terminal ? {} : { add: [opts.label] }),
       });
     },
   };
