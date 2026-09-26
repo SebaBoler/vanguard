@@ -536,6 +536,11 @@ describe('vanguard.run', () => {
       expect(workflowPathsInDiff(diff)).toEqual(['.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml']);
     });
 
+    it('finds .gitlab/ YAML whose path contains a space', () => {
+      const diff = ['diff --git a/.gitlab/ci build.yml b/.gitlab/ci build.yml', '+++ b/.gitlab/ci build.yml\t'].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab/ci build.yml']);
+    });
+
     it('ignores .gitlab/ files that no pipeline executes (MR templates, CODEOWNERS)', () => {
       const diff = [
         'diff --git a/.gitlab/merge_request_templates/default.md b/.gitlab/merge_request_templates/default.md',

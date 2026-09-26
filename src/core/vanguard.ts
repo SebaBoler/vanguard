@@ -187,7 +187,7 @@ export function workflowPathsInDiff(diff: string): string[] {
   const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
   for (const line of diff.split('\n')) {
     if (!HEADER_LINE.test(line)) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^\s"']*\.ya?ml(?=$|["'\s]))/.exec(line);
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^"'\n]*?\.ya?ml(?=$|["'\s]))/.exec(line);
     if (match?.[2] !== undefined) found.add(match[2]);
   }
   return [...found].sort();
