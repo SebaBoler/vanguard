@@ -138,6 +138,7 @@ describe('buildMergeRequestReviewComment', () => {
 
 describe('reviewMergeRequest head dedupe', () => {
   const HEAD = 'abc123def4567890';
+  const BOT = 'vanguard-bot';
 
   function makeGlab(notes: string | Error, sha = HEAD): { glab: GlabRunner; calls: string[][] } {
     const calls: string[][] = [];
@@ -145,6 +146,7 @@ describe('reviewMergeRequest head dedupe', () => {
       calls.push(args);
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, title: 'T', sha });
       if (args[0] === 'mr' && args[1] === 'diff') return 'diff --git a/x b/x';
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: BOT });
       if (args[0] === 'api') {
         if (notes instanceof Error) throw notes;
         return notes;
@@ -157,7 +159,9 @@ describe('reviewMergeRequest head dedupe', () => {
   const posted = (calls: string[][]): string[][] => calls.filter((c) => c[0] === 'mr' && c[1] === 'note');
 
   it('skips a head it already reviewed: no reviewer run, nothing posted', async () => {
-    const notes = JSON.stringify([{ system: false, body: `## Vanguard Review\n\nok\n\n${mergeRequestReviewMarker(HEAD)}` }]);
+    const notes = JSON.stringify([
+      { system: false, author: { username: BOT }, body: `## Vanguard Review\n\nok\n\n${mergeRequestReviewMarker(HEAD)}` },
+    ]);
     const { glab, calls } = makeGlab(notes);
     const reviewer = vi.fn(async () => 'No blocking findings.');
     const lines: string[] = [];
@@ -172,7 +176,7 @@ describe('reviewMergeRequest head dedupe', () => {
   });
 
   it('reviews and posts when only an older head was reviewed', async () => {
-    const notes = JSON.stringify([{ system: false, body: mergeRequestReviewMarker('0000000') }]);
+    const notes = JSON.stringify([{ system: false, author: { username: BOT }, body: mergeRequestReviewMarker('0000000') }]);
     const { glab, calls } = makeGlab(notes);
     const reviewer = vi.fn(async () => 'No blocking findings.');
 
@@ -181,6 +185,17 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(reviewer).toHaveBeenCalledOnce();
     expect(posted(calls)).toHaveLength(1);
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
+  });
+
+  it('ignores a marker another user posted, so a participant cannot suppress the review', async () => {
+    const notes = JSON.stringify([{ system: false, author: { username: 'mallory' }, body: mergeRequestReviewMarker(HEAD) }]);
+    const { glab, calls } = makeGlab(notes);
+    const reviewer = vi.fn(async () => 'No blocking findings.');
+
+    await reviewMergeRequest('5', { project: 'g/p', glab, reviewer });
+
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(posted(calls)).toHaveLength(1);
   });
 
   it('fails and posts nothing when the MR notes cannot be read', async () => {
@@ -225,6 +240,7 @@ describe('reviewMergeRequest incomplete retry', () => {
       calls.push(args);
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, title: 'T', sha: HEAD });
       if (args[0] === 'mr' && args[1] === 'diff') return 'diff --git a/x b/x';
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
       if (args[0] === 'api') return '[]';
       return '';
     };

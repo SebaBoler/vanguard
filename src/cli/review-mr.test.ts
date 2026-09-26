@@ -26,7 +26,8 @@ describe('reviewMrCommand', () => {
     const glab: GlabRunner = async (args) => {
       calls.push(args);
       if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha });
-      if (args[0] === 'api') return JSON.stringify([{ system: false, body: mergeRequestReviewMarker(sha) }]);
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
+      if (args[0] === 'api') return JSON.stringify([{ system: false, author: { username: 'vanguard-bot' }, body: mergeRequestReviewMarker(sha) }]);
       return '';
     };
     const lines: string[] = [];

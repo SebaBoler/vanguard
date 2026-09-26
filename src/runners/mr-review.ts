@@ -77,6 +77,7 @@ export function parseMergeRequestRef(ref: string, project?: string): MergeReques
 interface GlabMrNoteItem {
   body?: string | null;
   system?: boolean;
+  author?: { username?: string } | null;
 }
 
 interface GlabMrView {
@@ -163,19 +164,26 @@ export function hasMergeRequestReviewMarker(body: string, sha: string): boolean 
   return Array.from(body.matchAll(MR_REVIEW_MARKER_RE)).some((m) => m[1] === sha);
 }
 
-/** Whether one of the MR's latest 100 notes carries the Vanguard review marker for `sha`. Throws when the notes cannot be read. */
+/**
+ * Whether one of the MR's latest 100 notes carries the Vanguard review marker for `sha` and was written by
+ * the user glab runs as. Only that author counts: anyone on the MR can post an invisible marker note to
+ * suppress the review. Throws when the user or the notes cannot be read.
+ */
 export async function hasMergeRequestReviewForHead(
   target: MergeRequestReviewTarget,
   sha: string,
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<boolean> {
+  const self = (JSON.parse(await glab(['api', 'user'])) as { username?: string }).username;
+  if (self === undefined || self === '') throw new Error('glab api user returned no username');
   const out = await glab([
     'api',
     `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
   ]);
   const notes = JSON.parse(out) as GlabMrNoteItem[];
   return notes.some(
-    (n) => !n.system && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
+    (n) =>
+      !n.system && n.author?.username === self && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
   );
 }
 
