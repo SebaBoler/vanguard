@@ -44,22 +44,24 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
   }
 
   const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
-  // Provisioned inside the reviewer, so a head that is already reviewed never starts a sandbox.
+  // Started on the first reviewer call, so an already-reviewed head never starts a sandbox, and shared by
+  // the incomplete-retry so it does not rebuild the egress network and llm-proxy sidecar.
+  let sandboxContext: SandboxContext | undefined;
   const reviewer: MergeRequestReviewer = async (mr, opts) => {
-    const sandboxContext = await startSandboxContext({
+    sandboxContext ??= await startSandboxContext({
       egress: cmd.egress,
       llmProxy: cmd.llmProxy === true,
       ...(auth !== undefined ? { auth } : {}),
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     });
-    try {
-      return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext, opts);
-    } finally {
-      await sandboxContext.destroy();
-    }
+    return await runDefaultMrReviewer(mr, cmd, auth, sandboxContext, opts);
   };
-  const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log, ...headDedupe });
-  logDone(result, log);
+  try {
+    const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log, ...headDedupe });
+    logDone(result, log);
+  } finally {
+    await sandboxContext?.destroy();
+  }
 }
 
 /** A skipped head already logged "already reviewed -> skip"; "done" would read as a fresh review. */

@@ -42,4 +42,27 @@ describe('reviewMrCommand', () => {
     expect(lines).toContain(`review-mr g/p!5: head ${sha} already reviewed -> skip`);
     expect(lines).not.toContain('review-mr g/p!5: done');
   });
+
+  it('starts one sandbox context for both review attempts and destroys it once', async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    const destroy = vi.fn(async () => undefined);
+    vi.mocked(startSandboxContext).mockClear().mockResolvedValue({ destroy } as never);
+    const mr = { project: 'g/p', iid: 5, title: 'T', description: '', webUrl: '', author: '', sourceBranch: 'b', sha: 'abc', targetBranch: 'main', diff: '' };
+
+    await reviewMrCommand(
+      { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/nonexistent-repo', egress: true },
+      {
+        // Each attempt fails past the context (no repo); only the context lifecycle is under test.
+        reviewMergeRequest: async (_ref, deps) => {
+          await deps.reviewer(mr, { isRetry: false }).catch(() => undefined);
+          await deps.reviewer(mr, { isRetry: true }).catch(() => undefined);
+          return { mr };
+        },
+        log: () => undefined,
+      },
+    );
+
+    expect(startSandboxContext).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
 });
