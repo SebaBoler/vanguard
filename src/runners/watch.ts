@@ -81,7 +81,7 @@ interface WatchLogOptions {
 
 interface WatchOnceOptions extends WatchLogOptions {
   concurrency?: number;
-  /** Cap the number of ready tasks claimed and processed this poll, per phase (unset: process all). */
+  /** Cap the number of ready tasks successfully claimed and processed this poll, per phase (unset: process all). */
   maxTasks?: number;
 }
 
@@ -89,12 +89,38 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
   opts.log?.(msg);
 }
 
-/** Apply --max-tasks in fetcher order and log the poll: the rest are left unclaimed for the next poll. */
-function capReady<T>(ready: T[], opts: WatchOnceOptions, phase: string): T[] {
-  const toProcess = opts.maxTasks !== undefined ? ready.slice(0, opts.maxTasks) : ready;
-  const cappedNote = toProcess.length < ready.length ? ` (capped to ${toProcess.length} by --max-tasks)` : '';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready${cappedNote}`);
-  return toProcess;
+function logPoll(ready: number, opts: WatchOnceOptions, phase: string): void {
+  const cappedNote = opts.maxTasks !== undefined && opts.maxTasks < ready ? ` (capped to ${opts.maxTasks} by --max-tasks)` : '';
+  operatorLog(opts, `${phase}: poll -> ${ready} ready${cappedNote}`);
+}
+
+/** `taken`: the claim threw (another runner has it). `deferred`: --max-tasks is already met. */
+type ClaimOutcome = 'claimed' | 'taken' | 'deferred';
+
+/**
+ * Claim gate for one poll. Under --max-tasks, claims run one at a time in fetcher order and only a
+ * successful claim counts, so items another runner already took do not use up the cap; the rest stay
+ * unclaimed for the next poll. Uncapped, claims run concurrently as before.
+ */
+function claimGate(maxTasks: number | undefined): (claim: () => Promise<void>) => Promise<ClaimOutcome> {
+  let claimed = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  return (claim) => {
+    const attempt = async (): Promise<ClaimOutcome> => {
+      if (maxTasks !== undefined && claimed >= maxTasks) return 'deferred';
+      try {
+        await claim();
+      } catch {
+        return 'taken';
+      }
+      claimed += 1;
+      return 'claimed';
+    };
+    if (maxTasks === undefined) return attempt();
+    const next = queue.then(attempt);
+    queue = next;
+    return next;
+  };
 }
 
 /**
@@ -104,17 +130,19 @@ function capReady<T>(ready: T[], opts: WatchOnceOptions, phase: string): T[] {
  */
 export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOptions = {}): Promise<WatchTick> {
   const phase = opts.phase ?? 'watch';
-  const toProcess = capReady(await primitives.listReady(), opts, phase);
+  const ready = await primitives.listReady();
+  logPoll(ready.length, opts, phase);
+  const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
-    toProcess,
-    async (item): Promise<{ id: string; kind: Kind }> => {
-      try {
-        await primitives.claim(item.id);
-        operatorLog(opts, `${phase} ${item.id}: claim -> running`);
-      } catch {
+    ready,
+    async (item): Promise<{ id: string; kind: Kind | 'deferred' }> => {
+      const claimed = await claim(() => primitives.claim(item.id));
+      if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
+      if (claimed === 'taken') {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
+      operatorLog(opts, `${phase} ${item.id}: claim -> running`);
       try {
         const { prUrl, parked } = await primitives.runOne(item.id);
         if (prUrl === undefined) {
@@ -170,17 +198,19 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
  */
 export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
   const phase = opts.phase ?? 'spec';
-  const toProcess = capReady(await primitives.listReady(), opts, phase);
+  const ready = await primitives.listReady();
+  logPoll(ready.length, opts, phase);
+  const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
-    toProcess,
-    async (item): Promise<{ id: string; kind: SpecKind }> => {
-      try {
-        await primitives.claim(item.id);
-        operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
-      } catch {
+    ready,
+    async (item): Promise<{ id: string; kind: SpecKind | 'deferred' }> => {
+      const claimed = await claim(() => primitives.claim(item.id));
+      if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
+      if (claimed === 'taken') {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
+      operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
       try {
         const outcome = await primitives.runSpec(item.id);
         operatorLog(
