@@ -139,6 +139,11 @@ export function gitlabProjectFromRemote(remoteUrl: string): string | undefined {
   return parseGitlabProjectFromRemote(remoteUrl);
 }
 
+/** A remote URL fit for logs: `scheme://user:token@host/...` loses its userinfo (CI remotes carry a job token). */
+export function redactRemote(remoteUrl: string): string {
+  return remoteUrl.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1');
+}
+
 /** Lower-cased hostname of a git remote URL or a GITLAB_HOST value, without scheme, user or port. */
 function hostnameOf(value: string): string | undefined {
   const trimmed = value.trim();
@@ -180,7 +185,7 @@ export async function knownGitlabProjectFromOrigin(repoPath: string): Promise<st
   }
   if (!isKnownGitlabRemote(origin)) return undefined;
   const project = parseGitlabProjectFromRemote(origin);
-  if (project === undefined) throw new Error(`origin ${origin.trim()} is on GitLab but names no group/project; fix the remote.`);
+  if (project === undefined) throw new Error(`origin ${redactRemote(origin)} is on GitLab but names no group/project; fix the remote.`);
   return project;
 }
 
@@ -206,7 +211,7 @@ export async function gitlabDepsFromEnv(
     const remote = stdout.trim();
     resolvedProject = gitlabProjectFromRemote(remote);
     if (resolvedProject === undefined) {
-      throw new Error(`Cannot detect a GitLab project from the origin remote (${remote}). Pass --gitlab-project explicitly.`);
+      throw new Error(`Cannot detect a GitLab project from the origin remote (${redactRemote(remote)}). Pass --gitlab-project explicitly.`);
     }
   }
   return {

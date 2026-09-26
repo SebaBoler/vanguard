@@ -8,6 +8,7 @@ import {
   gitlabProjectFromRemote,
   isKnownGitlabRemote,
   knownGitlabProjectFromOrigin,
+  redactRemote,
   runGitlabIssue,
   gitlabAdapter,
   gitlabDepsFromEnv,
@@ -91,6 +92,15 @@ describe('isKnownGitlabRemote', () => {
   });
 });
 
+describe('redactRemote', () => {
+  it('drops userinfo from a scheme URL and leaves scp-like and plain remotes alone', () => {
+    expect(redactRemote('https://gitlab-ci-token:glcbt-secret@gitlab.com/g/p.git')).toBe('https://gitlab.com/g/p.git');
+    expect(redactRemote('https://oauth2:tok@gitlab.com/')).toBe('https://gitlab.com/');
+    expect(redactRemote('git@gitlab.com:g/p.git')).toBe('git@gitlab.com:g/p.git');
+    expect(redactRemote('https://gitlab.com/g/p.git\n')).toBe('https://gitlab.com/g/p.git');
+  });
+});
+
 describe('knownGitlabProjectFromOrigin', () => {
   const dirs: string[] = [];
   afterEach(async () => {
@@ -108,7 +118,9 @@ describe('knownGitlabProjectFromOrigin', () => {
     expect(await knownGitlabProjectFromOrigin(await repoWithOrigin('ssh://git@gitlab.com:2222/group/project.git'))).toBe('group/project');
   });
   it('throws when origin is on GitLab but names no project, instead of falling back to gh', async () => {
-    await expect(knownGitlabProjectFromOrigin(await repoWithOrigin('https://gitlab.com/'))).rejects.toThrow(/names no group\/project/);
+    await expect(knownGitlabProjectFromOrigin(await repoWithOrigin('https://oauth2:secret-token@gitlab.com/'))).rejects.toThrow(
+      'origin https://gitlab.com/ is on GitLab but names no group/project',
+    );
   });
   it('returns undefined for a GitHub origin', async () => {
     expect(await knownGitlabProjectFromOrigin(await repoWithOrigin('git@github.com:o/r.git'))).toBeUndefined();
