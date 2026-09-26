@@ -4,19 +4,19 @@
 export const RETRY_TRIAGE_INSTRUCTION =
   'This is a large diff. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). Produce your verdict within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, but you MUST finish with a verdict and <promise>COMPLETE</promise>.';
 
-// The review prompt's own tags, plus those of adversarySystemPrompt and the stage prompts it sits beside.
-// review-prompt.test.ts fails when a tag the reviewer sees is missing here.
-const PROMPT_TAG_RE =
-  /<(\/?)(task_instructions|input_handling|(?:mr|pr)_(?:metadata|description)|diff|promise|role|policy|guidelines|tradeoffs|findings|plan|verdict)\b/gi;
+// A `<` that opens anything tag-shaped: `<name` or `</name` (attributes, hyphens and `ns:name` included),
+// or `< name>` / `</ name >` with inner spaces. Comparisons such as `a < b` and `i <= n` stay as written.
+const TAG_OPEN_RE = /<(?=\/?[A-Za-z])|<(?=\s*\/?\s*[A-Za-z][\w:.-]*\s*>)/g;
 
 /**
- * Escape the prompt's tag syntax inside untrusted text, so an author cannot close a data block and open
- * a second instruction or policy block. `promise` is included because a quoted
- * `<promise>COMPLETE</promise>` in the final message marks a partial review as complete. Other angle
- * brackets (generics, HTML) stay as written.
+ * Escape every tag opening inside untrusted text. A closed list of the prompt's own tags cannot cover the
+ * framings the agent harness treats as authoritative (`<system-reminder>`, `<function_results>`, ...), so
+ * no tag reaches the model unescaped: an author cannot close a data block and open an instruction, policy
+ * or harness block, and a quoted `<promise>COMPLETE</promise>` cannot mark a partial review complete. Code
+ * generics read as `Array&lt;string>`; comparisons are left alone.
  */
 export function neutralizePromptTags(text: string): string {
-  return text.replace(PROMPT_TAG_RE, '&lt;$1$2');
+  return text.replace(TAG_OPEN_RE, '&lt;');
 }
 
 export const AUTHORITATIVE_BLOCK_INSTRUCTION =
