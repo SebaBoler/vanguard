@@ -204,8 +204,13 @@ export class PullRequestReviewIncompleteError extends VanguardError {
   }
 }
 
+/** Agent text without completion signals or quoted review markers (see stripMergeRequestReviewMarkers). */
+function reviewBody(agentText: string): string {
+  return agentText.replace(PROMISE_RE, '').replace(PR_REVIEW_MARKER_RE, '').trim();
+}
+
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
-  const body = agentText.replace(PROMISE_RE, '').trim();
+  const body = reviewBody(agentText);
   return appendMarker(`## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`, headRefOid);
 }
 
@@ -241,7 +246,7 @@ export function buildMainLoopReviewComment(
   agentText: string,
   opts: { headRefOid?: string; attribution: string },
 ): string {
-  const body = agentText.replace(PROMISE_RE, '').trim();
+  const body = reviewBody(agentText);
   const oid = opts.headRefOid !== undefined && opts.headRefOid !== '' ? opts.headRefOid : undefined;
   const sha7 = oid?.slice(0, 7);
   const atSha = sha7 !== undefined ? ` @ ${sha7}` : '';
