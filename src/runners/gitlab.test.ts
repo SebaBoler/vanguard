@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseGitlabProjectFromRemote, gitlabProjectFromRemote, isKnownGitlabRemote, runGitlabIssue, gitlabAdapter, gitlabDepsFromEnv } from './gitlab.js';
+import { execa } from 'execa';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  parseGitlabProjectFromRemote,
+  gitlabProjectFromRemote,
+  isKnownGitlabRemote,
+  knownGitlabProjectFromOrigin,
+  runGitlabIssue,
+  gitlabAdapter,
+  gitlabDepsFromEnv,
+} from './gitlab.js';
 import type { RunGitlabIssueDeps } from './gitlab.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
@@ -25,6 +37,12 @@ describe('parseGitlabProjectFromRemote', () => {
   });
   it('parses HTTPS remote with nested subgroups', () => {
     expect(parseGitlabProjectFromRemote('https://gitlab.com/group/sub/project.git')).toBe('group/sub/project');
+  });
+  it('parses an ssh:// remote with a port', () => {
+    expect(parseGitlabProjectFromRemote('ssh://git@gitlab.com:2222/group/project.git')).toBe('group/project');
+  });
+  it('returns undefined for a URL with no path', () => {
+    expect(parseGitlabProjectFromRemote('https://gitlab.com/')).toBeUndefined();
   });
   it('parses HTTPS remote without .git suffix', () => {
     expect(parseGitlabProjectFromRemote('https://gitlab.com/group/project')).toBe('group/project');
@@ -66,6 +84,30 @@ describe('isKnownGitlabRemote', () => {
   });
   it('rejects a local path', () => {
     expect(isKnownGitlabRemote('/srv/git/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(false);
+  });
+});
+
+describe('knownGitlabProjectFromOrigin', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  });
+  async function repoWithOrigin(url: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'vg-origin-'));
+    dirs.push(dir);
+    await execa('git', ['init', '-q'], { cwd: dir });
+    await execa('git', ['remote', 'add', 'origin', url], { cwd: dir });
+    return dir;
+  }
+
+  it('returns the project for an ssh:// gitlab.com origin with a port', async () => {
+    expect(await knownGitlabProjectFromOrigin(await repoWithOrigin('ssh://git@gitlab.com:2222/group/project.git'))).toBe('group/project');
+  });
+  it('throws when origin is on GitLab but names no project, instead of falling back to gh', async () => {
+    await expect(knownGitlabProjectFromOrigin(await repoWithOrigin('https://gitlab.com/'))).rejects.toThrow(/names no group\/project/);
+  });
+  it('returns undefined for a GitHub origin', async () => {
+    expect(await knownGitlabProjectFromOrigin(await repoWithOrigin('git@github.com:o/r.git'))).toBeUndefined();
   });
 });
 

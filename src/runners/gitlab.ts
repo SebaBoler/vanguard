@@ -118,9 +118,15 @@ export async function runGitlabIssue(issueRef: string, deps: RunGitlabIssueDeps)
   return runSourcedIssue(issueRef, deps, gitlabAdapter(deps));
 }
 
-/** Extract `group/project` from an SSH or HTTPS git remote URL. */
+/** Extract `group/project` from a scp-like SSH remote or any `scheme://` remote URL (HTTPS, `ssh://` with a port). */
 export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefined {
-  return remoteUrl.trim().match(/(?:https?:\/\/[^/]+\/|^[^:]+:)(.+?)(?:\.git)?$/)?.[1];
+  const trimmed = remoteUrl.trim();
+  if (!trimmed.includes('://')) return trimmed.match(/^[^:]+:(.+?)(?:\.git)?$/)?.[1];
+  try {
+    return new URL(trimmed).pathname.replace(/^\/+/, '').replace(/\.git$/, '') || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -161,15 +167,21 @@ export function isKnownGitlabRemote(remoteUrl: string, env: NodeJS.ProcessEnv = 
 
 /**
  * The GitLab project the `origin` remote of `repoPath` points at when isKnownGitlabRemote accepts
- * it; undefined for any other host or when origin is unreadable.
+ * it; undefined for any other host or when origin is unreadable (preflight then checks gh, too).
+ * Throws when origin is on GitLab but names no project: falling back to gh would publish to the
+ * wrong forge after the agent work is done.
  */
 export async function knownGitlabProjectFromOrigin(repoPath: string): Promise<string | undefined> {
+  let origin: string;
   try {
-    const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
-    return isKnownGitlabRemote(stdout) ? parseGitlabProjectFromRemote(stdout) : undefined;
+    origin = (await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath })).stdout;
   } catch {
     return undefined;
   }
+  if (!isKnownGitlabRemote(origin)) return undefined;
+  const project = parseGitlabProjectFromRemote(origin);
+  if (project === undefined) throw new Error(`origin ${origin.trim()} is on GitLab but names no group/project; fix the remote.`);
+  return project;
 }
 
 /** Assemble `RunGitlabIssueDeps` from environment + CLI flags (mirrors `githubDepsFromEnv`). */
