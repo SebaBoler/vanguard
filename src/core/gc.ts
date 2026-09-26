@@ -85,12 +85,19 @@ export function isStaleEmptyNetwork(inspect: string, maxAgeMs: number, now: numb
 }
 
 /**
+ * How long an empty egress network is kept. The race it covers (a concurrent job between `network create`
+ * and its first `network connect`) is seconds wide, so minutes, independent of --max-age-hours: a
+ * `--max-age-hours 0` cleanup must not reopen that race.
+ */
+export const EGRESS_NETWORK_GRACE_MS = 10 * 60 * 1000;
+
+/**
  * Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs.
  * Networks whose inspect output cannot be read are kept, and one warning names them, so an engine that
  * rejects the template shows up instead of quietly reaping nothing.
  */
 export function dockerEgressNetworkLister(
-  maxAgeMs = 0,
+  maxAgeMs = EGRESS_NETWORK_GRACE_MS,
   now: () => number = Date.now,
   warn: (line: string) => void = console.warn,
 ): NetworkLister {
