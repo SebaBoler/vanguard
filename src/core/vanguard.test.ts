@@ -454,6 +454,8 @@ describe('vanguard.run', () => {
       await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
       await writeFile(join(hostPath, '.gitlab', 'ci', 'evil.yml'), 'evil:\n  script: [env]\n');
       await writeFile(join(hostPath, 'app.gitlab-ci.yml.md'), 'notes\n');
+      await mkdir(join(hostPath, '.gitlab', 'merge_request_templates'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab', 'merge_request_templates', 'default.md'), 'template\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
     const ctx = await prepareContext({ taskId: 'gl-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
@@ -461,6 +463,7 @@ describe('vanguard.run', () => {
     await disposeContext(ctx);
 
     expect(result.diff).toContain('app.gitlab-ci.yml.md');
+    expect(result.diff).toContain('.gitlab/merge_request_templates/default.md');
     expect(result.diff ?? '').not.toContain('.gitlab/ci');
     expect(result.diff ?? '').not.toContain('workflow:');
     expect(existsSync(join(repo, '.gitlab', 'ci', 'evil.yml'))).toBe(false);
@@ -521,14 +524,28 @@ describe('vanguard.run', () => {
       expect(workflowPathsInDiff(diff)).toEqual([]);
     });
 
-    it('finds GitLab CI config: .gitlab-ci.yml and anything under .gitlab/', () => {
+    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/', () => {
       const diff = [
         'diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml',
         '+++ b/.gitlab-ci.yml',
         'diff --git a/.gitlab/ci/verify.yml b/.gitlab/ci/verify.yml',
         '+++ b/.gitlab/ci/verify.yml',
+        'diff --git a/.gitlab/deploy.yaml b/.gitlab/deploy.yaml',
+        '+++ b/.gitlab/deploy.yaml',
       ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab-ci.yml', '.gitlab/ci/verify.yml']);
+      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml']);
+    });
+
+    it('ignores .gitlab/ files that no pipeline executes (MR templates, CODEOWNERS)', () => {
+      const diff = [
+        'diff --git a/.gitlab/merge_request_templates/default.md b/.gitlab/merge_request_templates/default.md',
+        '+++ b/.gitlab/merge_request_templates/default.md',
+        'diff --git a/.gitlab/CODEOWNERS b/.gitlab/CODEOWNERS',
+        '+++ b/.gitlab/CODEOWNERS',
+        'diff --git a/.gitlab/notes.yml.md b/.gitlab/notes.yml.md',
+        '+++ b/.gitlab/notes.yml.md',
+      ].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual([]);
     });
 
     it('does not match GitLab near-misses (.gitlab-ci.yml as a prefix, a .gitlabx dir)', () => {

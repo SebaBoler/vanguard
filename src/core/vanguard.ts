@@ -32,11 +32,14 @@ const COPY_BACK_SKIP =
 // Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
 // that gets committed and pushed — that is the exact escalation path in the disclosed
 // claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
-// next GitHub event). GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml
-// (and the .gitlab/ files it includes) from the source branch, so an agent-written copy would run
-// with the project's CI variables. Kept as its own regex (not folded into COPY_BACK_SKIP) so drops
-// can be logged loudly instead of silently, like the other noisy-but-expected skips above.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab([\\/]|$)/;
+// next GitHub event). GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml, and
+// the .gitlab/ YAML it conventionally includes, from the source branch, so an agent-written copy would
+// run with the project's CI variables. For GitLab this is defence in depth, not a boundary:
+// `include: local:` can name any path, so CI YAML kept elsewhere needs the project's own gate. Other
+// .gitlab/ files (MR templates, CODEOWNERS) are not executed and still sync back. Kept as its own
+// regex (not folded into COPY_BACK_SKIP) so drops can be logged loudly instead of silently, like the
+// other noisy-but-expected skips above.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/;
 
 export interface PrepareOptions {
   taskId: string;
@@ -178,13 +181,13 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
-/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/`) touched by a unified diff. Empty ⇒ clean. */
+/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) touched by a unified diff. Empty ⇒ clean. */
 export function workflowPathsInDiff(diff: string): string[] {
   const found = new Set<string>();
   const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
   for (const line of diff.split('\n')) {
     if (!HEADER_LINE.test(line)) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^\s"']*)/.exec(line);
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^\s"']*\.ya?ml(?=$|["'\s]))/.exec(line);
     if (match?.[2] !== undefined) found.add(match[2]);
   }
   return [...found].sort();
@@ -213,7 +216,7 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
         if (WORKFLOW_PATH.test(relative(staging, src))) {
           ctx.log.warn(
             { taskId: ctx.taskId, path: src },
-            'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ are never synced back)',
+            'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
           );
           return false;
         }
