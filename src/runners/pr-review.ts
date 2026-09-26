@@ -1,5 +1,6 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
+import { RETRY_TRIAGE_INSTRUCTION } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -126,10 +127,7 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
 export function buildPullRequestReviewPrompt(pr: PullRequestForReview, opts: { retryTriage?: boolean } = {}): string {
   const lines = ['<task_instructions>'];
   if (opts.retryTriage) {
-    lines.push(
-      'This is a large diff. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). Produce your verdict within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, but you MUST finish with a verdict and <promise>COMPLETE</promise>.',
-      '',
-    );
+    lines.push(RETRY_TRIAGE_INSTRUCTION, '');
   }
   lines.push(
     'Review this pull request diff as an independent reviewer. Focus on correctness, security, tests, regressions, and maintainability.',

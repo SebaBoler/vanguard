@@ -33,6 +33,13 @@ describe('buildMergeRequestReviewPrompt', () => {
     expect(prompt).toContain('<promise>COMPLETE</promise>');
   });
 
+  it('adds the retry triage instruction inside task_instructions only when retryTriage is true', () => {
+    const prompt = buildMergeRequestReviewPrompt(BASE_MR, { retryTriage: true });
+    const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
+    expect(instructions).toContain('This is a large diff');
+    expect(buildMergeRequestReviewPrompt(BASE_MR)).not.toContain('This is a large diff');
+  });
+
   it('tells the reviewer to apply the repository review guidelines inside task_instructions', () => {
     const prompt = buildMergeRequestReviewPrompt(BASE_MR);
     const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));

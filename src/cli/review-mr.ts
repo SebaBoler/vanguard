@@ -99,7 +99,7 @@ async function runDefaultMrReviewer(
       const result = await runAgent(ctx, {
         stageName: 'mr-review',
         agent: agents.agent,
-        promptTemplate: buildMergeRequestReviewPrompt(mr),
+        promptTemplate: buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry }),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
         maxTurns: opts.isRetry ? 24 : 16,
