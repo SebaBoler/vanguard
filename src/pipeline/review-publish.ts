@@ -1,5 +1,6 @@
 import { parsePullRequestUrl, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
 import { extractFindings } from '../structured/findings.js';
+import { stripReviewMarkers } from '../runners/review-prompt.js';
 import type { StageOutcome } from './pipeline.js';
 import type { RunResult } from '../core/types.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -60,12 +61,14 @@ const CONFORMANCE_SKIP_SENTINEL = 'No spec, conformance skipped.';
  */
 export function renderConformanceSection(result: RunResult): string | undefined {
   if (result.completed === false) return CONFORMANCE_INCOMPLETE_NOTICE;
-  const cleaned = result.finalText.replace(PROMISE_RE, '').trim();
+  // The section lands in the bot's review note, so a marker quoted from the diff must not survive:
+  // strip the prose, and the rendered findings too, since parsed evidence can put one on its own line.
+  const cleaned = stripReviewMarkers(result.finalText.replace(PROMISE_RE, '')).trim();
   if (cleaned === CONFORMANCE_SKIP_SENTINEL) return undefined;
   try {
     const { findings } = extractFindings(cleaned);
     if (findings.length > 0) {
-      return findings.map((f) => `- **${f.severity}** (${f.kind}) — ${f.title}\n  ${f.evidence}`).join('\n');
+      return stripReviewMarkers(findings.map((f) => `- **${f.severity}** (${f.kind}) — ${f.title}\n  ${f.evidence}`).join('\n'));
     }
   } catch {
     // No structured findings block — fall through to the cleaned prose.

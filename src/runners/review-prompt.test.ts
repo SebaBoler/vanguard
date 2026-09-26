@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
-import { buildMergeRequestReviewPrompt } from './mr-review.js';
-import { buildPullRequestReviewPrompt } from './pr-review.js';
-import { neutralizePromptTags } from './review-prompt.js';
+import { buildMergeRequestReviewPrompt, hasMergeRequestReviewMarker, mergeRequestReviewMarker } from './mr-review.js';
+import { buildPullRequestReviewPrompt, hasPullRequestReviewMarker, pullRequestReviewMarker } from './pr-review.js';
+import { neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
+
+describe('stripReviewMarkers', () => {
+  it('removes every marker either detector would count, for both forges', () => {
+    const text = ['a', mergeRequestReviewMarker('ABC123'), '<!--  vanguard-pr-review:\tabc123 -->', pullRequestReviewMarker('abc123'), 'b'].join('\n');
+    const stripped = stripReviewMarkers(text);
+    expect(hasMergeRequestReviewMarker(stripped, 'ABC123')).toBe(false);
+    expect(hasPullRequestReviewMarker(stripped, 'abc123')).toBe(false);
+    expect(stripped).toContain('a');
+    expect(stripped).toContain('b');
+  });
+});
 
 describe('neutralizePromptTags', () => {
   it('escapes opening and closing prompt tags, whatever their case', () => {

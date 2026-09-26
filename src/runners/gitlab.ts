@@ -2,7 +2,8 @@ import { execa } from 'execa';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
-import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker, stripMergeRequestReviewMarkers } from './mr-review.js';
+import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
+import { stripReviewMarkers } from './review-prompt.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
@@ -61,7 +62,7 @@ export async function publishGitlabVerdict(project: string, input: PublishVerdic
   const target = parseMergeRequestRef(input.prUrl, project);
   const verdictText = input.reviewerOutcome.result.finalText;
   // Build the comment body with attribution header and MR dedupe marker.
-  const body = stripMergeRequestReviewMarkers(verdictText.replace(/<promise>\s*COMPLETE\s*<\/promise>/gi, '')).trim();
+  const body = stripReviewMarkers(verdictText.replace(/<promise>\s*COMPLETE\s*<\/promise>/gi, '')).trim();
   const sha7 = input.headSha.slice(0, 7);
   const header = `Reviewed by ${input.attribution} @ ${sha7}`;
   const visible = body === ''

@@ -1,7 +1,7 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -203,16 +203,8 @@ export async function hasMergeRequestReviewForHead(
   );
 }
 
-/**
- * Remove review markers from agent text. The reviewer can quote one from the MR description or diff, and
- * in the bot's own note it would mark that (possibly future) head as reviewed.
- */
-export function stripMergeRequestReviewMarkers(text: string): string {
-  return text.replace(MR_REVIEW_MARKER_RE, '');
-}
-
 export function buildMergeRequestReviewComment(agentText: string, sha?: string): string {
-  const body = stripMergeRequestReviewMarkers(agentText.replace(PROMISE_RE, '')).trim();
+  const body = stripReviewMarkers(agentText.replace(PROMISE_RE, '')).trim();
   const visible = `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
   return sha === undefined || sha === '' ? visible : `${visible}\n\n${mergeRequestReviewMarker(sha)}`;
 }

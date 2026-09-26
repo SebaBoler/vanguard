@@ -1,6 +1,6 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -204,9 +204,9 @@ export class PullRequestReviewIncompleteError extends VanguardError {
   }
 }
 
-/** Agent text without completion signals or quoted review markers (see stripMergeRequestReviewMarkers). */
+/** Agent text without completion signals or quoted review markers (see stripReviewMarkers). */
 function reviewBody(agentText: string): string {
-  return agentText.replace(PROMISE_RE, '').replace(PR_REVIEW_MARKER_RE, '').trim();
+  return stripReviewMarkers(agentText.replace(PROMISE_RE, '')).trim();
 }
 
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
