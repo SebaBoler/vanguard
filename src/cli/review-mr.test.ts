@@ -39,5 +39,6 @@ describe('reviewMrCommand', () => {
     expect(startSandboxContext).not.toHaveBeenCalled();
     expect(calls.some((c) => c[0] === 'mr' && c[1] === 'note')).toBe(false);
     expect(lines).toContain(`review-mr g/p!5: head ${sha} already reviewed -> skip`);
+    expect(lines).not.toContain('review-mr g/p!5: done');
   });
 });

@@ -27,15 +27,18 @@ export interface ReviewMrCommandDeps {
   reviewer?: MergeRequestReviewer;
   reviewMergeRequest?: ReviewMergeRequestRunner;
   log?: (line: string) => void;
+  /** See ReviewMergeRequestDeps.headDedupe. */
+  headDedupe?: boolean;
 }
 
 /** Review an existing GitLab MR and post a non-blocking Vanguard review note. */
 export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrCommandDeps = {}): Promise<void> {
   const log = deps.log ?? console.log;
   const runReview = deps.reviewMergeRequest ?? reviewMergeRequest;
+  const headDedupe = deps.headDedupe !== undefined ? { headDedupe: deps.headDedupe } : {};
   if (deps.reviewer !== undefined) {
-    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, log });
-    log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
+    const result = await runReview(String(cmd.iid), { reviewer: deps.reviewer, project: cmd.project, log, ...headDedupe });
+    logDone(result, log);
     return;
   }
 
@@ -54,8 +57,13 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
       await sandboxContext.destroy();
     }
   };
-  const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log });
-  log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
+  const result = await runReview(String(cmd.iid), { reviewer, project: cmd.project, log, ...headDedupe });
+  logDone(result, log);
+}
+
+/** A skipped head already logged "already reviewed -> skip"; "done" would read as a fresh review. */
+function logDone(result: ReviewMergeRequestResult, log: (line: string) => void): void {
+  if (result.commentBody !== undefined) log(`review-mr ${result.mr.project}!${result.mr.iid}: done`);
 }
 
 async function runDefaultMrReviewer(

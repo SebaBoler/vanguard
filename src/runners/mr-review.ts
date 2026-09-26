@@ -41,6 +41,12 @@ export interface ReviewMergeRequestDeps {
   glab?: GlabRunner;
   reviewer: MergeRequestReviewer;
   log?: (line: string) => void;
+  /**
+   * Fail-closed per-head dedupe (default true): skip a reviewed head, and fail when the head SHA or the
+   * notes cannot be read. watch-mrs passes false: its listReady already ran a lenient check that
+   * re-reviews on doubt.
+   */
+  headDedupe?: boolean;
 }
 
 export interface ReviewMergeRequestResult {
@@ -198,6 +204,25 @@ export class MergeRequestReviewIncompleteError extends VanguardError {
   }
 }
 
+/**
+ * A CI retry re-runs review-mr on the same head. Skip when that head is already reviewed, and fail when
+ * that cannot be established: a guess of "not reviewed yet" would post a second review.
+ */
+async function isHeadAlreadyReviewed(
+  target: MergeRequestReviewTarget,
+  mr: MergeRequestForReview,
+  glab: GlabRunner,
+): Promise<boolean> {
+  const id = `${target.project}!${target.iid}`;
+  if (mr.sha === '') throw new Error(`review-mr ${id}: glab returned no head SHA, so an earlier review cannot be ruled out; nothing posted.`);
+  try {
+    return await hasMergeRequestReviewForHead(target, mr.sha, glab);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`review-mr ${id}: cannot read the MR notes to check for a review of ${mr.sha}; nothing posted (${reason})`, { cause: error });
+  }
+}
+
 export async function reviewMergeRequest(
   ref: string,
   deps: ReviewMergeRequestDeps,
@@ -206,18 +231,8 @@ export async function reviewMergeRequest(
   const target = parseMergeRequestRef(ref, deps.project);
   deps.log?.(`review-mr ${target.project}!${target.iid}: fetch -> diff`);
   const mr = await fetchMergeRequestForReview(target, glab);
-  // A CI retry re-runs review-mr on the same head. Skip when that head is already reviewed, and fail
-  // when that cannot be established: a guess of "not reviewed yet" would post a second review.
   const id = `${target.project}!${target.iid}`;
-  if (mr.sha === '') throw new Error(`review-mr ${id}: glab returned no head SHA, so an earlier review cannot be ruled out; nothing posted.`);
-  let reviewed: boolean;
-  try {
-    reviewed = await hasMergeRequestReviewForHead(target, mr.sha, glab);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`review-mr ${id}: cannot read the MR notes to check for a review of ${mr.sha}; nothing posted (${reason})`, { cause: error });
-  }
-  if (reviewed) {
+  if (deps.headDedupe !== false && (await isHeadAlreadyReviewed(target, mr, glab))) {
     deps.log?.(`review-mr ${id}: head ${mr.sha} already reviewed -> skip`);
     return { mr };
   }

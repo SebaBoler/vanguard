@@ -183,6 +183,18 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(reviewer).not.toHaveBeenCalled();
     expect(posted(calls)).toEqual([]);
   });
+
+  it('with headDedupe false (watch-mrs), reviews without a notes read, and posts no marker when the SHA is missing', async () => {
+    const { glab, calls } = makeGlab(new Error('glab: 403 Forbidden'), '');
+    const reviewer = vi.fn(async () => 'No blocking findings.');
+
+    const result = await reviewMergeRequest('5', { project: 'g/p', glab, reviewer, headDedupe: false });
+
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(calls.some((c) => c[0] === 'api')).toBe(false);
+    expect(posted(calls)).toHaveLength(1);
+    expect(result.commentBody).not.toContain('vanguard-mr-review');
+  });
 });
 
 describe('reviewMergeRequest incomplete retry', () => {
