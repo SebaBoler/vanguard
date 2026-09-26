@@ -217,10 +217,26 @@ describe('reviewMergeRequest head dedupe', () => {
     const reviewer = vi.fn(async () => 'No blocking findings.');
 
     await expect(reviewMergeRequest('5', { project: 'g/p', glab, reviewer })).rejects.toThrow(
-      /cannot read the MR notes .* nothing posted \(glab: 403 Forbidden\)/,
+      /cannot check for an earlier review .* nothing posted: cannot read the MR notes \(glab: 403 Forbidden\)/,
     );
     expect(reviewer).not.toHaveBeenCalled();
     expect(posted(calls)).toEqual([]);
+  });
+
+  it('names GET /user, not the notes, when the glab user cannot be read', async () => {
+    const calls: string[][] = [];
+    const glab: GlabRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, title: 'T', sha: HEAD });
+      if (args[0] === 'api' && args[1] === 'user') throw new Error('glab: 403 Forbidden');
+      return '[]';
+    };
+    const reviewer = vi.fn(async () => 'No blocking findings.');
+
+    await expect(reviewMergeRequest('5', { project: 'g/p', glab, reviewer })).rejects.toThrow(
+      /nothing posted: cannot read the glab user; the token must be able to read GET \/user \(glab: 403 Forbidden\)/,
+    );
+    expect(reviewer).not.toHaveBeenCalled();
   });
 
   it('fails and posts nothing when glab returns no head SHA', async () => {

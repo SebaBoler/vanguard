@@ -171,11 +171,15 @@ const glabUsers = new WeakMap<GlabRunner, Promise<string>>();
 function glabUser(glab: GlabRunner): Promise<string> {
   const cached = glabUsers.get(glab);
   if (cached !== undefined) return cached;
-  const user = glab(['api', 'user']).then((out) => {
-    const name = (JSON.parse(out) as { username?: string }).username;
-    if (name === undefined || name === '') throw new Error('glab api user returned no username');
-    return name;
-  });
+  const user = glab(['api', 'user'])
+    .then((out) => {
+      const name = (JSON.parse(out) as { username?: string }).username;
+      if (name === undefined || name === '') throw new Error('it returned no username');
+      return name;
+    })
+    .catch((error: unknown) => {
+      throw new Error(`cannot read the glab user; the token must be able to read GET /user (${errorText(error)})`, { cause: error });
+    });
   glabUsers.set(glab, user);
   user.catch(() => glabUsers.delete(glab));
   return user;
@@ -192,11 +196,16 @@ export async function hasMergeRequestReviewForHead(
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<boolean> {
   const self = await glabUser(glab);
-  const out = await glab([
-    'api',
-    `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
-  ]);
-  const notes = JSON.parse(out) as GlabMrNoteItem[];
+  let notes: GlabMrNoteItem[];
+  try {
+    const out = await glab([
+      'api',
+      `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
+    ]);
+    notes = JSON.parse(out) as GlabMrNoteItem[];
+  } catch (error) {
+    throw new Error(`cannot read the MR notes (${errorText(error)})`, { cause: error });
+  }
   return notes.some(
     (n) =>
       !n.system && n.author?.username === self && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
@@ -249,9 +258,12 @@ async function isHeadAlreadyReviewed(
   try {
     return await hasMergeRequestReviewForHead(target, mr.sha, glab);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`review-mr ${id}: cannot read the MR notes to check for a review of ${mr.sha}; nothing posted (${reason})`, { cause: error });
+    throw new Error(`review-mr ${id}: cannot check for an earlier review of ${mr.sha}; nothing posted: ${errorText(error)}`, { cause: error });
   }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function reviewMergeRequest(
