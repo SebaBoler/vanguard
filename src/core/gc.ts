@@ -84,22 +84,39 @@ export function isStaleEmptyNetwork(inspect: string, maxAgeMs: number, now: numb
   return now - Number(createdAt) * 1000 > maxAgeMs;
 }
 
-/** Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs. */
-export function dockerEgressNetworkLister(maxAgeMs = 0, now: () => number = Date.now): NetworkLister {
+/**
+ * Docker-backed lister of vg-egr-* networks that have no attached containers and are older than maxAgeMs.
+ * Networks whose inspect output cannot be read are kept, and one warning names them, so an engine that
+ * rejects the template shows up instead of quietly reaping nothing.
+ */
+export function dockerEgressNetworkLister(
+  maxAgeMs = 0,
+  now: () => number = Date.now,
+  warn: (line: string) => void = console.warn,
+): NetworkLister {
   return async (): Promise<string[]> => {
     const { stdout } = await execa('docker', ['network', 'ls', '--filter', 'name=vg-egr-', '--format', '{{.Name}}']);
     if (stdout.trim() === '') return [];
     const names = stdout.split('\n').filter((n) => n.startsWith('vg-egr-'));
+    const unreadable: string[] = [];
     const results = await Promise.all(
       names.map(async (name) => {
-        const { stdout: count } = await execa(
+        const inspect = await execa(
           'docker',
           ['network', 'inspect', name, '--format', '{{len .Containers}} {{.Created.Unix}}'],
           { reject: false },
         );
-        return isStaleEmptyNetwork(count, maxAgeMs, now()) ? name : null;
+        const out = inspect.stdout ?? '';
+        if (!/^\d+ \d+$/.test(out.trim())) {
+          unreadable.push(`${name} (${(inspect.stderr ?? '').trim() || 'no output'})`);
+          return null;
+        }
+        return isStaleEmptyNetwork(out, maxAgeMs, now()) ? name : null;
       }),
     );
+    if (unreadable.length > 0) {
+      warn(`gc: kept ${unreadable.length} vg-egr-* network(s) whose inspect output could not be read: ${unreadable.join(', ')}`);
+    }
     return results.filter((name): name is string => name !== null);
   };
 }

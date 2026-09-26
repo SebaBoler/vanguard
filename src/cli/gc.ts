@@ -30,6 +30,10 @@ export interface GcReport {
 
 const noop = async (): Promise<void> => undefined;
 
+// The race the network age check covers (a concurrent job between `network create` and its first
+// `network connect`) is seconds wide, so an empty network waits minutes, not --max-age-hours.
+const EGRESS_NETWORK_GRACE_MS = 10 * 60 * 1000;
+
 /**
  * Reap stale sandbox containers, prune worktree admin entries, and (when remoteRepo is set) delete
  * merged remote chore/vanguard-* branches. dryRun swaps in no-op removers, so the reapers still report what
@@ -42,7 +46,7 @@ export async function runGc(opts: GcCliOptions): Promise<GcReport> {
     opts.maxAgeMs,
   );
   const networks = await reapEgressNetworks(
-    dockerEgressNetworkLister(opts.maxAgeMs),
+    dockerEgressNetworkLister(Math.min(opts.maxAgeMs, EGRESS_NETWORK_GRACE_MS)),
     opts.dryRun ? noop : dockerEgressNetworkRemover(),
   );
   if (!opts.dryRun) await pruneWorktrees(opts.repoPath);
