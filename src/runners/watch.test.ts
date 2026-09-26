@@ -177,6 +177,25 @@ describe('specOnce', () => {
       'spec D: skipped -> already claimed',
     ]);
   });
+
+  it('claims and specs only the first maxTasks ready items', async () => {
+    const claimed: string[] = [];
+    const logs: string[] = [];
+    const primitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    const tick = await specOnce(primitives, { concurrency: 1, maxTasks: 1, log: (msg) => logs.push(msg) });
+
+    expect(claimed).toEqual(['A']);
+    expect(tick.advanced).toEqual(['A']);
+    expect(logs[0]).toBe('spec: poll -> 3 ready (capped to 1 by --max-tasks)');
+  });
 });
 
 describe('runLoopV1', () => {
