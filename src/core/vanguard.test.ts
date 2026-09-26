@@ -442,9 +442,28 @@ describe('vanguard.run', () => {
     await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
-    const warning = entries.find((e) => e.msg.includes('dropped .github/workflows path'));
+    const warning = entries.find((e) => e.msg.includes('dropped CI config path'));
     expect(warning).toBeDefined();
     expect(String(warning?.obj.path)).toContain('.github/workflows');
+  });
+
+  it('does not copy sandbox-authored GitLab CI config back to the worktree', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await writeFile(join(hostPath, '.gitlab-ci.yml'), 'workflow:\n  rules: []\n');
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'evil.yml'), 'evil:\n  script: [env]\n');
+      await writeFile(join(hostPath, 'app.gitlab-ci.yml.md'), 'notes\n');
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'gl-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    expect(result.diff).toContain('app.gitlab-ci.yml.md');
+    expect(result.diff ?? '').not.toContain('.gitlab/ci');
+    expect(result.diff ?? '').not.toContain('workflow:');
+    expect(existsSync(join(repo, '.gitlab', 'ci', 'evil.yml'))).toBe(false);
   });
 
   it('still copies back sibling .github files like dependabot.yml', async () => {
@@ -498,6 +517,26 @@ describe('vanguard.run', () => {
         '--- a/README.md',
         '+++ b/README.md',
         '+see .github/workflows/ci.yml for details',
+      ].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual([]);
+    });
+
+    it('finds GitLab CI config: .gitlab-ci.yml and anything under .gitlab/', () => {
+      const diff = [
+        'diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml',
+        '+++ b/.gitlab-ci.yml',
+        'diff --git a/.gitlab/ci/verify.yml b/.gitlab/ci/verify.yml',
+        '+++ b/.gitlab/ci/verify.yml',
+      ].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab-ci.yml', '.gitlab/ci/verify.yml']);
+    });
+
+    it('does not match GitLab near-misses (.gitlab-ci.yml as a prefix, a .gitlabx dir)', () => {
+      const diff = [
+        'diff --git a/.gitlab-ci.yml.orig b/.gitlab-ci.yml.orig',
+        '+++ b/.gitlab-ci.yml.orig',
+        'diff --git a/.gitlabx/ci.yml b/.gitlabx/ci.yml',
+        '+++ b/.gitlabx/ci.yml',
       ].join('\n');
       expect(workflowPathsInDiff(diff)).toEqual([]);
     });

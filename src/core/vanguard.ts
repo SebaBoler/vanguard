@@ -1,5 +1,5 @@
 import { cp, mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
@@ -32,9 +32,11 @@ const COPY_BACK_SKIP =
 // Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
 // that gets committed and pushed — that is the exact escalation path in the disclosed
 // claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
-// next GitHub event). Kept as its own regex (not folded into COPY_BACK_SKIP) so drops can be
-// logged loudly instead of silently, like the other noisy-but-expected skips above.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)/;
+// next GitHub event). GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml
+// (and the .gitlab/ files it includes) from the source branch, so an agent-written copy would run
+// with the project's CI variables. Kept as its own regex (not folded into COPY_BACK_SKIP) so drops
+// can be logged loudly instead of silently, like the other noisy-but-expected skips above.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab([\\/]|$)/;
 
 export interface PrepareOptions {
   taskId: string;
@@ -176,24 +178,24 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
-/** Paths under `.github/workflows/` touched by a unified diff. Empty ⇒ clean. */
+/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/`) touched by a unified diff. Empty ⇒ clean. */
 export function workflowPathsInDiff(diff: string): string[] {
   const found = new Set<string>();
   const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
   for (const line of diff.split('\n')) {
     if (!HEADER_LINE.test(line)) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*)/.exec(line);
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^\s"']*)/.exec(line);
     if (match?.[2] !== undefined) found.add(match[2]);
   }
   return [...found].sort();
 }
 
-/** Throws WorkflowGuardError (logged) if the diff touches .github/workflows/. */
+/** Throws WorkflowGuardError (logged) if the diff touches a CI config path. */
 export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskId: string): void {
   const offending = workflowPathsInDiff(diff);
   if (offending.length === 0) return;
-  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches .github/workflows/ (hard constraint)');
-  throw new WorkflowGuardError(`Diff touches forbidden .github/workflows path(s): ${offending.join(', ')}`);
+  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches CI config (hard constraint)');
+  throw new WorkflowGuardError(`Diff touches forbidden CI config path(s): ${offending.join(', ')}`);
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
@@ -207,10 +209,11 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       force: true,
       verbatimSymlinks: true,
       filter: (src) => {
-        if (WORKFLOW_PATH.test(src)) {
+        // Relative, so a `.gitlab` or `.github` directory above the repo does not match.
+        if (WORKFLOW_PATH.test(relative(staging, src))) {
           ctx.log.warn(
             { taskId: ctx.taskId, path: src },
-            'copy-back: dropped .github/workflows path (workflow files are never synced back)',
+            'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ are never synced back)',
           );
           return false;
         }
