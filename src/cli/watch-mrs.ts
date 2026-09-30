@@ -26,7 +26,7 @@ export async function watchMrsCommand(cmd: WatchMrsCommand, deps: WatchMrsComman
   if (!report.ok) throw new Error('preflight failed');
 
   const log = deps.log ?? console.log;
-  const runReviewMr = deps.reviewMr ?? ((reviewCmd: ReviewMrCommand) => reviewMrCommand(reviewCmd));
+  const runReviewMr = deps.reviewMr ?? ((reviewCmd: ReviewMrCommand) => reviewMrCommand(reviewCmd, { headDedupe: false }));
   const runWatchMrs = deps.watchMergeRequests ?? watchMergeRequests;
   const controller = new AbortController();
   const stop = (): void => controller.abort();

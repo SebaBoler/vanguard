@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels } from './gitlab.js';
+import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels, neutralizeQuickActions } from './gitlab.js';
 
 describe('issueIID', () => {
   it('returns bare number unchanged', () => {
@@ -87,6 +87,31 @@ describe('commentGitlabIssue', () => {
     const glab = async (args: string[]) => { calls.push(args); return ''; };
     await commentGitlabIssue('g/p', 'g/p#5', 'hello', glab);
     expect(calls[0]).toEqual(['issue', 'note', 'create', '5', '--repo', 'g/p', '-m', 'hello']);
+  });
+});
+
+describe('neutralizeQuickActions', () => {
+  it('stops every line from starting with a slash and a command name, and leaves other slashes alone', () => {
+    expect(neutralizeQuickActions('Quoted:\n/merge\n  /approve\n\t/label ~x\n/Close\ntext /close stays\na/b')).toBe(
+      'Quoted:\n\\/merge\n  \\/approve\n\t\\/label ~x\n\\/Close\ntext /close stays\na/b',
+    );
+  });
+
+  it('also escapes a slash-and-letter line inside a code fence, where GitLab would show the backslash', () => {
+    // Accepted cost: parsing fences the way GitLab does is harder to get exactly right than a stray backslash.
+    expect(neutralizeQuickActions('```\n/usr/local/bin/x\n```')).toBe('```\n\\/usr/local/bin/x\n```');
+  });
+
+  it('leaves comment and JSDoc lines in quoted code alone', () => {
+    const code = '```ts\n// keep\n/** doc */\n  // indented\n```';
+    expect(neutralizeQuickActions(code)).toBe(code);
+  });
+
+  it('applies to issue notes', async () => {
+    const calls: string[][] = [];
+    const glab = async (args: string[]) => { calls.push(args); return ''; };
+    await commentGitlabIssue('g/p', 'g/p#5', 'see\n/close', glab);
+    expect(calls[0]?.at(-1)).toBe('see\n\\/close');
   });
 });
 

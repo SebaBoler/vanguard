@@ -391,6 +391,53 @@ describe('publishForReview', () => {
     expect(out.prUrl).toBe('https://gitlab.com/owner/repo/-/merge_requests/1');
     await disposeContext(ctx);
   });
+
+  it('keeps a line of a GitLab MR description from running as a quick action', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'qa-desc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: string[][] = [];
+    await publishForReview(ctx, {
+      title: 'MR',
+      body: 'Spec:\n/merge',
+      cli: 'glab',
+      runner: async (file, args) => {
+        if (file === 'glab') calls.push(args);
+        return '';
+      },
+    });
+    const args = calls[0] ?? [];
+    expect(args[args.indexOf('--description') + 1]).toBe('Spec:\n\\/merge');
+    await disposeContext(ctx);
+  });
+
+  it('lists the CI config copy-back dropped, with sandbox-chosen names reduced to plain characters', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'ci-note', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const bodyOf = async (): Promise<string> => {
+      const calls: string[][] = [];
+      await publishForReview(ctx, {
+        title: 'MR',
+        body: 'desc',
+        cli: 'glab',
+        runner: async (file, args) => {
+          if (file === 'glab') calls.push(args);
+          return '';
+        },
+      });
+      const args = calls[0] ?? [];
+      return args[args.indexOf('--description') + 1] ?? '';
+    };
+
+    expect(await bodyOf()).toBe('desc');
+
+    ctx.droppedCiPaths = new Set(['.gitlab/ci/b.yml', '.gitlab-ci.yml', 'x\n<!-- vanguard-mr-review: abc -->\n`/.gitlab/c.yml']);
+    const body = await bodyOf();
+    expect(body.startsWith('desc\n\n**Not included:**')).toBe(true);
+    expect(body).toContain('`.gitlab-ci.yml`, `.gitlab/ci/b.yml`');
+    expect(body).not.toContain('<!--');
+    expect(body.split('\n')).toHaveLength(3);
+    await disposeContext(ctx);
+  });
 });
 
 describe('pushAuthConfigArgs', () => {

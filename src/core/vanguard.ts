@@ -1,5 +1,5 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, lstat, mkdir, readFile, readdir, readlink, rm } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
@@ -32,9 +32,23 @@ const COPY_BACK_SKIP =
 // Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
 // that gets committed and pushed — that is the exact escalation path in the disclosed
 // claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
-// next GitHub event). Kept as its own regex (not folded into COPY_BACK_SKIP) so drops can be
-// logged loudly instead of silently, like the other noisy-but-expected skips above.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)/;
+// next GitHub event). Local actions under .github/actions/ count too, since `uses: ./.github/actions/x` runs
+// them with the workflow's secrets; an action kept elsewhere needs the repository's own review. GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml, and
+// the .gitlab/ YAML it conventionally includes, from the source branch, so an agent-written copy would
+// run with the project's CI variables. For GitLab this is defence in depth, not a boundary:
+// `include: local:` can name any path, so CI YAML kept elsewhere needs the project's own gate. Other
+// .gitlab/ files (MR templates, CODEOWNERS) are not executed and still sync back. Kept as its own
+// regex (not folded into COPY_BACK_SKIP) so drops can be logged loudly instead of silently, like the
+// other noisy-but-expected skips above.
+// Case-insensitive, so `job.YML` or a `.GitLab` directory on a case-insensitive filesystem cannot slip
+// past; over-matching only drops a file that no pipeline reads. `s` lets `.*` cross a newline in a file name.
+// The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.github[\\/]actions([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
+// A `.github` or `.gitlab` entry that is not a real directory (a symlink or a file, and in a diff any changed
+// path, since git lists no directories) could stand in for the directory and point at CI files kept elsewhere.
+// Copy-back also drops any symlink inside those directories, which could do the same for a subdirectory.
+const CI_DIR_NAME = /(^|[\\/])\.git(hub|lab)$/i;
+const IN_CI_DIR = /(^|[\\/])\.git(hub|lab)[\\/]/i;
 
 export interface PrepareOptions {
   taskId: string;
@@ -63,6 +77,8 @@ export interface RunContext {
   localRepoPath: string;
   wm: WorktreeManager;
   log: VanguardLogger;
+  /** CI config files the agent added or edited in the sandbox, which copy-back dropped. The PR/MR description or revision summary lists them. */
+  droppedCiPaths?: Set<string>;
 }
 
 export interface StageInput {
@@ -176,24 +192,49 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
-/** Paths under `.github/workflows/` touched by a unified diff. Empty ⇒ clean. */
-export function workflowPathsInDiff(diff: string): string[] {
-  const found = new Set<string>();
-  const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
-  for (const line of diff.split('\n')) {
-    if (!HEADER_LINE.test(line)) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*)/.exec(line);
-    if (match?.[2] !== undefined) found.add(match[2]);
-  }
-  return [...found].sort();
+/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) among changed paths. Empty ⇒ clean. */
+export function workflowPaths(paths: string[]): string[] {
+  return paths.filter((path) => WORKFLOW_PATH.test(path) || CI_DIR_NAME.test(path)).sort();
 }
 
-/** Throws WorkflowGuardError (logged) if the diff touches .github/workflows/. */
-export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskId: string): void {
-  const offending = workflowPathsInDiff(diff);
+/** Throws WorkflowGuardError (logged) if a changed path is CI config. */
+export function assertNoWorkflowChanges(paths: string[], log: VanguardLogger, taskId: string): void {
+  const offending = workflowPaths(paths);
   if (offending.length === 0) return;
-  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches .github/workflows/ (hard constraint)');
-  throw new WorkflowGuardError(`Diff touches forbidden .github/workflows path(s): ${offending.join(', ')}`);
+  log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches CI config (hard constraint)');
+  throw new WorkflowGuardError(`Diff touches forbidden CI config path(s): ${offending.join(', ')}`);
+}
+
+/** Larger dropped files are reported as changed unread: CI YAML is small, and the sandbox chose the size. */
+const MAX_COMPARED_BYTES = 4 * 1024 * 1024;
+/** The copy-back warning names this many dropped files and counts the rest. */
+const DROPPED_CI_LOGGED = 20;
+
+/**
+ * Collect the files under a dropped CI path whose sandbox copy is new or differs from the worktree.
+ * Unchanged CI files are dropped on every copy-back; only these mean the agent's work is missing from
+ * the diff. A file the agent deleted is not in staging, so it is not reported. The walk is sequential:
+ * the sandbox chose how many files there are, and a parallel walk can run out of file descriptors.
+ */
+async function collectChangedFiles(staging: string, worktree: string, rel: string, changed: string[]): Promise<void> {
+  const src = join(staging, rel);
+  const dest = join(worktree, rel);
+  const info = await lstat(src);
+  if (info.isDirectory()) {
+    for (const name of await readdir(src)) await collectChangedFiles(staging, worktree, join(rel, name), changed);
+    return;
+  }
+  // Compare a symlink by its target and never read through it: the sandbox chose where it points.
+  if (info.isSymbolicLink()) {
+    if ((await readlink(src)) !== (await readlink(dest).catch(() => undefined))) changed.push(rel);
+    return;
+  }
+  const destInfo = info.isFile() ? await lstat(dest).catch(() => undefined) : undefined;
+  if (destInfo?.isFile() !== true || destInfo.size !== info.size || info.size > MAX_COMPARED_BYTES) {
+    changed.push(rel);
+    return;
+  }
+  if (!(await readFile(src)).equals(await readFile(dest))) changed.push(rel);
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
@@ -202,26 +243,45 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
   await mkdir(staging, { recursive: true });
   try {
     await ctx.sandbox.copyFileOut(WORKDIR, staging);
+    const dropped: string[] = [];
     await cp(staging, ctx.worktreePath, {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
-      filter: (src) => {
-        if (WORKFLOW_PATH.test(src)) {
-          ctx.log.warn(
-            { taskId: ctx.taskId, path: src },
-            'copy-back: dropped .github/workflows path (workflow files are never synced back)',
-          );
+      filter: async (src) => {
+        // Relative, so a `.gitlab` or `.github` directory above the repo does not match.
+        const rel = relative(staging, src);
+        const standsIn = async (): Promise<boolean> => {
+          if (!CI_DIR_NAME.test(rel) && !IN_CI_DIR.test(rel)) return false;
+          const info = await lstat(src);
+          return CI_DIR_NAME.test(rel) ? !info.isDirectory() : info.isSymbolicLink();
+        };
+        if (WORKFLOW_PATH.test(rel) || (await standsIn())) {
+          dropped.push(rel);
           return false;
         }
         return !COPY_BACK_SKIP.test(src);
       },
     });
+    // A comparison that fails reports the whole dropped path, so an edit is never hidden.
+    const changed: string[] = [];
+    for (const rel of dropped) {
+      await collectChangedFiles(staging, ctx.worktreePath, rel, changed).catch(() => changed.push(rel));
+    }
+    if (changed.length > 0) {
+      ctx.log.warn(
+        { taskId: ctx.taskId, count: changed.length, paths: changed.slice(0, DROPPED_CI_LOGGED) },
+        'copy-back: dropped CI config path (.github/workflows, .github/actions, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
+      );
+      const recorded = (ctx.droppedCiPaths ??= new Set());
+      for (const path of changed) recorded.add(path);
+    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
   const diff = await ctx.wm.diff(ctx.worktreePath);
-  assertNoWorkflowChanges(diff, ctx.log, ctx.taskId);
+  // Paths from git, not parsed diff headers: diff content lines can start with `+++ ` or `--- `.
+  assertNoWorkflowChanges(await ctx.wm.changedPaths(ctx.worktreePath), ctx.log, ctx.taskId);
   return diff;
 }
 

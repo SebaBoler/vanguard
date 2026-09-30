@@ -128,6 +128,20 @@ export class WorktreeManager {
   }
 
   /**
+   * Paths the worktree changes against HEAD, new files included and both sides of a rename listed.
+   * NUL-separated, so no quoting, and unaffected by diff prefix or rename settings in the user's config.
+   */
+  async changedPaths(worktreePath: string): Promise<string[]> {
+    try {
+      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
+      const { stdout } = await execa('git', ['diff', 'HEAD', '--name-only', '--no-renames', '-z'], { cwd: worktreePath });
+      return stdout.split('\0').filter((path) => path !== '');
+    } catch (cause) {
+      throw new WorktreeError(`Failed to list worktree changes ${worktreePath}`, { cause });
+    }
+  }
+
+  /**
    * Commit messages in `<baseRef>..HEAD`, for the commit-message closing-keyword scan (a rebase
    * merge closes an issue per commit message, regardless of the PR body). Best-effort: returns []
    * (never throws) when `baseRef` can't be resolved locally.

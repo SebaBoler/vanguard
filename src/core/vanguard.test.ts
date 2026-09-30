@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { execa } from 'execa';
 import {
   run,
   prepareContext,
   runAgent,
   disposeContext,
-  workflowPathsInDiff,
+  workflowPaths,
   assertNoWorkflowChanges,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
@@ -442,9 +442,33 @@ describe('vanguard.run', () => {
     await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
-    const warning = entries.find((e) => e.msg.includes('dropped .github/workflows path'));
+    const warning = entries.find((e) => e.msg.includes('dropped CI config path'));
     expect(warning).toBeDefined();
-    expect(String(warning?.obj.path)).toContain('.github/workflows');
+    expect(String(warning?.obj.paths)).toContain('.github/workflows');
+  });
+
+  it('does not copy sandbox-authored GitLab CI config back to the worktree', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await writeFile(join(hostPath, '.gitlab-ci.yml'), 'workflow:\n  rules: []\n');
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'evil.yml'), 'evil:\n  script: [env]\n');
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'upper.YML'), 'upper:\n  script: [env]\n');
+      await writeFile(join(hostPath, 'app.gitlab-ci.yml.md'), 'notes\n');
+      await mkdir(join(hostPath, '.gitlab', 'merge_request_templates'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab', 'merge_request_templates', 'default.md'), 'template\n');
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'gl-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    expect(result.diff).toContain('app.gitlab-ci.yml.md');
+    expect(result.diff).toContain('.gitlab/merge_request_templates/default.md');
+    expect(result.diff ?? '').not.toContain('.gitlab/ci');
+    expect(result.diff ?? '').not.toContain('workflow:');
+    expect(existsSync(join(repo, '.gitlab', 'ci', 'evil.yml'))).toBe(false);
+    expect(existsSync(join(repo, '.gitlab', 'ci', 'upper.YML'))).toBe(false);
   });
 
   it('still copies back sibling .github files like dependabot.yml', async () => {
@@ -461,72 +485,160 @@ describe('vanguard.run', () => {
     expect(result.diff).toContain('dependabot.yml');
   });
 
-  describe('workflowPathsInDiff', () => {
-    it('finds a workflow path from diff --git / +++ headers, including new files and nested dirs', () => {
-      const diff = [
-        'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml',
-        'new file mode 100644',
-        '--- /dev/null',
-        '+++ b/.github/workflows/ci.yml',
-        '@@ -0,0 +1 @@',
-        '+on: push',
-        '',
-        'diff --git a/.github/workflows/nested/sub.yml b/.github/workflows/nested/sub.yml',
-        '--- a/.github/workflows/nested/sub.yml',
-        '+++ b/.github/workflows/nested/sub.yml',
-      ].join('\n');
-      const paths = workflowPathsInDiff(diff);
-      expect(paths).toContain('.github/workflows/ci.yml');
-      expect(paths).toContain('.github/workflows/nested/sub.yml');
+  it('records the CI config the agent added or edited, not unchanged copies of it', async () => {
+    // Identical on both sides, but above the compare cap, so it is reported without being read.
+    const huge = `# ${'x'.repeat(4 * 1024 * 1024)}\n`;
+    await mkdir(join(repo, '.github', 'workflows'), { recursive: true });
+    await mkdir(join(repo, '.gitlab'), { recursive: true });
+    await writeFile(join(repo, '.gitlab-ci.yml'), 'stages: [test]\n');
+    await writeFile(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+    await writeFile(join(repo, '.gitlab', 'linked.yml'), 'same\n');
+    await writeFile(join(repo, '.gitlab', 'same-size.yml'), 'job: a\n');
+    await writeFile(join(repo, '.gitlab', 'huge.yml'), huge);
+    await execa('git', ['add', '.'], { cwd: repo });
+    await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ci'], { cwd: repo });
+    const outside = join(repo, '..', `${basename(repo)}-target.yml`);
+    await writeFile(outside, 'same\n');
+    const wm = new WorktreeManager(repo);
+    const { logger, entries } = captureLogger();
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, '.github', 'workflows'), { recursive: true });
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, '.gitlab-ci.yml'), 'stages: [test]\n');
+      await writeFile(join(hostPath, '.github', 'workflows', 'ci.yml'), 'on: pull_request\n');
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'new.yml'), 'new:\n  script: [env]\n');
+      await writeFile(join(hostPath, '.gitlab', 'same-size.yml'), 'job: b\n');
+      await writeFile(join(hostPath, '.gitlab', 'huge.yml'), huge);
+      // Same bytes through the link, but a symlink is compared by target, never read through.
+      await symlink(outside, join(hostPath, '.gitlab', 'linked.yml'));
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-changed', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+    await rm(outside, { force: true });
+
+    const expected = ['.github/workflows/ci.yml', '.gitlab/ci/new.yml', '.gitlab/huge.yml', '.gitlab/linked.yml', '.gitlab/same-size.yml'];
+    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(expected);
+    const warnings = entries.filter((e) => e.msg.includes('dropped CI config path'));
+    expect(warnings).toHaveLength(1);
+    expect([...(warnings[0]?.obj.paths as string[])].sort()).toEqual(expected);
+  });
+
+  it('drops a .gitlab or .github entry that stands in for the directory, and symlinks inside one', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, 'ci-src', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, 'ci-src', 'ci', 'job.yml'), 'job:\n  script: [env]\n');
+      await mkdir(join(hostPath, 'gh', 'workflows'), { recursive: true });
+      await writeFile(join(hostPath, 'gh', 'workflows', 'x.yml'), 'on: push\n');
+      await symlink('ci-src', join(hostPath, '.gitlab'));
+      await symlink('gh', join(hostPath, '.github'));
+      await mkdir(join(hostPath, 'sub', '.github', 'ISSUE_TEMPLATE'), { recursive: true });
+      await symlink('../../gh', join(hostPath, 'sub', '.github', 'workflows-src'));
+      await writeFile(join(hostPath, 'sub', '.github', 'ISSUE_TEMPLATE', 'bug.md'), 'bug\n');
+      await writeFile(join(hostPath, 'sub', '.gitlab'), 'not a directory\n');
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-symlink', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
+    const linked = await Promise.all(['.gitlab', '.github'].map((name) => lstat(join(ctx.worktreePath, name)).then(() => true, () => false)));
+    await disposeContext(ctx);
+
+    expect(linked).toEqual([false, false]);
+    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(['.github', '.gitlab', 'sub/.github/workflows-src', 'sub/.gitlab']);
+    // A real directory under the same name still syncs back.
+    expect(result.diff).toContain('sub/.github/ISSUE_TEMPLATE/bug.md');
+  });
+
+  it('logs one capped warning however many CI files the agent writes', async () => {
+    const wm = new WorktreeManager(repo);
+    const { logger, entries } = captureLogger();
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      for (let i = 0; i < 25; i++) await writeFile(join(hostPath, '.gitlab', 'ci', `job-${i}.yml`), `job${i}: {}\n`);
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-flood', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    const warnings = entries.filter((e) => e.msg.includes('dropped CI config path'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj.count).toBe(25);
+    expect(warnings[0]?.obj.paths).toHaveLength(20);
+    expect(ctx.droppedCiPaths?.size).toBe(25);
+  });
+
+  describe('workflowPaths', () => {
+    it('finds GitHub workflows and local actions, nested ones included', () => {
+      expect(
+        workflowPaths(['src/a.ts', '.github/workflows/nested/sub.yml', '.github/workflows/ci.yml', '.github/actions/setup/action.yml', '.github/actions/setup/run.sh']),
+      ).toEqual(['.github/actions/setup/action.yml', '.github/actions/setup/run.sh', '.github/workflows/ci.yml', '.github/workflows/nested/sub.yml']);
     });
 
-    it('returns [] for a diff touching only src/** and non-workflow .github files', () => {
-      const diff = [
-        'diff --git a/src/index.ts b/src/index.ts',
-        '--- a/src/index.ts',
-        '+++ b/src/index.ts',
-        'diff --git a/.github/dependabot.yml b/.github/dependabot.yml',
-        '--- a/.github/dependabot.yml',
-        '+++ b/.github/dependabot.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces or newlines and in any case', () => {
+      const paths = ['.gitlab-ci.yml', 'sub/.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml', '.gitlab/ci build.yml', '.gitlab/ci\nevil.yml', '.gitlab/ci/job.YML', '.GitLab-CI.yml'];
+      expect(workflowPaths(paths)).toEqual([...paths].sort());
     });
 
-    it('ignores mentions of .github/workflows/ inside body content lines, not just headers', () => {
-      const diff = [
-        'diff --git a/README.md b/README.md',
-        '--- a/README.md',
-        '+++ b/README.md',
-        '+see .github/workflows/ci.yml for details',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+    it('flags a changed path named .github or .gitlab, which git lists only for a file or symlink', () => {
+      expect(workflowPaths(['.gitlab', 'sub/.github', '.gitlabx', '.github-old', 'docs/.gitlab.md'])).toEqual(['.gitlab', 'sub/.github']);
     });
 
-    it('does not match near-miss paths (singular "workflow", or a similarly-prefixed dir)', () => {
-      const diff = [
-        'diff --git a/.github/workflow/ci.yml b/.github/workflow/ci.yml',
-        '+++ b/.github/workflow/ci.yml',
-        'diff --git a/.githubx/workflows/ci.yml b/.githubx/workflows/ci.yml',
-        '+++ b/.githubx/workflows/ci.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+    it('ignores other .github and .gitlab files and near-miss names', () => {
+      expect(
+        workflowPaths([
+          'src/a.ts',
+          '.github/dependabot.yml',
+          '.github/CODEOWNERS',
+          '.gitlab/merge_request_templates/default.md',
+          '.gitlab/CODEOWNERS',
+          '.gitlab/notes.yml.md',
+          '.gitlab-ci.yml.orig',
+          'app.gitlab-ci.yml.md',
+          '.gitlabx/ci.yml',
+          '.github/workflow/ci.yml',
+          '.githubx/workflows/ci.yml',
+        ]),
+      ).toEqual([]);
+    });
+
+    it('sees changes git records only in headers, and not CI paths quoted in file content', async () => {
+      await mkdir(join(repo, '.github', 'workflows'), { recursive: true });
+      await mkdir(join(repo, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+      await writeFile(join(repo, '.gitlab', 'ci', 'job.yml'), 'job: {}\n');
+      await execa('git', ['add', '.'], { cwd: repo });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ci'], { cwd: repo });
+      // Custom diff prefixes must not hide anything.
+      await execa('git', ['config', 'diff.srcPrefix', 'src/'], { cwd: repo });
+      await execa('git', ['config', 'diff.dstPrefix', 'dst/'], { cwd: repo });
+      const wm = new WorktreeManager(repo);
+      const ctx = await prepareContext({ taskId: 'wf-paths', localRepoPath: repo, sandbox: makeSandbox().sandbox }, { worktrees: wm });
+
+      await chmod(join(ctx.worktreePath, '.github', 'workflows', 'ci.yml'), 0o755);
+      await writeFile(join(ctx.worktreePath, '.gitlab', 'ci', 'job.yml'), Buffer.from([0, 1, 2, 0]));
+      // Added lines render as `+++ b/...` and `+-- ...` in a unified diff.
+      await writeFile(join(ctx.worktreePath, 'notes.sql'), '++ b/.github/workflows/evil.yml\n-- .gitlab/ci/evil.yml\n');
+
+      expect(workflowPaths(await wm.changedPaths(ctx.worktreePath))).toEqual(['.github/workflows/ci.yml', '.gitlab/ci/job.yml']);
+      await disposeContext(ctx);
     });
   });
 
   describe('assertNoWorkflowChanges', () => {
-    it('throws WorkflowGuardError and logs error with offending paths for a workflow-touching diff', () => {
+    it('throws WorkflowGuardError and logs error with the offending paths', () => {
       const { logger, entries } = captureLogger();
-      const diff = 'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n';
-      expect(() => assertNoWorkflowChanges(diff, logger, 't-guard')).toThrow(WorkflowGuardError);
+      expect(() => assertNoWorkflowChanges(['src/a.ts', '.github/workflows/ci.yml'], logger, 't-guard')).toThrow(WorkflowGuardError);
       const error = entries.find((e) => e.msg.includes('blocked commit'));
       expect(error).toBeDefined();
       expect(error?.obj.paths).toEqual(['.github/workflows/ci.yml']);
     });
 
-    it('does not throw for a clean diff', () => {
+    it('does not throw when no changed path is CI config', () => {
       const { logger, entries } = captureLogger();
-      const diff = 'diff --git a/src/index.ts b/src/index.ts\n+++ b/src/index.ts\n';
-      expect(() => assertNoWorkflowChanges(diff, logger, 't-guard-clean')).not.toThrow();
+      expect(() => assertNoWorkflowChanges(['src/index.ts'], logger, 't-guard-clean')).not.toThrow();
       expect(entries.length).toBe(0);
     });
   });

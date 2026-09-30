@@ -108,6 +108,86 @@ describe('watchOnce', () => {
       'watch D: skipped -> already claimed',
     ]);
   });
+
+  it('claims and processes only the first maxTasks ready items, leaving the rest untouched', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1, maxTasks: 2 });
+
+    expect(claimed).toEqual(['A', 'B']);
+    expect(tick.opened).toEqual(['A', 'B']);
+  });
+
+  it('does not count an item another runner already claimed against maxTasks', async () => {
+    const attempted: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'E' }],
+      claim: async (id) => {
+        attempted.push(id);
+        if (id === 'A') throw new Error('already claimed');
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 2, maxTasks: 2 });
+
+    expect(attempted).toEqual(['A', 'B', 'C']);
+    expect(tick.opened).toEqual(['B', 'C']);
+    expect(tick.skipped).toEqual(['A']);
+    expect(tick.deferred).toEqual(['D', 'E']);
+  });
+
+  it('never claims more than maxTasks when claims run concurrently', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+      claim: async (id) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 4, maxTasks: 1 });
+
+    expect(claimed).toEqual(['A']);
+    expect(tick.opened).toEqual(['A']);
+  });
+
+  it('processes every ready item when maxTasks is unset', async () => {
+    const claimed: string[] = [];
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runOne: async (id) => ({ prUrl: `pr/${id}` }),
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    const tick = await watchOnce(primitives, { concurrency: 1 });
+
+    expect(claimed).toEqual(['A', 'B', 'C']);
+    expect(tick.opened).toEqual(['A', 'B', 'C']);
+  });
 });
 
 describe('specOnce', () => {
@@ -138,6 +218,42 @@ describe('specOnce', () => {
       'spec C: failed -> retry later',
       'spec D: skipped -> already claimed',
     ]);
+  });
+
+  it('claims and specs only the first maxTasks ready items', async () => {
+    const claimed: string[] = [];
+    const logs: string[] = [];
+    const primitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        claimed.push(id);
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    const tick = await specOnce(primitives, { concurrency: 1, maxTasks: 1, log: (msg) => logs.push(msg) });
+
+    expect(claimed).toEqual(['A']);
+    expect(tick.advanced).toEqual(['A']);
+    expect(logs[0]).toBe('spec: poll -> 3 ready (capped to 1 by --max-tasks)');
+  });
+
+  it('fills maxTasks past an item that fails to claim', async () => {
+    const primitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        if (id === 'A') throw new Error('already claimed');
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    const tick = await specOnce(primitives, { concurrency: 1, maxTasks: 1 });
+
+    expect(tick.advanced).toEqual(['B']);
+    expect(tick.skipped).toEqual(['A']);
+    expect(tick.deferred).toEqual(['C']);
   });
 });
 

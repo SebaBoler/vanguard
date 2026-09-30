@@ -38,6 +38,18 @@ export function sidecarMemoryArgs(env: NodeJS.ProcessEnv = process.env): string[
 }
 
 /**
+ * `--label vanguard.owner=<value>` for every container and network Vanguard creates, when
+ * VANGUARD_OWNER_LABEL is set. Lets a CI job tear down exactly its own leftovers in an after_script
+ * without touching another job's; the README gives the commands, piped through `xargs -r` so an empty
+ * match does not fail.
+ * Empty (no flag) when the variable is unset or empty, same as the other sidecar arg helpers here.
+ */
+export function ownerLabelArgs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const owner = env.VANGUARD_OWNER_LABEL;
+  return owner === undefined || owner === '' ? [] : ['--label', `vanguard.owner=${owner}`];
+}
+
+/**
  * Env-overridable sandbox hardening. Unlike the resource limits above, these default ON for every
  * sandbox (least-privilege by default) and are overridable per the same "0"/empty ⇒ disable idiom.
  */

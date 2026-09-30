@@ -2,8 +2,9 @@ import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
+import { sandboxImage } from './docker.js';
 import { DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
-import { sidecarMemoryArgs } from './limits.js';
+import { ownerLabelArgs, sidecarMemoryArgs } from './limits.js';
 import type { DockerRunner } from './llm-proxy.js';
 
 const PROXY_PORT = 8080;
@@ -47,7 +48,9 @@ export async function startEgressEnclave(
 ): Promise<EgressEnclave> {
   const docker = opts.docker ?? defaultDocker;
   const allowlist = opts.allowlist ?? DEFAULT_EGRESS_ALLOWLIST;
-  const image = opts.image ?? 'vanguard-sandbox:latest';
+  // The proxy sidecar runs its node script inside the sandbox image itself (no dedicated proxy
+  // image), so it must follow the same CI-pinned override as the main sandbox.
+  const image = opts.image ?? sandboxImage();
   const id = randomUUID().slice(0, 8);
   const network = `vg-egr-${id}`;
   const proxy = `vg-proxy-${id}`;
@@ -60,7 +63,7 @@ export async function startEgressEnclave(
     if (result.exitCode !== 0) throw new Error(`docker ${args[0]} failed: ${result.stderr}`);
   };
   try {
-    await must(['network', 'create', '--internal', network]);
+    await must(['network', 'create', '--internal', ...ownerLabelArgs(), network]);
     // Created (not started) on the default bridge so the script can be cp'd in first; joined to the
     // internal network before start.
     await must([
@@ -69,6 +72,7 @@ export async function startEgressEnclave(
       proxy,
       '--label',
       `vanguard.runId=${id}`,
+      ...ownerLabelArgs(),
       '--restart',
       'on-failure:10',
       ...sidecarMemoryArgs(),
