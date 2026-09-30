@@ -33,6 +33,12 @@ describe('sandboxImage', () => {
     expect(sandboxImage()).toBe('vanguard-sandbox:latest');
   });
 
+  it('rejects a value docker would read as a flag, or one with whitespace', () => {
+    for (const value of ['--privileged', '-v/:/host', 'vanguard-sandbox:latest --privileged']) {
+      expect(() => sandboxImage({ [ENV_VAR]: value }), value).toThrow(/not an image reference/);
+    }
+  });
+
   it('reads from an injected env map rather than process.env when given one', () => {
     expect(sandboxImage({ [ENV_VAR]: 'sha256:cafef00d' })).toBe('sha256:cafef00d');
     expect(sandboxImage({})).toBe('vanguard-sandbox:latest');

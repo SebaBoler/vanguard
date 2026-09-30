@@ -36,7 +36,11 @@ const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
  */
 export function sandboxImage(env: NodeJS.ProcessEnv = process.env): string {
   const override = env['VANGUARD_SANDBOX_IMAGE'];
-  return override !== undefined && override !== '' ? override : DEFAULT_IMAGE;
+  if (override === undefined || override === '') return DEFAULT_IMAGE;
+  // The image sits in docker's argv before the command, so a leading `-` would be read as a flag such as
+  // --privileged. No valid image reference starts with `-` or contains whitespace.
+  if (/^-|\s/.test(override)) throw new SandboxError(`VANGUARD_SANDBOX_IMAGE is not an image reference: ${JSON.stringify(override)}`);
+  return override;
 }
 
 /**
