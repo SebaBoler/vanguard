@@ -4,8 +4,19 @@ vi.mock('../sandbox/sandbox-context.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../sandbox/sandbox-context.js')>()),
   startSandboxContext: vi.fn(),
 }));
+vi.mock('../sandbox/llm-proxy.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../sandbox/llm-proxy.js')>()),
+  startProviderProxies: vi.fn(async () => ({ destroy: async () => undefined })),
+}));
+vi.mock('../core/vanguard.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/vanguard.js')>()),
+  prepareContext: vi.fn(async () => ({})),
+  runAgent: vi.fn(),
+  disposeContext: vi.fn(async () => undefined),
+}));
 
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
+import { runAgent } from '../core/vanguard.js';
 import { mergeRequestReviewMarker, reviewMergeRequest } from '../runners/mr-review.js';
 import { reviewMrCommand } from './review-mr.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
@@ -47,22 +58,29 @@ describe('reviewMrCommand', () => {
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
     const destroy = vi.fn(async () => undefined);
     vi.mocked(startSandboxContext).mockClear().mockResolvedValue({ destroy } as never);
-    const mr = { project: 'g/p', iid: 5, title: 'T', description: '', webUrl: '', author: '', sourceBranch: 'b', sha: 'abc', targetBranch: 'main', diff: '' };
+    const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+    vi.mocked(runAgent)
+      .mockReset()
+      .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
+      .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+    const sha = 'abc123def4567890';
+    const calls: string[][] = [];
+    const glab: GlabRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha });
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
+      if (args[0] === 'api') return '[]';
+      return '';
+    };
 
     await reviewMrCommand(
-      { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/nonexistent-repo', egress: true },
-      {
-        // Each attempt fails past the context (no repo); only the context lifecycle is under test.
-        reviewMergeRequest: async (_ref, deps) => {
-          await deps.reviewer(mr, { isRetry: false }).catch(() => undefined);
-          await deps.reviewer(mr, { isRetry: true }).catch(() => undefined);
-          return { mr };
-        },
-        log: () => undefined,
-      },
+      { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true },
+      { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
     );
 
+    expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([16, 24]);
     expect(startSandboxContext).toHaveBeenCalledTimes(1);
     expect(destroy).toHaveBeenCalledTimes(1);
+    expect(calls.filter((c) => c[0] === 'mr' && c[1] === 'note')).toHaveLength(1);
   });
 });
