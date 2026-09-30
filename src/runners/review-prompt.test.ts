@@ -32,9 +32,10 @@ describe('stripReviewMarkers', () => {
 
   it('stays linear on a long run of blank lines', () => {
     const started = performance.now();
-    stripReviewMarkers(`${'\n'.repeat(200_000)}x`);
-    // Padding that spans line breaks rescans the rest of the run from every line start: seconds, not milliseconds.
-    expect(performance.now() - started).toBeLessThan(1000);
+    stripReviewMarkers(`${'\n'.repeat(400_000)}x`);
+    // Linear: about 1 ms here. Padding that spans line breaks rescans the rest of the run from every line
+    // start: about a minute. The bound sits far from both, so a loaded runner does not flake it.
+    expect(performance.now() - started).toBeLessThan(5000);
   });
 });
 
