@@ -223,30 +223,34 @@ export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskI
 
 /** Larger dropped files are reported as changed unread: CI YAML is small, and the sandbox chose the size. */
 const MAX_COMPARED_BYTES = 4 * 1024 * 1024;
+/** The copy-back warning names this many dropped files and counts the rest. */
+const DROPPED_CI_LOGGED = 20;
 
 /**
- * Files under a dropped CI path whose sandbox copy is new or differs from the worktree. Unchanged CI
- * files are dropped on every copy-back; only these mean the agent's work is missing from the diff. A
- * file the agent deleted is not in staging, so it is not reported.
+ * Collect the files under a dropped CI path whose sandbox copy is new or differs from the worktree.
+ * Unchanged CI files are dropped on every copy-back; only these mean the agent's work is missing from
+ * the diff. A file the agent deleted is not in staging, so it is not reported. The walk is sequential:
+ * the sandbox chose how many files there are, and a parallel walk can run out of file descriptors.
  */
-async function changedFiles(staging: string, worktree: string, rel: string): Promise<string[]> {
+async function collectChangedFiles(staging: string, worktree: string, rel: string, changed: string[]): Promise<void> {
   const src = join(staging, rel);
   const dest = join(worktree, rel);
   const info = await lstat(src);
   if (info.isDirectory()) {
-    const names = await readdir(src);
-    return (await Promise.all(names.map((name) => changedFiles(staging, worktree, join(rel, name))))).flat();
+    for (const name of await readdir(src)) await collectChangedFiles(staging, worktree, join(rel, name), changed);
+    return;
   }
   // Compare a symlink by its target and never read through it: the sandbox chose where it points.
   if (info.isSymbolicLink()) {
-    const [a, b] = await Promise.all([readlink(src), readlink(dest).catch(() => undefined)]);
-    return a === b ? [] : [rel];
+    if ((await readlink(src)) !== (await readlink(dest).catch(() => undefined))) changed.push(rel);
+    return;
   }
-  if (!info.isFile()) return [rel];
-  const destInfo = await lstat(dest).catch(() => undefined);
-  if (destInfo?.isFile() !== true || destInfo.size !== info.size || info.size > MAX_COMPARED_BYTES) return [rel];
-  const [a, b] = await Promise.all([readFile(src), readFile(dest)]);
-  return a.equals(b) ? [] : [rel];
+  const destInfo = info.isFile() ? await lstat(dest).catch(() => undefined) : undefined;
+  if (destInfo?.isFile() !== true || destInfo.size !== info.size || info.size > MAX_COMPARED_BYTES) {
+    changed.push(rel);
+    return;
+  }
+  if (!(await readFile(src)).equals(await readFile(dest))) changed.push(rel);
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */
@@ -271,13 +275,17 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       },
     });
     // A comparison that fails reports the whole dropped path, so an edit is never hidden.
-    const changed = await Promise.all(dropped.map((rel) => changedFiles(staging, ctx.worktreePath, rel).catch(() => [rel])));
-    for (const path of changed.flat()) {
+    const changed: string[] = [];
+    for (const rel of dropped) {
+      await collectChangedFiles(staging, ctx.worktreePath, rel, changed).catch(() => changed.push(rel));
+    }
+    if (changed.length > 0) {
       ctx.log.warn(
-        { taskId: ctx.taskId, path },
+        { taskId: ctx.taskId, count: changed.length, paths: changed.slice(0, DROPPED_CI_LOGGED) },
         'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
       );
-      (ctx.droppedCiPaths ??= new Set()).add(path);
+      const recorded = (ctx.droppedCiPaths ??= new Set());
+      for (const path of changed) recorded.add(path);
     }
   } finally {
     await rm(staging, { recursive: true, force: true });

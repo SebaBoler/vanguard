@@ -444,7 +444,7 @@ describe('vanguard.run', () => {
 
     const warning = entries.find((e) => e.msg.includes('dropped CI config path'));
     expect(warning).toBeDefined();
-    expect(String(warning?.obj.path)).toContain('.github/workflows');
+    expect(String(warning?.obj.paths)).toContain('.github/workflows');
   });
 
   it('does not copy sandbox-authored GitLab CI config back to the worktree', async () => {
@@ -520,8 +520,28 @@ describe('vanguard.run', () => {
 
     const expected = ['.github/workflows/ci.yml', '.gitlab/ci/new.yml', '.gitlab/huge.yml', '.gitlab/linked.yml', '.gitlab/same-size.yml'];
     expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(expected);
-    const warned = entries.filter((e) => e.msg.includes('dropped CI config path')).map((e) => String(e.obj.path));
-    expect(warned.sort()).toEqual(expected);
+    const warnings = entries.filter((e) => e.msg.includes('dropped CI config path'));
+    expect(warnings).toHaveLength(1);
+    expect([...(warnings[0]?.obj.paths as string[])].sort()).toEqual(expected);
+  });
+
+  it('logs one capped warning however many CI files the agent writes', async () => {
+    const wm = new WorktreeManager(repo);
+    const { logger, entries } = captureLogger();
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
+      for (let i = 0; i < 25; i++) await writeFile(join(hostPath, '.gitlab', 'ci', `job-${i}.yml`), `job${i}: {}\n`);
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-flood', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    await runAgent(ctx, { promptTemplate: 'p', agent });
+    await disposeContext(ctx);
+
+    const warnings = entries.filter((e) => e.msg.includes('dropped CI config path'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.obj.count).toBe(25);
+    expect(warnings[0]?.obj.paths).toHaveLength(20);
+    expect(ctx.droppedCiPaths?.size).toBe(25);
   });
 
   describe('workflowPathsInDiff', () => {
