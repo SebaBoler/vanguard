@@ -194,6 +194,13 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
   });
 
+  it('names the MR notes when glab returns something other than a list', async () => {
+    const { glab } = makeGlab('{"message":"404 Not Found"}');
+    await expect(hasMergeRequestReviewForHead({ project: 'g/p', iid: 5 }, HEAD, glab)).rejects.toThrow(
+      'cannot read the MR notes (the response is not a list of notes)',
+    );
+  });
+
   it('finds a review pushed past the first page of notes, and reads at most five pages', async () => {
     const spam = JSON.stringify(Array.from({ length: 100 }, () => ({ system: false, author: { username: 'mallory' }, body: 'hi' })));
     const review = JSON.stringify([{ system: false, author: { username: BOT }, body: mergeRequestReviewMarker(HEAD) }]);

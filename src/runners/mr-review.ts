@@ -209,6 +209,7 @@ export async function hasMergeRequestReviewForHead(
         `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=${NOTES_PER_PAGE}&page=${page}&sort=desc&order_by=created_at`,
       ]);
       notes = JSON.parse(out) as GlabMrNoteItem[];
+      if (!Array.isArray(notes)) throw new Error('the response is not a list of notes');
     } catch (error) {
       throw new Error(`cannot read the MR notes (${errorText(error)})`, { cause: error });
     }
