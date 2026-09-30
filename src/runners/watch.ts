@@ -450,6 +450,8 @@ interface LoopControls {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** (loop-v1) Run only the spec pass each tick; the agent pass never lists, claims or runs. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -480,7 +482,8 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
  * agentPrimitives) once per tick. Continuous loops defer freshly-specced tickets to the next poll,
  * giving a human a window to intervene before the agent runs. One-shot runs carry freshly-specced
  * tickets into the same invocation, which avoids relying on GitHub's eventually consistent label
- * search in GitHub Actions.
+ * search in GitHub Actions. With specOnly the agent pass is skipped entirely, so advanced tickets
+ * wait in the agent trigger until a separate (e.g. scheduled) agent-only watch picks them up.
  * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
  */
 export async function runLoopV1(
@@ -496,6 +499,11 @@ export async function runLoopV1(
     const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
     const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped${deferredNote(spec)}.`);
+    if (opts.specOnly === true) {
+      if (opts.once === true) return;
+      await delay(intervalMs, opts.signal);
+      continue;
+    }
     // GitHub's label index is eventually consistent: a label written by the spec pass may not
     // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
     // into the agent ready-set so spec→build completes in one invocation, deduping against what
@@ -529,6 +537,8 @@ export interface WatchLinearLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -663,6 +673,8 @@ export interface WatchGithubLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -915,6 +927,8 @@ export interface WatchGitlabLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 

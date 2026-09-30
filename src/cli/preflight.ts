@@ -100,14 +100,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   if (cmd.kind === 'doctor-prs') return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
   if (cmd.source !== 'github') return [];
   if (cmd.specLabel !== undefined) {
+    // A spec-only watch never runs the agent pass, so it never writes the claimed/review labels.
+    const agentPassLabels = cmd.specOnly === true ? [] : [cmd.claimedState ?? GITHUB_CLAIMED_LABEL, cmd.reviewState ?? GITHUB_REVIEW_LABEL];
     return unique([
       cmd.label,
       cmd.specLabel,
       cmd.agentLabel,
       cmd.needsInfoLabel,
       cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
-      cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
-      cmd.reviewState ?? GITHUB_REVIEW_LABEL,
+      ...agentPassLabels,
     ]);
   }
   return unique([
@@ -361,7 +362,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
         checks.push(check('github labels', false, 'repo unknown'));
       } else {
         checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
-        const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
+        // A spec-only watch never opens a PR, so the pr-create setting cannot block it.
+        const specOnly = cmd.kind !== 'doctor-prs' && cmd.specOnly === true;
+        const prCreate = specOnly ? undefined : await prCreateSettingOk(run, cmd.repoPath, repoSlug);
         if (prCreate !== undefined) checks.push(prCreate);
       }
     }
@@ -369,6 +372,10 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
       checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+    }
+
+    // The checks below guard publishing a Linear run's PR/MR; a spec-only watch never publishes.
+    if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear' && cmd.specOnly !== true) {
       // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
       const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
       // A self-hosted GitLab that GITLAB_HOST does not name takes the gh path and would fail at publish, after

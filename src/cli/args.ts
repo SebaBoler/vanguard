@@ -130,6 +130,7 @@ export type Command =
       agentState?: string;
       needsInfoState?: string;
       specClaimedState?: string;
+      specOnly?: boolean;
       llmProxy?: boolean;
     }
   | ({
@@ -209,6 +210,8 @@ export type Command =
        * (default: 'Speccing'). Omitted when absent — the default is used.
        */
       specClaimedState?: string;
+      /** (loop-v1) Run only the spec pass each tick; the agent pass is skipped (no list, claim or run). */
+      specOnly?: boolean;
     } & RunOptions)
   | {
       kind: 'review-mr';
@@ -374,6 +377,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'needs-info-state': { type: 'string' },
         'spec-claimed-state': { type: 'string' },
         'spec-model': { type: 'string' },
+        'spec-only': { type: 'boolean' },
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
@@ -853,6 +857,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         return fail('loop-v1 is not supported with --source project.');
       }
     } else {
+      if (values['spec-only'] === true) {
+        return fail(`${commandKind} --spec-only requires loop-v1 (--loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.`);
+      }
       // Existing single-pass validation: label is required for linear/github/gitlab; optional for project.
       if (source !== 'project' && label === undefined) {
         return fail(`${commandKind} --source ${source} requires --label <name>.`);
@@ -905,6 +912,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(agentState !== undefined ? { agentState } : {}),
       ...(needsInfoState !== undefined ? { needsInfoState } : {}),
       ...(typeof values['spec-claimed-state'] === 'string' ? { specClaimedState: values['spec-claimed-state'] } : {}),
+      ...(values['spec-only'] === true ? { specOnly: true } : {}),
     };
 
     if (commandKind === 'doctor') {
@@ -1013,6 +1021,11 @@ Commands:
 
     Shared:
       --spec-model <m>           Cheap model for the spec-generation stage (e.g. "haiku")
+      --spec-only                Run only the spec pass each tick; never list, claim or run the agent pass
+                                 (works with --once; --max-tasks then caps the spec pass only).
+                                 Review window: a spec-only job advances specced issues to a review state/label
+                                 (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
+                                 and a separate watch without --spec-only builds them.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo

@@ -137,6 +137,7 @@ export async function watchLinearSource(
       intervalMs: cmd.intervalMs,
       once: cmd.once,
       ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;
@@ -217,6 +218,7 @@ async function watchGithubSource(
       intervalMs: cmd.intervalMs,
       once: cmd.once,
       ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;
@@ -314,6 +316,7 @@ export async function watchGitlabSource(
       intervalMs: cmd.intervalMs,
       once: cmd.once,
       ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;

@@ -1082,6 +1082,58 @@ describe('parseCli', () => {
       expect('specClaimedLabel' in cmd).toBe(false);
     }
   });
+
+  // --- --spec-only: spec pass without the agent pass ---
+
+  it('parses --spec-only with --once on linear loop-v1', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--label', 'ready-for-agent',
+        '--team', 'DEV',
+        '--once',
+        '--spec-only',
+        '--spec-state', 'triage',
+        '--spec-state-name', 'Triage',
+        '--agent-state', 'Spec Review',
+        '--needs-info-state', 'Needs Info',
+      ],
+      '/work',
+    );
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'linear', once: true, specOnly: true, agentState: 'Spec Review' });
+  });
+
+  it('parses --spec-only on github loop-v1 defaults', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'github', specLabel: 'ready for spec', specOnly: true, once: false });
+  });
+
+  it('parses --spec-only on doctor so preflight matches the spec-only watch', () => {
+    const cmd = parseCli(['doctor', '--loop-v1', '--label', 'vanguard', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'doctor', specOnly: true });
+  });
+
+  it('omits specOnly when --spec-only is absent', () => {
+    const cmd = parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--once'], '/work');
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('specOnly' in cmd).toBe(false);
+    }
+  });
+
+  it('returns an error when --spec-only is used without loop-v1', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only requires loop-v1 (--loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.',
+    });
+  });
+
+  it('returns an error when --spec-only is used on the project source', () => {
+    expect(parseCli(['watch', '--source', 'project', '--project', '7', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
 });
 
 describe('parseCli revise-pr', () => {
