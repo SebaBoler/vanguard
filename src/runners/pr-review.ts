@@ -188,10 +188,16 @@ function appendMarker(visible: string, headRefOid?: string): string {
   return headRefOid === undefined || headRefOid === '' ? visible : `${visible}\n\n${pullRequestReviewMarker(headRefOid)}`;
 }
 
+/**
+ * Marks Vanguard's own incomplete review so revise-pr does not take it for human feedback when the posting
+ * login is not recognised as a bot. The head dedupe does not count it (no SHA).
+ */
+export const PR_REVIEW_INCOMPLETE_MARKER = '<!-- vanguard-pr-review-incomplete -->';
+
 // Deliberately no head-SHA marker: the marker means "this head has a verdict", and an incomplete
 // notice must not block the retry via re-label or the next sweep (the stranded-label no-op, #316).
 export function buildPullRequestReviewIncompleteComment(reason: PullRequestReviewIncompleteReason = 'too-large'): string {
-  return `## Vanguard Review\n\n${reason === 'no-output' ? PR_REVIEW_NO_OUTPUT_NOTICE : PR_REVIEW_INCOMPLETE_NOTICE}`;
+  return `## Vanguard Review\n\n${reason === 'no-output' ? PR_REVIEW_NO_OUTPUT_NOTICE : PR_REVIEW_INCOMPLETE_NOTICE}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
 }
 
 /** Both review attempts ended without a verdict. The incomplete notice (when publishing) was already posted. */
@@ -252,7 +258,7 @@ export function buildMainLoopReviewComment(
   const atSha = sha7 !== undefined ? ` @ ${sha7}` : '';
   const header = `Reviewed by ${opts.attribution}${atSha}`;
   if (opts.completed === false) {
-    return `## Vanguard Review\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}`;
+    return `## Vanguard Review\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
   }
   const visible =
     body === '' ? `## Vanguard Review\n\n${header}: no blocking issues` : `## Vanguard Review\n\n${header}:\n\n${body}`;

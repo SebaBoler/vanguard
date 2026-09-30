@@ -159,7 +159,7 @@ describe('reviewPullRequest', () => {
     expect(body).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
     expect(body).not.toContain('Now let me examine');
     // No head marker: the notice must not block a retry after re-labeling the same head.
-    expect(body).not.toContain('vanguard-pr-review');
+    expect(body).not.toContain('vanguard-pr-review:');
     expect(logs).toContain('review-pr o/r#12: incomplete -> retry (larger budget)');
     expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice (too-large)');
   });
@@ -175,7 +175,7 @@ describe('reviewPullRequest', () => {
     const body = calls.find((a) => a[0] === 'pr' && a[1] === 'review')?.at(-1) ?? '';
     expect(body).toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
     expect(body).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
-    expect(body).not.toContain('vanguard-pr-review');
+    expect(body).not.toContain('vanguard-pr-review:');
   });
 
   it('publish:false incomplete posts nothing and carries the notice on the error', async () => {
@@ -414,13 +414,13 @@ describe('buildPullRequestReviewIncompleteComment', () => {
     expect(comment).toContain('## Vanguard Review');
     expect(comment).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
     // A marker would make watch-prs treat the failed attempt as a delivered verdict for the head.
-    expect(comment).not.toContain('vanguard-pr-review');
+    expect(comment).not.toContain('vanguard-pr-review:');
   });
 
   it('names the provider failure for the no-output reason', () => {
     const comment = buildPullRequestReviewIncompleteComment('no-output');
     expect(comment).toContain(PR_REVIEW_NO_OUTPUT_NOTICE);
     expect(comment).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
-    expect(comment).not.toContain('vanguard-pr-review');
+    expect(comment).not.toContain('vanguard-pr-review:');
   });
 });

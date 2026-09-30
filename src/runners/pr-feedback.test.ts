@@ -17,6 +17,7 @@ import {
   guardedPoint,
 } from './pr-feedback.js';
 import type { PullRequestFeedback, FeedbackItem, RevisionSummaryInput, FileChange } from './pr-feedback.js';
+import { buildMainLoopReviewComment, buildPullRequestReviewIncompleteComment } from './pr-review.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -477,6 +478,24 @@ describe('buildRevisionDryRun', () => {
     });
     expect(out).toContain('(no changes)');
     expect(out).toContain('(none)');
+  });
+});
+
+describe('selectActionableFeedback and incomplete verdicts', () => {
+  it("drops Vanguard's own incomplete review even when the posting login is not a recognised bot", () => {
+    const partial = buildMainLoopReviewComment('Partial.', { headRefOid: 'sha-new', attribution: 'a', completed: false });
+    const fb: PullRequestFeedback = {
+      headRefOid: 'sha-new',
+      headCommittedDate: '2026-01-01T00:00:00Z',
+      isDraft: false,
+      threads: [],
+      items: [
+        commentItem({ author: 'pawel', body: partial, createdAt: '2026-01-02T00:00:00Z' }),
+        commentItem({ author: 'pawel', body: buildPullRequestReviewIncompleteComment(), createdAt: '2026-01-02T00:00:00Z' }),
+        commentItem({ author: 'alice', body: 'Please rename x.', createdAt: '2026-01-02T00:00:00Z' }),
+      ],
+    };
+    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' }).map((item) => item.author)).toEqual(['alice']);
   });
 });
 
