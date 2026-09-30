@@ -87,12 +87,14 @@ export class GitLabTaskFetcher implements TaskFetcher {
 
 /**
  * Keep GitLab from running quick actions in text the bot posts. A note or description created through the
- * API runs each line that starts with `/` (`/merge`, `/approve`, `/label ~x`) as the posting user, and bot
- * text quotes MR, issue and agent content. A backslash before the slash stops that and renders as nothing.
- * Leading spaces and tabs are covered too, although GitLab only matches a `/` at the very start of a line.
+ * API runs each line that starts with `/` and a command name (`/merge`, `/approve`, `/label ~x`) as the
+ * posting user, and bot text quotes MR, issue and agent content. A backslash before the slash stops that and
+ * renders as nothing outside code. Every command name starts with a letter, so `//` and `/**` lines in quoted
+ * code stay as they are. Leading spaces and tabs are covered too, although GitLab only matches a `/` at the
+ * very start of a line.
  */
 export function neutralizeQuickActions(text: string): string {
-  return text.replace(/^([ \t]*)\//gm, '$1\\/');
+  return text.replace(/^([ \t]*)\/(?=[a-z])/gim, '$1\\/');
 }
 
 /** Post a note on a GitLab issue. */

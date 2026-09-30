@@ -91,10 +91,15 @@ describe('commentGitlabIssue', () => {
 });
 
 describe('neutralizeQuickActions', () => {
-  it('stops every line from starting with a slash, and leaves other slashes alone', () => {
-    expect(neutralizeQuickActions('Quoted:\n/merge\n  /approve\n\t/label ~x\ntext /close stays\na/b')).toBe(
-      'Quoted:\n\\/merge\n  \\/approve\n\t\\/label ~x\ntext /close stays\na/b',
+  it('stops every line from starting with a slash and a command name, and leaves other slashes alone', () => {
+    expect(neutralizeQuickActions('Quoted:\n/merge\n  /approve\n\t/label ~x\n/Close\ntext /close stays\na/b')).toBe(
+      'Quoted:\n\\/merge\n  \\/approve\n\t\\/label ~x\n\\/Close\ntext /close stays\na/b',
     );
+  });
+
+  it('leaves comment and JSDoc lines in quoted code alone', () => {
+    const code = '```ts\n// keep\n/** doc */\n  // indented\n```';
+    expect(neutralizeQuickActions(code)).toBe(code);
   });
 
   it('applies to issue notes', async () => {
