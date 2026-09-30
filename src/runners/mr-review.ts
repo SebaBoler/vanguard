@@ -1,7 +1,7 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, neutralizeReviewMarkers } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -213,7 +213,7 @@ export async function hasMergeRequestReviewForHead(
 }
 
 export function buildMergeRequestReviewComment(agentText: string, sha?: string): string {
-  const body = neutralizeReviewMarkers(agentText.replace(PROMISE_RE, '')).trim();
+  const body = stripReviewMarkers(agentText.replace(PROMISE_RE, '')).trim();
   const visible = `## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`;
   return sha === undefined || sha === '' ? visible : `${visible}\n\n${mergeRequestReviewMarker(sha)}`;
 }

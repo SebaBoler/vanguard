@@ -16,17 +16,24 @@ import {
   hasPullRequestReviewMarker,
   pullRequestReviewMarker,
 } from './pr-review.js';
-import { neutralizePromptTags, neutralizeReviewMarkers } from './review-prompt.js';
+import { neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 import type { RunResult } from '../core/types.js';
 
-describe('neutralizeReviewMarkers', () => {
-  it('defuses every marker either detector would count, for both forges', () => {
+describe('stripReviewMarkers', () => {
+  it('removes every marker either detector would count, for both forges', () => {
     const text = ['a', mergeRequestReviewMarker('ABC123'), '<!--  vanguard-pr-review:\tabc123 -->', pullRequestReviewMarker('abc123'), 'b'].join('\n');
-    const neutralized = neutralizeReviewMarkers(text);
-    expect(hasMergeRequestReviewMarker(neutralized, 'ABC123')).toBe(false);
-    expect(hasPullRequestReviewMarker(neutralized, 'abc123')).toBe(false);
-    expect(neutralized).toContain('a');
-    expect(neutralized).toContain('b');
+    const stripped = stripReviewMarkers(text);
+    expect(stripped).not.toContain('ABC123');
+    expect(stripped).not.toContain('abc123');
+    expect(stripped).toContain('a');
+    expect(stripped).toContain('b');
+  });
+
+  it('stays linear on a long run of blank lines', () => {
+    const started = performance.now();
+    stripReviewMarkers(`${'\n'.repeat(200_000)}x`);
+    // Padding that spans line breaks rescans the rest of the run from every line start: seconds, not milliseconds.
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
 
@@ -47,6 +54,9 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
       ['tab', `\t${marker}`],
       ['NBSP', `\u00a0${marker}`],
       ['BOM', `\ufeff${marker}`],
+      ['trailing tab', `${marker}\t`],
+      ['trailing NBSP', `${marker}\u00a0`],
+      ['trailing BOM', `${marker}\ufeff`],
       ['CR inside the token', marker.replace('review', '\rreview')],
     ];
   };

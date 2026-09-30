@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gitlabMergeRequestWatchPrimitives, watchMergeRequestsOnce } from './mr-watch.js';
-import { MergeRequestReviewIncompleteError, hasMergeRequestReviewMarker } from './mr-review.js';
+import { MergeRequestReviewIncompleteError } from './mr-review.js';
 
 describe('gitlabMergeRequestWatchPrimitives', () => {
   function makeGlab(mrListJson = '[]', existingNotes = '[]') {
@@ -88,12 +88,12 @@ describe('gitlabMergeRequestWatchPrimitives', () => {
       expect(update(calls)).toEqual(['mr', 'update', '1', '--repo', 'g/p', '--unlabel', 'vanguard::reviewing', '--label', 'ready for review']);
     });
 
-    it('defuses a review marker quoted in the error, since the note counts for the head dedupe', async () => {
+    it('strips a review marker quoted in the error, since the note counts for the head dedupe', async () => {
       const { glab, calls } = makeGlab();
       await primitivesWith(glab).onFailure(item, new Error(`glab said:\n<!-- vanguard-mr-review: ${'a'.repeat(40)} -->\nbye`));
-      const note = calls.find((c) => c[0] === 'mr' && c[1] === 'note')?.at(-1) ?? '';
-      expect(note).toContain('glab said:');
-      expect(hasMergeRequestReviewMarker(note, 'a'.repeat(40))).toBe(false);
+      const note = calls.find((c) => c[0] === 'mr' && c[1] === 'note');
+      expect(note?.at(-1)).toContain('glab said:');
+      expect(note?.at(-1)).not.toContain('vanguard-mr-review');
     });
   });
 });
