@@ -219,9 +219,13 @@ export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskI
   throw new WorkflowGuardError(`Diff touches forbidden CI config path(s): ${offending.join(', ')}`);
 }
 
+/** Larger dropped files are reported as changed unread: CI YAML is small, and the sandbox chose the size. */
+const MAX_COMPARED_BYTES = 4 * 1024 * 1024;
+
 /**
  * Files under a dropped CI path whose sandbox copy is new or differs from the worktree. Unchanged CI
- * files are dropped on every copy-back; only these mean the agent's work is missing from the diff.
+ * files are dropped on every copy-back; only these mean the agent's work is missing from the diff. A
+ * file the agent deleted is not in staging, so it is not reported.
  */
 async function changedFiles(staging: string, worktree: string, rel: string): Promise<string[]> {
   const src = join(staging, rel);
@@ -237,8 +241,10 @@ async function changedFiles(staging: string, worktree: string, rel: string): Pro
     return a === b ? [] : [rel];
   }
   if (!info.isFile()) return [rel];
-  const [a, b] = await Promise.all([readFile(src), readFile(dest).catch(() => undefined)]);
-  return b !== undefined && a.equals(b) ? [] : [rel];
+  const destInfo = await lstat(dest).catch(() => undefined);
+  if (destInfo?.isFile() !== true || destInfo.size !== info.size || info.size > MAX_COMPARED_BYTES) return [rel];
+  const [a, b] = await Promise.all([readFile(src), readFile(dest)]);
+  return a.equals(b) ? [] : [rel];
 }
 
 /** Copy the sandbox workspace back onto the worktree via a staging dir, then return the resulting diff. */

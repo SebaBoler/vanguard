@@ -484,11 +484,15 @@ describe('vanguard.run', () => {
   });
 
   it('records the CI config the agent added or edited, not unchanged copies of it', async () => {
+    // Identical on both sides, but above the compare cap, so it is reported without being read.
+    const huge = `# ${'x'.repeat(4 * 1024 * 1024)}\n`;
     await mkdir(join(repo, '.github', 'workflows'), { recursive: true });
     await mkdir(join(repo, '.gitlab'), { recursive: true });
     await writeFile(join(repo, '.gitlab-ci.yml'), 'stages: [test]\n');
     await writeFile(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n');
     await writeFile(join(repo, '.gitlab', 'linked.yml'), 'same\n');
+    await writeFile(join(repo, '.gitlab', 'same-size.yml'), 'job: a\n');
+    await writeFile(join(repo, '.gitlab', 'huge.yml'), huge);
     await execa('git', ['add', '.'], { cwd: repo });
     await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ci'], { cwd: repo });
     const outside = join(repo, '..', `${basename(repo)}-target.yml`);
@@ -501,6 +505,8 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, '.gitlab-ci.yml'), 'stages: [test]\n');
       await writeFile(join(hostPath, '.github', 'workflows', 'ci.yml'), 'on: pull_request\n');
       await writeFile(join(hostPath, '.gitlab', 'ci', 'new.yml'), 'new:\n  script: [env]\n');
+      await writeFile(join(hostPath, '.gitlab', 'same-size.yml'), 'job: b\n');
+      await writeFile(join(hostPath, '.gitlab', 'huge.yml'), huge);
       // Same bytes through the link, but a symlink is compared by target, never read through.
       await symlink(outside, join(hostPath, '.gitlab', 'linked.yml'));
     });
@@ -510,7 +516,7 @@ describe('vanguard.run', () => {
     await disposeContext(ctx);
     await rm(outside, { force: true });
 
-    const expected = ['.github/workflows/ci.yml', '.gitlab/ci/new.yml', '.gitlab/linked.yml'];
+    const expected = ['.github/workflows/ci.yml', '.gitlab/ci/new.yml', '.gitlab/huge.yml', '.gitlab/linked.yml', '.gitlab/same-size.yml'];
     expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(expected);
     const warned = entries.filter((e) => e.msg.includes('dropped CI config path')).map((e) => String(e.obj.path));
     expect(warned.sort()).toEqual(expected);
