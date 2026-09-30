@@ -193,6 +193,11 @@ function appendMarker(visible: string, headRefOid?: string): string {
  * login is not recognised as a bot. The head dedupe does not count it (no SHA).
  */
 export const PR_REVIEW_INCOMPLETE_MARKER = '<!-- vanguard-pr-review-incomplete -->';
+const PR_REVIEW_INCOMPLETE_MARKER_RE = /^<!--[ \t]*vanguard-pr-review-incomplete[ \t]*-->$/m;
+
+export function hasPullRequestReviewIncompleteMarker(body: string): boolean {
+  return PR_REVIEW_INCOMPLETE_MARKER_RE.test(body);
+}
 
 // Deliberately no head-SHA marker: the marker means "this head has a verdict", and an incomplete
 // notice must not block the retry via re-label or the next sweep (the stranded-label no-op, #316).

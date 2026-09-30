@@ -493,9 +493,10 @@ describe('selectActionableFeedback and incomplete verdicts', () => {
         commentItem({ author: 'pawel', body: partial, createdAt: '2026-01-02T00:00:00Z' }),
         commentItem({ author: 'pawel', body: buildPullRequestReviewIncompleteComment(), createdAt: '2026-01-02T00:00:00Z' }),
         commentItem({ author: 'alice', body: 'Please rename x.', createdAt: '2026-01-02T00:00:00Z' }),
+        commentItem({ author: 'bob', body: 'Why is `<!-- vanguard-pr-review-incomplete -->` on the last review?', createdAt: '2026-01-02T00:00:00Z' }),
       ],
     };
-    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' }).map((item) => item.author)).toEqual(['alice']);
+    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' }).map((item) => item.author)).toEqual(['alice', 'bob']);
   });
 });
 
