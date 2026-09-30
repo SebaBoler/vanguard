@@ -296,11 +296,18 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const dockerInfo = await runOk(run, cmd.repoPath, 'docker', ['info']);
   checks.push(dockerInfo.ok ? check('docker daemon', true) : check('docker daemon', false, 'unavailable'));
 
-  const image = sandboxImage(env);
-  const sandboxImageCheck = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', image]);
-  checks.push(sandboxImageCheck.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${image}`));
+  let image: string | undefined;
+  try {
+    image = sandboxImage(env);
+  } catch (error) {
+    checks.push(check('sandbox image', false, error instanceof Error ? error.message : String(error)));
+  }
+  const sandboxImageCheck = image === undefined ? undefined : await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', image]);
+  if (sandboxImageCheck !== undefined) {
+    checks.push(sandboxImageCheck.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${image}`));
+  }
 
-  if (sandboxImageCheck.ok) {
+  if (image !== undefined && sandboxImageCheck?.ok === true) {
     const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', image, 'claude', '--version']);
     const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
     checks.push(

@@ -314,6 +314,26 @@ describe('runPreflight', () => {
     });
   });
 
+  it('reports an invalid VANGUARD_SANDBOX_IMAGE as a failed check and runs no docker command with it', async () => {
+    const calls: string[] = [];
+    const base = makeRunner();
+    const run: PreflightRunner = async (cmd, args, opts) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      return await base(cmd, args, opts);
+    };
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', VANGUARD_SANDBOX_IMAGE: '--privileged' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: sandbox image VANGUARD_SANDBOX_IMAGE is not an image reference: "--privileged" -> stop before claim',
+    );
+    expect(calls.some((c) => c.includes('--privileged'))).toBe(false);
+  });
+
   it('fails provider auth when doctor uses codex but CODEX_API_KEY/OPENAI_API_KEY are absent', async () => {
     const report = await runPreflight(githubDoctor({ provider: 'codex' }), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
