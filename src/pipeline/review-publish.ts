@@ -94,6 +94,7 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
   let commentBody = buildMainLoopReviewComment(verdictText, {
     headRefOid: input.headSha,
     attribution: input.attribution,
+    completed: input.reviewerOutcome.result.completed,
   });
 
   const conformanceResult = input.conformanceOutcome?.result;

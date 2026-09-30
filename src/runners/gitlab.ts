@@ -3,7 +3,7 @@ import { agentAuthFromEnv } from '../agents/auth.js';
 import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
-import { stripReviewMarkers } from './review-prompt.js';
+import { REVIEW_INCOMPLETE, stripReviewMarkers } from './review-prompt.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 import { renderConformanceSection, hasBlockingFinding } from '../pipeline/review-publish.js';
 import { runSourcedIssue } from './source-adapter.js';
@@ -65,10 +65,15 @@ export async function publishGitlabVerdict(project: string, input: PublishVerdic
   const body = stripReviewMarkers(verdictText.replace(/<promise>\s*COMPLETE\s*<\/promise>/gi, '')).trim();
   const sha7 = input.headSha.slice(0, 7);
   const header = `Reviewed by ${input.attribution} @ ${sha7}`;
-  const visible = body === ''
-    ? `## Vanguard Review\n\n${header}: no blocking issues`
-    : `## Vanguard Review\n\n${header}:\n\n${body}`;
-  let commentBody = `${visible}\n\n${mergeRequestReviewMarker(input.headSha)}`;
+  // The glab user writes this note, so its marker would make review-mr skip the head for good: an
+  // incomplete review gets none.
+  const completed = input.reviewerOutcome.result.completed;
+  const visible = !completed
+    ? `## Vanguard Review\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}`
+    : body === ''
+      ? `## Vanguard Review\n\n${header}: no blocking issues`
+      : `## Vanguard Review\n\n${header}:\n\n${body}`;
+  let commentBody = completed ? `${visible}\n\n${mergeRequestReviewMarker(input.headSha)}` : visible;
 
   const conformanceResult = input.conformanceOutcome?.result;
   if (conformanceResult !== undefined) {

@@ -117,6 +117,30 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
     }
   }
 
+  it('marks no head when the reviewer stage ended incomplete', async () => {
+    let note = '';
+    await publishGitlabVerdict(
+      'g/p',
+      {
+        prUrl: 'https://gitlab.com/g/p/-/merge_requests/1',
+        headSha: current,
+        reviewerOutcome: { name: 'reviewer', result: { ...result(''), completed: false, exitReason: 'maxTurns' } },
+        attribution: 'a',
+      },
+      async (args) => {
+        note = args.at(-1) ?? '';
+        return '';
+      },
+    );
+    expect(hasMergeRequestReviewMarker(saved(note), current)).toBe(false);
+    expect(note).toContain('did not complete');
+    expect(note).not.toContain('no blocking issues');
+
+    const github = buildMainLoopReviewComment('Partial.', { headRefOid: current, attribution: 'a', completed: false });
+    expect(hasPullRequestReviewMarker(github, current)).toBe(false);
+    expect(github).toContain('did not complete');
+  });
+
   it('keeps the marker the bot appends for the reviewed head', async () => {
     expect(hasMergeRequestReviewMarker(saved(buildMergeRequestReviewComment('ok', current)), current)).toBe(true);
     expect(hasPullRequestReviewMarker(saved(buildPullRequestReviewComment('ok', current)), current)).toBe(true);

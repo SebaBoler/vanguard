@@ -1,6 +1,6 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, REVIEW_INCOMPLETE, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -244,13 +244,16 @@ export async function postPullRequestReview(
  */
 export function buildMainLoopReviewComment(
   agentText: string,
-  opts: { headRefOid?: string; attribution: string },
+  opts: { headRefOid?: string; attribution: string; completed?: boolean },
 ): string {
   const body = reviewBody(agentText);
   const oid = opts.headRefOid !== undefined && opts.headRefOid !== '' ? opts.headRefOid : undefined;
   const sha7 = oid?.slice(0, 7);
   const atSha = sha7 !== undefined ? ` @ ${sha7}` : '';
   const header = `Reviewed by ${opts.attribution}${atSha}`;
+  if (opts.completed === false) {
+    return `## Vanguard Review\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}`;
+  }
   const visible =
     body === '' ? `## Vanguard Review\n\n${header}: no blocking issues` : `## Vanguard Review\n\n${header}:\n\n${body}`;
   return oid !== undefined ? `${visible}\n\n${pullRequestReviewMarker(oid)}` : visible;
