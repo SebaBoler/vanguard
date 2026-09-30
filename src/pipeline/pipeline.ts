@@ -6,6 +6,7 @@ import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { roundUsd } from './budget.js';
+import { neutralizeQuickActions } from '../tasks/gitlab.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -1094,7 +1095,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       '--source-branch', ctx.branch,
       '--target-branch', opts.baseBranch ?? 'main',
       '--title', opts.title,
-      '--description', body,
+      '--description', neutralizeQuickActions(body),
     ];
     if (opts.draft === true) args.push('--draft');
   } else {

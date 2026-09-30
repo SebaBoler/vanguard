@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { VanguardError } from '../core/errors.js';
 import { linearGraphql } from './linear-cli.js';
+import { neutralizeQuickActions } from './gitlab.js';
 import type { LinearGraphql } from './linear-cli.js';
 
 /** What a new task carries. `labels` are applied at creation; the transport decides what that means. */
@@ -112,7 +113,7 @@ export async function createGitlabIssue(
   run: CliRunner = defaultCli,
 ): Promise<CreatedTask> {
   assertCreatable(input);
-  const args = ['issue', 'create', '--title', input.title, '--description', input.body];
+  const args = ['issue', 'create', '--title', input.title, '--description', neutralizeQuickActions(input.body)];
   const labels = input.labels ?? [];
   if (labels.length > 0) args.push('--label', labels.join(','));
   const url = issueUrl(await run('glab', args, { cwd: repoPath }), 'glab issue create');

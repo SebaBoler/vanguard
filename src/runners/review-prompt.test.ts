@@ -8,6 +8,7 @@ import {
   buildMergeRequestReviewPrompt,
   hasMergeRequestReviewMarker,
   mergeRequestReviewMarker,
+  postMergeRequestNote,
 } from './mr-review.js';
 import {
   buildMainLoopReviewComment,
@@ -116,6 +117,24 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
       });
     }
   }
+
+  it('never posts a GitLab MR note line that would run as a quick action', async () => {
+    const text = 'Quoted from the MR:\n/merge\n  /approve\n/label ~vanguard::reviewed';
+    const runsQuickAction = /^[ \t]*\//m;
+    const notes: string[] = [];
+    const glab = async (args: string[]): Promise<string> => {
+      if (args[1] === 'note') notes.push(args.at(-1) ?? '');
+      return '';
+    };
+    await postMergeRequestNote({ project: 'g/p', iid: 1 }, buildMergeRequestReviewComment(text, current), glab);
+    const gitlab = builders.filter(([name]) => name === 'publishGitlabVerdict' || name === 'watch-mrs failure note');
+    for (const [, build] of gitlab) notes.push(await build(text));
+    expect(notes).toHaveLength(3);
+    for (const note of notes) {
+      expect(note).toContain('merge');
+      expect(runsQuickAction.test(note), note).toBe(false);
+    }
+  });
 
   it('marks no head when the reviewer stage ended incomplete', async () => {
     let note = '';

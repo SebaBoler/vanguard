@@ -53,6 +53,17 @@ describe('createGitlabIssue', () => {
   });
 });
 
+describe('createGitlabIssue quick actions', () => {
+  it('keeps a line of the description from running as a quick action', async () => {
+    let seen: string[] = [];
+    await createGitlabIssue('/repo', { title: 'T', body: 'Plan\n/assign @me' }, async (_bin, args) => {
+      seen = args;
+      return 'https://gitlab.com/g/p/-/issues/7';
+    });
+    expect(seen[seen.indexOf('--description') + 1]).toBe('Plan\n\\/assign @me');
+  });
+});
+
 describe('createLinearIssue', () => {
   const ok: LinearGraphql = async (body) => {
     if (body.query.includes('teams')) return { data: { teams: { nodes: [{ id: 'team-uuid' }] } } };

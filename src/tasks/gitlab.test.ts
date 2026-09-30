@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels } from './gitlab.js';
+import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels, neutralizeQuickActions } from './gitlab.js';
 
 describe('issueIID', () => {
   it('returns bare number unchanged', () => {
@@ -87,6 +87,21 @@ describe('commentGitlabIssue', () => {
     const glab = async (args: string[]) => { calls.push(args); return ''; };
     await commentGitlabIssue('g/p', 'g/p#5', 'hello', glab);
     expect(calls[0]).toEqual(['issue', 'note', 'create', '5', '--repo', 'g/p', '-m', 'hello']);
+  });
+});
+
+describe('neutralizeQuickActions', () => {
+  it('stops every line from starting with a slash, and leaves other slashes alone', () => {
+    expect(neutralizeQuickActions('Quoted:\n/merge\n  /approve\n\t/label ~x\ntext /close stays\na/b')).toBe(
+      'Quoted:\n\\/merge\n  \\/approve\n\t\\/label ~x\ntext /close stays\na/b',
+    );
+  });
+
+  it('applies to issue notes', async () => {
+    const calls: string[][] = [];
+    const glab = async (args: string[]) => { calls.push(args); return ''; };
+    await commentGitlabIssue('g/p', 'g/p#5', 'see\n/close', glab);
+    expect(calls[0]?.at(-1)).toBe('see\n\\/close');
   });
 });
 

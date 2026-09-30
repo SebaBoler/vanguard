@@ -1,5 +1,5 @@
 import { fanOut } from '../pipeline/fan-out.js';
-import { defaultGlabRunner } from '../tasks/gitlab.js';
+import { defaultGlabRunner, neutralizeQuickActions } from '../tasks/gitlab.js';
 import { MergeRequestReviewIncompleteError, hasMergeRequestReviewForHead } from './mr-review.js';
 import { stripReviewMarkers } from './review-prompt.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
@@ -189,7 +189,7 @@ export function gitlabMergeRequestWatchPrimitives(
           String(item.iid),
           '--repo', item.project,
           // This note is written by the glab user, so a marker quoted in the error would count for the dedupe.
-          '-m', `Vanguard MR review failed: ${stripReviewMarkers(String(error))}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`,
+          '-m', neutralizeQuickActions(`Vanguard MR review failed: ${stripReviewMarkers(String(error))}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`),
         ]);
       } catch {
         // note posting is best-effort; always fix the labels

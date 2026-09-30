@@ -1,6 +1,6 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
-import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
+import { defaultGlabRunner, encodeProject, neutralizeQuickActions } from '../tasks/gitlab.js';
 import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 
 export interface MergeRequestReviewTarget {
@@ -239,7 +239,7 @@ export async function postMergeRequestNote(
     'mr', 'note', 'create',
     String(target.iid),
     '--repo', target.project,
-    '-m', body,
+    '-m', neutralizeQuickActions(body),
   ]);
 }
 
