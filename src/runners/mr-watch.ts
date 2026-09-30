@@ -180,8 +180,9 @@ export function gitlabMergeRequestWatchPrimitives(
       }).then(() => {}),
     onFailure: async (item, error) => {
       // An incomplete review (typically a diff too large for the budget) would fail the same way on every
-      // poll, at two agent runs each. Leave the trigger label off so it waits for a human to re-add it.
-      const terminal = error instanceof MergeRequestReviewIncompleteError;
+      // poll, at two agent runs each. Leave the trigger label off so it waits for a human to re-add it, but
+      // only once the note that tells them so is posted; otherwise the MR would sit with no label and no note.
+      let terminal = error instanceof MergeRequestReviewIncompleteError;
       try {
         await glab([
           'mr', 'note', 'create',
@@ -192,6 +193,7 @@ export function gitlabMergeRequestWatchPrimitives(
         ]);
       } catch {
         // note posting is best-effort; always fix the labels
+        terminal = false;
       }
       await editMrLabels(glab, item.project, item.iid, {
         remove: [opts.reviewingLabel],

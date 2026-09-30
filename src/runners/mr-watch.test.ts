@@ -77,6 +77,17 @@ describe('gitlabMergeRequestWatchPrimitives', () => {
       expect(note?.at(-1)).toContain('Re-add the "ready for review" label to retry.');
     });
 
+    it('restores the trigger label after an incomplete review when the note cannot be posted', async () => {
+      const { glab: base, calls } = makeGlab();
+      const glab = async (args: string[]): Promise<string> => {
+        if (args[1] === 'note') throw new Error('500');
+        return await base(args);
+      };
+      const incomplete = new MergeRequestReviewIncompleteError({ ...item, description: '', webUrl: '', sourceBranch: 'b', targetBranch: 'main', diff: '' });
+      await primitivesWith(glab).onFailure(item, incomplete);
+      expect(update(calls)).toEqual(['mr', 'update', '1', '--repo', 'g/p', '--unlabel', 'vanguard::reviewing', '--label', 'ready for review']);
+    });
+
     it('defuses a review marker quoted in the error, since the note counts for the head dedupe', async () => {
       const { glab, calls } = makeGlab();
       await primitivesWith(glab).onFailure(item, new Error(`glab said:\n<!-- vanguard-mr-review: ${'a'.repeat(40)} -->\nbye`));
