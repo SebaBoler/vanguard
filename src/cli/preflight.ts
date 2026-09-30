@@ -18,7 +18,7 @@ export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand |
 export type PreflightRunner = (
   cmd: string,
   args: string[],
-  opts: { cwd: string; env?: NodeJS.ProcessEnv },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv; timeoutMs?: number },
 ) => Promise<{ stdout: string }>;
 
 export interface PreflightOptions {
@@ -44,7 +44,11 @@ export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
-  const { stdout } = await execa(cmd, args, opts.env !== undefined ? { cwd: opts.cwd, env: opts.env, extendEnv: false } : { cwd: opts.cwd });
+  const { stdout } = await execa(cmd, args, {
+    cwd: opts.cwd,
+    ...(opts.env !== undefined ? { env: opts.env, extendEnv: false } : {}),
+    ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+  });
   return { stdout };
 };
 
@@ -118,10 +122,10 @@ async function runOk(
   cwd: string,
   cmd: string,
   args: string[],
-  env?: NodeJS.ProcessEnv,
+  extra: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
   try {
-    const { stdout } = await run(cmd, args, env !== undefined ? { cwd, env } : { cwd });
+    const { stdout } = await run(cmd, args, { cwd, ...extra });
     return { ok: true, stdout };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -380,7 +384,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       // glab sends GITLAB_TOKEN to whatever host a command names, and this host may be GitHub Enterprise or
       // another forge, so the probe runs without token variables: only a login stored for this host counts.
       const probeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !GLAB_TOKEN_VARS.includes(key)));
-      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'], probeEnv)).ok) {
+      // A host that drops packets must not stall preflight until the OS connect timeout; a timeout reads as not logged in.
+      const probe = { env: probeEnv, timeoutMs: 10_000 };
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'], probe)).ok) {
         checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
       }
       // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.

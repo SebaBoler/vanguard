@@ -266,8 +266,12 @@ describe('runPreflight', () => {
     it('fails before claim when glab is logged in to the origin host but GITLAB_HOST does not name it', async () => {
       const { run: base, calls } = linearRunner('git@git.example.com:group/project.git');
       const probeEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+      const probeTimeouts: Array<number | undefined> = [];
       const run: PreflightRunner = async (cmd, args, opts) => {
-        if (cmd === 'glab' && args[0] === 'api') probeEnvs.push(opts.env);
+        if (cmd === 'glab' && args[0] === 'api') {
+          probeEnvs.push(opts.env);
+          probeTimeouts.push(opts.timeoutMs);
+        }
         return await base(cmd, args, opts);
       };
       const tokens = { GITLAB_TOKEN: 'glpat', GITLAB_ACCESS_TOKEN: 'glpat2', OAUTH_TOKEN: 'oauth', CI_JOB_TOKEN: 'job', GH_TOKEN: 'gh' };
@@ -282,6 +286,7 @@ describe('runPreflight', () => {
       expect(probeEnvs).toHaveLength(1);
       expect(Object.keys(probeEnvs[0] ?? {}).filter((key) => key in tokens && key !== 'GH_TOKEN')).toEqual([]);
       expect(probeEnvs[0]?.LINEAR_API_KEY).toBe('lin');
+      expect(probeTimeouts).toEqual([10_000]);
     });
 
     it('names GITLAB_HOST when gh auth is missing for an origin that is not github.com', async () => {
