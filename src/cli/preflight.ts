@@ -18,7 +18,7 @@ export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand |
 export type PreflightRunner = (
   cmd: string,
   args: string[],
-  opts: { cwd: string },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string }>;
 
 export interface PreflightOptions {
@@ -44,9 +44,12 @@ export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
-  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  const { stdout } = await execa(cmd, args, opts.env !== undefined ? { cwd: opts.cwd, env: opts.env, extendEnv: false } : { cwd: opts.cwd });
   return { stdout };
 };
+
+/** Environment variables glab sends as a token to whatever host a command names. */
+const GLAB_TOKEN_VARS = ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'CI_JOB_TOKEN'];
 
 function check(name: string, ok: boolean, reason?: string): PreflightCheck {
   return reason === undefined ? { name, ok } : { name, ok, reason };
@@ -110,9 +113,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   ]);
 }
 
-async function runOk(run: PreflightRunner, cwd: string, cmd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+async function runOk(
+  run: PreflightRunner,
+  cwd: string,
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
   try {
-    const { stdout } = await run(cmd, args, { cwd });
+    const { stdout } = await run(cmd, args, env !== undefined ? { cwd, env } : { cwd });
     return { ok: true, stdout };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -361,10 +370,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
           ? check(auth.name, false, `missing for origin host ${otherHost}; for a self-hosted GitLab set GITLAB_HOST=${otherHost}`)
           : auth,
       );
-      // `glab api --hostname` reaches the host with a stored login or with GITLAB_TOKEN, which glab sends to
-      // whatever host it is given; a GitHub host answers the GitLab API path with an error.
-      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'])).ok) {
-        checks.push(check('gitlab host', false, `glab can reach ${otherHost} as GitLab; set GITLAB_HOST=${otherHost} to publish there through glab`));
+      // glab sends GITLAB_TOKEN to whatever host a command names, and this host may be GitHub Enterprise or
+      // another forge, so the probe runs without token variables: only a login stored for this host counts.
+      const probeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !GLAB_TOKEN_VARS.includes(key)));
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'], probeEnv)).ok) {
+        checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
       }
       // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
       if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {

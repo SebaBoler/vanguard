@@ -263,15 +263,25 @@ describe('runPreflight', () => {
       expect(calls).not.toContain('glab auth status');
     });
 
-    it('fails before claim when glab can reach the origin host as GitLab but GITLAB_HOST does not name it', async () => {
-      const { run, calls } = linearRunner('git@git.example.com:group/project.git');
-      const report = await runPreflight(linearDoctor, { env: { ...env, GITLAB_TOKEN: 'glpat', GH_TOKEN: 'gh' }, nodeVersion: '24.11.1', run });
+    it('fails before claim when glab is logged in to the origin host but GITLAB_HOST does not name it', async () => {
+      const { run: base, calls } = linearRunner('git@git.example.com:group/project.git');
+      const probeEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+      const run: PreflightRunner = async (cmd, args, opts) => {
+        if (cmd === 'glab' && args[0] === 'api') probeEnvs.push(opts.env);
+        return await base(cmd, args, opts);
+      };
+      const tokens = { GITLAB_TOKEN: 'glpat', GITLAB_ACCESS_TOKEN: 'glpat2', OAUTH_TOKEN: 'oauth', CI_JOB_TOKEN: 'job', GH_TOKEN: 'gh' };
+      const report = await runPreflight(linearDoctor, { env: { ...env, ...tokens }, nodeVersion: '24.11.1', run });
 
       expect(report.ok).toBe(false);
       expect(calls).toContain('glab api --hostname git.example.com user');
       expect(formatPreflightReport(report)).toContain(
-        'preflight: gitlab host glab can reach git.example.com as GitLab; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
+        'preflight: gitlab host glab is logged in to git.example.com; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
       );
+      // The host may be another forge: no GitLab token may reach it.
+      expect(probeEnvs).toHaveLength(1);
+      expect(Object.keys(probeEnvs[0] ?? {}).filter((key) => key in tokens && key !== 'GH_TOKEN')).toEqual([]);
+      expect(probeEnvs[0]?.LINEAR_API_KEY).toBe('lin');
     });
 
     it('names GITLAB_HOST when gh auth is missing for an origin that is not github.com', async () => {
