@@ -46,7 +46,9 @@ export async function reviewMrCommand(cmd: ReviewMrCommand, deps: ReviewMrComman
   const auth = agentAuthFromEnv(cmd.provider !== undefined ? { provider: cmd.provider } : {});
   // Started on the first reviewer call, so an already-reviewed head never starts a sandbox, and shared by
   // the incomplete-retry so it does not rebuild the egress network and llm-proxy sidecar. The promise is
-  // cached, not the context, so overlapping attempts could never start a second one.
+  // cached, not the context, so overlapping attempts could never start a second one. A failed start fails
+  // the first attempt, and a thrown attempt ends the review (only an incomplete one is retried), so a
+  // cached rejection is never awaited by a retry.
   let sandboxContext: Promise<SandboxContext> | undefined;
   const reviewer: MergeRequestReviewer = async (mr, opts) => {
     sandboxContext ??= startSandboxContext({
