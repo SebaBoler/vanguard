@@ -571,11 +571,10 @@ describe('vanguard.run', () => {
   });
 
   describe('workflowPaths', () => {
-    it('finds GitHub workflows, nested ones included', () => {
-      expect(workflowPaths(['src/a.ts', '.github/workflows/nested/sub.yml', '.github/workflows/ci.yml'])).toEqual([
-        '.github/workflows/ci.yml',
-        '.github/workflows/nested/sub.yml',
-      ]);
+    it('finds GitHub workflows and local actions, nested ones included', () => {
+      expect(
+        workflowPaths(['src/a.ts', '.github/workflows/nested/sub.yml', '.github/workflows/ci.yml', '.github/actions/setup/action.yml', '.github/actions/setup/run.sh']),
+      ).toEqual(['.github/actions/setup/action.yml', '.github/actions/setup/run.sh', '.github/workflows/ci.yml', '.github/workflows/nested/sub.yml']);
     });
 
     it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces or newlines and in any case', () => {

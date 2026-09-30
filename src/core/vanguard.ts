@@ -32,7 +32,8 @@ const COPY_BACK_SKIP =
 // Hard security boundary (see CLAUDE.md): an agent must never be able to write a workflow file
 // that gets committed and pushed — that is the exact escalation path in the disclosed
 // claude-code-action prompt-injection class (a malicious workflow runs with repo secrets on the
-// next GitHub event). GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml, and
+// next GitHub event). Local actions under .github/actions/ count too, since `uses: ./.github/actions/x` runs
+// them with the workflow's secrets; an action kept elsewhere needs the repository's own review. GitLab CI config counts too: a merge request pipeline reads .gitlab-ci.yml, and
 // the .gitlab/ YAML it conventionally includes, from the source branch, so an agent-written copy would
 // run with the project's CI variables. For GitLab this is defence in depth, not a boundary:
 // `include: local:` can name any path, so CI YAML kept elsewhere needs the project's own gate. Other
@@ -42,7 +43,7 @@ const COPY_BACK_SKIP =
 // Case-insensitive, so `job.YML` or a `.GitLab` directory on a case-insensitive filesystem cannot slip
 // past; over-matching only drops a file that no pipeline reads. `s` lets `.*` cross a newline in a file name.
 // The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.github[\\/]actions([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
 // A `.github` or `.gitlab` entry that is not a real directory (a symlink or a file, and in a diff any changed
 // path, since git lists no directories) could stand in for the directory and point at CI files kept elsewhere.
 // Copy-back also drops any symlink inside those directories, which could do the same for a subdirectory.
@@ -270,7 +271,7 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
     if (changed.length > 0) {
       ctx.log.warn(
         { taskId: ctx.taskId, count: changed.length, paths: changed.slice(0, DROPPED_CI_LOGGED) },
-        'copy-back: dropped CI config path (.github/workflows, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
+        'copy-back: dropped CI config path (.github/workflows, .github/actions, .gitlab-ci.yml and .gitlab/ YAML are never synced back)',
       );
       const recorded = (ctx.droppedCiPaths ??= new Set());
       for (const path of changed) recorded.add(path);
