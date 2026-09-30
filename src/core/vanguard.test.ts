@@ -453,6 +453,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, '.gitlab-ci.yml'), 'workflow:\n  rules: []\n');
       await mkdir(join(hostPath, '.gitlab', 'ci'), { recursive: true });
       await writeFile(join(hostPath, '.gitlab', 'ci', 'evil.yml'), 'evil:\n  script: [env]\n');
+      await writeFile(join(hostPath, '.gitlab', 'ci', 'upper.YML'), 'upper:\n  script: [env]\n');
       await writeFile(join(hostPath, 'app.gitlab-ci.yml.md'), 'notes\n');
       await mkdir(join(hostPath, '.gitlab', 'merge_request_templates'), { recursive: true });
       await writeFile(join(hostPath, '.gitlab', 'merge_request_templates', 'default.md'), 'template\n');
@@ -467,6 +468,7 @@ describe('vanguard.run', () => {
     expect(result.diff ?? '').not.toContain('.gitlab/ci');
     expect(result.diff ?? '').not.toContain('workflow:');
     expect(existsSync(join(repo, '.gitlab', 'ci', 'evil.yml'))).toBe(false);
+    expect(existsSync(join(repo, '.gitlab', 'ci', 'upper.YML'))).toBe(false);
   });
 
   it('still copies back sibling .github files like dependabot.yml', async () => {
@@ -607,6 +609,11 @@ describe('vanguard.run', () => {
         'new mode 100755',
       ].join('\n');
       expect(workflowPathsInDiff(diff)).toEqual(['.github/workflows/ci.yml', '.gitlab/ci/job.yml']);
+    });
+
+    it('matches GitLab CI config whatever the case of its name or extension', () => {
+      const diff = ['diff --git a/.gitlab/ci/job.YML b/.gitlab/ci/job.YML', '+++ b/.gitlab/ci/job.YML', '+++ b/.GitLab-CI.yml'].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual(['.GitLab-CI.yml', '.gitlab/ci/job.YML']);
     });
 
     it('ignores .gitlab/ files that no pipeline executes (MR templates, CODEOWNERS)', () => {

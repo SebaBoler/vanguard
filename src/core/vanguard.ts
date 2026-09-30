@@ -39,7 +39,9 @@ const COPY_BACK_SKIP =
 // .gitlab/ files (MR templates, CODEOWNERS) are not executed and still sync back. Kept as its own
 // regex (not folded into COPY_BACK_SKIP) so drops can be logged loudly instead of silently, like the
 // other noisy-but-expected skips above.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/;
+// Case-insensitive, so `job.YML` or a `.GitLab` directory on a case-insensitive filesystem cannot slip
+// past; over-matching only drops a file that no pipeline reads.
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/i;
 
 export interface PrepareOptions {
   taskId: string;
@@ -205,7 +207,7 @@ export function workflowPathsInDiff(diff: string): string[] {
     if (!HEADER_LINE.test(header)) continue;
     const line = header.startsWith('diff --git ') ? sameGitHeaderPath(header) : header;
     if (line === undefined) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^"'\n]*?\.ya?ml(?=$|["'\s]))/.exec(line);
+    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^"'\n]*?\.ya?ml(?=$|["'\s]))/i.exec(line);
     if (match?.[2] !== undefined) found.add(match[2]);
   }
   return [...found].sort();
