@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -525,6 +525,26 @@ describe('vanguard.run', () => {
     expect([...(warnings[0]?.obj.paths as string[])].sort()).toEqual(expected);
   });
 
+  it('drops a .gitlab or .github symlink that stands in for the directory', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox(async (hostPath) => {
+      await mkdir(join(hostPath, 'ci-src', 'ci'), { recursive: true });
+      await writeFile(join(hostPath, 'ci-src', 'ci', 'job.yml'), 'job:\n  script: [env]\n');
+      await mkdir(join(hostPath, 'gh', 'workflows'), { recursive: true });
+      await writeFile(join(hostPath, 'gh', 'workflows', 'x.yml'), 'on: push\n');
+      await symlink('ci-src', join(hostPath, '.gitlab'));
+      await symlink('gh', join(hostPath, '.github'));
+    });
+    const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
+    const ctx = await prepareContext({ taskId: 'ci-symlink', localRepoPath: repo, sandbox }, { worktrees: wm });
+    await runAgent(ctx, { promptTemplate: 'p', agent });
+    const linked = await Promise.all(['.gitlab', '.github'].map((name) => lstat(join(ctx.worktreePath, name)).then(() => true, () => false)));
+    await disposeContext(ctx);
+
+    expect(linked).toEqual([false, false]);
+    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(['.github', '.gitlab']);
+  });
+
   it('logs one capped warning however many CI files the agent writes', async () => {
     const wm = new WorktreeManager(repo);
     const { logger, entries } = captureLogger();
@@ -555,6 +575,10 @@ describe('vanguard.run', () => {
     it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces or newlines and in any case', () => {
       const paths = ['.gitlab-ci.yml', 'sub/.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml', '.gitlab/ci build.yml', '.gitlab/ci\nevil.yml', '.gitlab/ci/job.YML', '.GitLab-CI.yml'];
       expect(workflowPaths(paths)).toEqual([...paths].sort());
+    });
+
+    it('flags a changed path named .github or .gitlab, which git lists only for a file or symlink', () => {
+      expect(workflowPaths(['.gitlab', 'sub/.github', '.gitlabx', '.github-old', 'docs/.gitlab.md'])).toEqual(['.gitlab', 'sub/.github']);
     });
 
     it('ignores other .github and .gitlab files and near-miss names', () => {

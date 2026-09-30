@@ -43,6 +43,9 @@ const COPY_BACK_SKIP =
 // past; over-matching only drops a file that no pipeline reads. `s` lets `.*` cross a newline in a file name.
 // The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
 const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
+// A `.github` or `.gitlab` entry that is not a real directory (a symlink, or in a diff any changed path, since
+// git lists no directories) could stand in for the directory and point at CI files kept elsewhere.
+const CI_DIR_NAME = /(^|[\\/])\.git(hub|lab)$/i;
 
 export interface PrepareOptions {
   taskId: string;
@@ -188,7 +191,7 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
 
 /** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) among changed paths. Empty ⇒ clean. */
 export function workflowPaths(paths: string[]): string[] {
-  return paths.filter((path) => WORKFLOW_PATH.test(path)).sort();
+  return paths.filter((path) => WORKFLOW_PATH.test(path) || CI_DIR_NAME.test(path)).sort();
 }
 
 /** Throws WorkflowGuardError (logged) if a changed path is CI config. */
@@ -242,10 +245,10 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       recursive: true,
       force: true,
       verbatimSymlinks: true,
-      filter: (src) => {
+      filter: async (src) => {
         // Relative, so a `.gitlab` or `.github` directory above the repo does not match.
         const rel = relative(staging, src);
-        if (WORKFLOW_PATH.test(rel)) {
+        if (WORKFLOW_PATH.test(rel) || (CI_DIR_NAME.test(rel) && (await lstat(src)).isSymbolicLink())) {
           dropped.push(rel);
           return false;
         }
