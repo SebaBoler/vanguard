@@ -164,8 +164,17 @@ export {
   buildMergeRequestReviewComment,
   postMergeRequestNote,
   reviewMergeRequest,
+  MergeRequestReviewIncompleteError,
 } from './runners/mr-review.js';
-export type { MergeRequestReviewTarget, MergeRequestForReview, MergeRequestReviewer, ReviewMergeRequestDeps, ReviewMergeRequestResult } from './runners/mr-review.js';
+export type {
+  MergeRequestReviewTarget,
+  MergeRequestForReview,
+  MergeRequestReviewer,
+  MergeRequestReviewAttempt,
+  MergeRequestReviewOutcome,
+  ReviewMergeRequestDeps,
+  ReviewMergeRequestResult,
+} from './runners/mr-review.js';
 export {
   gitlabMergeRequestWatchPrimitives,
   watchMergeRequestsOnce,
