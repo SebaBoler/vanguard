@@ -110,6 +110,7 @@ export async function watchLinearSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchLinearLoopV1({
@@ -193,6 +194,7 @@ async function watchGithubSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGithubLoopV1({
@@ -290,6 +292,7 @@ export async function watchGitlabSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGitlabLoopV1({
