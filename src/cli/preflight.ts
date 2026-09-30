@@ -3,7 +3,7 @@ import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
-import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote } from '../runners/gitlab.js';
+import { hostnameOf, isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -352,6 +352,12 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
       const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
       checks.push(gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env));
+      // `glab auth login` on a self-hosted GitLab sets no GITLAB_HOST, so the run would take the gh path and
+      // fail at publish, after the agent work.
+      const host = remote.ok && !gitlabOrigin ? hostnameOf(remote.stdout) : undefined;
+      if (host !== undefined && host !== 'github.com' && (await runOk(run, cmd.repoPath, 'glab', ['auth', 'status', '--hostname', host])).ok) {
+        checks.push(check('gitlab host', false, `glab is logged in to ${host}; set GITLAB_HOST=${host} to publish there through glab`));
+      }
       // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
       if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
         checks.push(check('gitlab project', false, `origin ${redactRemote(remote.stdout)} names no group/project`));

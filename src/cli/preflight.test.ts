@@ -254,13 +254,31 @@ describe('runPreflight', () => {
       ['a GitHub Enterprise remote', 'git@github.corp.com:o/r.git'],
       ['a self-hosted remote without GITLAB_HOST', 'git@git.example.com:group/project.git'],
     ])('checks gh auth when origin is %s', async (_label, origin) => {
-      const { run, calls } = linearRunner(origin);
+      const { run, calls } = linearRunner(origin, false);
       const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
 
       expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
       expect(report.checks.some((c) => c.name === 'gitlab auth')).toBe(false);
       expect(calls).toContain('gh auth status');
       expect(calls).not.toContain('glab auth status');
+    });
+
+    it('fails before claim when glab is logged in to the origin host but GITLAB_HOST does not name it', async () => {
+      const { run, calls } = linearRunner('git@git.example.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(calls).toContain('glab auth status --hostname git.example.com');
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: gitlab host glab is logged in to git.example.com; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
+      );
+    });
+
+    it('does not ask glab about a github.com origin', async () => {
+      const { run, calls } = linearRunner('https://github.com/owner/repo.git');
+      await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(calls.some((c) => c.startsWith('glab'))).toBe(false);
     });
 
     it('checks glab auth for a self-hosted remote that matches GITLAB_HOST', async () => {

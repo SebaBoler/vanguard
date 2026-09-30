@@ -148,7 +148,7 @@ export function redactRemote(remoteUrl: string): string {
 }
 
 /** Lower-cased hostname of a git remote URL or a GITLAB_HOST value, without scheme, user or port. */
-function hostnameOf(value: string): string | undefined {
+export function hostnameOf(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed.includes('://')) {
     try {
