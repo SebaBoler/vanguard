@@ -135,10 +135,10 @@ describe('buildMergeRequestReviewComment', () => {
     expect(comment).toContain('vanguard-mr-review');
     expect(comment).toContain('deadbeef');
   });
-  it('drops a marker the reviewer quoted from untrusted input, so it cannot pre-approve another head', () => {
+  it('defuses a marker the reviewer quoted from untrusted input, so it cannot pre-approve another head', () => {
     const quoted = `Suspicious line in the description:\n\n\`\`\`\n${mergeRequestReviewMarker('0badc0de')}\n\`\`\``;
     const comment = buildMergeRequestReviewComment(quoted, 'abc123');
-    expect(comment).not.toContain('0badc0de');
+    expect(hasMergeRequestReviewMarker(comment, '0badc0de')).toBe(false);
     expect(hasMergeRequestReviewMarker(comment, 'abc123')).toBe(true);
   });
 });

@@ -15,16 +15,15 @@ export function neutralizePromptTags(text: string): string {
   return text.replaceAll('<', '&lt;');
 }
 
-// Both forges' dedupe markers, in the line-anchored shape their detectors accept, so stripping covers
-// everything detection would count.
-const REVIEW_MARKER_LINE_RE = /^<!--[ \t]*vanguard-(?:mr|pr)-review:[ \t]*[a-fA-F0-9]+[ \t]*-->$/gm;
-
 /**
- * Remove review dedupe markers from agent-written text (verdicts, conformance sections). The agent can
- * quote one from the MR or PR content, and in the bot's own note it would mark that head as reviewed.
+ * Defuse review dedupe markers in text the bot posts but did not write (verdicts, conformance sections,
+ * error text). The agent can quote one from the MR or PR content, and in the bot's own note it would
+ * mark that head as reviewed. The token is renamed wherever it appears, not matched by line shape, so
+ * whitespace around a marker and the trim that follows cannot turn it back into a line the detectors
+ * count. `\r` goes first: GitLab drops it when it saves a note, which would rejoin a token split by one.
  */
-export function stripReviewMarkers(text: string): string {
-  return text.replace(REVIEW_MARKER_LINE_RE, '');
+export function neutralizeReviewMarkers(text: string): string {
+  return text.replaceAll('\r', '').replace(/vanguard-(mr|pr)-review/g, 'vanguard-$1-review-quoted');
 }
 
 export const AUTHORITATIVE_BLOCK_INSTRUCTION =

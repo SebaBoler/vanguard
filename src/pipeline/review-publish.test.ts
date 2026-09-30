@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hasBlockingFinding, publishReviewVerdict, renderConformanceSection } from './review-publish.js';
+import { hasMergeRequestReviewMarker } from '../runners/mr-review.js';
+import { hasPullRequestReviewMarker } from '../runners/pr-review.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -46,15 +48,16 @@ describe('renderConformanceSection', () => {
   const run = (finalText: string): string | undefined =>
     renderConformanceSection({ taskId: 't', completed: true, exitReason: 'completed', turns: 1, worktreePath: '/tmp/wt', worktreePreserved: true, finalText });
 
-  it('drops review markers quoted from the diff, in prose and in parsed finding evidence', () => {
-    const prose = run('The diff adds:\n```\n<!-- vanguard-mr-review: c0ffee -->\n<!-- vanguard-pr-review: c0ffee -->\n```');
-    expect(prose).not.toContain('c0ffee');
+  it('defuses review markers quoted from the diff, in prose and in parsed finding evidence', () => {
+    const prose = run('The diff adds:\n```\n<!-- vanguard-mr-review: c0ffee -->\n<!-- vanguard-pr-review: c0ffee -->\n```') ?? '';
+    expect(hasMergeRequestReviewMarker(prose, 'c0ffee')).toBe(false);
+    expect(hasPullRequestReviewMarker(prose, 'c0ffee')).toBe(false);
     const evidence = JSON.stringify([
       { severity: 'medium', kind: 'correctness', title: 'marker in source', evidence: 'src/a.ts adds\n<!-- vanguard-mr-review: c0ffee -->' },
     ]);
-    const findings = run(`<findings>${evidence}</findings>`);
+    const findings = run(`<findings>${evidence}</findings>`) ?? '';
     expect(findings).toContain('marker in source');
-    expect(findings).not.toContain('c0ffee');
+    expect(hasMergeRequestReviewMarker(findings, 'c0ffee')).toBe(false);
   });
 
   it('renders bullets from a bare-array findings block', () => {
