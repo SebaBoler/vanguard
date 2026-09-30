@@ -79,11 +79,10 @@ export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: strin
   const run = opts.run ?? defaultDockerRunner;
   const image = opts.image ?? sandboxImage();
   // `docker commit` onto an image ID or a digest reference cannot change what it names.
-  if (/^(sha256:)?[a-f0-9]{12,64}$|@sha256:[a-f0-9]{64}$/.test(image)) {
-    throw new SandboxError(
-      `Cannot refresh ${image}: an image ID or digest is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
-    );
-  }
+  const immutable = new SandboxError(
+    `Cannot refresh ${image}: an image ID or digest is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
+  );
+  if (/^(sha256:)?[a-f0-9]{12,64}$|@sha256:[a-f0-9]{64}$/.test(image)) throw immutable;
   const helper = 'vg-cli-refresh';
   const { cwd } = opts;
 
@@ -91,6 +90,8 @@ export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: strin
     const { stdout } = await run('docker', ['image', 'inspect', image, '--format', `{{${field}}}`], { cwd });
     return stdout.trim();
   };
+  // Docker also resolves a shorter unique prefix of an ID; only the engine can tell it from a hex repository name.
+  if (/^[a-f0-9]+$/.test(image) && (await inspect('.Id')).replace(/^sha256:/, '').startsWith(image)) throw immutable;
   const user = await inspect('.Config.User');
   const workdir = await inspect('.Config.WorkingDir');
 

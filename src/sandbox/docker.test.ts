@@ -66,6 +66,20 @@ describe('refreshSandboxClaudeCli', () => {
     ).rejects.toThrow(/immutable/);
     expect(calls).toEqual([]);
   });
+
+  it('refuses a short image ID, and still refreshes a hex repository name that is not an ID prefix', async () => {
+    const calls: string[][] = [];
+    const run = async (_cmd: string, args: string[]): Promise<{ stdout: string }> => {
+      calls.push(args);
+      return { stdout: args.at(-1) === '{{.Id}}' ? `sha256:abc1234${'0'.repeat(57)}` : '' };
+    };
+
+    await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: 'abc1234', run })).rejects.toThrow(/immutable/);
+    expect(calls.some((args) => args[0] === 'commit')).toBe(false);
+
+    await refreshSandboxClaudeCli({ cwd: '/repo', image: 'cafe', run });
+    expect(calls.some((args) => args[0] === 'commit' && args.at(-1) === 'cafe')).toBe(true);
+  });
 });
 
 describe('isOlderVersion', () => {
