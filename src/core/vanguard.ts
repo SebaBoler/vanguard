@@ -43,9 +43,11 @@ const COPY_BACK_SKIP =
 // past; over-matching only drops a file that no pipeline reads. `s` lets `.*` cross a newline in a file name.
 // The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
 const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
-// A `.github` or `.gitlab` entry that is not a real directory (a symlink, or in a diff any changed path, since
-// git lists no directories) could stand in for the directory and point at CI files kept elsewhere.
+// A `.github` or `.gitlab` entry that is not a real directory (a symlink or a file, and in a diff any changed
+// path, since git lists no directories) could stand in for the directory and point at CI files kept elsewhere.
+// Copy-back also drops any symlink inside those directories, which could do the same for a subdirectory.
 const CI_DIR_NAME = /(^|[\\/])\.git(hub|lab)$/i;
+const IN_CI_DIR = /(^|[\\/])\.git(hub|lab)[\\/]/i;
 
 export interface PrepareOptions {
   taskId: string;
@@ -248,7 +250,12 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
       filter: async (src) => {
         // Relative, so a `.gitlab` or `.github` directory above the repo does not match.
         const rel = relative(staging, src);
-        if (WORKFLOW_PATH.test(rel) || (CI_DIR_NAME.test(rel) && (await lstat(src)).isSymbolicLink())) {
+        const standsIn = async (): Promise<boolean> => {
+          if (!CI_DIR_NAME.test(rel) && !IN_CI_DIR.test(rel)) return false;
+          const info = await lstat(src);
+          return CI_DIR_NAME.test(rel) ? !info.isDirectory() : info.isSymbolicLink();
+        };
+        if (WORKFLOW_PATH.test(rel) || (await standsIn())) {
           dropped.push(rel);
           return false;
         }

@@ -525,7 +525,7 @@ describe('vanguard.run', () => {
     expect([...(warnings[0]?.obj.paths as string[])].sort()).toEqual(expected);
   });
 
-  it('drops a .gitlab or .github symlink that stands in for the directory', async () => {
+  it('drops a .gitlab or .github entry that stands in for the directory, and symlinks inside one', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox(async (hostPath) => {
       await mkdir(join(hostPath, 'ci-src', 'ci'), { recursive: true });
@@ -534,15 +534,21 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'gh', 'workflows', 'x.yml'), 'on: push\n');
       await symlink('ci-src', join(hostPath, '.gitlab'));
       await symlink('gh', join(hostPath, '.github'));
+      await mkdir(join(hostPath, 'sub', '.github', 'ISSUE_TEMPLATE'), { recursive: true });
+      await symlink('../../gh', join(hostPath, 'sub', '.github', 'workflows-src'));
+      await writeFile(join(hostPath, 'sub', '.github', 'ISSUE_TEMPLATE', 'bug.md'), 'bug\n');
+      await writeFile(join(hostPath, 'sub', '.gitlab'), 'not a directory\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
     const ctx = await prepareContext({ taskId: 'ci-symlink', localRepoPath: repo, sandbox }, { worktrees: wm });
-    await runAgent(ctx, { promptTemplate: 'p', agent });
+    const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     const linked = await Promise.all(['.gitlab', '.github'].map((name) => lstat(join(ctx.worktreePath, name)).then(() => true, () => false)));
     await disposeContext(ctx);
 
     expect(linked).toEqual([false, false]);
-    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(['.github', '.gitlab']);
+    expect([...(ctx.droppedCiPaths ?? [])].sort()).toEqual(['.github', '.gitlab', 'sub/.github/workflows-src', 'sub/.gitlab']);
+    // A real directory under the same name still syncs back.
+    expect(result.diff).toContain('sub/.github/ISSUE_TEMPLATE/bug.md');
   });
 
   it('logs one capped warning however many CI files the agent writes', async () => {
