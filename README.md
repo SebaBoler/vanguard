@@ -512,7 +512,7 @@ Normal logs report source, task id, phase, outcome, and next action. Full prompt
 
 `vanguard review-pr` runs an adversarial, read-only review over an existing GitHub PR diff and posts a non-blocking GitHub review comment. It does not edit code, open another PR, or move issue labels.
 
-The reviewer applies the repository's review guidelines (`CLAUDE.md` or `AGENTS.md`, and any document they point to). It reads them from its sandbox checkout, which `review-pr` and `review-mr` build from the local `main` branch, not from the PR or MR head, so an author cannot rewrite the rules their own change is judged by. Keep that local `main` current with the target branch; guideline edits inside the diff are reviewed, not applied.
+The reviewer applies the repository's review guidelines (`CLAUDE.md` or `AGENTS.md`, and any document they point to). It reads them from its sandbox checkout, which `review-pr` and `review-mr` build from the local `main` branch, not from the PR or MR head. Keep that local `main` current with the target branch; guideline edits inside the diff are reviewed, not applied. This stops an author from rewriting the rules their own change is judged by only when the author cannot also change how the job builds `main`. A GitLab MR pipeline reads its job definitions from the MR's source branch, and its detached checkout has no local `main` until the job script makes one, so the author of a same-project MR can point `main` at their own head. Where that matters, run the review from a pipeline whose configuration the author does not control, or gate the job on a label a maintainer adds after reading the diff.
 
 ```bash
 vanguard review-pr https://github.com/owner/repo/pull/123
