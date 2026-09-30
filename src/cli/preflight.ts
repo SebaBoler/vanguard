@@ -361,8 +361,10 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
           ? check(auth.name, false, `missing for origin host ${otherHost}; for a self-hosted GitLab set GITLAB_HOST=${otherHost}`)
           : auth,
       );
-      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['auth', 'status', '--hostname', otherHost])).ok) {
-        checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
+      // `glab api --hostname` reaches the host with a stored login or with GITLAB_TOKEN, which glab sends to
+      // whatever host it is given; a GitHub host answers the GitLab API path with an error.
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'])).ok) {
+        checks.push(check('gitlab host', false, `glab can reach ${otherHost} as GitLab; set GITLAB_HOST=${otherHost} to publish there through glab`));
       }
       // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
       if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {

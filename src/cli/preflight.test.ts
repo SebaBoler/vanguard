@@ -210,7 +210,7 @@ describe('runPreflight', () => {
       const run: PreflightRunner = async (cmd, args) => {
         calls.push(`${cmd} ${args.join(' ')}`);
         if (cmd === 'git' && args[0] === 'remote') return { stdout: origin };
-        if (cmd === 'glab' && args[0] === 'auth') {
+        if (cmd === 'glab' && (args[0] === 'auth' || args[0] === 'api')) {
           if (!glabAuthOk) throw new Error('not logged in');
           return { stdout: '' };
         }
@@ -263,14 +263,14 @@ describe('runPreflight', () => {
       expect(calls).not.toContain('glab auth status');
     });
 
-    it('fails before claim when glab is logged in to the origin host but GITLAB_HOST does not name it', async () => {
+    it('fails before claim when glab can reach the origin host as GitLab but GITLAB_HOST does not name it', async () => {
       const { run, calls } = linearRunner('git@git.example.com:group/project.git');
-      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+      const report = await runPreflight(linearDoctor, { env: { ...env, GITLAB_TOKEN: 'glpat', GH_TOKEN: 'gh' }, nodeVersion: '24.11.1', run });
 
       expect(report.ok).toBe(false);
-      expect(calls).toContain('glab auth status --hostname git.example.com');
+      expect(calls).toContain('glab api --hostname git.example.com user');
       expect(formatPreflightReport(report)).toContain(
-        'preflight: gitlab host glab is logged in to git.example.com; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
+        'preflight: gitlab host glab can reach git.example.com as GitLab; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
       );
     });
 
