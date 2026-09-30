@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 // Mock the watch runners so the deps builders run without entering a real poll loop. We capture the
 // deps each builder produces and assert the RunOptions fields survived — a guard the type system
@@ -74,12 +74,16 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
   const githubLoop = { source: 'github', specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' } as const;
   const gitlabLoop = { ...githubLoop, source: 'gitlab', project: 'g/p' } as const;
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
     ['linear', linearLoop, watchLinearSource, watchLinearLoopV1],
     ['github', githubLoop, watchGithubSource, watchGithubLoopV1],
     ['gitlab', gitlabLoop, watchGitlabSource, watchGitlabLoopV1],
   ] as const)('%s: specOnly reaches the loop, and is absent without the flag', async (_name, loop, source, runner) => {
-    process.env.LINEAR_API_KEY = 'key';
+    vi.stubEnv('LINEAR_API_KEY', 'key');
     await source(watchCommand({ ...loop, specOnly: true }), undefined, ctx, signal);
     await source(watchCommand(loop), undefined, ctx, signal);
 
