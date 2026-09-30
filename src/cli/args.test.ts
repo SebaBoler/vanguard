@@ -1205,6 +1205,18 @@ describe('parseCli gitlab run', () => {
 });
 
 describe('parseCli watch gitlab', () => {
+  it('parses --spec-only on gitlab loop-v1', () => {
+    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1', '--once', '--spec-only'], '/repo');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'gitlab', specLabel: 'ready for spec', once: true, specOnly: true });
+  });
+
+  it('rejects --spec-only on single-pass gitlab watch', () => {
+    expect(parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--spec-only'], '/repo')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
+
   it('parses --source gitlab with --gitlab-project', () => {
     const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'owner/project', '--label', 'vanguard'], '/repo');
     assert(cmd.kind === 'watch');

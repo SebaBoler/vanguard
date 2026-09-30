@@ -19,8 +19,8 @@ vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
 
-import { watchLinear, watchGitlab } from '../runners/watch.js';
-import { buildGithubDeps, watchLinearSource, watchGitlabSource } from './watch.js';
+import { watchLinear, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
+import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -66,5 +66,26 @@ describe('watch deps builders thread RunOptions', () => {
     await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p' }), undefined, ctx, signal);
     const deps = vi.mocked(watchGitlab).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
+  });
+});
+
+describe('loop-v1 sources pass --spec-only to the loop', () => {
+  const linearLoop = { source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' } as const;
+  const githubLoop = { source: 'github', specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' } as const;
+  const gitlabLoop = { ...githubLoop, source: 'gitlab', project: 'g/p' } as const;
+
+  it.each([
+    ['linear', linearLoop, watchLinearSource, watchLinearLoopV1],
+    ['github', githubLoop, watchGithubSource, watchGithubLoopV1],
+    ['gitlab', gitlabLoop, watchGitlabSource, watchGitlabLoopV1],
+  ] as const)('%s: specOnly reaches the loop, and is absent without the flag', async (_name, loop, source, runner) => {
+    process.env.LINEAR_API_KEY = 'key';
+    await source(watchCommand({ ...loop, specOnly: true }), undefined, ctx, signal);
+    await source(watchCommand(loop), undefined, ctx, signal);
+
+    const calls = vi.mocked(runner).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0]).toMatchObject({ once: true, specOnly: true });
+    expect('specOnly' in calls[1]![0]).toBe(false);
   });
 });

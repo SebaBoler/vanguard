@@ -456,6 +456,22 @@ describe('runPreflight gitlab source', () => {
     await runPreflight(baseCmd, { env: { GITLAB_TOKEN: 'token', ANTHROPIC_API_KEY: 'key' }, nodeVersion: '24.0.0', run });
     expect(glabAuthCalled).toBe(false);
   });
+
+  it('spec-only gitlab loop-v1 still checks glab auth and the spec routing labels', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'auth') throw new Error('not logged in');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: JSON.stringify([{ name: 'vanguard' }, { name: 'ready for spec' }]) };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { ...baseCmd, specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true },
+      { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab labels missing ready for agent, needs info -> stop before claim');
+  });
 });
 
 function githubWatch(overrides: Partial<WatchCommand> = {}): WatchCommand {

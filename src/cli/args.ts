@@ -1218,6 +1218,7 @@ Commands:
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.
+    Add --spec-only to check a spec-only loop-v1 watch: it skips the checks that only guard publishing.
     Example (GitHub): vanguard doctor --source github --github-repo owner/repo
     Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
 
