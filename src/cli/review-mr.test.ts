@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../sandbox/sandbox-context.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../sandbox/sandbox-context.js')>()),
@@ -23,6 +23,11 @@ import type { GlabRunner } from '../tasks/gitlab.js';
 
 describe('reviewMrCommand', () => {
   const prev = { oat: process.env.CLAUDE_CODE_OAUTH_TOKEN, key: process.env.ANTHROPIC_API_KEY };
+  // Each test asserts on call counts, so no test may see another's calls.
+  beforeEach(() => {
+    vi.mocked(startSandboxContext).mockReset();
+    vi.mocked(runAgent).mockReset();
+  });
   afterEach(() => {
     if (prev.oat === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     else process.env.CLAUDE_CODE_OAUTH_TOKEN = prev.oat;
@@ -57,10 +62,9 @@ describe('reviewMrCommand', () => {
   it('starts one sandbox context for both review attempts and destroys it once', async () => {
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
     const destroy = vi.fn(async () => undefined);
-    vi.mocked(startSandboxContext).mockClear().mockResolvedValue({ destroy } as never);
+    vi.mocked(startSandboxContext).mockResolvedValue({ destroy } as never);
     const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
     vi.mocked(runAgent)
-      .mockReset()
       .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
       .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
     const sha = 'abc123def4567890';
