@@ -3,7 +3,7 @@ import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
-import { hostnameOf, isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote } from '../runners/gitlab.js';
+import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -362,7 +362,7 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
       // A self-hosted GitLab that GITLAB_HOST does not name takes the gh path and would fail at publish, after
       // the agent work: `glab auth login` sets no GITLAB_HOST, and a CI job may only have GITLAB_TOKEN.
-      const host = remote.ok && !gitlabOrigin ? hostnameOf(remote.stdout) : undefined;
+      const host = remote.ok && !gitlabOrigin ? remoteHostname(remote.stdout) : undefined;
       const otherHost = host !== undefined && host !== 'github.com' ? host : undefined;
       const auth = gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env);
       checks.push(

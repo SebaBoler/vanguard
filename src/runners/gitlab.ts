@@ -141,7 +141,7 @@ export function parseGitlabProjectFromRemote(remoteUrl: string): string | undefi
  * so self-hosted instances are detected.
  */
 export function gitlabProjectFromRemote(remoteUrl: string): string | undefined {
-  const host = hostnameOf(remoteUrl);
+  const host = remoteHostname(remoteUrl);
   if (host !== undefined && /(^|\.)(github\.com|bitbucket\.org|dev\.azure\.com)$/.test(host)) return undefined;
   return parseGitlabProjectFromRemote(remoteUrl);
 }
@@ -152,8 +152,8 @@ export function redactRemote(remoteUrl: string): string {
   return remoteUrl.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1');
 }
 
-/** Lower-cased hostname of a git remote URL or a GITLAB_HOST value, without scheme, user or port. */
-export function hostnameOf(value: string): string | undefined {
+/** Lower-cased hostname of a URL or a bare `host[:port]` (a GITLAB_HOST value), without scheme, user or port. */
+function hostnameOf(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed.includes('://')) {
     try {
@@ -167,12 +167,22 @@ export function hostnameOf(value: string): string | undefined {
 }
 
 /**
+ * Lower-cased host of a git remote, or undefined for a local path. Git reads a remote without a scheme
+ * as scp-like only when a colon comes before any slash; `../mirror.git` or `mirror.git` is a path.
+ */
+export function remoteHostname(remoteUrl: string): string | undefined {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.includes('://')) return hostnameOf(trimmed);
+  return /^(?:[^@/]+@)?([^:/]+):/.exec(trimmed)?.[1]?.toLowerCase();
+}
+
+/**
  * Whether a remote's host is GitLab by explicit signal: gitlab.com, or the host in glab's
  * GITLAB_HOST. Stricter than gitlabProjectFromRemote because it serves sources whose review surface
  * defaults to GitHub (Linear): a GitHub Enterprise or other unknown host must keep that default.
  */
 export function isKnownGitlabRemote(remoteUrl: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const host = hostnameOf(remoteUrl);
+  const host = remoteHostname(remoteUrl);
   if (host === undefined) return false;
   const selfHosted = env.GITLAB_HOST === undefined ? undefined : hostnameOf(env.GITLAB_HOST);
   return host === 'gitlab.com' || host === selfHosted;

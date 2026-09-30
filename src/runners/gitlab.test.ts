@@ -7,6 +7,7 @@ import {
   parseGitlabProjectFromRemote,
   gitlabProjectFromRemote,
   isKnownGitlabRemote,
+  remoteHostname,
   knownGitlabProjectFromOrigin,
   redactRemote,
   runGitlabIssue,
@@ -93,6 +94,21 @@ describe('isKnownGitlabRemote', () => {
   });
   it('rejects a local path', () => {
     expect(isKnownGitlabRemote('/srv/git/project.git', { GITLAB_HOST: 'git.example.com' })).toBe(false);
+  });
+});
+
+describe('remoteHostname', () => {
+  it('reads the host of scheme and scp-like remotes', () => {
+    expect(remoteHostname('git@GitLab.com:group/project.git')).toBe('gitlab.com');
+    expect(remoteHostname('git.example.com:group/project.git')).toBe('git.example.com');
+    expect(remoteHostname('ssh://git@git.example.com:2222/group/project.git')).toBe('git.example.com');
+    expect(remoteHostname('https://oauth2:tok@git.example.com/group/project.git')).toBe('git.example.com');
+  });
+
+  it('returns undefined for a local path, relative or absolute', () => {
+    for (const path of ['../mirror.git', 'mirror.git', './dir:with-colon.git', '/srv/git/project.git', 'file:///srv/git/project.git']) {
+      expect(remoteHostname(path), path).toBeUndefined();
+    }
   });
 });
 
