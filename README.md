@@ -346,7 +346,7 @@ vanguard run --linear TES-1 --fork 3
 
 The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
 
-`VANGUARD_OWNER_LABEL=<id>` labels every container and network with `vanguard.owner=<id>`, so a CI job can remove its own leftovers with `docker rm -f $(docker ps -aq --filter label=vanguard.owner=<id>)`.
+`VANGUARD_OWNER_LABEL=<id>` labels every container and network with `vanguard.owner=<id>`, so a CI job can remove its own leftovers: first the containers with `docker rm -f $(docker ps -aq --filter label=vanguard.owner=<id>)`, then the egress network with `docker network rm $(docker network ls -q --filter label=vanguard.owner=<id>)`, which Docker refuses while a container still uses it.
 
 ### Host LLM proxy
 

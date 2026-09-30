@@ -189,7 +189,7 @@ function glabUser(glab: GlabRunner): Promise<string> {
 }
 
 /**
- * Whether one of the MR's latest 100 notes carries the Vanguard review marker for `sha` and was written by
+ * Whether one of the MR's latest 500 notes carries the Vanguard review marker for `sha` and was written by
  * the user glab runs as. Only that author counts: anyone on the MR can post an invisible marker note to
  * suppress the review. Throws when the user or the notes cannot be read.
  */
