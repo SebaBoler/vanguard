@@ -183,12 +183,28 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
+/**
+ * The `a/X` half of a `diff --git a/X b/X` header, or undefined when the two paths differ. Git does not
+ * quote spaces there, so a two-path line has no reliable split and a pattern could span both paths. A
+ * rename or copy carries its own one-path `rename`/`copy` lines; binary and mode-only changes have no
+ * `---`/`+++` lines, so this header is their only record.
+ */
+function sameGitHeaderPath(line: string): string | undefined {
+  const rest = line.slice('diff --git '.length);
+  const half = (rest.length - 1) / 2;
+  if (!Number.isInteger(half) || rest[half] !== ' ') return undefined;
+  const a = rest.slice(0, half);
+  return a.slice(2) === rest.slice(half + 3) ? a : undefined;
+}
+
 /** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) touched by a unified diff. Empty ⇒ clean. */
 export function workflowPathsInDiff(diff: string): string[] {
   const found = new Set<string>();
   const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
-  for (const line of diff.split('\n')) {
-    if (!HEADER_LINE.test(line)) continue;
+  for (const header of diff.split('\n')) {
+    if (!HEADER_LINE.test(header)) continue;
+    const line = header.startsWith('diff --git ') ? sameGitHeaderPath(header) : header;
+    if (line === undefined) continue;
     const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^"'\n]*?\.ya?ml(?=$|["'\s]))/.exec(line);
     if (match?.[2] !== undefined) found.add(match[2]);
   }

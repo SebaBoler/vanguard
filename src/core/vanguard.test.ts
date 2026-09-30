@@ -574,6 +574,35 @@ describe('vanguard.run', () => {
       expect(workflowPathsInDiff(diff)).toEqual(['.gitlab/ci build.yml']);
     });
 
+    it('does not match across the two paths of a rename header, and names a renamed file correctly', () => {
+      const unrelated = [
+        'diff --git a/.gitlab/issue_templates/Bug.md b/docs/deploy.yml',
+        'similarity index 100%',
+        'rename from .gitlab/issue_templates/Bug.md',
+        'rename to docs/deploy.yml',
+      ].join('\n');
+      expect(workflowPathsInDiff(unrelated)).toEqual([]);
+      const intoCi = [
+        'diff --git a/docs/ci notes.md b/.gitlab/ci/new job.yml',
+        'similarity index 100%',
+        'rename from docs/ci notes.md',
+        'rename to .gitlab/ci/new job.yml',
+      ].join('\n');
+      expect(workflowPathsInDiff(intoCi)).toEqual(['.gitlab/ci/new job.yml']);
+    });
+
+    it('finds CI config whose only record is the diff --git header (binary or mode-only change)', () => {
+      const diff = [
+        'diff --git a/.gitlab/ci/job.yml b/.gitlab/ci/job.yml',
+        'new file mode 100644',
+        'Binary files /dev/null and b/.gitlab/ci/job.yml differ',
+        'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml',
+        'old mode 100644',
+        'new mode 100755',
+      ].join('\n');
+      expect(workflowPathsInDiff(diff)).toEqual(['.github/workflows/ci.yml', '.gitlab/ci/job.yml']);
+    });
+
     it('ignores .gitlab/ files that no pipeline executes (MR templates, CODEOWNERS)', () => {
       const diff = [
         'diff --git a/.gitlab/merge_request_templates/default.md b/.gitlab/merge_request_templates/default.md',
