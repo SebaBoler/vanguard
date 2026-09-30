@@ -114,6 +114,8 @@ export function dockerEgressNetworkLister(
           { reject: false },
         );
         const out = inspect.stdout ?? '';
+        // Removed since `network ls` (another job's gc or after_script): nothing to keep or warn about.
+        if (inspect.exitCode !== 0 && /no such network|network \S+ not found/i.test(inspect.stderr ?? '')) return null;
         if (!/^\d+ \d+$/.test(out.trim())) {
           unreadable.push(`${name} (${(inspect.stderr ?? '').trim() || 'no output'})`);
           return null;
