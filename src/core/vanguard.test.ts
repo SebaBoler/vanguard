@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -9,7 +9,7 @@ import {
   prepareContext,
   runAgent,
   disposeContext,
-  workflowPathsInDiff,
+  workflowPaths,
   assertNoWorkflowChanges,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
@@ -544,145 +544,72 @@ describe('vanguard.run', () => {
     expect(ctx.droppedCiPaths?.size).toBe(25);
   });
 
-  describe('workflowPathsInDiff', () => {
-    it('finds a workflow path from diff --git / +++ headers, including new files and nested dirs', () => {
-      const diff = [
-        'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml',
-        'new file mode 100644',
-        '--- /dev/null',
-        '+++ b/.github/workflows/ci.yml',
-        '@@ -0,0 +1 @@',
-        '+on: push',
-        '',
-        'diff --git a/.github/workflows/nested/sub.yml b/.github/workflows/nested/sub.yml',
-        '--- a/.github/workflows/nested/sub.yml',
-        '+++ b/.github/workflows/nested/sub.yml',
-      ].join('\n');
-      const paths = workflowPathsInDiff(diff);
-      expect(paths).toContain('.github/workflows/ci.yml');
-      expect(paths).toContain('.github/workflows/nested/sub.yml');
+  describe('workflowPaths', () => {
+    it('finds GitHub workflows, nested ones included', () => {
+      expect(workflowPaths(['src/a.ts', '.github/workflows/nested/sub.yml', '.github/workflows/ci.yml'])).toEqual([
+        '.github/workflows/ci.yml',
+        '.github/workflows/nested/sub.yml',
+      ]);
     });
 
-    it('returns [] for a diff touching only src/** and non-workflow .github files', () => {
-      const diff = [
-        'diff --git a/src/index.ts b/src/index.ts',
-        '--- a/src/index.ts',
-        '+++ b/src/index.ts',
-        'diff --git a/.github/dependabot.yml b/.github/dependabot.yml',
-        '--- a/.github/dependabot.yml',
-        '+++ b/.github/dependabot.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces and in any case', () => {
+      const paths = ['.gitlab-ci.yml', 'sub/.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml', '.gitlab/ci build.yml', '.gitlab/ci/job.YML', '.GitLab-CI.yml'];
+      expect(workflowPaths(paths)).toEqual([...paths].sort());
     });
 
-    it('ignores mentions of .github/workflows/ inside body content lines, not just headers', () => {
-      const diff = [
-        'diff --git a/README.md b/README.md',
-        '--- a/README.md',
-        '+++ b/README.md',
-        '+see .github/workflows/ci.yml for details',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+    it('ignores other .github and .gitlab files and near-miss names', () => {
+      expect(
+        workflowPaths([
+          'src/a.ts',
+          '.github/dependabot.yml',
+          '.github/CODEOWNERS',
+          '.gitlab/merge_request_templates/default.md',
+          '.gitlab/CODEOWNERS',
+          '.gitlab/notes.yml.md',
+          '.gitlab-ci.yml.orig',
+          'app.gitlab-ci.yml.md',
+          '.gitlabx/ci.yml',
+          '.github/workflow/ci.yml',
+          '.githubx/workflows/ci.yml',
+        ]),
+      ).toEqual([]);
     });
 
-    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/', () => {
-      const diff = [
-        'diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml',
-        '+++ b/.gitlab-ci.yml',
-        'diff --git a/.gitlab/ci/verify.yml b/.gitlab/ci/verify.yml',
-        '+++ b/.gitlab/ci/verify.yml',
-        'diff --git a/.gitlab/deploy.yaml b/.gitlab/deploy.yaml',
-        '+++ b/.gitlab/deploy.yaml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml']);
-    });
+    it('sees changes git records only in headers, and not CI paths quoted in file content', async () => {
+      await mkdir(join(repo, '.github', 'workflows'), { recursive: true });
+      await mkdir(join(repo, '.gitlab', 'ci'), { recursive: true });
+      await writeFile(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n');
+      await writeFile(join(repo, '.gitlab', 'ci', 'job.yml'), 'job: {}\n');
+      await execa('git', ['add', '.'], { cwd: repo });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ci'], { cwd: repo });
+      // Custom diff prefixes must not hide anything.
+      await execa('git', ['config', 'diff.srcPrefix', 'src/'], { cwd: repo });
+      await execa('git', ['config', 'diff.dstPrefix', 'dst/'], { cwd: repo });
+      const wm = new WorktreeManager(repo);
+      const ctx = await prepareContext({ taskId: 'wf-paths', localRepoPath: repo, sandbox: makeSandbox().sandbox }, { worktrees: wm });
 
-    it('finds .gitlab/ YAML whose path contains a space', () => {
-      const diff = ['diff --git a/.gitlab/ci build.yml b/.gitlab/ci build.yml', '+++ b/.gitlab/ci build.yml\t'].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual(['.gitlab/ci build.yml']);
-    });
+      await chmod(join(ctx.worktreePath, '.github', 'workflows', 'ci.yml'), 0o755);
+      await writeFile(join(ctx.worktreePath, '.gitlab', 'ci', 'job.yml'), Buffer.from([0, 1, 2, 0]));
+      // Added lines render as `+++ b/...` and `+-- ...` in a unified diff.
+      await writeFile(join(ctx.worktreePath, 'notes.sql'), '++ b/.github/workflows/evil.yml\n-- .gitlab/ci/evil.yml\n');
 
-    it('does not match across the two paths of a rename header, and names a renamed file correctly', () => {
-      const unrelated = [
-        'diff --git a/.gitlab/issue_templates/Bug.md b/docs/deploy.yml',
-        'similarity index 100%',
-        'rename from .gitlab/issue_templates/Bug.md',
-        'rename to docs/deploy.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(unrelated)).toEqual([]);
-      const intoCi = [
-        'diff --git a/docs/ci notes.md b/.gitlab/ci/new job.yml',
-        'similarity index 100%',
-        'rename from docs/ci notes.md',
-        'rename to .gitlab/ci/new job.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(intoCi)).toEqual(['.gitlab/ci/new job.yml']);
-    });
-
-    it('finds CI config whose only record is the diff --git header (binary or mode-only change)', () => {
-      const diff = [
-        'diff --git a/.gitlab/ci/job.yml b/.gitlab/ci/job.yml',
-        'new file mode 100644',
-        'Binary files /dev/null and b/.gitlab/ci/job.yml differ',
-        'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml',
-        'old mode 100644',
-        'new mode 100755',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual(['.github/workflows/ci.yml', '.gitlab/ci/job.yml']);
-    });
-
-    it('matches GitLab CI config whatever the case of its name or extension', () => {
-      const diff = ['diff --git a/.gitlab/ci/job.YML b/.gitlab/ci/job.YML', '+++ b/.gitlab/ci/job.YML', '+++ b/.GitLab-CI.yml'].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual(['.GitLab-CI.yml', '.gitlab/ci/job.YML']);
-    });
-
-    it('ignores .gitlab/ files that no pipeline executes (MR templates, CODEOWNERS)', () => {
-      const diff = [
-        'diff --git a/.gitlab/merge_request_templates/default.md b/.gitlab/merge_request_templates/default.md',
-        '+++ b/.gitlab/merge_request_templates/default.md',
-        'diff --git a/.gitlab/CODEOWNERS b/.gitlab/CODEOWNERS',
-        '+++ b/.gitlab/CODEOWNERS',
-        'diff --git a/.gitlab/notes.yml.md b/.gitlab/notes.yml.md',
-        '+++ b/.gitlab/notes.yml.md',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
-    });
-
-    it('does not match GitLab near-misses (.gitlab-ci.yml as a prefix, a .gitlabx dir)', () => {
-      const diff = [
-        'diff --git a/.gitlab-ci.yml.orig b/.gitlab-ci.yml.orig',
-        '+++ b/.gitlab-ci.yml.orig',
-        'diff --git a/.gitlabx/ci.yml b/.gitlabx/ci.yml',
-        '+++ b/.gitlabx/ci.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
-    });
-
-    it('does not match near-miss paths (singular "workflow", or a similarly-prefixed dir)', () => {
-      const diff = [
-        'diff --git a/.github/workflow/ci.yml b/.github/workflow/ci.yml',
-        '+++ b/.github/workflow/ci.yml',
-        'diff --git a/.githubx/workflows/ci.yml b/.githubx/workflows/ci.yml',
-        '+++ b/.githubx/workflows/ci.yml',
-      ].join('\n');
-      expect(workflowPathsInDiff(diff)).toEqual([]);
+      expect(workflowPaths(await wm.changedPaths(ctx.worktreePath))).toEqual(['.github/workflows/ci.yml', '.gitlab/ci/job.yml']);
+      await disposeContext(ctx);
     });
   });
 
   describe('assertNoWorkflowChanges', () => {
-    it('throws WorkflowGuardError and logs error with offending paths for a workflow-touching diff', () => {
+    it('throws WorkflowGuardError and logs error with the offending paths', () => {
       const { logger, entries } = captureLogger();
-      const diff = 'diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n';
-      expect(() => assertNoWorkflowChanges(diff, logger, 't-guard')).toThrow(WorkflowGuardError);
+      expect(() => assertNoWorkflowChanges(['src/a.ts', '.github/workflows/ci.yml'], logger, 't-guard')).toThrow(WorkflowGuardError);
       const error = entries.find((e) => e.msg.includes('blocked commit'));
       expect(error).toBeDefined();
       expect(error?.obj.paths).toEqual(['.github/workflows/ci.yml']);
     });
 
-    it('does not throw for a clean diff', () => {
+    it('does not throw when no changed path is CI config', () => {
       const { logger, entries } = captureLogger();
-      const diff = 'diff --git a/src/index.ts b/src/index.ts\n+++ b/src/index.ts\n';
-      expect(() => assertNoWorkflowChanges(diff, logger, 't-guard-clean')).not.toThrow();
+      expect(() => assertNoWorkflowChanges(['src/index.ts'], logger, 't-guard-clean')).not.toThrow();
       expect(entries.length).toBe(0);
     });
   });

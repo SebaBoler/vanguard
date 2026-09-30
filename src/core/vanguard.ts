@@ -41,6 +41,7 @@ const COPY_BACK_SKIP =
 // other noisy-but-expected skips above.
 // Case-insensitive, so `job.YML` or a `.GitLab` directory on a case-insensitive filesystem cannot slip
 // past; over-matching only drops a file that no pipeline reads.
+// The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
 const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/i;
 
 export interface PrepareOptions {
@@ -185,37 +186,14 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
-/**
- * The `a/X` half of a `diff --git a/X b/X` header, or undefined when the two paths differ. Git does not
- * quote spaces there, so a two-path line has no reliable split and a pattern could span both paths. A
- * rename or copy carries its own one-path `rename`/`copy` lines; binary and mode-only changes have no
- * `---`/`+++` lines, so this header is their only record.
- */
-function sameGitHeaderPath(line: string): string | undefined {
-  const rest = line.slice('diff --git '.length);
-  const half = (rest.length - 1) / 2;
-  if (!Number.isInteger(half) || rest[half] !== ' ') return undefined;
-  const a = rest.slice(0, half);
-  return a.slice(2) === rest.slice(half + 3) ? a : undefined;
+/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) among changed paths. Empty ⇒ clean. */
+export function workflowPaths(paths: string[]): string[] {
+  return paths.filter((path) => WORKFLOW_PATH.test(path)).sort();
 }
 
-/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) touched by a unified diff. Empty ⇒ clean. */
-export function workflowPathsInDiff(diff: string): string[] {
-  const found = new Set<string>();
-  const HEADER_LINE = /^(diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )/;
-  for (const header of diff.split('\n')) {
-    if (!HEADER_LINE.test(header)) continue;
-    const line = header.startsWith('diff --git ') ? sameGitHeaderPath(header) : header;
-    if (line === undefined) continue;
-    const match = /(^|["'\s/])(\.github\/workflows\/[^\s"']*|\.gitlab-ci\.yml(?=$|["'\s])|\.gitlab\/[^"'\n]*?\.ya?ml(?=$|["'\s]))/i.exec(line);
-    if (match?.[2] !== undefined) found.add(match[2]);
-  }
-  return [...found].sort();
-}
-
-/** Throws WorkflowGuardError (logged) if the diff touches a CI config path. */
-export function assertNoWorkflowChanges(diff: string, log: VanguardLogger, taskId: string): void {
-  const offending = workflowPathsInDiff(diff);
+/** Throws WorkflowGuardError (logged) if a changed path is CI config. */
+export function assertNoWorkflowChanges(paths: string[], log: VanguardLogger, taskId: string): void {
+  const offending = workflowPaths(paths);
   if (offending.length === 0) return;
   log.error({ taskId, paths: offending }, 'diff guard: blocked commit — diff touches CI config (hard constraint)');
   throw new WorkflowGuardError(`Diff touches forbidden CI config path(s): ${offending.join(', ')}`);
@@ -291,7 +269,8 @@ async function syncSandboxToWorktree(ctx: RunContext): Promise<string> {
     await rm(staging, { recursive: true, force: true });
   }
   const diff = await ctx.wm.diff(ctx.worktreePath);
-  assertNoWorkflowChanges(diff, ctx.log, ctx.taskId);
+  // Paths from git, not parsed diff headers: diff content lines can start with `+++ ` or `--- `.
+  assertNoWorkflowChanges(await ctx.wm.changedPaths(ctx.worktreePath), ctx.log, ctx.taskId);
   return diff;
 }
 
