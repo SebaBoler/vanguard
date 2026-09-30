@@ -274,6 +274,19 @@ describe('runPreflight', () => {
       );
     });
 
+    it('names GITLAB_HOST when gh auth is missing for an origin that is not github.com', async () => {
+      const { run: base } = linearRunner('git@git.example.com:group/project.git', false);
+      const run: PreflightRunner = async (cmd, args, opts) => {
+        if (cmd === 'gh' && args[0] === 'auth') throw new Error('not logged in');
+        return await base(cmd, args, opts);
+      };
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: github auth missing for origin host git.example.com; for a self-hosted GitLab set GITLAB_HOST=git.example.com -> stop before claim',
+      );
+    });
+
     it('does not ask glab about a github.com origin', async () => {
       const { run, calls } = linearRunner('https://github.com/owner/repo.git');
       await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });

@@ -351,12 +351,18 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
       // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
       const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
-      checks.push(gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env));
-      // `glab auth login` on a self-hosted GitLab sets no GITLAB_HOST, so the run would take the gh path and
-      // fail at publish, after the agent work.
+      // A self-hosted GitLab that GITLAB_HOST does not name takes the gh path and would fail at publish, after
+      // the agent work: `glab auth login` sets no GITLAB_HOST, and a CI job may only have GITLAB_TOKEN.
       const host = remote.ok && !gitlabOrigin ? hostnameOf(remote.stdout) : undefined;
-      if (host !== undefined && host !== 'github.com' && (await runOk(run, cmd.repoPath, 'glab', ['auth', 'status', '--hostname', host])).ok) {
-        checks.push(check('gitlab host', false, `glab is logged in to ${host}; set GITLAB_HOST=${host} to publish there through glab`));
+      const otherHost = host !== undefined && host !== 'github.com' ? host : undefined;
+      const auth = gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env);
+      checks.push(
+        !auth.ok && otherHost !== undefined
+          ? check(auth.name, false, `missing for origin host ${otherHost}; for a self-hosted GitLab set GITLAB_HOST=${otherHost}`)
+          : auth,
+      );
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['auth', 'status', '--hostname', otherHost])).ok) {
+        checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
       }
       // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
       if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
