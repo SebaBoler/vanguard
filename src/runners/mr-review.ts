@@ -60,6 +60,9 @@ const MR_URL_RE = /^https?:\/\/[^/]+\/(.+?)\/-\/merge_requests\/(\d+)(?:[/?#].*)
 const NUMBER_RE = /^\d+$/;
 const MR_REVIEW_MARKER_RE = /^<!--[ \t]*vanguard-mr-review:[ \t]*([a-fA-F0-9]+)[ \t]*-->$/gm;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
+const NOTES_PER_PAGE = 100;
+/** The dedupe reads at most this many pages of notes, newest first. */
+const NOTE_PAGES = 5;
 
 export function parseMergeRequestRef(ref: string, project?: string): MergeRequestReviewTarget {
   const trimmed = ref.trim();
@@ -196,20 +199,27 @@ export async function hasMergeRequestReviewForHead(
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<boolean> {
   const self = await glabUser(glab);
-  let notes: GlabMrNoteItem[];
-  try {
-    const out = await glab([
-      'api',
-      `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
-    ]);
-    notes = JSON.parse(out) as GlabMrNoteItem[];
-  } catch (error) {
-    throw new Error(`cannot read the MR notes (${errorText(error)})`, { cause: error });
+  // Newest first, a few pages deep: any participant can post notes after the review to push its marker
+  // out of a single page, and a head that looks unreviewed is reviewed and noted again.
+  for (let page = 1; page <= NOTE_PAGES; page++) {
+    let notes: GlabMrNoteItem[];
+    try {
+      const out = await glab([
+        'api',
+        `projects/${encodeProject(target.project)}/merge_requests/${target.iid}/notes?per_page=${NOTES_PER_PAGE}&page=${page}&sort=desc&order_by=created_at`,
+      ]);
+      notes = JSON.parse(out) as GlabMrNoteItem[];
+    } catch (error) {
+      throw new Error(`cannot read the MR notes (${errorText(error)})`, { cause: error });
+    }
+    const found = notes.some(
+      (n) =>
+        !n.system && n.author?.username === self && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
+    );
+    if (found) return true;
+    if (notes.length < NOTES_PER_PAGE) return false;
   }
-  return notes.some(
-    (n) =>
-      !n.system && n.author?.username === self && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, sha),
-  );
+  return false;
 }
 
 export function buildMergeRequestReviewComment(agentText: string, sha?: string): string {

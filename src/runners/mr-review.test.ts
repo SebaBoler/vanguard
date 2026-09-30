@@ -179,7 +179,7 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(posted(calls)).toEqual([]);
     expect(result.commentBody).toBeUndefined();
     expect(lines).toContain(`review-mr g/p!5: head ${HEAD} already reviewed -> skip`);
-    expect(calls).toContainEqual(['api', 'projects/g%2Fp/merge_requests/5/notes?per_page=100&sort=desc&order_by=created_at']);
+    expect(calls).toContainEqual(['api', 'projects/g%2Fp/merge_requests/5/notes?per_page=100&page=1&sort=desc&order_by=created_at']);
   });
 
   it('reviews and posts when only an older head was reviewed', async () => {
@@ -192,6 +192,29 @@ describe('reviewMergeRequest head dedupe', () => {
     expect(reviewer).toHaveBeenCalledOnce();
     expect(posted(calls)).toHaveLength(1);
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
+  });
+
+  it('finds a review pushed past the first page of notes, and reads at most five pages', async () => {
+    const spam = JSON.stringify(Array.from({ length: 100 }, () => ({ system: false, author: { username: 'mallory' }, body: 'hi' })));
+    const review = JSON.stringify([{ system: false, author: { username: BOT }, body: mergeRequestReviewMarker(HEAD) }]);
+    const pagedGlab = (pages: Record<string, string>): { glab: GlabRunner; pagesRead: string[] } => {
+      const pagesRead: string[] = [];
+      const glab: GlabRunner = async (args) => {
+        if (args[1] === 'user') return JSON.stringify({ username: BOT });
+        const page = /[?&]page=(\d+)/.exec(args[1] ?? '')?.[1] ?? '';
+        pagesRead.push(page);
+        return pages[page] ?? spam;
+      };
+      return { glab, pagesRead };
+    };
+
+    const second = pagedGlab({ '1': spam, '2': review });
+    expect(await hasMergeRequestReviewForHead({ project: 'g/p', iid: 5 }, HEAD, second.glab)).toBe(true);
+    expect(second.pagesRead).toEqual(['1', '2']);
+
+    const flooded = pagedGlab({});
+    expect(await hasMergeRequestReviewForHead({ project: 'g/p', iid: 6 }, HEAD, flooded.glab)).toBe(false);
+    expect(flooded.pagesRead).toEqual(['1', '2', '3', '4', '5']);
   });
 
   it('reads the glab user once per runner, however many MRs it checks', async () => {
