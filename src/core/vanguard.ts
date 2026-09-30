@@ -40,9 +40,9 @@ const COPY_BACK_SKIP =
 // regex (not folded into COPY_BACK_SKIP) so drops can be logged loudly instead of silently, like the
 // other noisy-but-expected skips above.
 // Case-insensitive, so `job.YML` or a `.GitLab` directory on a case-insensitive filesystem cannot slip
-// past; over-matching only drops a file that no pipeline reads.
+// past; over-matching only drops a file that no pipeline reads. `s` lets `.*` cross a newline in a file name.
 // The diff guard (assertNoWorkflowChanges) tests the same pattern against every path git reports as changed.
-const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/i;
+const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.gitlab-ci\.yml$|(^|[\\/])\.gitlab[\\/].*\.ya?ml$/is;
 
 export interface PrepareOptions {
   taskId: string;

@@ -552,8 +552,8 @@ describe('vanguard.run', () => {
       ]);
     });
 
-    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces and in any case', () => {
-      const paths = ['.gitlab-ci.yml', 'sub/.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml', '.gitlab/ci build.yml', '.gitlab/ci/job.YML', '.GitLab-CI.yml'];
+    it('finds GitLab CI config: .gitlab-ci.yml and YAML under .gitlab/, with spaces or newlines and in any case', () => {
+      const paths = ['.gitlab-ci.yml', 'sub/.gitlab-ci.yml', '.gitlab/ci/verify.yml', '.gitlab/deploy.yaml', '.gitlab/ci build.yml', '.gitlab/ci\nevil.yml', '.gitlab/ci/job.YML', '.GitLab-CI.yml'];
       expect(workflowPaths(paths)).toEqual([...paths].sort());
     });
 
