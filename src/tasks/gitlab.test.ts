@@ -97,6 +97,11 @@ describe('neutralizeQuickActions', () => {
     );
   });
 
+  it('also escapes a slash-and-letter line inside a code fence, where GitLab would show the backslash', () => {
+    // Accepted cost: parsing fences the way GitLab does is harder to get exactly right than a stray backslash.
+    expect(neutralizeQuickActions('```\n/usr/local/bin/x\n```')).toBe('```\n\\/usr/local/bin/x\n```');
+  });
+
   it('leaves comment and JSDoc lines in quoted code alone', () => {
     const code = '```ts\n// keep\n/** doc */\n  // indented\n```';
     expect(neutralizeQuickActions(code)).toBe(code);
