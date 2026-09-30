@@ -147,6 +147,7 @@ describe('watchOnce', () => {
     expect(attempted).toEqual(['A', 'B', 'C']);
     expect(tick.opened).toEqual(['B', 'C']);
     expect(tick.skipped).toEqual(['A']);
+    expect(tick.deferred).toEqual(['D', 'E']);
   });
 
   it('never claims more than maxTasks when claims run concurrently', async () => {
@@ -252,6 +253,7 @@ describe('specOnce', () => {
 
     expect(tick.advanced).toEqual(['B']);
     expect(tick.skipped).toEqual(['A']);
+    expect(tick.deferred).toEqual(['C']);
   });
 });
 

@@ -70,9 +70,11 @@ export interface WatchTick {
   failed: string[];
   /** Could not be claimed (already taken / state moved). */
   skipped: string[];
+  /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
+  deferred: string[];
 }
 
-type Kind = 'opened' | 'noChange' | 'failed' | 'skipped';
+type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
 
 interface WatchLogOptions {
   log?: (msg: string) => void;
@@ -87,6 +89,11 @@ interface WatchOnceOptions extends WatchLogOptions {
 
 function operatorLog(opts: WatchLogOptions, msg: string): void {
   opts.log?.(msg);
+}
+
+/** Summary suffix for a capped poll; empty when --max-tasks left nothing for the next poll. */
+function deferredNote(tick: { deferred: string[] }): string {
+  return tick.deferred.length > 0 ? `, ${tick.deferred.length} deferred by --max-tasks` : '';
 }
 
 function logPoll(ready: number, opts: WatchOnceOptions, phase: string): void {
@@ -135,7 +142,7 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
   const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
     ready,
-    async (item): Promise<{ id: string; kind: Kind | 'deferred' }> => {
+    async (item): Promise<{ id: string; kind: Kind }> => {
       const claimed = await claim(() => primitives.claim(item.id));
       if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
       if (claimed === 'taken') {
@@ -163,7 +170,7 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
   );
   const ids = (kind: Kind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped') };
+  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
 }
 
 export interface SpecWatchPrimitives {
@@ -186,9 +193,11 @@ export interface SpecTick {
   failed: string[];
   /** Could not be claimed (already taken / state moved). */
   skipped: string[];
+  /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
+  deferred: string[];
 }
 
-type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
+type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped' | 'deferred';
 
 /**
  * One SPEC poll: claim each ready issue (skipping any that can't be claimed), triage it, then either
@@ -203,7 +212,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
   const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
     ready,
-    async (item): Promise<{ id: string; kind: SpecKind | 'deferred' }> => {
+    async (item): Promise<{ id: string; kind: SpecKind }> => {
       const claimed = await claim(() => primitives.claim(item.id));
       if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
       if (claimed === 'taken') {
@@ -230,7 +239,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
   );
   const ids = (kind: SpecKind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { advanced: ids('advanced'), needsInfo: ids('needsInfo'), failed: ids('failed'), skipped: ids('skipped') };
+  return { advanced: ids('advanced'), needsInfo: ids('needsInfo'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
 }
 
 export interface WatchLinearOptions {
@@ -455,7 +464,7 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
       log,
       phase: 'watch',
     });
-    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped.`);
+    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -486,7 +495,7 @@ export async function runLoopV1(
     if (opts.signal?.aborted === true) return;
     const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
     const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, log, phase: 'spec' });
-    log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
+    log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped${deferredNote(spec)}.`);
     // GitHub's label index is eventually consistent: a label written by the spec pass may not
     // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
     // into the agent ready-set so spec→build completes in one invocation, deduping against what
@@ -504,7 +513,7 @@ export async function runLoopV1(
       listReady: async () => agentReady,
     };
     const agent = await watchOnce(agentThisTick, { ...concurrency, ...maxTasks, log, phase: 'watch' });
-    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
+    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
