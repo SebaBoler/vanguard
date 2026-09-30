@@ -95,7 +95,8 @@ export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: strin
     return stdout.trim();
   };
   // Docker also resolves a shorter unique prefix of an ID; only the engine can tell it from a hex repository name.
-  if (/^[a-f0-9]+$/.test(image) && (await inspect('.Id')).replace(/^sha256:/, '').startsWith(image)) throw immutable;
+  const hex = /^(?:sha256:)?([a-f0-9]+)$/.exec(image)?.[1];
+  if (hex !== undefined && (await inspect('.Id')).replace(/^sha256:/, '').startsWith(hex)) throw immutable;
   const user = await inspect('.Config.User');
   const workdir = await inspect('.Config.WorkingDir');
 

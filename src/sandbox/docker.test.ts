@@ -81,6 +81,7 @@ describe('refreshSandboxClaudeCli', () => {
     };
 
     await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: 'abc1234', run })).rejects.toThrow(/immutable/);
+    await expect(refreshSandboxClaudeCli({ cwd: '/repo', image: 'sha256:abc1', run })).rejects.toThrow(/immutable/);
     expect(calls.some((args) => args[0] === 'commit')).toBe(false);
 
     await refreshSandboxClaudeCli({ cwd: '/repo', image: 'cafe', run });
