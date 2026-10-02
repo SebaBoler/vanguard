@@ -1025,7 +1025,7 @@ Commands:
                                  (works with --once; --max-tasks then caps the spec pass only).
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
-                                 and a separate watch without --spec-only builds them. Leave that review state
+                                 and a separate single-pass watch builds them. Leave that review state
                                  out and the build job picks the issues up with no review window.
 
     Example (GitHub, defaults):
