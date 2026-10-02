@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { githubPullRequestWatchPrimitives, watchPullRequestsOnce } from './pr-watch.js';
+import { getEventListeners } from 'node:events';
+import { githubPullRequestWatchPrimitives, watchPullRequests, watchPullRequestsOnce } from './pr-watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestWatchItem, PullRequestWatchPrimitives } from './pr-watch.js';
 
@@ -546,5 +547,27 @@ describe('githubPullRequestWatchPrimitives', () => {
 
     expect(ready.map((item) => item.number)).toEqual([12]);
     expect(logs).toContain('watch-prs o/r#99: hint fetch failed -> boom');
+  });
+});
+
+describe('watchPullRequests', () => {
+  it('continuous ticks leave no abort listener behind on the signal', async () => {
+    const controller = new AbortController();
+    const listeners: number[] = [];
+    const primitives: PullRequestWatchPrimitives = {
+      listReady: async () => {
+        listeners.push(getEventListeners(controller.signal, 'abort').length);
+        if (listeners.length === 12) controller.abort();
+        return [];
+      },
+      claim: async () => {},
+      review: async () => {},
+      markReviewed: async () => {},
+      onFailure: async () => {},
+    };
+
+    await watchPullRequests(primitives, { signal: controller.signal, intervalMs: 0 });
+
+    expect(listeners).toEqual(Array(12).fill(0));
   });
 });
