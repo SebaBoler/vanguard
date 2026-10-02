@@ -303,10 +303,13 @@ function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-/** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
+/**
+ * Parse a positive-integer flag (--limit, --max-turns, --max-tasks, --max-repair-iterations, ...), or undefined
+ * if absent or invalid. Like 0 or a negative value, a value above Number.MAX_SAFE_INTEGER sets no override: the
+ * ceiling keeps derived caps (review-mr's and review-pr's 1.5x retry) finite and out of exponent notation.
+ */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
-  // The safe-integer ceiling keeps a derived cap (e.g. review-mr's 1.5x retry) finite and out of exponent notation.
   return Number.isFinite(limit) && limit >= 1 && limit <= Number.MAX_SAFE_INTEGER ? Math.floor(limit) : undefined;
 }
 

@@ -20,7 +20,8 @@ import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reviewPrCommand } from './review-pr.js';
-import { PullRequestReviewIncompleteError } from '../runners/pr-review.js';
+import { PullRequestReviewIncompleteError, reviewPullRequest } from '../runners/pr-review.js';
+import type { GhRunner } from '../tasks/github.js';
 import type { Command } from './args.js';
 import type { ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
 
@@ -146,28 +147,25 @@ describe('reviewPrCommand', () => {
 
   it('--max-turns sets the first attempt cap and 1.5x for the retry', async () => {
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
-    vi.mocked(runAgent).mockResolvedValue({
-      taskId: 't',
-      exitReason: 'completed',
-      completed: true,
-      turns: 1,
-      finalText: 'No blocking findings.',
-      worktreePath: '/wt',
-      worktreePreserved: false,
-    });
-    const pr = fakeResult().pr;
-    const reviewPullRequest = async (_ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> => {
-      await deps.reviewer(pr, { isRetry: false });
-      await deps.reviewer(pr, { isRetry: true });
-      return fakeResult();
-    };
+    try {
+      const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+      vi.mocked(runAgent)
+        .mockReset()
+        .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
+        .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+      const gh: GhRunner = async (args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ number: 12, headRefOid: 'abc123' });
+        return '';
+      };
 
-    await reviewPrCommand(
-      { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, maxTurns: 41 } satisfies Command,
-      { reviewPullRequest, log: () => undefined },
-    );
+      await reviewPrCommand(
+        { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, maxTurns: 41 },
+        { reviewPullRequest: (ref, deps) => reviewPullRequest(ref, { ...deps, gh }), log: () => undefined },
+      );
 
-    expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
-    vi.unstubAllEnvs();
+      expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
