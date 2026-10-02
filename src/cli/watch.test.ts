@@ -111,19 +111,23 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
 
 describe('specOnlyReviewNote', () => {
   it.each([
-    ['linear', { source: 'linear', agentState: 'Spec Review', specOnly: true }, 'state "Spec Review"'],
-    ['github', { source: 'github', agentLabel: 'spec review', specOnly: true }, 'label "spec review"'],
-    ['gitlab', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, 'label "ready for agent"'],
-  ] as const)('%s: names where specced issues go and that the build job must not trigger there', (_name, overrides, target) => {
-    const note = specOnlyReviewNote(watchCommand(overrides));
-    expect(note).toContain(`moves specced issues to ${target}`);
-    expect(note).toContain('the build job must not trigger on it');
+    ['github', { source: 'github', agentLabel: 'spec review', specOnly: true }, 'spec review'],
+    ['gitlab', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, 'ready for agent'],
+  ] as const)('%s: names the label specced issues get and that the build job must not trigger on it', (_name, overrides, label) => {
+    expect(specOnlyReviewNote(watchCommand(overrides))).toBe(
+      `watch: --spec-only moves specced issues to label "${label}". For a review window the build job must not trigger on it.`,
+    );
   });
 
-  it('linear: names the default Todo state and the unstarted-type rule', () => {
-    expect(specOnlyReviewNote(watchCommand({ source: 'linear', specOnly: true }))).toContain(
-      'state "Todo". For a review window the build job must not trigger on it, so it must not be an unstarted-type state',
-    );
+  it('linear: names the state in effect and both state-type rules', () => {
+    const note = specOnlyReviewNote(watchCommand({ source: 'linear', agentState: 'Spec Review', specOnly: true }));
+    expect(note).toContain('moves specced issues to state "Spec Review"');
+    expect(note).toContain('must differ from the --spec-state type, or the spec pass specs them again on every poll');
+    expect(note).toContain("the build job's trigger type (unstarted by default), or there is no review window");
+  });
+
+  it('linear: falls back to the default Todo state', () => {
+    expect(specOnlyReviewNote(watchCommand({ source: 'linear', specOnly: true }))).toContain('moves specced issues to state "Todo"');
   });
 
   it('stays quiet without --spec-only', () => {

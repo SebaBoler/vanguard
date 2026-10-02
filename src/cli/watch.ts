@@ -72,7 +72,7 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 export function specOnlyReviewNote(cmd: WatchCommand): string | undefined {
   if (cmd.specOnly !== true) return undefined;
   if (cmd.source === 'linear') {
-    return `watch: --spec-only moves specced issues to state "${cmd.agentState ?? 'Todo'}". For a review window the build job must not trigger on it, so it must not be an unstarted-type state such as Todo.`;
+    return `watch: --spec-only moves specced issues to state "${cmd.agentState ?? 'Todo'}". Its state type must differ from the --spec-state type, or the spec pass specs them again on every poll, and from the build job's trigger type (unstarted by default), or there is no review window.`;
   }
   return cmd.agentLabel !== undefined
     ? `watch: --spec-only moves specced issues to label "${cmd.agentLabel}". For a review window the build job must not trigger on it.`

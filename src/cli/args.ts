@@ -1032,8 +1032,11 @@ Commands:
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
                                  and a separate single-pass watch builds them. Leave that review state
-                                 out and the build job picks the issues up with no review window. On Linear the
-                                 review state must not be an unstarted-type state: the build job triggers on that type.
+                                 out and the build job picks the issues up with no review window. On Linear both
+                                 passes list issues by state type, so the review state's type must differ from the
+                                 --spec-state type (or it is specced again on every poll) and from the build job's
+                                 trigger type (unstarted by default). With the default --spec-state triage, use a
+                                 backlog-type review state.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo
