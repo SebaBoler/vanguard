@@ -17,7 +17,7 @@ import {
   guardedPoint,
 } from './pr-feedback.js';
 import type { PullRequestFeedback, FeedbackItem, RevisionSummaryInput, FileChange } from './pr-feedback.js';
-import { buildMainLoopReviewComment, buildPullRequestReviewIncompleteComment } from './pr-review.js';
+import { buildMainLoopReviewComment, buildPullRequestReviewIncompleteComment, PR_REVIEW_INCOMPLETE_MARKER } from './pr-review.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -494,9 +494,27 @@ describe('selectActionableFeedback and incomplete verdicts', () => {
         commentItem({ author: 'pawel', body: buildPullRequestReviewIncompleteComment(), createdAt: '2026-01-02T00:00:00Z' }),
         commentItem({ author: 'alice', body: 'Please rename x.', createdAt: '2026-01-02T00:00:00Z' }),
         commentItem({ author: 'bob', body: 'Why is `<!-- vanguard-pr-review-incomplete -->` on the last review?', createdAt: '2026-01-02T00:00:00Z' }),
+        commentItem({
+          author: 'carol',
+          body: ['The last review ended with:', '', '```', buildPullRequestReviewIncompleteComment(), '```'].join('\n'),
+          createdAt: '2026-01-02T00:00:00Z',
+        }),
       ],
     };
-    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' }).map((item) => item.author)).toEqual(['alice', 'bob']);
+    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' }).map((item) => item.author)).toEqual(['alice', 'bob', 'carol']);
+  });
+
+  it('drops a human comment that opens with the bot heading and has the marker on its own line', () => {
+    // Known residual; recognising the notice by the posting login (follow-up) would keep this comment.
+    const body = ['## Vanguard Review', '', 'Re-ran it by hand, still incomplete.', '', PR_REVIEW_INCOMPLETE_MARKER].join('\n');
+    const fb: PullRequestFeedback = {
+      headRefOid: 'sha-new',
+      headCommittedDate: '2026-01-01T00:00:00Z',
+      isDraft: false,
+      threads: [],
+      items: [commentItem({ author: 'dave', body, createdAt: '2026-01-02T00:00:00Z' })],
+    };
+    expect(selectActionableFeedback(fb, { headRefOid: 'sha-new' })).toEqual([]);
   });
 });
 
