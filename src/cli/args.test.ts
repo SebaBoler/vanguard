@@ -1153,14 +1153,14 @@ describe('parseCli', () => {
       parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'spec', '--spec-only'], '/work'),
     ).toEqual({
       kind: 'error',
-      message: 'watch cannot advance specced issues into the spec trigger state "Spec" with --spec-only; set --agent-state to another state, or the spec pass specs the same issues again on every poll.',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger state "Spec"; set --agent-state to another state, or the spec pass specs the same issues again on every poll.',
     });
   });
 
   it('rejects --spec-only with an --agent-state matching the default spec state name in another case', () => {
     expect(parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--agent-state', ' SPEC ', '--spec-only'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('cannot advance specced issues into the spec trigger state "Spec" with --spec-only'),
+      message: expect.stringContaining('--spec-only cannot advance specced issues into the spec trigger state "Spec"'),
     });
   });
 
@@ -1170,35 +1170,17 @@ describe('parseCli', () => {
   ])('rejects --spec-only on %s when --agent-label is the spec trigger label, ignoring case', (_name, sourceArgs) => {
     expect(parseCli(['watch', ...sourceArgs, '--spec-label', 'Ready', '--agent-label', 'ready', '--once', '--spec-only'], '/work')).toEqual({
       kind: 'error',
-      message: 'watch cannot advance specced issues into the spec trigger label "Ready" with --spec-only; set --agent-label to another label, or the spec pass specs the same issues again on every poll.',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger label "Ready"; set --agent-label to another label, or the spec pass specs the same issues again on every poll.',
     });
   });
 
-  it.each([
-    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec'], 'state "Spec"'],
-    ['linear with the default agent state', ['--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Todo'], 'state "Todo"'],
-    ['github', ['--source', 'github', '--github-repo', 'o/r', '--spec-label', 'ready', '--agent-label', 'ready'], 'label "ready"'],
-  ])('rejects a continuous %s loop-v1 watch that advances into the spec trigger', (_name, args, target) => {
-    expect(parseCli(['watch', ...args], '/work')).toMatchObject({
-      kind: 'error',
-      message: expect.stringContaining(`into the spec trigger ${target} without --once`),
-    });
-  });
-
-  it('checks doctor for the spec trigger loop only with --spec-only, since doctor takes no --once', () => {
-    const args = ['doctor', '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec'];
-    expect(parseCli(args, '/work')).toMatchObject({ kind: 'doctor', agentState: 'Spec' });
+  it.each(['watch', 'doctor'])('applies the spec trigger guard to %s only with --spec-only', (kind) => {
+    const args = [kind, '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec'];
+    expect(parseCli(args, '/work')).toMatchObject({ kind, agentState: 'Spec' });
     expect(parseCli([...args, '--spec-only'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('doctor cannot advance specced issues into the spec trigger state "Spec" with --spec-only'),
+      message: expect.stringContaining(`${kind} --spec-only cannot advance specced issues into the spec trigger state "Spec"`),
     });
-  });
-
-  it.each([
-    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec']],
-    ['github', ['--source', 'github', '--github-repo', 'o/r', '--spec-label', 'ready', '--agent-label', 'ready']],
-  ])('allows a %s --once loop-v1 watch without --spec-only to advance into the spec trigger, since it builds in the same run', (_name, args) => {
-    expect(parseCli(['watch', ...args, '--once'], '/work')).toMatchObject({ kind: 'watch', once: true });
   });
 
   it('returns an error when --spec-only is used on the project source', () => {
