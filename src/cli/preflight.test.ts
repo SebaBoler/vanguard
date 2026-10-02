@@ -586,16 +586,19 @@ describe('runPreflight provider combo check', () => {
     expect(unreadable.checks.find((c) => c.name === 'pr-create setting')).toBeUndefined();
   });
 
-  it('spec-only github loop-v1 skips the pr-create setting and the agent-pass labels', async () => {
+  it.each([
+    ['doctor', githubDoctor({ specOnly: true })],
+    ['watch', githubWatch({ specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true })],
+  ] as const)('spec-only github loop-v1 %s skips the pr-create setting and the agent-pass labels', async (_kind, command) => {
     const calls: string[] = [];
-    const base = makeRunner(['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL]);
+    const base = makeRunner(['vanguard', 'ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL]);
     const run: PreflightRunner = async (cmd, args, opts) => {
       calls.push(`${cmd} ${args.join(' ')}`);
       return cmd === 'gh' && args[0] === 'api'
         ? { stdout: JSON.stringify({ can_approve_pull_request_reviews: false }) }
         : await base(cmd, args, opts);
     };
-    const report = await runPreflight(githubDoctor({ specOnly: true }), {
+    const report = await runPreflight(command, {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
       nodeVersion: '24.11.1',
       run,
@@ -607,7 +610,11 @@ describe('runPreflight provider combo check', () => {
     expect(calls.some((c) => c.startsWith('gh api'))).toBe(false);
   });
 
-  it('spec-only linear loop-v1 skips the publish auth checks for the origin host', async () => {
+  const linearLoop = { source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info', specOnly: true } as const;
+  it.each([
+    ['doctor', { kind: 'doctor', ...linearLoop }],
+    ['watch', { kind: 'watch', ...linearLoop, concurrency: 1, intervalMs: 60000, once: true, egress: false }],
+  ] as const)('spec-only linear loop-v1 %s skips the publish auth checks for the origin host', async (_kind, command) => {
     const calls: string[] = [];
     const run: PreflightRunner = async (cmd, args) => {
       calls.push(`${cmd} ${args.join(' ')}`);
@@ -616,10 +623,7 @@ describe('runPreflight provider combo check', () => {
       if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
       return { stdout: '' };
     };
-    const report = await runPreflight(
-      { kind: 'doctor', source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info', specOnly: true },
-      { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' }, nodeVersion: '24.11.1', run },
-    );
+    const report = await runPreflight(command, { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' }, nodeVersion: '24.11.1', run });
 
     expect(report.ok).toBe(true);
     expect(formatPreflightReport(report)).toContain('preflight: linear api ok');
