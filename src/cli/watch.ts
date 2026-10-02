@@ -283,7 +283,7 @@ export async function watchGitlabSource(
     if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
       throw new Error('--agent-label and --needs-info-label are required with --spec-label for gitlab loop-v1');
     }
-    const specDeps = {
+    const specDeps: RunSpecGeneratorDeps = {
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitLabTaskFetcher(deps.project),
