@@ -1,6 +1,6 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, REVIEW_INCOMPLETE, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, MARKER_PAD, REVIEW_INCOMPLETE, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -64,6 +64,10 @@ const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 const PR_REVIEW_MARKER_RE = /^<!--[ \t]*vanguard-pr-review:[ \t]*([a-fA-F0-9]+)[ \t]*-->$/gm;
+// Every incomplete-note builder must open the body with this heading: hasPullRequestReviewIncompleteMarker
+// checks it as an exact prefix, so a leading BOM, space or attribution line would turn the bot's own notice
+// into human feedback for revise-pr.
+const PR_REVIEW_HEADING = '## Vanguard Review';
 
 function normalizePullRequestReviewOutcome(outcome: string | PullRequestReviewOutcome): PullRequestReviewOutcome {
   return typeof outcome === 'string' ? { text: outcome, completed: true } : outcome;
@@ -193,11 +197,23 @@ function appendMarker(visible: string, headRefOid?: string): string {
  * login is not recognised as a bot. The head dedupe does not count it (no SHA).
  */
 export const PR_REVIEW_INCOMPLETE_MARKER = '<!-- vanguard-pr-review-incomplete -->';
+// Whole line only, like the head-SHA markers, so a comment that mentions the marker inline stays feedback;
+// the padding matches stripReviewMarkers. The note must also open with the bot's heading, so a marker quoted
+// in a code block stays feedback unless the comment opens with that heading too. A last-line rule would miss
+// the bot's own note: publishReviewVerdict appends the Conformance section after the marker.
+const PR_REVIEW_INCOMPLETE_MARKER_RE = new RegExp(
+  String.raw`^${MARKER_PAD}<!--[ \t]*vanguard-pr-review-incomplete[ \t]*-->${MARKER_PAD}$`,
+  'm',
+);
+
+export function hasPullRequestReviewIncompleteMarker(body: string): boolean {
+  return body.startsWith(PR_REVIEW_HEADING) && PR_REVIEW_INCOMPLETE_MARKER_RE.test(body);
+}
 
 // Deliberately no head-SHA marker: the marker means "this head has a verdict", and an incomplete
 // notice must not block the retry via re-label or the next sweep (the stranded-label no-op, #316).
 export function buildPullRequestReviewIncompleteComment(reason: PullRequestReviewIncompleteReason = 'too-large'): string {
-  return `## Vanguard Review\n\n${reason === 'no-output' ? PR_REVIEW_NO_OUTPUT_NOTICE : PR_REVIEW_INCOMPLETE_NOTICE}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
+  return `${PR_REVIEW_HEADING}\n\n${reason === 'no-output' ? PR_REVIEW_NO_OUTPUT_NOTICE : PR_REVIEW_INCOMPLETE_NOTICE}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
 }
 
 /** Both review attempts ended without a verdict. The incomplete notice (when publishing) was already posted. */
@@ -217,7 +233,7 @@ function reviewBody(agentText: string): string {
 
 export function buildPullRequestReviewComment(agentText: string, headRefOid?: string): string {
   const body = reviewBody(agentText);
-  return appendMarker(`## Vanguard Review\n\n${body === '' ? 'No blocking findings.' : body}`, headRefOid);
+  return appendMarker(`${PR_REVIEW_HEADING}\n\n${body === '' ? 'No blocking findings.' : body}`, headRefOid);
 }
 
 export type PullRequestReviewAction = 'comment' | 'request-changes' | 'approve';
@@ -258,10 +274,10 @@ export function buildMainLoopReviewComment(
   const atSha = sha7 !== undefined ? ` @ ${sha7}` : '';
   const header = `Reviewed by ${opts.attribution}${atSha}`;
   if (opts.completed === false) {
-    return `## Vanguard Review\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
+    return `${PR_REVIEW_HEADING}\n\n${header}: ${REVIEW_INCOMPLETE}${body === '' ? '' : `\n\n${body}`}\n\n${PR_REVIEW_INCOMPLETE_MARKER}`;
   }
   const visible =
-    body === '' ? `## Vanguard Review\n\n${header}: no blocking issues` : `## Vanguard Review\n\n${header}:\n\n${body}`;
+    body === '' ? `${PR_REVIEW_HEADING}\n\n${header}: no blocking issues` : `${PR_REVIEW_HEADING}\n\n${header}:\n\n${body}`;
   return oid !== undefined ? `${visible}\n\n${pullRequestReviewMarker(oid)}` : visible;
 }
 

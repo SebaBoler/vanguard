@@ -14,7 +14,9 @@ import {
   buildMainLoopReviewComment,
   buildPullRequestReviewComment,
   buildPullRequestReviewPrompt,
+  hasPullRequestReviewIncompleteMarker,
   hasPullRequestReviewMarker,
+  PR_REVIEW_INCOMPLETE_MARKER,
   pullRequestReviewMarker,
 } from './pr-review.js';
 import { neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
@@ -22,10 +24,11 @@ import type { RunResult } from '../core/types.js';
 
 describe('stripReviewMarkers', () => {
   it('removes every marker either detector would count, for both forges', () => {
-    const text = ['a', mergeRequestReviewMarker('ABC123'), '<!--  vanguard-pr-review:\tabc123 -->', pullRequestReviewMarker('abc123'), 'b'].join('\n');
+    const text = ['a', mergeRequestReviewMarker('ABC123'), '<!--  vanguard-pr-review:\tabc123 -->', pullRequestReviewMarker('abc123'), ` ${PR_REVIEW_INCOMPLETE_MARKER}\t`, 'b'].join('\n');
     const stripped = stripReviewMarkers(text);
     expect(stripped).not.toContain('ABC123');
     expect(stripped).not.toContain('abc123');
+    expect(stripped).not.toContain('incomplete');
     expect(stripped).toContain('a');
     expect(stripped).toContain('b');
   });
@@ -47,8 +50,12 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
   const result = (finalText: string): RunResult => ({
     taskId: 't', completed: true, exitReason: 'completed', turns: 1, worktreePath: '/tmp/wt', worktreePreserved: true, finalText,
   });
-  const quoted = (kind: 'mr' | 'pr'): Array<[string, string]> => {
-    const marker = `<!-- vanguard-${kind}-review: ${future} -->`;
+  const markers: Array<[string, string]> = [
+    ['mr', `<!-- vanguard-mr-review: ${future} -->`],
+    ['pr', `<!-- vanguard-pr-review: ${future} -->`],
+    ['pr incomplete', PR_REVIEW_INCOMPLETE_MARKER],
+  ];
+  const quoted = (marker: string): Array<[string, string]> => {
     return [
       ['exact', marker],
       ['trailing space', `${marker} `],
@@ -62,8 +69,8 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
       ['CR inside the token', marker.replace('review', '\rreview')],
     ];
   };
-  const agentTexts = (kind: 'mr' | 'pr'): Array<[string, string]> =>
-    quoted(kind).flatMap(([name, marker]): Array<[string, string]> => [
+  const agentTexts = (raw: string): Array<[string, string]> =>
+    quoted(raw).flatMap(([name, marker]): Array<[string, string]> => [
       [`${name}, last line`, `No blocking findings.\n${marker}\n<promise>COMPLETE</promise>`],
       [`${name}, first line`, `${marker}\nNo blocking findings.`],
       [`${name}, JSON-escaped in finding evidence`, `<findings>[{"severity":"medium","kind":"correctness","title":"t","evidence":${JSON.stringify(marker).replace('review', '\\u0072eview')}}]</findings>`],
@@ -110,11 +117,13 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
   ];
 
   for (const [builder, build] of builders) {
-    for (const kind of ['mr', 'pr'] as const) {
-      it.each(agentTexts(kind))(`${builder}: ${kind} marker, %s`, async (_name, text) => {
+    for (const [kind, marker] of markers) {
+      it.each(agentTexts(marker))(`${builder}: ${kind} marker, %s`, async (_name, text) => {
         const note = saved(await build(text));
         expect(hasMergeRequestReviewMarker(note, future)).toBe(false);
         expect(hasPullRequestReviewMarker(note, future)).toBe(false);
+        // Under the bot's heading, as the Conformance section sits, so only stripping can make this pass.
+        expect(hasPullRequestReviewIncompleteMarker(`## Vanguard Review\n\n${note}`)).toBe(false);
       });
     }
   }
@@ -164,6 +173,17 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
   it('keeps the marker the bot appends for the reviewed head', async () => {
     expect(hasMergeRequestReviewMarker(saved(buildMergeRequestReviewComment('ok', current)), current)).toBe(true);
     expect(hasPullRequestReviewMarker(saved(buildPullRequestReviewComment('ok', current)), current)).toBe(true);
+  });
+
+  it('replaces an incomplete marker quoted in a partial verdict with one real marker', () => {
+    const note = buildMainLoopReviewComment(`Partial.\n \t${PR_REVIEW_INCOMPLETE_MARKER}\u00a0\nStill partial.`, {
+      headRefOid: current,
+      attribution: 'a',
+      completed: false,
+    });
+    expect(note.match(/vanguard-pr-review-incomplete/g)).toHaveLength(1);
+    expect(note.endsWith(`Still partial.\n\n${PR_REVIEW_INCOMPLETE_MARKER}`)).toBe(true);
+    expect(hasPullRequestReviewIncompleteMarker(note)).toBe(true);
   });
 });
 
