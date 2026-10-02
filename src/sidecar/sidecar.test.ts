@@ -115,6 +115,7 @@ describe('runSidecar', () => {
     ['blank baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '  ' }],
     ['option-like baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '--upload-pack=false' }],
     ['refspec baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 'feature:main' }],
+    ['force-refspec baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '+main' }],
     ['empty issueRef', { issueRef: '' }],
     ['whitespace issueRef', { issueRef: '  \n ' }],
     ['missing issueRef', {}],
