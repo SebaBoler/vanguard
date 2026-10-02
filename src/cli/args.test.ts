@@ -1103,14 +1103,22 @@ describe('parseCli', () => {
     expect(cmd).toMatchObject({ kind: 'watch', source: 'linear', once: true, specOnly: true, agentState: 'Spec Review' });
   });
 
-  it('parses --spec-only on github loop-v1 defaults', () => {
-    const cmd = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--spec-only'], '/work');
-    expect(cmd).toMatchObject({ kind: 'watch', source: 'github', specLabel: 'ready for spec', specOnly: true, once: false });
+  it('parses --spec-only on github loop-v1 defaults with a review label', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--agent-label', 'spec review', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'github', specLabel: 'ready for spec', agentLabel: 'spec review', specOnly: true, once: false });
   });
 
   it('parses --spec-only on doctor so preflight matches the spec-only watch', () => {
-    const cmd = parseCli(['doctor', '--loop-v1', '--label', 'vanguard', '--spec-only'], '/work');
+    const cmd = parseCli(['doctor', '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec Review', '--spec-only'], '/work');
     expect(cmd).toMatchObject({ kind: 'doctor', specOnly: true });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard'], 'watch --spec-only requires --agent-state <review state>; the default "Todo" is the build trigger, so specced issues would get no review window.'],
+    ['github', ['--source', 'github', '--github-repo', 'o/r'], 'watch --spec-only requires --agent-label <review label>; the default "ready for agent" is the build trigger, so specced issues would get no review window.'],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'], 'watch --spec-only requires --agent-label <review label>; the default "ready for agent" is the build trigger, so specced issues would get no review window.'],
+  ])('rejects --spec-only on %s without an explicit review target', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
   });
 
   it('omits specOnly when --spec-only is absent', () => {
@@ -1270,7 +1278,7 @@ describe('parseCli gitlab run', () => {
 
 describe('parseCli watch gitlab', () => {
   it('parses --spec-only on gitlab loop-v1', () => {
-    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1', '--once', '--spec-only'], '/repo');
+    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1', '--agent-label', 'spec review', '--once', '--spec-only'], '/repo');
     expect(cmd).toMatchObject({ kind: 'watch', source: 'gitlab', specLabel: 'ready for spec', once: true, specOnly: true });
   });
 

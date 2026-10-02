@@ -859,6 +859,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
+        if (values['spec-only'] === true && typeof values['agent-label'] !== 'string') {
+          return fail(`${commandKind} --spec-only requires --agent-label <review label>; the default "${agentLabel}" is the build trigger, so specced issues would get no review window.`);
+        }
         if (respecWhen !== undefined && sameName(agentLabel, specLabel)) {
           return fail(`${commandKind} cannot advance specced issues into the spec trigger label "${specLabel}" ${respecWhen}; set --agent-label to another label, or the spec pass specs the same issues again on every poll.`);
         }
@@ -872,6 +875,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         // not a status-only scan over the whole Linear workspace.
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
+        }
+        if (values['spec-only'] === true && agentState === undefined) {
+          return fail(`${commandKind} --spec-only requires --agent-state <review state>; the default "${DEFAULT_LINEAR_AGENT_STATE}" is the build trigger, so specced issues would get no review window.`);
         }
         if (respecWhen !== undefined && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, specStateName)) {
           return fail(`${commandKind} cannot advance specced issues into the spec trigger state "${specStateName}" ${respecWhen}; set --agent-state to another state, or the spec pass specs the same issues again on every poll.`);
@@ -1050,12 +1056,12 @@ Commands:
                                  agent pass reads (--claimed-state, --review-state, --plan, --flow, ...) have no effect.
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
-                                 and a separate single-pass watch builds them. Leave that review state
-                                 out and the build job picks the issues up with no review window. On Linear both
-                                 passes list issues by state type, so the review state's type must differ from the
-                                 --spec-state type (or it is specced again on every poll) and from the build job's
-                                 trigger type (unstarted by default). With the default --spec-state triage, use a
-                                 backlog-type review state.
+                                 and a separate single-pass watch builds them. --spec-only requires --agent-state
+                                 (Linear) or --agent-label (GitHub/GitLab), because the defaults are the build
+                                 trigger and would give no review window. On Linear both passes list issues by
+                                 state type, so the review state's type must differ from the --spec-state type (or
+                                 it is specced again on every poll) and from the build job's trigger type (unstarted
+                                 by default). With the default --spec-state triage, use a backlog-type review state.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo
