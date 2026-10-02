@@ -18,9 +18,22 @@ vi.mock('../runners/github.js', () => ({
 vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
+vi.mock('./preflight.js', () => ({
+  runPreflight: vi.fn(async () => ({ ok: true, checks: [] })),
+  formatPreflightReport: vi.fn(() => []),
+}));
+vi.mock('./provider-choice.js', () => ({ loadProviderChoice: vi.fn(async () => ({})) }));
 
 import { watchLinear, watchGithub, watchGithubProject, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
-import { buildGithubDeps, specOnlyReviewNote, watchLinearSource, watchGithubSource, watchGithubProjectSource, watchGitlabSource } from './watch.js';
+import {
+  buildGithubDeps,
+  specOnlyReviewNote,
+  watchCommand as runWatchCommand,
+  watchLinearSource,
+  watchGithubSource,
+  watchGithubProjectSource,
+  watchGitlabSource,
+} from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -132,5 +145,36 @@ describe('specOnlyReviewNote', () => {
 
   it('stays quiet without --spec-only', () => {
     expect(specOnlyReviewNote(watchCommand({ source: 'github', agentLabel: 'ready for agent' }))).toBeUndefined();
+  });
+});
+
+describe('watchCommand', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('prints the spec-only review note before it dispatches to the source', async () => {
+    vi.stubEnv('LINEAR_API_KEY', 'key');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'token');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runWatchCommand(
+        watchCommand({
+          source: 'linear',
+          skillsDir: '/skills',
+          specState: 'triage',
+          specStateName: 'Spec',
+          needsInfoState: 'Needs Info',
+          agentState: 'Spec Review',
+          specOnly: true,
+        }),
+      );
+
+      const note = log.mock.calls.findIndex(([line]) => String(line).startsWith('watch: --spec-only moves specced issues to state "Spec Review"'));
+      expect(note).toBeGreaterThanOrEqual(0);
+      expect(log.mock.invocationCallOrder[note]).toBeLessThan(vi.mocked(watchLinearLoopV1).mock.invocationCallOrder[0]!);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
