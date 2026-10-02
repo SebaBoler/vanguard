@@ -1027,7 +1027,8 @@ Commands:
     Shared:
       --spec-model <m>           Cheap model for the spec-generation stage (e.g. "haiku")
       --spec-only                Run only the spec pass each tick; never list, claim or run the agent pass
-                                 (works with --once; --max-tasks then caps the spec pass only).
+                                 (works with --once; --max-tasks then caps the spec pass only). Flags only the
+                                 agent pass reads (--claimed-state, --review-state, --plan, --flow, ...) have no effect.
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
                                  and a separate single-pass watch builds them. Leave that review state
