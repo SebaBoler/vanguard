@@ -79,14 +79,17 @@ type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
 interface WatchLogOptions {
   log?: (msg: string) => void;
   phase?: string;
-  /** (loop-v1) No agent pass follows the spec pass, so this watch never builds an advanced ticket. */
-  specOnly?: boolean;
 }
 
 interface WatchOnceOptions extends WatchLogOptions {
   concurrency?: number;
   /** Cap the number of ready tasks successfully claimed and processed this poll, per phase (unset: process all). */
   maxTasks?: number;
+}
+
+interface SpecOnceOptions extends WatchOnceOptions {
+  /** (loop-v1) No agent pass follows the spec pass, so this watch never builds an advanced ticket. */
+  specOnly?: boolean;
 }
 
 function operatorLog(opts: WatchLogOptions, msg: string): void {
@@ -207,7 +210,7 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped' | 'deferred';
  * to needs-info. Mirrors watchOnce structurally (claim-before-run, fan-out, failure isolation) but
  * with honest spec semantics instead of PR semantics — it never opens a PR.
  */
-export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
+export async function specOnce(primitives: SpecWatchPrimitives, opts: SpecOnceOptions = {}): Promise<SpecTick> {
   const phase = opts.phase ?? 'spec';
   const advancedNext = opts.specOnly === true ? 'not built (--spec-only)' : 'next poll agent';
   const ready = await primitives.listReady();
