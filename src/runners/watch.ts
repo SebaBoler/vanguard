@@ -457,9 +457,12 @@ interface LoopControls {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
-  /** (loop-v1) Run only the spec pass each tick; the agent pass never lists, claims or runs. */
-  specOnly?: boolean;
   signal?: AbortSignal;
+}
+
+interface LoopV1Controls extends LoopControls {
+  /** Run only the spec pass each tick; the agent pass never lists, claims or runs. */
+  specOnly?: boolean;
 }
 
 /** Poll on an interval, running each newly-ready item. Stops on signal or after one pass (once). */
@@ -497,7 +500,7 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
 export async function runLoopV1(
   specPrimitives: SpecWatchPrimitives,
   agentPrimitives: WatchPrimitives,
-  opts: LoopControls,
+  opts: LoopV1Controls,
   log: (msg: string) => void = console.log,
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
