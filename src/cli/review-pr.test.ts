@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 vi.mock('../sandbox/sandbox-context.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../sandbox/sandbox-context.js')>()),
@@ -44,6 +44,11 @@ function fakeResult(): ReviewPullRequestResult {
 }
 
 describe('reviewPrCommand', () => {
+  // The cap tests assert on runAgent's calls, so no test may see another's.
+  beforeEach(() => {
+    vi.mocked(runAgent).mockReset();
+  });
+
   it('delegates to the PR review runner and preserves operator logs', async () => {
     const logs: string[] = [];
     const reviewer = vi.fn().mockResolvedValue({ text: 'No blocking findings.', completed: true });
@@ -145,12 +150,14 @@ describe('reviewPrCommand', () => {
     }
   });
 
-  it('--max-turns sets the first attempt cap and 1.5x for the retry', async () => {
+  it.each([
+    { maxTurns: undefined, caps: [16, 24] },
+    { maxTurns: 41, caps: [41, 62] },
+  ])('--max-turns $maxTurns gives caps $caps for the first attempt and the retry', async ({ maxTurns, caps }) => {
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
     try {
       const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
       vi.mocked(runAgent)
-        .mockReset()
         .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
         .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
       const gh: GhRunner = async (args) => {
@@ -159,11 +166,11 @@ describe('reviewPrCommand', () => {
       };
 
       await reviewPrCommand(
-        { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, maxTurns: 41 },
+        { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, ...(maxTurns !== undefined ? { maxTurns } : {}) },
         { reviewPullRequest: (ref, deps) => reviewPullRequest(ref, { ...deps, gh }), log: () => undefined },
       );
 
-      expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
+      expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual(caps);
     } finally {
       vi.unstubAllEnvs();
     }
