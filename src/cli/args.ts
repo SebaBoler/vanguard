@@ -17,6 +17,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
       /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
       out?: string;
     }
@@ -88,6 +90,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'doctor-prs';
@@ -223,6 +227,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'watch-mrs';
@@ -240,6 +246,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'doctor-mrs';
@@ -285,6 +293,8 @@ const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
 /** State NAME the Linear spec pass advances to when --agent-state is absent. */
 export const DEFAULT_LINEAR_AGENT_STATE = 'Todo';
+/** First-attempt turn cap of a review-pr or review-mr run without --max-turns; the retry gets 1.5x. */
+export const DEFAULT_REVIEW_MAX_TURNS = 16;
 const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
@@ -299,10 +309,14 @@ function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-/** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
+/**
+ * Parse a positive-integer flag (--limit, --max-turns, --max-tasks, --max-repair-iterations, ...), or undefined
+ * if absent or invalid. A huge value is clamped to Number.MAX_SAFE_INTEGER, so it still means "effectively
+ * unlimited" and never reaches a CLI argument as Infinity or in exponent notation.
+ */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
-  return Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : undefined;
+  return Number.isFinite(limit) && limit >= 1 ? Math.min(Math.floor(limit), Number.MAX_SAFE_INTEGER) : undefined;
 }
 
 /**
@@ -582,6 +596,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
@@ -630,7 +645,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         ? values.github
         : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
-    const maxRoundsRaw = Number(values['max-rounds']);
+    const maxRounds = parseLimit(values['max-rounds']);
     return {
       kind: 'revise-pr',
       prRef,
@@ -640,7 +655,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
+      ...(maxRounds !== undefined ? { maxRounds } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
@@ -672,6 +687,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -704,6 +720,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -733,6 +750,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -1131,6 +1149,8 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --max-turns <n>        Agent CLI turn cap for the first review attempt (default: ${DEFAULT_REVIEW_MAX_TURNS}; opt-in, higher cost).
+                           Tool calls count as turns. The retry after an incomplete review gets 1.5x
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -1185,6 +1205,7 @@ Commands:
     --concurrency <n>      Max PRs reviewed at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --max-turns <n>        As for review-pr
     --egress --llm-proxy --repo <path>         As for run/watch
 
     Example:
@@ -1203,7 +1224,7 @@ Commands:
   review-mr options:
     --mr <iid>               GitLab MR IID (integer)
     --gitlab-project <g/p>   GitLab project path (required, e.g. group/project)
-    --provider --review-model --egress --llm-proxy --repo  As for review-pr
+    --provider --review-model --max-turns --egress --llm-proxy --repo  As for review-pr
 
   watch-mrs options:
     --gitlab-project <g/p>   Required project path (e.g. group/project)
@@ -1215,6 +1236,7 @@ Commands:
     --concurrency <n>        Max MRs reviewed at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for MR review (default: claude)
     --review-model <m>       Model for the MR review
+    --max-turns <n>          As for review-pr
     --egress --llm-proxy --repo <path>         As for run/watch
 
     Example:

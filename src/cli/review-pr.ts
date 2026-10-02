@@ -14,6 +14,7 @@ import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewP
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
+import { DEFAULT_REVIEW_MAX_TURNS } from './args.js';
 import type { Command } from './args.js';
 
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
@@ -112,6 +113,7 @@ async function runDefaultReviewer(
     });
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
     const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
@@ -119,7 +121,7 @@ async function runDefaultReviewer(
         ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? 24 : 16,
+        maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

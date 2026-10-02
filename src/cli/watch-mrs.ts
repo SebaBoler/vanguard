@@ -49,6 +49,7 @@ export async function watchMrsCommand(cmd: WatchMrsCommand, deps: WatchMrsComman
         ...(cmd.llmProxy === true ? { llmProxy: true } : {}),
         ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
         ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+        ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
       }),
   });
 
