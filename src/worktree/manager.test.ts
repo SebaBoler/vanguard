@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { WorktreeManager } from './manager.js';
+import { WorktreeManager, assertSafeBaseBranch } from './manager.js';
 
 let repo: string;
 let wm: WorktreeManager;
@@ -35,6 +35,10 @@ describe('WorktreeManager', () => {
     const wt = await wm.create('gh-owner-repo-904', 'main', { branchPrefix: 'feat/', branchId: '904' });
     expect(wt.branch).toBe('feat/904-r1');
     expect(wt.path.endsWith('904-r1')).toBe(true);
+  });
+
+  it('refuses a base branch git would read as an option', async () => {
+    await expect(wm.create('task-1', '-dev')).rejects.toThrow('Invalid base branch');
   });
 
   it('gives the same task a fresh branch and path on each run (no collision)', async () => {
@@ -84,5 +88,15 @@ describe('WorktreeManager', () => {
     const wt = await wm.create('task-4', 'main');
     await wm.remove(wt.path);
     expect(await wm.isDirty(wt.path).catch(() => 'gone')).toBe('gone');
+  });
+});
+
+describe('assertSafeBaseBranch', () => {
+  it.each(['-dev', '--upload-pack=false', '+main', 'feature:main', '+refs/heads/x:refs/heads/main'])('rejects %s', (base) => {
+    expect(() => assertSafeBaseBranch(base)).toThrow('Invalid base branch');
+  });
+
+  it('accepts a normal branch name', () => {
+    expect(() => assertSafeBaseBranch('release/1.2')).not.toThrow();
   });
 });

@@ -23,6 +23,7 @@ import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
 import { createLogger, type VanguardLogger } from '../core/logger.js';
+import { assertSafeBaseBranch } from '../worktree/manager.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -93,10 +94,10 @@ function defaultSandboxFactory(
  * Best-effort: with no `origin`, offline, or a branch the remote doesn't carry, it logs and returns
  * the local `base` so the spec pass still runs.
  *
- * @throws VanguardError when `base` starts with "-": git would parse it as an option (e.g. --upload-pack).
+ * @throws VanguardError when git would misread `base` (see assertSafeBaseBranch).
  */
 export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
-  if (base.startsWith('-')) throw new VanguardError(`spec: invalid base branch "${base}": a branch name cannot start with "-"`);
+  assertSafeBaseBranch(base);
   // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
   // you which ref the spec was actually written against (vs a silent fallback to a stale local copy).
   const log = logger ?? createLogger();
