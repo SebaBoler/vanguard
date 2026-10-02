@@ -45,6 +45,7 @@ import { authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { GITHUB_REVIEW_LABEL } from '../github-labels.js';
 import { WorktreeManager } from '../worktree/manager.js';
+import { VanguardError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
 import type { CommandRunner } from '../pipeline/pipeline.js';
@@ -224,6 +225,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     if (deps._baseBranch !== undefined) {
       baseBranch = deps._baseBranch;
     } else {
+      if (pr.headRefName === '') throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
       await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${pr.headRefName}`], { cwd: deps.repoPath });
       baseBranch = 'FETCH_HEAD';
     }

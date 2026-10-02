@@ -336,6 +336,27 @@ describe('runRevisePullRequest happy path', () => {
     expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], expect.objectContaining({ cwd: repo }));
   });
 
+  it('fails with a clear error when the PR has no head ref', async () => {
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: undefined });
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+      return '';
+    };
+
+    await expect(
+      runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox(),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async () => '',
+        provider: 'claude',
+      }),
+    ).rejects.toThrow('PR o/r#7 has no head ref to fetch');
+  });
+
   it('revises the PR head, not main, when the head branch name starts with "+"', async () => {
     const git = (args: string[]): Promise<{ stdout: string }> => execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
     await git(['checkout', '-b', '+main']);
