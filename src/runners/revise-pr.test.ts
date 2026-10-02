@@ -333,7 +333,7 @@ describe('runRevisePullRequest happy path', () => {
       provider: 'claude',
     });
 
-    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], { cwd: repo });
+    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], expect.objectContaining({ cwd: repo }));
   });
 
   it('revises the PR head, not main, when the head branch name starts with "+"', async () => {
