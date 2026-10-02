@@ -1069,7 +1069,10 @@ Commands:
                                  list issues by state type, so the review state's type must differ from the
                                  --spec-state type (or it is specced again on every poll) and from the build job's
                                  trigger type (unstarted by default). With the default --spec-state triage, use a
-                                 backlog-type review state.
+                                 backlog-type review state. On GitHub/GitLab the build job's --label must be the
+                                 approval label a human applies (e.g. "ready for agent"), not the loop-v1 ownership
+                                 --label: the spec pass leaves that label on every issue, so a build job on it would
+                                 also build issues in review and issues not yet specced.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo
