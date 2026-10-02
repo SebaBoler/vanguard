@@ -17,6 +17,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
       /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
       out?: string;
     }
@@ -223,6 +225,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'watch-mrs';
@@ -582,6 +586,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
   }
@@ -704,6 +709,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -1131,6 +1137,7 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --max-turns <n>        Turn cap for the first review attempt (default: 16); the retry after an incomplete review gets 1.5x
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -1203,7 +1210,7 @@ Commands:
   review-mr options:
     --mr <iid>               GitLab MR IID (integer)
     --gitlab-project <g/p>   GitLab project path (required, e.g. group/project)
-    --provider --review-model --egress --llm-proxy --repo  As for review-pr
+    --provider --review-model --max-turns --egress --llm-proxy --repo  As for review-pr
 
   watch-mrs options:
     --gitlab-project <g/p>   Required project path (e.g. group/project)

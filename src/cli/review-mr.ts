@@ -109,7 +109,7 @@ async function runDefaultMrReviewer(
         ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? 24 : 16,
+        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? 16) * 1.5) : cmd.maxTurns ?? 16,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

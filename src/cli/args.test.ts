@@ -207,6 +207,15 @@ describe('parseCli', () => {
     expect(cmd.kind === 'watch' && cmd.maxRepairIterations).toBe(5);
   });
 
+  it('parses --max-turns on review-mr and review-pr, and omits it when absent', () => {
+    const mr = parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '48'], '/work');
+    expect(mr.kind === 'review-mr' && mr.maxTurns).toBe(48);
+    const pr = parseCli(['review-pr', 'o/r#7', '--max-turns', '48'], '/work');
+    expect(pr.kind === 'review-pr' && pr.maxTurns).toBe(48);
+    expect('maxTurns' in parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['review-pr', 'o/r#7'], '/work')).toBe(false);
+  });
+
   it('rejects --max-turns 0, negative, or non-numeric (no override set)', () => {
     expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '0'], '/work')).toBe(false);
     expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '-3'], '/work')).toBe(false);

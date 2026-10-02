@@ -87,4 +87,26 @@ describe('reviewMrCommand', () => {
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(calls.filter((c) => c[0] === 'mr' && c[1] === 'note')).toHaveLength(1);
   });
+
+  it('--max-turns sets the first attempt cap and 1.5x for the retry', async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    vi.mocked(startSandboxContext).mockResolvedValue({ destroy: async () => undefined } as never);
+    const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+    vi.mocked(runAgent)
+      .mockResolvedValueOnce({ ...attempt, completed: false, finalText: 'Partial' })
+      .mockResolvedValueOnce({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+    const glab: GlabRunner = async (args) => {
+      if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890' });
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
+      if (args[0] === 'api') return '[]';
+      return '';
+    };
+
+    await reviewMrCommand(
+      { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true, maxTurns: 41 },
+      { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+    );
+
+    expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
+  });
 });
