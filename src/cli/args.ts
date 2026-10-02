@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { RunOptions } from '../runners/source-adapter.js';
-import { assertSafeBaseBranch } from '../worktree/manager.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 

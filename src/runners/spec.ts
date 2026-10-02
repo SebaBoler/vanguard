@@ -23,7 +23,7 @@ import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
 import { createLogger, type VanguardLogger } from '../core/logger.js';
-import { assertSafeBaseBranch } from '../worktree/manager.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset

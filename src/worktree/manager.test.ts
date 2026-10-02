@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { WorktreeManager, assertSafeBaseBranch } from './manager.js';
+import { WorktreeManager } from './manager.js';
 
 let repo: string;
 let wm: WorktreeManager;
@@ -88,15 +88,5 @@ describe('WorktreeManager', () => {
     const wt = await wm.create('task-4', 'main');
     await wm.remove(wt.path);
     expect(await wm.isDirty(wt.path).catch(() => 'gone')).toBe('gone');
-  });
-});
-
-describe('assertSafeBaseBranch', () => {
-  it.each(['-dev', '--upload-pack=false', '+main', 'feature:main', '+refs/heads/x:refs/heads/main'])('rejects %s', (base) => {
-    expect(() => assertSafeBaseBranch(base)).toThrow('Invalid base branch');
-  });
-
-  it('accepts a normal branch name', () => {
-    expect(() => assertSafeBaseBranch('release/1.2')).not.toThrow();
   });
 });

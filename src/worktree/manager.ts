@@ -1,7 +1,8 @@
 import { execa } from 'execa';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { VanguardError, WorktreeError } from '../core/errors.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
+import { WorktreeError } from '../core/errors.js';
 
 export interface Worktree {
   path: string;
@@ -23,17 +24,6 @@ export interface CreateOptions {
   branchPrefix?: string;
   /** Override the branch/path id (default taskId). White-label mode uses the bare issue number. */
   branchId?: string;
-}
-
-/**
- * Reject a base branch git would misread when it is passed as a bare argument. A leading "-" parses
- * as an option (e.g. --upload-pack=<cmd>). A ":" or a leading "+" makes `git fetch origin <base>` a
- * refspec that writes, or force-overwrites, a local branch.
- */
-export function assertSafeBaseBranch(base: string): void {
-  if (base.startsWith('-') || base.startsWith('+') || base.includes(':')) {
-    throw new VanguardError(`Invalid base branch "${base}": it cannot start with "-" or "+", or contain ":"`);
-  }
 }
 
 /** Short, unique-per-run id so re-running the same task never collides on an existing branch/path. */
