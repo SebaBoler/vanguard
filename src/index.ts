@@ -97,6 +97,7 @@ export {
   PullRequestReviewIncompleteError,
   pullRequestReviewMarker,
   hasPullRequestReviewMarker,
+  hasPullRequestReviewIncompleteMarker,
   reviewPullRequest,
 } from './runners/pr-review.js';
 export {

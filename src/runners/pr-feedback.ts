@@ -1,4 +1,4 @@
-import { PR_REVIEW_INCOMPLETE_MARKER, hasPullRequestReviewMarker } from './pr-review.js';
+import { hasPullRequestReviewIncompleteMarker, hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { AUTHORITATIVE_BLOCK_INSTRUCTION, neutralizePromptTags } from './review-prompt.js';
 import type { PullRequestReviewTarget } from './pr-review.js';
@@ -195,6 +195,7 @@ function isBotAuthor(login: string, extraBotLogins: string[]): boolean {
 /**
  * Filter PullRequestFeedback down to items Vanguard should act on this round.
  * Drops: bot-authored items, items carrying the current head's PR-review marker,
+ * Vanguard's incomplete-review notices (the bot heading plus the marker on its own line),
  * items in resolved threads, and items older than the head commit (watermark).
  */
 export function selectActionableFeedback(fb: PullRequestFeedback, opts: ActionableOptions): FeedbackItem[] {
@@ -204,7 +205,7 @@ export function selectActionableFeedback(fb: PullRequestFeedback, opts: Actionab
   return fb.items.filter((item) => {
     if (isBotAuthor(item.author, extraBots)) return false;
     if (hasPullRequestReviewMarker(item.body, opts.headRefOid)) return false;
-    if (item.body.includes(PR_REVIEW_INCOMPLETE_MARKER)) return false;
+    if (hasPullRequestReviewIncompleteMarker(item.body)) return false;
     if (hasRevisionMarker(item.body)) return false;
     if (item.isResolved === true) return false;
     if (watermark !== '' && item.createdAt !== '' && item.createdAt <= watermark) return false;
