@@ -113,6 +113,9 @@ describe('runSidecar', () => {
     ['fractional maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 2.5 }],
     ['non-string baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 42 }],
     ['blank baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '  ' }],
+    ['option-like baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '--upload-pack=false' }],
+    ['refspec baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 'feature:main' }],
+    ['force-refspec baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '+main' }],
     ['empty issueRef', { issueRef: '' }],
     ['whitespace issueRef', { issueRef: '  \n ' }],
     ['missing issueRef', {}],
@@ -122,6 +125,13 @@ describe('runSidecar', () => {
     const { write, out } = collect();
     await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request' } });
+  });
+
+  it('names only the type of a non-string baseBranch, not its value', async () => {
+    const { write, out } = collect();
+    const params = { issueRef: 'gh-1', repoPath: '/repo', baseBranch: Array.from({ length: 1000 }, () => 'x') };
+    await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request', message: 'baseBranch must be a string, got array' } });
   });
 
   // Flow validation moved out of the sync validator (repo .hcl flows are legal values it cannot

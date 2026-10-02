@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { WorktreeError } from '../core/errors.js';
 
 export interface Worktree {
@@ -53,6 +54,7 @@ export class WorktreeManager {
   ) {}
 
   async create(taskId: string, baseBranch: string = 'main', opts: CreateOptions = {}): Promise<Worktree> {
+    assertSafeBaseBranch(baseBranch);
     const prefix = opts.branchPrefix ?? VANGUARD_BRANCH_PREFIX;
     const id = opts.branchId ?? taskId;
     if (opts.reuse) {

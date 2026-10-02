@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { RunOptions } from '../runners/source-adapter.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
@@ -471,6 +472,15 @@ export function parseCli(argv: string[], cwd: string): Command {
     commitAuthor = parseCommitAuthor(values['commit-author']);
   } catch (message) {
     return fail(String(message));
+  }
+
+  // Checked once here for run, watch and spec, so a bad --base exits before any ticket is claimed.
+  if (typeof values.base === 'string') {
+    try {
+      assertSafeBaseBranch(values.base);
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
   }
 
   // Opt-in overrides to let a single run finish a large task (run + watch). Positive integers only;
@@ -982,7 +992,7 @@ Commands:
     --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
-    --base <branch>          Base branch to branch off and target the PR at (default: main)
+    --base <branch>          Base branch to branch off and target the PR at; also the loop-v1 spec pass's research baseline (default: main)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
     --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
     --max-turns <n>            Override the implementer (or loop-v1 spec pass's tech-spec) stage turn cap (default: 30; opt-in, higher cost)

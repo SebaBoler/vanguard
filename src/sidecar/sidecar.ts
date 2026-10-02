@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { VanguardError } from '../core/errors.js';
 import { coerceFlowDoc, flowDocError, FlowError, FLOW_FILE_RE } from '../flows/repo.js';
 import type { RepoFlowInfo } from '../flows/repo.js';
@@ -166,8 +167,15 @@ export function validateCreateRun(params: unknown): void {
   if (p.maxTurns !== undefined && (typeof p.maxTurns !== 'number' || !Number.isInteger(p.maxTurns) || p.maxTurns <= 0)) {
     throw new BadRequestError(`maxTurns must be a positive integer, got ${String(p.maxTurns)}`);
   }
-  if (p.baseBranch !== undefined && (typeof p.baseBranch !== 'string' || p.baseBranch.trim() === '')) {
-    throw new BadRequestError(`baseBranch must be a non-blank string, got ${String(p.baseBranch)}`);
+  if (p.baseBranch !== undefined && typeof p.baseBranch !== 'string') {
+    throw new BadRequestError(`baseBranch must be a string, got ${Array.isArray(p.baseBranch) ? 'array' : p.baseBranch === null ? 'null' : typeof p.baseBranch}`);
+  }
+  if (typeof p.baseBranch === 'string') {
+    try {
+      assertSafeBaseBranch(p.baseBranch);
+    } catch (error) {
+      throw new BadRequestError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
   }
 }
 

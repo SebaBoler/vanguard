@@ -649,6 +649,15 @@ describe('runSourcedIssue', () => {
     expect(body).toContain(`\`Closes ${task.id}\``);
   });
 
+  it('scans commit messages from the run base branch, not main', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValueOnce({ passed: false } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'master' }, fakeAdapter([], STAGES));
+
+    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', 'master');
+  });
+
   it('omits the commit-leak warning on a full green pass', async () => {
     wmCommitMessages.mockResolvedValueOnce([`Closes ${task.id}`]);
 

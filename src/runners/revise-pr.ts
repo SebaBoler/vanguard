@@ -45,6 +45,7 @@ import { authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { GITHUB_REVIEW_LABEL } from '../github-labels.js';
 import { WorktreeManager } from '../worktree/manager.js';
+import { VanguardError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
 import type { CommandRunner } from '../pipeline/pipeline.js';
@@ -215,12 +216,17 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         ...(deps.network !== undefined ? { network: deps.network } : {}),
       });
 
-    // Fetch the PR branch locally so the worktree starts from PR head, not main.
+    // Fetch the PR branch from origin so the worktree starts from the PR head, not main. This holds
+    // for a same-repo PR only: a fork PR's head is not on origin, so a same-named origin branch, or
+    // nothing, is fetched instead. The head ref name is author-controlled: --end-of-options keeps a
+    // "-"-led name from parsing as a git option, and the full refs/heads/ source keeps a "+"-led name
+    // (legal in git) from reading as a force refspec.
     let baseBranch: string;
     if (deps._baseBranch !== undefined) {
       baseBranch = deps._baseBranch;
     } else {
-      await execa('git', ['fetch', 'origin', pr.headRefName], { cwd: deps.repoPath });
+      if (pr.headRefName === '') throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
+      await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${pr.headRefName}`], { cwd: deps.repoPath });
       baseBranch = 'FETCH_HEAD';
     }
 

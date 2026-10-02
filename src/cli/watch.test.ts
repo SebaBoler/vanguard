@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the watch runners so the deps builders run without entering a real poll loop. We capture the
 // deps each builder produces and assert the RunOptions fields survived — a guard the type system
@@ -19,8 +19,8 @@ vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
 
-import { watchLinear, watchGitlab } from '../runners/watch.js';
-import { buildGithubDeps, watchLinearSource, watchGitlabSource } from './watch.js';
+import { watchLinear, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
+import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -49,9 +49,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('watch deps builders thread RunOptions', () => {
   it('watchLinearSource carries every option field', async () => {
-    process.env.LINEAR_API_KEY = 'key';
+    vi.stubEnv('LINEAR_API_KEY', 'key');
     await watchLinearSource(watchCommand({ source: 'linear', skillsDir: '/skills' }), undefined, ctx, signal);
     const deps = vi.mocked(watchLinear).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
@@ -66,5 +70,26 @@ describe('watch deps builders thread RunOptions', () => {
     await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p' }), undefined, ctx, signal);
     const deps = vi.mocked(watchGitlab).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
+  });
+});
+
+describe('loop-v1 spec deps carry --base', () => {
+  const loopV1 = { specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' };
+
+  it('watchLinearSource', async () => {
+    vi.stubEnv('LINEAR_API_KEY', 'key');
+    const cmd = watchCommand({ source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' });
+    await watchLinearSource(cmd, undefined, ctx, signal);
+    expect(vi.mocked(watchLinearLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGithubSource', async () => {
+    await watchGithubSource(watchCommand({ repoSlug: 'o/r', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGithubLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGitlabSource', async () => {
+    await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGitlabLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
   });
 });
