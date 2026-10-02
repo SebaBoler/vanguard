@@ -19,6 +19,7 @@ import type {
   ReviewMergeRequestDeps,
   ReviewMergeRequestResult,
 } from '../runners/mr-review.js';
+import { DEFAULT_REVIEW_MAX_TURNS } from './args.js';
 import type { Command } from './args.js';
 
 type ReviewMrCommand = Extract<Command, { kind: 'review-mr' }>;
@@ -109,7 +110,7 @@ async function runDefaultMrReviewer(
         ...literalPrompt(buildMergeRequestReviewPrompt(mr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? 16) * 1.5) : cmd.maxTurns ?? 16,
+        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS) * 1.5) : cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

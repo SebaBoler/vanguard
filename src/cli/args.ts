@@ -17,7 +17,7 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
       maxTurns?: number;
       /** Write the review to this local file instead of posting a PR comment (no trace on the tracker). */
       out?: string;
@@ -90,7 +90,7 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
       maxTurns?: number;
     }
   | {
@@ -227,7 +227,7 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
       maxTurns?: number;
     }
   | {
@@ -246,7 +246,7 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
-      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      /** First-attempt turn cap (default DEFAULT_REVIEW_MAX_TURNS); the retry after an incomplete review gets 1.5x. */
       maxTurns?: number;
     }
   | {
@@ -293,6 +293,8 @@ const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
 /** State NAME the Linear spec pass advances to when --agent-state is absent. */
 export const DEFAULT_LINEAR_AGENT_STATE = 'Todo';
+/** First-attempt turn cap of a review-pr or review-mr run without --max-turns; the retry gets 1.5x. */
+export const DEFAULT_REVIEW_MAX_TURNS = 16;
 const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
@@ -643,7 +645,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         ? values.github
         : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
-    const maxRoundsRaw = Number(values['max-rounds']);
+    const maxRounds = parseLimit(values['max-rounds']);
     return {
       kind: 'revise-pr',
       prRef,
@@ -653,7 +655,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(Number.isFinite(maxRoundsRaw) && maxRoundsRaw >= 1 ? { maxRounds: Math.floor(maxRoundsRaw) } : {}),
+      ...(maxRounds !== undefined ? { maxRounds } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
       ...(typeof values.out === 'string' ? { out: values.out } : {}),
     };
@@ -1147,7 +1149,8 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
-    --max-turns <n>        Turn cap for the first review attempt (default: 16); the retry after an incomplete review gets 1.5x (opt-in, higher cost)
+    --max-turns <n>        Agent CLI turn cap for the first review attempt; tool calls count as turns (default: ${DEFAULT_REVIEW_MAX_TURNS}).
+                           The retry after an incomplete review gets 1.5x (opt-in, higher cost)
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 

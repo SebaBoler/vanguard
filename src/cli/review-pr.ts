@@ -14,6 +14,7 @@ import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewP
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
+import { DEFAULT_REVIEW_MAX_TURNS } from './args.js';
 import type { Command } from './args.js';
 
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
@@ -119,7 +120,7 @@ async function runDefaultReviewer(
         ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? 16) * 1.5) : cmd.maxTurns ?? 16,
+        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS) * 1.5) : cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

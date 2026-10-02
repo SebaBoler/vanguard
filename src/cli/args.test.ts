@@ -220,9 +220,11 @@ describe('parseCli', () => {
     expect(wp.kind === 'watch-prs' && wp.maxTurns).toBe(48);
   });
 
-  it('clamps a huge --max-turns to Number.MAX_SAFE_INTEGER', () => {
+  it('clamps a huge --max-turns or --max-rounds to Number.MAX_SAFE_INTEGER', () => {
     const huge = parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '1e308'], '/work');
     expect(huge.kind === 'review-mr' && huge.maxTurns).toBe(Number.MAX_SAFE_INTEGER);
+    const rounds = parseCli(['revise-pr', '7', '--github-repo', 'o/r', '--max-rounds', '1e308'], '/work');
+    expect(rounds.kind === 'revise-pr' && rounds.maxRounds).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it('rejects --max-turns 0, negative, or non-numeric (no override set)', () => {
