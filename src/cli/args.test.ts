@@ -1134,6 +1134,17 @@ describe('parseCli', () => {
       message: expect.stringContaining('--spec-only requires loop-v1'),
     });
   });
+
+  it.each([
+    ['run', '--linear', 'TES-1'],
+    ['watch-prs', '--github-repo', 'o/r', '--label', 'x'],
+    ['watch-mrs', '--gitlab-project', 'g/p', '--label', 'x'],
+  ])('rejects --spec-only on %s, which would otherwise ignore it', (...argv) => {
+    expect(parseCli([...argv, '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: '--spec-only is only supported with watch and doctor.',
+    });
+  });
 });
 
 describe('parseCli revise-pr', () => {

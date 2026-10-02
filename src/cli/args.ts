@@ -439,6 +439,11 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
 
+  // The option table is shared, so every other command would accept --spec-only and silently do its full work.
+  if (values['spec-only'] === true && positionals[0] !== 'watch' && positionals[0] !== 'doctor') {
+    return fail('--spec-only is only supported with watch and doctor.');
+  }
+
   // Provider flags. run/watch/doctor also accept repo-configured custom provider names (S6): those
   // shapes relax to the name grammar here — this parser is synchronous and cannot read the repo's
   // app.json, so resolution (and the "which names exist" error) happens at dispatch. Every other
