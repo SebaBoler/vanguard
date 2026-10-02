@@ -1,6 +1,6 @@
 import { defaultGhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, REVIEW_INCOMPLETE, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, MARKER_PAD, REVIEW_INCOMPLETE, RETRY_TRIAGE_INSTRUCTION, neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -193,10 +193,17 @@ function appendMarker(visible: string, headRefOid?: string): string {
  * login is not recognised as a bot. The head dedupe does not count it (no SHA).
  */
 export const PR_REVIEW_INCOMPLETE_MARKER = '<!-- vanguard-pr-review-incomplete -->';
-const PR_REVIEW_INCOMPLETE_MARKER_RE = /^<!--[ \t]*vanguard-pr-review-incomplete[ \t]*-->$/m;
+// Whole line only, like the head-SHA markers, so a comment that mentions the marker inline stays feedback;
+// the padding matches stripReviewMarkers. The note must also open with the bot's heading, so a marker quoted
+// in a code block stays feedback unless the comment opens with that heading too. A last-line rule would miss
+// the bot's own note: publishReviewVerdict appends the Conformance section after the marker.
+const PR_REVIEW_INCOMPLETE_MARKER_RE = new RegExp(
+  String.raw`^${MARKER_PAD}<!--[ \t]*vanguard-pr-review-incomplete[ \t]*-->${MARKER_PAD}$`,
+  'm',
+);
 
 export function hasPullRequestReviewIncompleteMarker(body: string): boolean {
-  return PR_REVIEW_INCOMPLETE_MARKER_RE.test(body);
+  return body.startsWith('## Vanguard Review') && PR_REVIEW_INCOMPLETE_MARKER_RE.test(body);
 }
 
 // Deliberately no head-SHA marker: the marker means "this head has a verdict", and an incomplete

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hasBlockingFinding, publishReviewVerdict, renderConformanceSection } from './review-publish.js';
+import { hasPullRequestReviewIncompleteMarker } from '../runners/pr-review.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -238,5 +239,25 @@ describe('publishReviewVerdict', () => {
 
     expect(calls[0]).toContain('--comment');
     expect(calls[0]?.at(-1)).toContain('Conformance pass did not complete');
+  });
+
+  it('keeps an incomplete verdict marked when the conformance section follows it', async () => {
+    let body = '';
+    const gh: GhRunner = async (args) => {
+      body = args.at(-1) ?? '';
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: stageOutcome('reviewer', 'partial', false),
+      conformanceOutcome: stageOutcome('conformance', 'No blocking issues.\n<promise>COMPLETE</promise>'),
+      attribution: 'codex',
+      gh,
+    });
+
+    expect(body).toMatch(/-->\n\n## Conformance/);
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(true);
   });
 });
