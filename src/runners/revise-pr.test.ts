@@ -310,7 +310,7 @@ describe('runRevisePullRequest happy path', () => {
     expect(executed.some((c) => c.includes('PWNED'))).toBe(false);
   });
 
-  it('fetches the PR head with --end-of-options, so a dash-led head ref cannot act as a git option', async () => {
+  it('fetches refs/heads/<head> with --end-of-options, so a dash-led head ref cannot act as a git option', async () => {
     await execa('git', ['remote', 'add', 'origin', repo], { cwd: repo });
     const gh: GhRunner = async (args) => {
       if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
@@ -333,7 +333,46 @@ describe('runRevisePullRequest happy path', () => {
       provider: 'claude',
     });
 
-    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'feature-branch'], { cwd: repo });
+    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], { cwd: repo });
+  });
+
+  it('revises the PR head, not main, when the head branch name starts with "+"', async () => {
+    const git = (args: string[]): Promise<{ stdout: string }> => execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
+    await git(['checkout', '-b', '+main']);
+    await writeFile(join(repo, 'pr.txt'), 'pr head');
+    await git(['add', '.']);
+    await git(['commit', '-m', 'pr head']);
+    const prHead = (await git(['rev-parse', 'HEAD'])).stdout;
+    await git(['checkout', 'main']);
+    await git(['remote', 'add', 'origin', repo]);
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: '+main' });
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+    let pushedHead: string | undefined;
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (_file, args, cwd) => {
+        if (args[0] === 'push') pushedHead = (await execa('git', ['rev-parse', 'HEAD'], { cwd })).stdout;
+        return '';
+      },
+      provider: 'claude',
+    });
+
+    expect(pushedHead).toBeDefined();
+    const isAncestor = await execa('git', ['merge-base', '--is-ancestor', prHead, pushedHead!], { cwd: repo, reject: false });
+    expect(isAncestor.exitCode).toBe(0);
   });
 
   it('--out writes a dry-run preview and pushes/comments NOTHING', async () => {

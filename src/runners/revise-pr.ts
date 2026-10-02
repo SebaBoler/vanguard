@@ -216,13 +216,13 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       });
 
     // Fetch the PR branch locally so the worktree starts from PR head, not main. The head ref is
-    // author-controlled (possibly a fork), so --end-of-options keeps a dash-led name from parsing as
-    // a git option.
+    // author-controlled: --end-of-options keeps a "-"-led name from parsing as a git option, and the
+    // full refs/heads/ source keeps a "+"-led name (legal in git) from reading as a force refspec.
     let baseBranch: string;
     if (deps._baseBranch !== undefined) {
       baseBranch = deps._baseBranch;
     } else {
-      await execa('git', ['fetch', '--end-of-options', 'origin', pr.headRefName], { cwd: deps.repoPath });
+      await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${pr.headRefName}`], { cwd: deps.repoPath });
       baseBranch = 'FETCH_HEAD';
     }
 
