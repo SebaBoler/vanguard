@@ -842,6 +842,9 @@ export function parseCli(argv: string[], cwd: string): Command {
     }
 
     if (isLoopV1) {
+      // Advancing into the spec trigger re-lists the issue for the spec pass, which runs first on every
+      // poll. Only a --once run without --spec-only builds the issue before anything polls again.
+      const respecLoop = values['spec-only'] === true || values.once !== true;
       // Loop v1 validation per source.
       if (source === 'github' || source === 'gitlab') {
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) {
@@ -850,8 +853,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
-        if (values['spec-only'] === true && sameName(agentLabel, specLabel)) {
-          return fail(`${commandKind} --spec-only cannot use the spec trigger label "${specLabel}" as --agent-label; the spec pass would spec the same issues again on every poll.`);
+        if (respecLoop && sameName(agentLabel, specLabel)) {
+          return fail(`${commandKind} cannot use the spec trigger label "${specLabel}" as --agent-label with --spec-only or without --once; the spec pass would spec the same issues again on every poll.`);
         }
         // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
         // watches the routing labels directly; explicit --label narrows that further when desired.
@@ -864,8 +867,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
-        if (values['spec-only'] === true && agentState !== undefined && sameName(agentState, specStateName)) {
-          return fail(`${commandKind} --spec-only cannot use the spec trigger state "${specStateName}" as --agent-state; the spec pass would spec the same issues again on every poll.`);
+        if (respecLoop && agentState !== undefined && sameName(agentState, specStateName)) {
+          return fail(`${commandKind} cannot use the spec trigger state "${specStateName}" as --agent-state with --spec-only or without --once; the spec pass would spec the same issues again on every poll.`);
         }
       } else {
         // project source does not support loop-v1

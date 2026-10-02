@@ -1133,14 +1133,14 @@ describe('parseCli', () => {
       parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'spec', '--spec-only'], '/work'),
     ).toEqual({
       kind: 'error',
-      message: 'watch --spec-only cannot use the spec trigger state "Spec" as --agent-state; the spec pass would spec the same issues again on every poll.',
+      message: 'watch cannot use the spec trigger state "Spec" as --agent-state with --spec-only or without --once; the spec pass would spec the same issues again on every poll.',
     });
   });
 
   it('rejects --spec-only with an --agent-state matching the default spec state name in another case', () => {
     expect(parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--agent-state', ' SPEC ', '--spec-only'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('cannot use the spec trigger state "Spec" as --agent-state'),
+      message: expect.stringContaining('cannot use the spec trigger state "Spec" as --agent-state with --spec-only or without --once'),
     });
   });
 
@@ -1150,8 +1150,25 @@ describe('parseCli', () => {
   ])('rejects --spec-only on %s when --agent-label is the spec trigger label, ignoring case', (_name, sourceArgs) => {
     expect(parseCli(['watch', ...sourceArgs, '--spec-label', 'Ready', '--agent-label', 'ready', '--once', '--spec-only'], '/work')).toEqual({
       kind: 'error',
-      message: 'watch --spec-only cannot use the spec trigger label "Ready" as --agent-label; the spec pass would spec the same issues again on every poll.',
+      message: 'watch cannot use the spec trigger label "Ready" as --agent-label with --spec-only or without --once; the spec pass would spec the same issues again on every poll.',
     });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec']],
+    ['github', ['--source', 'github', '--github-repo', 'o/r', '--spec-label', 'ready', '--agent-label', 'ready']],
+  ])('rejects a continuous %s loop-v1 watch that advances into the spec trigger', (_name, args) => {
+    expect(parseCli(['watch', ...args], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('the spec pass would spec the same issues again on every poll'),
+    });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec']],
+    ['github', ['--source', 'github', '--github-repo', 'o/r', '--spec-label', 'ready', '--agent-label', 'ready']],
+  ])('allows a %s --once loop-v1 watch without --spec-only to advance into the spec trigger, since it builds in the same run', (_name, args) => {
+    expect(parseCli(['watch', ...args, '--once'], '/work')).toMatchObject({ kind: 'watch', once: true });
   });
 
   it('returns an error when --spec-only is used on the project source', () => {
