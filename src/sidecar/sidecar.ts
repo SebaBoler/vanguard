@@ -168,7 +168,7 @@ export function validateCreateRun(params: unknown): void {
     throw new BadRequestError(`maxTurns must be a positive integer, got ${String(p.maxTurns)}`);
   }
   if (p.baseBranch !== undefined && typeof p.baseBranch !== 'string') {
-    throw new BadRequestError(`baseBranch must be a string, got ${JSON.stringify(p.baseBranch)}`);
+    throw new BadRequestError(`baseBranch must be a string, got ${Array.isArray(p.baseBranch) ? 'array' : p.baseBranch === null ? 'null' : typeof p.baseBranch}`);
   }
   if (typeof p.baseBranch === 'string') {
     try {

@@ -127,6 +127,13 @@ describe('runSidecar', () => {
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request' } });
   });
 
+  it('names only the type of a non-string baseBranch, not its value', async () => {
+    const { write, out } = collect();
+    const params = { issueRef: 'gh-1', repoPath: '/repo', baseBranch: Array.from({ length: 1000 }, () => 'x') };
+    await runSidecar(lines(JSON.stringify({ id: 'b', method: 'createRun', params })), write, stubDeps());
+    expect(JSON.parse(out[0]!)).toMatchObject({ id: 'b', error: { kind: 'bad-request', message: 'baseBranch must be a string, got array' } });
+  });
+
   // Flow validation moved out of the sync validator (repo .hcl flows are legal values it cannot
   // see): resolvability is the dep's FIRST act, before any run machinery. Composed here exactly
   // like productionDeps composes it, with tmpdir() as a real repo that has no flows.
