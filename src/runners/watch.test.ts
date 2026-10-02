@@ -558,6 +558,31 @@ describe('runLoopV1', () => {
     expect(builtIds).toEqual(['A']);
   });
 
+  // T10 — specOnly: skipped and deferred spec items still reach the summary
+  it('specOnly logs skipped and deferred spec items and never touches the agent pass', async () => {
+    const logs: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        if (id === 'A') throw new Error('already claimed');
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives = untouchedAgentPrimitives();
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: true, maxTasks: 1, concurrency: 1 }, (msg) => logs.push(msg));
+
+    expectAgentUntouched(agentPrimitives);
+    expect(logs).toEqual([
+      'spec: poll -> 3 ready (capped to 1 by --max-tasks)',
+      'spec A: skipped -> already claimed',
+      'spec B: claim -> triage',
+      'spec B: advanced -> not built (--spec-only)',
+      'spec: 1 advanced, 0 needs-info, 0 failed, 1 skipped, 1 deferred by --max-tasks.',
+    ]);
+  });
+
   it('continuous ticks leave no abort listener behind on the signal', async () => {
     const controller = new AbortController();
     const listeners: number[] = [];
