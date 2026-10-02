@@ -724,7 +724,8 @@ describe('parseCli', () => {
   });
 
   it('rejects an unsafe or empty watch --base before any polling starts', () => {
-    // parseArgs refuses a dash-led value after a space, so only the `=` form reaches the base check.
+    // This first assertion pins Node's parseArgs, not our guard: parseArgs refuses a dash-led value
+    // after a space, so only the `=` form reaches the base check.
     expect(parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base', '-dev'], '/work').kind).toBe('help');
     const cmd = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base=-dev'], '/work');
     expect(cmd.kind === 'error' && cmd.message).toMatch(/Invalid base branch "-dev"/);
