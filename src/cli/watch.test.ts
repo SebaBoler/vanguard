@@ -157,6 +157,8 @@ describe('watchCommand', () => {
     vi.stubEnv('LINEAR_API_KEY', 'key');
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'token');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // watchCommand registers SIGINT/SIGTERM handlers it never removes; keep them off the test worker.
+    const once = vi.spyOn(process, 'once').mockImplementation(() => process);
     try {
       await runWatchCommand(
         watchCommand({
@@ -173,8 +175,10 @@ describe('watchCommand', () => {
       const note = log.mock.calls.findIndex(([line]) => String(line).startsWith('watch: --spec-only moves specced issues to state "Spec Review"'));
       expect(note).toBeGreaterThanOrEqual(0);
       expect(log.mock.invocationCallOrder[note]).toBeLessThan(vi.mocked(watchLinearLoopV1).mock.invocationCallOrder[0]!);
+      expect(once).toHaveBeenCalledWith('SIGINT', expect.any(Function));
     } finally {
       log.mockRestore();
+      once.mockRestore();
     }
   });
 });
