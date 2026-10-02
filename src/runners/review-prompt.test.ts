@@ -122,7 +122,8 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
         const note = saved(await build(text));
         expect(hasMergeRequestReviewMarker(note, future)).toBe(false);
         expect(hasPullRequestReviewMarker(note, future)).toBe(false);
-        expect(hasPullRequestReviewIncompleteMarker(note)).toBe(false);
+        // Under the bot's heading, as the Conformance section sits, so only stripping can make this pass.
+        expect(hasPullRequestReviewIncompleteMarker(`## Vanguard Review\n\n${note}`)).toBe(false);
       });
     }
   }
@@ -172,6 +173,17 @@ describe('notes the bot posts never carry a quoted marker the dedupe counts', ()
   it('keeps the marker the bot appends for the reviewed head', async () => {
     expect(hasMergeRequestReviewMarker(saved(buildMergeRequestReviewComment('ok', current)), current)).toBe(true);
     expect(hasPullRequestReviewMarker(saved(buildPullRequestReviewComment('ok', current)), current)).toBe(true);
+  });
+
+  it('replaces an incomplete marker quoted in a partial verdict with one real marker', () => {
+    const note = buildMainLoopReviewComment(`Partial.\n \t${PR_REVIEW_INCOMPLETE_MARKER}\u00a0\nStill partial.`, {
+      headRefOid: current,
+      attribution: 'a',
+      completed: false,
+    });
+    expect(note.match(/vanguard-pr-review-incomplete/g)).toHaveLength(1);
+    expect(note.endsWith(`Still partial.\n\n${PR_REVIEW_INCOMPLETE_MARKER}`)).toBe(true);
+    expect(hasPullRequestReviewIncompleteMarker(note)).toBe(true);
   });
 });
 
