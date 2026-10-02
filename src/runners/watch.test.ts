@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { getEventListeners } from 'node:events';
 import {
   watchOnce,
   specOnce,
@@ -555,6 +556,30 @@ describe('runLoopV1', () => {
     await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: false }, () => {});
 
     expect(builtIds).toEqual(['A']);
+  });
+
+  it('continuous ticks leave no abort listener behind on the signal', async () => {
+    const controller = new AbortController();
+    const listeners: number[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => {
+        listeners.push(getEventListeners(controller.signal, 'abort').length);
+        if (listeners.length === 12) controller.abort();
+        return [];
+      },
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(
+      specPrimitives,
+      untouchedAgentPrimitives(),
+      { once: false, specOnly: true, signal: controller.signal, intervalMs: 0 },
+      () => {},
+    );
+
+    expect(listeners).toEqual(Array(12).fill(0));
   });
 });
 
