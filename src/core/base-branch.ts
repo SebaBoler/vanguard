@@ -8,6 +8,6 @@ import { VanguardError } from './errors.js';
 export function assertSafeBaseBranch(base: string): void {
   if (base.trim() === '') throw new VanguardError('Invalid base branch: it cannot be empty');
   if (base.startsWith('-') || base.startsWith('+') || base.includes(':')) {
-    throw new VanguardError(`Invalid base branch "${base}": it cannot start with "-" or "+", or contain ":"`);
+    throw new VanguardError(`Invalid base branch ${JSON.stringify(base)}: it cannot start with "-" or "+", or contain ":"`);
   }
 }

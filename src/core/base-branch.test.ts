@@ -6,6 +6,10 @@ describe('assertSafeBaseBranch', () => {
     expect(() => assertSafeBaseBranch(base)).toThrow('Invalid base branch');
   });
 
+  it('escapes control characters in the message, so a value cannot forge log or terminal lines', () => {
+    expect(() => assertSafeBaseBranch('-x\n\u001b[31mfake')).toThrow('Invalid base branch "-x\\n\\u001b[31mfake"');
+  });
+
   it('accepts a normal branch name', () => {
     expect(() => assertSafeBaseBranch('release/1.2')).not.toThrow();
   });
