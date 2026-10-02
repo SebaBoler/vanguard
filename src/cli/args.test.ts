@@ -1128,6 +1128,15 @@ describe('parseCli', () => {
     });
   });
 
+  it('returns an error when --spec-only advances to the spec trigger state', () => {
+    expect(
+      parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'Spec', '--spec-only'], '/work'),
+    ).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot use the spec trigger state "Spec" as --agent-state; the spec pass would spec the same issues again on every poll.',
+    });
+  });
+
   it('returns an error when --spec-only is used on the project source', () => {
     expect(parseCli(['watch', '--source', 'project', '--project', '7', '--spec-only'], '/work')).toMatchObject({
       kind: 'error',

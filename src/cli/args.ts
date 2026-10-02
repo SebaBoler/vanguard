@@ -857,6 +857,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
+        if (values['spec-only'] === true && agentState === specStateName) {
+          return fail(`${commandKind} --spec-only cannot use the spec trigger state "${specStateName}" as --agent-state; the spec pass would spec the same issues again on every poll.`);
+        }
       } else {
         // project source does not support loop-v1
         return fail('loop-v1 is not supported with --source project.');
