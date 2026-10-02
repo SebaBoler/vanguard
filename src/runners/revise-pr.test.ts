@@ -10,6 +10,12 @@ import type { GhRunner } from '../tasks/github.js';
 import type { IsolatedSandboxProvider, ExecResult, SandboxConfig } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
 
+// Pass-through spy, so a test can assert the argv of a git call the runner makes on the host.
+vi.mock('execa', async (importActual) => {
+  const actual = await importActual<typeof import('execa')>();
+  return { ...actual, execa: vi.fn(actual.execa) };
+});
+
 const dockerSandboxConfigs = vi.hoisted(() => [] as SandboxConfig[]);
 
 vi.mock('../sandbox/docker.js', () => ({
@@ -302,6 +308,32 @@ describe('runRevisePullRequest happy path', () => {
 
     expect(agentInputs[0]?.prompt).toContain(body);
     expect(executed.some((c) => c.includes('PWNED'))).toBe(false);
+  });
+
+  it('fetches the PR head with --end-of-options, so a dash-led head ref cannot act as a git option', async () => {
+    await execa('git', ['remote', 'add', 'origin', repo], { cwd: repo });
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      provider: 'claude',
+    });
+
+    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'feature-branch'], { cwd: repo });
   });
 
   it('--out writes a dry-run preview and pushes/comments NOTHING', async () => {
