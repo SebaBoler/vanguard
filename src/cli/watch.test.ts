@@ -19,8 +19,8 @@ vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
 
-import { watchLinear, watchGitlab } from '../runners/watch.js';
-import { buildGithubDeps, watchLinearSource, watchGitlabSource } from './watch.js';
+import { watchLinear, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
+import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -66,5 +66,26 @@ describe('watch deps builders thread RunOptions', () => {
     await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p' }), undefined, ctx, signal);
     const deps = vi.mocked(watchGitlab).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
+  });
+});
+
+describe('loop-v1 spec deps carry --base', () => {
+  const loopV1 = { specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' };
+
+  it('watchLinearSource', async () => {
+    process.env.LINEAR_API_KEY = 'key';
+    const cmd = watchCommand({ source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' });
+    await watchLinearSource(cmd, undefined, ctx, signal);
+    expect(vi.mocked(watchLinearLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGithubSource', async () => {
+    await watchGithubSource(watchCommand({ repoSlug: 'o/r', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGithubLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGitlabSource', async () => {
+    await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGitlabLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
   });
 });

@@ -171,7 +171,7 @@ export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undef
   return deps;
 }
 
-async function watchGithubSource(
+export async function watchGithubSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
