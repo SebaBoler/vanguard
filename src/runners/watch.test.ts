@@ -479,7 +479,7 @@ describe('runLoopV1', () => {
     expect(logs).toEqual([
       'spec: poll -> 1 ready',
       'spec A: claim -> triage',
-      'spec A: advanced -> next poll agent',
+      'spec A: advanced -> not built (--spec-only)',
       'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
     ]);
   });

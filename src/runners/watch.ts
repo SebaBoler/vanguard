@@ -79,6 +79,8 @@ type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
 interface WatchLogOptions {
   log?: (msg: string) => void;
   phase?: string;
+  /** (loop-v1) No agent pass follows the spec pass, so this watch never builds an advanced ticket. */
+  specOnly?: boolean;
 }
 
 interface WatchOnceOptions extends WatchLogOptions {
@@ -207,6 +209,7 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped' | 'deferred';
  */
 export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
   const phase = opts.phase ?? 'spec';
+  const advancedNext = opts.specOnly === true ? 'not built (--spec-only)' : 'next poll agent';
   const ready = await primitives.listReady();
   logPoll(ready.length, opts, phase);
   const claim = claimGate(opts.maxTasks);
@@ -225,7 +228,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
         operatorLog(
           opts,
           outcome === 'advanced'
-            ? `${phase} ${item.id}: advanced -> next poll agent`
+            ? `${phase} ${item.id}: advanced -> ${advancedNext}`
             : `${phase} ${item.id}: needs info -> waiting human`,
         );
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
@@ -494,10 +497,11 @@ export async function runLoopV1(
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
   const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
+  const specOnly = opts.specOnly === true ? { specOnly: true } : {};
   for (;;) {
     if (opts.signal?.aborted === true) return;
     const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
-    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, log, phase: 'spec' });
+    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, ...specOnly, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped${deferredNote(spec)}.`);
     if (opts.specOnly === true) {
       if (opts.once === true) return;
