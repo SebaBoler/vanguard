@@ -631,6 +631,12 @@ describe('resolveSpecBaseRef', () => {
     await commit(repo, 'init');
     expect(await resolveSpecBaseRef(repo, 'main')).toBe('main');
   });
+
+  it('rejects a base that git would parse as an option', async () => {
+    const repo = await mk('vg-dash-');
+    await execa('git', ['init', '-b', 'main'], { cwd: repo });
+    await expect(resolveSpecBaseRef(repo, '--upload-pack=false')).rejects.toThrow('cannot start with "-"');
+  });
 });
 
 describe('runSpecGenerator', () => {

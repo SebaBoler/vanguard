@@ -92,8 +92,11 @@ function defaultSandboxFactory(
  * local copy (the very reason a spec diverges from a branch someone else is actively pushing to).
  * Best-effort: with no `origin`, offline, or a branch the remote doesn't carry, it logs and returns
  * the local `base` so the spec pass still runs.
+ *
+ * @throws VanguardError when `base` starts with "-": git would parse it as an option (e.g. --upload-pack).
  */
 export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
+  if (base.startsWith('-')) throw new VanguardError(`spec: invalid base branch "${base}": a branch name cannot start with "-"`);
   // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
   // you which ref the spec was actually written against (vs a silent fallback to a stale local copy).
   const log = logger ?? createLogger();
