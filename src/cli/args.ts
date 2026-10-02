@@ -131,6 +131,7 @@ export type Command =
       agentState?: string;
       needsInfoState?: string;
       specClaimedState?: string;
+      specOnly?: boolean;
       llmProxy?: boolean;
     }
   | ({
@@ -210,6 +211,8 @@ export type Command =
        * (default: 'Speccing'). Omitted when absent — the default is used.
        */
       specClaimedState?: string;
+      /** (loop-v1) Run only the spec pass each tick; the agent pass is skipped (no list, claim or run). */
+      specOnly?: boolean;
     } & RunOptions)
   | {
       kind: 'review-mr';
@@ -275,11 +278,13 @@ const DEFAULT_MAX_AGE_HOURS = 6;
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_LOOP_V1_OWNERSHIP_LABEL = 'vanguard';
 const DEFAULT_GITHUB_SPEC_LABEL = 'ready for spec';
-const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
+export const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
 const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
 const DEFAULT_LINEAR_SPEC_STATE = 'triage';
 const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
+/** State NAME the Linear spec pass advances to when --agent-state is absent. */
+export const DEFAULT_LINEAR_AGENT_STATE = 'Todo';
 const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
@@ -287,6 +292,11 @@ const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
 
 function fail(message: string): Command {
   return { kind: 'error', message };
+}
+
+// Case and surrounding spaces are not trusted to tell two names apart; a false match only rejects the config.
+function sameName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 /** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
@@ -375,6 +385,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         'needs-info-state': { type: 'string' },
         'spec-claimed-state': { type: 'string' },
         'spec-model': { type: 'string' },
+        'spec-only': { type: 'boolean' },
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
@@ -435,6 +446,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (positionals[0] === '__complete') return { kind: 'complete' };
 
   const repoPath = typeof values.repo === 'string' ? values.repo : cwd;
+
+  // The option table is shared, so every other command would accept --spec-only and silently do its full work.
+  if (values['spec-only'] === true && positionals[0] !== 'watch' && positionals[0] !== 'doctor') {
+    return fail('--spec-only is only supported with watch and doctor.');
+  }
 
   // Provider flags. run/watch/doctor also accept repo-configured custom provider names (S6): those
   // shapes relax to the name grammar here — this parser is synchronous and cannot read the repo's
@@ -847,6 +863,12 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
+        if (values['spec-only'] === true && sameName(agentLabel, DEFAULT_GITHUB_AGENT_LABEL)) {
+          return fail(`${commandKind} --spec-only requires --agent-label <review label> other than "${DEFAULT_GITHUB_AGENT_LABEL}"; that default is the build trigger, so specced issues would get no review window.`);
+        }
+        if (values['spec-only'] === true && sameName(agentLabel, specLabel)) {
+          return fail(`${commandKind} --spec-only cannot advance specced issues into the spec trigger label "${specLabel}"; set --agent-label to another label, or the spec pass specs the same issues again on every poll.`);
+        }
         // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
         // watches the routing labels directly; explicit --label narrows that further when desired.
       } else if (source === 'linear') {
@@ -858,11 +880,22 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
+        if (values['spec-only'] === true && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, DEFAULT_LINEAR_AGENT_STATE)) {
+          return fail(`${commandKind} --spec-only requires --agent-state <review state> other than "${DEFAULT_LINEAR_AGENT_STATE}"; that default is the build trigger, so specced issues would get no review window.`);
+        }
+        // The spec pass lists by state TYPE (--spec-state); --spec-state-name is only its revert target. This
+        // name check catches the obvious case and assumes --spec-state-name is a state of the --spec-state type.
+        if (values['spec-only'] === true && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, specStateName)) {
+          return fail(`${commandKind} --spec-only cannot advance specced issues into the spec trigger state "${specStateName}"; set --agent-state to another state, or the spec pass specs the same issues again on every poll.`);
+        }
       } else {
         // project source does not support loop-v1
         return fail('loop-v1 is not supported with --source project.');
       }
     } else {
+      if (values['spec-only'] === true) {
+        return fail(`${commandKind} --spec-only requires loop-v1, which any loop-v1 flag turns on (for example --loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.`);
+      }
       // Existing single-pass validation: label is required for linear/github/gitlab; optional for project.
       if (source !== 'project' && label === undefined) {
         return fail(`${commandKind} --source ${source} requires --label <name>.`);
@@ -915,6 +948,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(agentState !== undefined ? { agentState } : {}),
       ...(needsInfoState !== undefined ? { needsInfoState } : {}),
       ...(typeof values['spec-claimed-state'] === 'string' ? { specClaimedState: values['spec-claimed-state'] } : {}),
+      ...(values['spec-only'] === true ? { specOnly: true } : {}),
     };
 
     if (commandKind === 'doctor') {
@@ -1023,6 +1057,22 @@ Commands:
 
     Shared:
       --spec-model <m>           Cheap model for the spec-generation stage (e.g. "haiku")
+      --spec-only                Run only the spec pass each tick; never list, claim or run the agent pass
+                                 (works with --once; --max-tasks then caps the spec pass only). Flags only the
+                                 agent pass reads (--claimed-state, --review-state, --plan, --flow, ...) have no effect.
+                                 Review window: a spec-only job advances specced issues to a review state/label
+                                 (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
+                                 and a separate single-pass watch builds them. --spec-only requires --agent-state
+                                 (Linear) or --agent-label (GitHub/GitLab) other than the default build trigger,
+                                 which would give no review window. Only the default is checked: Vanguard cannot
+                                 see a build job that triggers on another state or label. On Linear both passes
+                                 list issues by state type, so the review state's type must differ from the
+                                 --spec-state type (or it is specced again on every poll) and from the build job's
+                                 trigger type (unstarted by default). With the default --spec-state triage, use a
+                                 backlog-type review state. On GitHub/GitLab the build job's --label must be the
+                                 approval label a human applies (e.g. "ready for agent"), not the loop-v1 ownership
+                                 --label: the spec pass leaves that label on every issue, so a build job on it would
+                                 also build issues in review and issues not yet specced.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo
@@ -1215,6 +1265,7 @@ Commands:
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.
+    Add --spec-only to check a spec-only loop-v1 watch: it skips the checks that only guard publishing.
     Example (GitHub): vanguard doctor --source github --github-repo owner/repo
     Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
 

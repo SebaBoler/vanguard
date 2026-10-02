@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { getEventListeners } from 'node:events';
 import {
   watchOnce,
   specOnce,
@@ -440,6 +441,170 @@ describe('runLoopV1', () => {
       'watch B: pr opened -> review',
       'watch: 2 PR(s), 0 no-change, 0 failed, 0 skipped.',
     ]);
+  });
+
+  function untouchedAgentPrimitives(): WatchPrimitives {
+    return {
+      listReady: vi.fn(async () => [{ id: 'B' }]),
+      claim: vi.fn(async () => {}),
+      runOne: vi.fn(async () => ({ prUrl: 'pr/x' })),
+      review: vi.fn(async () => {}),
+      onNoChange: vi.fn(async () => {}),
+      onFailure: vi.fn(async () => {}),
+    };
+  }
+
+  function expectAgentUntouched(agent: WatchPrimitives): void {
+    expect(agent.listReady).not.toHaveBeenCalled();
+    expect(agent.claim).not.toHaveBeenCalled();
+    expect(agent.runOne).not.toHaveBeenCalled();
+    expect(agent.review).not.toHaveBeenCalled();
+    expect(agent.onNoChange).not.toHaveBeenCalled();
+    expect(agent.onFailure).not.toHaveBeenCalled();
+  }
+
+  // T6 — once + specOnly: just-advanced tickets are not carried into an agent pass
+  it('once: true with specOnly specs tickets but never lists, claims or runs the agent pass', async () => {
+    const logs: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives = untouchedAgentPrimitives();
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: true, concurrency: 1 }, (msg) => logs.push(msg));
+
+    expectAgentUntouched(agentPrimitives);
+    expect(logs).toEqual([
+      'spec: poll -> 1 ready',
+      'spec A: claim -> triage',
+      'spec A: advanced -> not built (--spec-only)',
+      'spec: 1 advanced, 0 needs-info, 0 failed, 0 skipped.',
+    ]);
+  });
+
+  // T7 — continuous + specOnly: the agent pass is skipped on every tick
+  it('specOnly skips the agent pass on every continuous tick', async () => {
+    const controller = new AbortController();
+    let ticks = 0;
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => {
+        ticks += 1;
+        if (ticks === 3) controller.abort();
+        return [{ id: `S${ticks}` }];
+      },
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives = untouchedAgentPrimitives();
+
+    await runLoopV1(
+      specPrimitives,
+      agentPrimitives,
+      { once: false, specOnly: true, signal: controller.signal, intervalMs: 0 },
+      () => {},
+    );
+
+    expect(ticks).toBe(3);
+    expectAgentUntouched(agentPrimitives);
+  });
+
+  // T8 — specOnly: --max-tasks caps the spec pass
+  it('specOnly with maxTasks caps the spec pass only', async () => {
+    const specced: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }],
+      claim: async () => {},
+      runSpec: async (id) => {
+        specced.push(id);
+        return 'advanced';
+      },
+      onFailure: async () => {},
+    };
+    const agentPrimitives = untouchedAgentPrimitives();
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: true, maxTasks: 1 }, () => {});
+
+    expect(specced).toEqual(['A']);
+    expectAgentUntouched(agentPrimitives);
+  });
+
+  // T9 — specOnly: false keeps the once-mode carry (same outcome as T1)
+  it('once: true with specOnly: false still builds just-advanced tickets', async () => {
+    const builtIds: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives: WatchPrimitives = {
+      listReady: async () => [],
+      claim: async () => {},
+      runOne: async (id) => {
+        builtIds.push(id);
+        return { prUrl: `pr/${id}` };
+      },
+      review: async () => {},
+      onNoChange: async () => {},
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: false }, () => {});
+
+    expect(builtIds).toEqual(['A']);
+  });
+
+  // T10 — specOnly: skipped and deferred spec items still reach the summary
+  it('specOnly logs skipped and deferred spec items and never touches the agent pass', async () => {
+    const logs: string[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      claim: async (id) => {
+        if (id === 'A') throw new Error('already claimed');
+      },
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+    const agentPrimitives = untouchedAgentPrimitives();
+
+    await runLoopV1(specPrimitives, agentPrimitives, { once: true, specOnly: true, maxTasks: 1, concurrency: 1 }, (msg) => logs.push(msg));
+
+    expectAgentUntouched(agentPrimitives);
+    expect(logs).toEqual([
+      'spec: poll -> 3 ready (capped to 1 by --max-tasks)',
+      'spec A: skipped -> already claimed',
+      'spec B: claim -> triage',
+      'spec B: advanced -> not built (--spec-only)',
+      'spec: 1 advanced, 0 needs-info, 0 failed, 1 skipped, 1 deferred by --max-tasks.',
+    ]);
+  });
+
+  it('continuous ticks leave no abort listener behind on the signal', async () => {
+    const controller = new AbortController();
+    const listeners: number[] = [];
+    const specPrimitives: SpecWatchPrimitives = {
+      listReady: async () => {
+        listeners.push(getEventListeners(controller.signal, 'abort').length);
+        if (listeners.length === 12) controller.abort();
+        return [];
+      },
+      claim: async () => {},
+      runSpec: async () => 'advanced',
+      onFailure: async () => {},
+    };
+
+    await runLoopV1(
+      specPrimitives,
+      untouchedAgentPrimitives(),
+      { once: false, specOnly: true, signal: controller.signal, intervalMs: 0 },
+      () => {},
+    );
+
+    expect(listeners).toEqual(Array(12).fill(0));
   });
 });
 

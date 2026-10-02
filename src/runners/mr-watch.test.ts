@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { gitlabMergeRequestWatchPrimitives, watchMergeRequestsOnce } from './mr-watch.js';
+import { getEventListeners } from 'node:events';
+import { gitlabMergeRequestWatchPrimitives, watchMergeRequests, watchMergeRequestsOnce } from './mr-watch.js';
 import { MergeRequestReviewIncompleteError } from './mr-review.js';
 
 describe('gitlabMergeRequestWatchPrimitives', () => {
@@ -110,5 +111,27 @@ describe('watchMergeRequestsOnce', () => {
     const tick = await watchMergeRequestsOnce(primitives);
     expect(tick.reviewed).toHaveLength(0);
     expect(tick.failed).toHaveLength(0);
+  });
+});
+
+describe('watchMergeRequests', () => {
+  it('continuous ticks leave no abort listener behind on the signal', async () => {
+    const controller = new AbortController();
+    const listeners: number[] = [];
+    const primitives = {
+      listReady: async () => {
+        listeners.push(getEventListeners(controller.signal, 'abort').length);
+        if (listeners.length === 12) controller.abort();
+        return [];
+      },
+      claim: async () => {},
+      review: async () => {},
+      markReviewed: async () => {},
+      onFailure: async () => {},
+    };
+
+    await watchMergeRequests(primitives, { signal: controller.signal, intervalMs: 0 });
+
+    expect(listeners).toEqual(Array(12).fill(0));
   });
 });

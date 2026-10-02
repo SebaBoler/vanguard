@@ -87,6 +87,11 @@ interface WatchOnceOptions extends WatchLogOptions {
   maxTasks?: number;
 }
 
+interface SpecOnceOptions extends WatchOnceOptions {
+  /** (loop-v1) No agent pass follows the spec pass, so this watch never builds an advanced ticket. */
+  specOnly?: boolean;
+}
+
 function operatorLog(opts: WatchLogOptions, msg: string): void {
   opts.log?.(msg);
 }
@@ -205,8 +210,9 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped' | 'deferred';
  * to needs-info. Mirrors watchOnce structurally (claim-before-run, fan-out, failure isolation) but
  * with honest spec semantics instead of PR semantics — it never opens a PR.
  */
-export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
+export async function specOnce(primitives: SpecWatchPrimitives, opts: SpecOnceOptions = {}): Promise<SpecTick> {
   const phase = opts.phase ?? 'spec';
+  const advancedNext = opts.specOnly === true ? 'not built (--spec-only)' : 'next poll agent';
   const ready = await primitives.listReady();
   logPoll(ready.length, opts, phase);
   const claim = claimGate(opts.maxTasks);
@@ -225,7 +231,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
         operatorLog(
           opts,
           outcome === 'advanced'
-            ? `${phase} ${item.id}: advanced -> next poll agent`
+            ? `${phase} ${item.id}: advanced -> ${advancedNext}`
             : `${phase} ${item.id}: needs info -> waiting human`,
         );
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
@@ -432,15 +438,16 @@ export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPri
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    // Detach on the timer path too, or a long-lived signal gains one listener per tick.
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -451,6 +458,11 @@ interface LoopControls {
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
   signal?: AbortSignal;
+}
+
+interface LoopV1Controls extends LoopControls {
+  /** Run only the spec pass each tick; the agent pass never lists, claims or runs. */
+  specOnly?: boolean;
 }
 
 /** Poll on an interval, running each newly-ready item. Stops on signal or after one pass (once). */
@@ -480,22 +492,30 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
  * agentPrimitives) once per tick. Continuous loops defer freshly-specced tickets to the next poll,
  * giving a human a window to intervene before the agent runs. One-shot runs carry freshly-specced
  * tickets into the same invocation, which avoids relying on GitHub's eventually consistent label
- * search in GitHub Actions.
+ * search in GitHub Actions. With specOnly the agent pass is skipped entirely: advanced tickets move
+ * to the spec pass's agent state/label (a review state in a review-window setup) and this watch
+ * never builds them.
  * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
  */
 export async function runLoopV1(
   specPrimitives: SpecWatchPrimitives,
   agentPrimitives: WatchPrimitives,
-  opts: LoopControls,
+  opts: LoopV1Controls,
   log: (msg: string) => void = console.log,
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
   const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
+  const specOnly = opts.specOnly === true ? { specOnly: true } : {};
   for (;;) {
     if (opts.signal?.aborted === true) return;
     const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
-    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, log, phase: 'spec' });
+    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, ...specOnly, log, phase: 'spec' });
     log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped${deferredNote(spec)}.`);
+    if (opts.specOnly === true) {
+      if (opts.once === true) return;
+      await delay(intervalMs, opts.signal);
+      continue;
+    }
     // GitHub's label index is eventually consistent: a label written by the spec pass may not
     // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
     // into the agent ready-set so spec→build completes in one invocation, deduping against what
@@ -529,6 +549,8 @@ export interface WatchLinearLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues move to spec.agentState and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -663,6 +685,8 @@ export interface WatchGithubLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -915,6 +939,8 @@ export interface WatchGitlabLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 

@@ -456,6 +456,23 @@ describe('runPreflight gitlab source', () => {
     await runPreflight(baseCmd, { env: { GITLAB_TOKEN: 'token', ANTHROPIC_API_KEY: 'key' }, nodeVersion: '24.0.0', run });
     expect(glabAuthCalled).toBe(false);
   });
+
+  it('spec-only gitlab loop-v1 still checks glab auth and the spec routing labels', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'auth') throw new Error('not logged in');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: JSON.stringify([{ name: 'vanguard' }, { name: 'ready for spec' }]) };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { ...baseCmd, specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true },
+      { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab labels missing ready for agent, needs info -> stop before claim');
+  });
 });
 
 function githubWatch(overrides: Partial<WatchCommand> = {}): WatchCommand {
@@ -568,6 +585,52 @@ describe('runPreflight provider combo check', () => {
     // makeRunner throws on `gh api` -> runOk catches -> unreadable -> best-effort skip (no check pushed)
     const unreadable = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: makeRunner() });
     expect(unreadable.checks.find((c) => c.name === 'pr-create setting')).toBeUndefined();
+  });
+
+  it.each([
+    ['doctor', githubDoctor({ specOnly: true })],
+    ['watch', githubWatch({ specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true })],
+  ] as const)('spec-only github loop-v1 %s skips the pr-create setting and the agent-pass labels', async (_kind, command) => {
+    const calls: string[] = [];
+    const base = makeRunner(['vanguard', 'ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL]);
+    const run: PreflightRunner = async (cmd, args, opts) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      return cmd === 'gh' && args[0] === 'api'
+        ? { stdout: JSON.stringify({ can_approve_pull_request_reviews: false }) }
+        : await base(cmd, args, opts);
+    };
+    const report = await runPreflight(command, {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
+    expect(formatPreflightReport(report)).toContain('preflight: github labels ok');
+    expect(calls.some((c) => c.startsWith('gh api'))).toBe(false);
+  });
+
+  const linearLoop = { source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info', specOnly: true } as const;
+  it.each([
+    ['doctor', { kind: 'doctor', ...linearLoop }],
+    ['watch', { kind: 'watch', ...linearLoop, concurrency: 1, intervalMs: 60000, once: true, egress: false }],
+  ] as const)('spec-only linear loop-v1 %s skips the publish auth checks for the origin host', async (_kind, command) => {
+    const calls: string[] = [];
+    const run: PreflightRunner = async (cmd, args) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'git' && args[0] === 'remote') return { stdout: 'https://gitlab.com/' };
+      if (cmd === 'gh' || cmd === 'glab') throw new Error('not logged in');
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(command, { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' }, nodeVersion: '24.11.1', run });
+
+    expect(report.ok).toBe(true);
+    expect(formatPreflightReport(report)).toContain('preflight: linear api ok');
+    expect(formatPreflightReport(report)).toContain('preflight: linear skills ok');
+    expect(report.checks.some((c) => c.name === 'github auth' || c.name === 'gitlab auth' || c.name === 'gitlab project')).toBe(false);
+    expect(calls.some((c) => c.startsWith('gh') || c.startsWith('glab'))).toBe(false);
   });
 });
 

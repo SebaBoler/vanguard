@@ -1089,6 +1089,124 @@ describe('parseCli', () => {
       expect('specClaimedLabel' in cmd).toBe(false);
     }
   });
+
+  // --- --spec-only: spec pass without the agent pass ---
+
+  it('parses --spec-only with --once on linear loop-v1', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--label', 'ready-for-agent',
+        '--team', 'DEV',
+        '--once',
+        '--spec-only',
+        '--spec-state', 'triage',
+        '--spec-state-name', 'Triage',
+        '--agent-state', 'Spec Review',
+        '--needs-info-state', 'Needs Info',
+      ],
+      '/work',
+    );
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'linear', once: true, specOnly: true, agentState: 'Spec Review' });
+  });
+
+  it('parses --spec-only on github loop-v1 defaults with a review label', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--agent-label', 'spec review', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'github', specLabel: 'ready for spec', agentLabel: 'spec review', specOnly: true, once: false });
+  });
+
+  it('parses --spec-only on doctor so preflight matches the spec-only watch', () => {
+    const cmd = parseCli(['doctor', '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec Review', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'doctor', specOnly: true });
+  });
+
+  const linearTargetError =
+    'watch --spec-only requires --agent-state <review state> other than "Todo"; that default is the build trigger, so specced issues would get no review window.';
+  const labelTargetError =
+    'watch --spec-only requires --agent-label <review label> other than "ready for agent"; that default is the build trigger, so specced issues would get no review window.';
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r'], labelTargetError],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'], labelTargetError],
+  ])('rejects --spec-only on %s without an explicit review target', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', ' todo'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r', '--agent-label', 'Ready for agent'], labelTargetError],
+  ])('rejects --spec-only on %s when the review target is the default build trigger given explicitly', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
+  });
+
+  it('omits specOnly when --spec-only is absent', () => {
+    const cmd = parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--once'], '/work');
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('specOnly' in cmd).toBe(false);
+    }
+  });
+
+  it('returns an error when --spec-only is used without loop-v1', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only requires loop-v1, which any loop-v1 flag turns on (for example --loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.',
+    });
+  });
+
+  it('returns an error when --spec-only advances to the spec trigger state, ignoring case', () => {
+    expect(
+      parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'spec', '--spec-only'], '/work'),
+    ).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger state "Spec"; set --agent-state to another state, or the spec pass specs the same issues again on every poll.',
+    });
+  });
+
+  it('rejects --spec-only with an --agent-state matching the default spec state name in another case', () => {
+    expect(parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--agent-state', ' SPEC ', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only cannot advance specced issues into the spec trigger state "Spec"'),
+    });
+  });
+
+  it.each([
+    ['github', ['--source', 'github', '--github-repo', 'o/r']],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard']],
+  ])('rejects --spec-only on %s when --agent-label is the spec trigger label, ignoring case', (_name, sourceArgs) => {
+    expect(parseCli(['watch', ...sourceArgs, '--spec-label', 'Ready', '--agent-label', 'ready', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger label "Ready"; set --agent-label to another label, or the spec pass specs the same issues again on every poll.',
+    });
+  });
+
+  it.each(['watch', 'doctor'])('applies the spec trigger guard to %s only with --spec-only', (kind) => {
+    const args = [kind, '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec'];
+    expect(parseCli(args, '/work')).toMatchObject({ kind, agentState: 'Spec' });
+    expect(parseCli([...args, '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining(`${kind} --spec-only cannot advance specced issues into the spec trigger state "Spec"`),
+    });
+  });
+
+  it('returns an error when --spec-only is used on the project source', () => {
+    expect(parseCli(['watch', '--source', 'project', '--project', '7', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
+
+  it.each([
+    ['run', '--linear', 'TES-1'],
+    ['watch-prs', '--github-repo', 'o/r', '--label', 'x'],
+    ['watch-mrs', '--gitlab-project', 'g/p', '--label', 'x'],
+  ])('rejects --spec-only on %s, which would otherwise ignore it', (...argv) => {
+    expect(parseCli([...argv, '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: '--spec-only is only supported with watch and doctor.',
+    });
+  });
 });
 
 describe('parseCli revise-pr', () => {
@@ -1160,6 +1278,18 @@ describe('parseCli gitlab run', () => {
 });
 
 describe('parseCli watch gitlab', () => {
+  it('parses --spec-only on gitlab loop-v1', () => {
+    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1', '--agent-label', 'spec review', '--once', '--spec-only'], '/repo');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'gitlab', specLabel: 'ready for spec', once: true, specOnly: true });
+  });
+
+  it('rejects --spec-only on single-pass gitlab watch', () => {
+    expect(parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--spec-only'], '/repo')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
+
   it('parses --source gitlab with --gitlab-project', () => {
     const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'owner/project', '--label', 'vanguard'], '/repo');
     assert(cmd.kind === 'watch');
