@@ -277,7 +277,7 @@ const DEFAULT_MAX_AGE_HOURS = 6;
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_LOOP_V1_OWNERSHIP_LABEL = 'vanguard';
 const DEFAULT_GITHUB_SPEC_LABEL = 'ready for spec';
-export const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
+const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
 const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
 const DEFAULT_LINEAR_SPEC_STATE = 'triage';
 const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
@@ -1032,7 +1032,8 @@ Commands:
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
                                  and a separate single-pass watch builds them. Leave that review state
-                                 out and the build job picks the issues up with no review window.
+                                 out and the build job picks the issues up with no review window. On Linear the
+                                 review state must not be an unstarted-type state: the build job triggers on that type.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo

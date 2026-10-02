@@ -111,20 +111,22 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
 
 describe('specOnlyReviewNote', () => {
   it.each([
-    ['linear without --agent-state', { source: 'linear', specOnly: true }, '--agent-state'],
-    ['github with the default agent label', { source: 'github', agentLabel: 'ready for agent', specOnly: true }, '--agent-label'],
-    ['gitlab with the default agent label', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, '--agent-label'],
-  ] as const)('warns for %s', (_name, overrides, flag) => {
+    ['linear', { source: 'linear', agentState: 'Spec Review', specOnly: true }, 'state "Spec Review"'],
+    ['github', { source: 'github', agentLabel: 'spec review', specOnly: true }, 'label "spec review"'],
+    ['gitlab', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, 'label "ready for agent"'],
+  ] as const)('%s: names where specced issues go and that the build job must not trigger there', (_name, overrides, target) => {
     const note = specOnlyReviewNote(watchCommand(overrides));
-    expect(note).toContain('so there is no review window');
-    expect(note).toContain(flag);
+    expect(note).toContain(`moves specced issues to ${target}`);
+    expect(note).toContain('the build job must not trigger on it');
   });
 
-  it.each([
-    ['linear with a review state', { source: 'linear', agentState: 'Spec Review', specOnly: true }],
-    ['github with a review label', { source: 'github', agentLabel: 'spec review', specOnly: true }],
-    ['a watch without --spec-only', { source: 'github', agentLabel: 'ready for agent' }],
-  ] as const)('stays quiet for %s', (_name, overrides) => {
-    expect(specOnlyReviewNote(watchCommand(overrides))).toBeUndefined();
+  it('linear: names the default Todo state and the unstarted-type rule', () => {
+    expect(specOnlyReviewNote(watchCommand({ source: 'linear', specOnly: true }))).toContain(
+      'state "Todo". For a review window the build job must not trigger on it, so it must not be an unstarted-type state',
+    );
+  });
+
+  it('stays quiet without --spec-only', () => {
+    expect(specOnlyReviewNote(watchCommand({ source: 'github', agentLabel: 'ready for agent' }))).toBeUndefined();
   });
 });
