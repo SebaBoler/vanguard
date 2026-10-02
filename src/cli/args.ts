@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import { isProviderName, validateProviderChoice, PROVIDER_NAMES } from '../agents/registry.js';
 import type { ProviderName } from '../agents/registry.js';
 import type { RunOptions } from '../runners/source-adapter.js';
+import { assertSafeBaseBranch } from '../worktree/manager.js';
 
 type WatchSource = 'linear' | 'github' | 'project' | 'gitlab';
 
@@ -471,6 +472,15 @@ export function parseCli(argv: string[], cwd: string): Command {
     commitAuthor = parseCommitAuthor(values['commit-author']);
   } catch (message) {
     return fail(String(message));
+  }
+
+  // Checked once here for run, watch and spec, so a bad --base exits before any ticket is claimed.
+  if (typeof values.base === 'string') {
+    try {
+      assertSafeBaseBranch(values.base);
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
   }
 
   // Opt-in overrides to let a single run finish a large task (run + watch). Positive integers only;
