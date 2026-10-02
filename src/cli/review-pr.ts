@@ -113,6 +113,7 @@ async function runDefaultReviewer(
     });
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
     const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
@@ -120,7 +121,7 @@ async function runDefaultReviewer(
         ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? Math.ceil((cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS) * 1.5) : cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS,
+        maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

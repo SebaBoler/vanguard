@@ -312,7 +312,7 @@ function sameName(a: string, b: string): boolean {
 /**
  * Parse a positive-integer flag (--limit, --max-turns, --max-tasks, --max-repair-iterations, ...), or undefined
  * if absent or invalid. A huge value is clamped to Number.MAX_SAFE_INTEGER, so it still means "effectively
- * unlimited" while derived caps (the review commands' 1.5x retry) stay finite and out of exponent notation.
+ * unlimited" and never reaches a CLI argument as Infinity or in exponent notation.
  */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
@@ -1149,8 +1149,8 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
-    --max-turns <n>        Agent CLI turn cap for the first review attempt; tool calls count as turns (default: ${DEFAULT_REVIEW_MAX_TURNS}).
-                           The retry after an incomplete review gets 1.5x (opt-in, higher cost)
+    --max-turns <n>        Agent CLI turn cap for the first review attempt (default: ${DEFAULT_REVIEW_MAX_TURNS}; opt-in, higher cost).
+                           Tool calls count as turns. The retry after an incomplete review gets 1.5x
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
