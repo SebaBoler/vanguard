@@ -277,7 +277,7 @@ const DEFAULT_MAX_AGE_HOURS = 6;
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_LOOP_V1_OWNERSHIP_LABEL = 'vanguard';
 const DEFAULT_GITHUB_SPEC_LABEL = 'ready for spec';
-const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
+export const DEFAULT_GITHUB_AGENT_LABEL = 'ready for agent';
 const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
 const DEFAULT_LINEAR_SPEC_STATE = 'triage';
 const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
@@ -1053,11 +1053,13 @@ Commands:
                                  Review window: a spec-only job advances specced issues to a review state/label
                                  (--agent-state/--agent-label), a human moves approved ones to the agent trigger,
                                  and a separate single-pass watch builds them. --spec-only requires --agent-state
-                                 (Linear) or --agent-label (GitHub/GitLab), because the defaults are the build
-                                 trigger and would give no review window. On Linear both passes list issues by
-                                 state type, so the review state's type must differ from the --spec-state type (or
-                                 it is specced again on every poll) and from the build job's trigger type (unstarted
-                                 by default). With the default --spec-state triage, use a backlog-type review state.
+                                 (Linear) or --agent-label (GitHub/GitLab) other than the default build trigger,
+                                 which would give no review window. Only the default is checked: Vanguard cannot
+                                 see a build job that triggers on another state or label. On Linear both passes
+                                 list issues by state type, so the review state's type must differ from the
+                                 --spec-state type (or it is specced again on every poll) and from the build job's
+                                 trigger type (unstarted by default). With the default --spec-state triage, use a
+                                 backlog-type review state.
 
     Example (GitHub, defaults):
       vanguard watch --source github --github-repo owner/repo

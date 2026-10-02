@@ -125,10 +125,10 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
 describe('specOnlyReviewNote', () => {
   it.each([
     ['github', { source: 'github', agentLabel: 'spec review', specOnly: true }, 'spec review'],
-    ['gitlab', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, 'ready for agent'],
+    ['gitlab', { source: 'gitlab', agentLabel: 'spec review', specOnly: true }, 'spec review'],
   ] as const)('%s: names the label specced issues get and that the build job must not trigger on it', (_name, overrides, label) => {
     expect(specOnlyReviewNote(watchCommand(overrides))).toBe(
-      `watch: --spec-only moves specced issues to label "${label}". For a review window the build job must not trigger on it.`,
+      `watch: --spec-only moves specced issues to label "${label}". For a review window the build job must not trigger on it. Vanguard only checks that it is not the default build label "ready for agent"; it cannot see a build job on another label.`,
     );
   });
 
