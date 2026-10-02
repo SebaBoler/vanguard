@@ -143,6 +143,7 @@ export async function watchLinearSource(
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-state is required with --spec-only for linear loop-v1');
   await watchLinear({
     deps: agentDeps,
     label,
@@ -224,6 +225,7 @@ export async function watchGithubSource(
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-label is required with --spec-only for github loop-v1');
   // parseCli guarantees --label for the single-pass github source.
   const label = cmd.label!;
   await watchGithub({
@@ -322,6 +324,7 @@ export async function watchGitlabSource(
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-label is required with --spec-only for gitlab loop-v1');
   if (cmd.label === undefined) throw new Error('--label is required for gitlab watch source');
   await watchGitlab({
     deps,

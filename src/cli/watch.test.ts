@@ -19,7 +19,7 @@ vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
 
-import { watchLinear, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
+import { watchLinear, watchGithub, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
 import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
@@ -91,5 +91,18 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]![0]).toMatchObject({ once: true, specOnly: true });
     expect('specOnly' in calls[1]![0]).toBe(false);
+  });
+
+  it.each([
+    ['linear', { source: 'linear', skillsDir: '/skills' }, watchLinearSource, '--spec-state is required with --spec-only for linear loop-v1'],
+    ['github', { source: 'github' }, watchGithubSource, '--spec-label is required with --spec-only for github loop-v1'],
+    ['gitlab', { source: 'gitlab', project: 'g/p' }, watchGitlabSource, '--spec-label is required with --spec-only for gitlab loop-v1'],
+  ] as const)('%s: specOnly without the spec trigger throws instead of running the single-pass watch', async (_name, single, source, message) => {
+    vi.stubEnv('LINEAR_API_KEY', 'key');
+    await expect(source(watchCommand({ ...single, specOnly: true }), undefined, ctx, signal)).rejects.toThrow(message);
+
+    expect(watchLinear).not.toHaveBeenCalled();
+    expect(watchGithub).not.toHaveBeenCalled();
+    expect(watchGitlab).not.toHaveBeenCalled();
   });
 });
