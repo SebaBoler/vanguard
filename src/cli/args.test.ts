@@ -1124,7 +1124,7 @@ describe('parseCli', () => {
   it('returns an error when --spec-only is used without loop-v1', () => {
     expect(parseCli(['watch', '--label', 'vanguard', '--once', '--spec-only'], '/work')).toEqual({
       kind: 'error',
-      message: 'watch --spec-only requires loop-v1 (--loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.',
+      message: 'watch --spec-only requires loop-v1, which any loop-v1 flag turns on (for example --loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.',
     });
   });
 

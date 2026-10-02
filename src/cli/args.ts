@@ -866,7 +866,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       }
     } else {
       if (values['spec-only'] === true) {
-        return fail(`${commandKind} --spec-only requires loop-v1 (--loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.`);
+        return fail(`${commandKind} --spec-only requires loop-v1, which any loop-v1 flag turns on (for example --loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.`);
       }
       // Existing single-pass validation: label is required for linear/github/gitlab; optional for project.
       if (source !== 'project' && label === undefined) {
