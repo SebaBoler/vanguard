@@ -15,21 +15,21 @@ export function neutralizePromptTags(text: string): string {
   return text.replaceAll('<', '&lt;');
 }
 
-// Both forges' dedupe markers, in the line-anchored shape their detectors accept, padded with any whitespace
-// `.trim()` or GitLab's rstrip could remove, so stripping covers everything detection could count once the
-// note is built and saved. The padding excludes line breaks: `\s*` would rescan every following blank
-// line from each line start, which is quadratic on a long blank run.
-const PAD = String.raw`[^\S\n\r\u2028\u2029]*`;
+// Both forges' dedupe markers and the PR incomplete-review marker, in the line-anchored shape their detectors
+// accept, padded with any whitespace `.trim()` or GitLab's rstrip could remove, so stripping covers everything
+// detection could count once the note is built and saved. The padding excludes line breaks: `\s*` would
+// rescan every following blank line from each line start, which is quadratic on a long blank run.
+export const MARKER_PAD = String.raw`[^\S\n\r\u2028\u2029]*`;
 const REVIEW_MARKER_LINE_RE = new RegExp(
-  String.raw`^${PAD}<!--[ \t]*vanguard-(?:mr|pr)-review:[ \t]*[a-fA-F0-9]+[ \t]*-->${PAD}$`,
+  String.raw`^${MARKER_PAD}<!--[ \t]*vanguard-(?:(?:mr|pr)-review:[ \t]*[a-fA-F0-9]+|pr-review-incomplete)[ \t]*-->${MARKER_PAD}$`,
   'gm',
 );
 
 /**
  * Remove review dedupe markers from text the bot posts but did not write (verdicts, conformance sections,
  * error text). The agent can quote one from the MR or PR content, and in the bot's own note it would mark
- * that head as reviewed. `\r` goes first: GitLab drops it when it saves a note, which would rejoin a
- * marker split by one.
+ * that head as reviewed, or make revise-pr skip the note as an incomplete review. `\r` goes first: GitLab
+ * drops it when it saves a note, which would rejoin a marker split by one.
  */
 export function stripReviewMarkers(text: string): string {
   return text.replaceAll('\r', '').replace(REVIEW_MARKER_LINE_RE, '');

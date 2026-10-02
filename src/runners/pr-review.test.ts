@@ -4,8 +4,10 @@ import {
   buildPullRequestReviewIncompleteComment,
   buildPullRequestReviewPrompt,
   fetchPullRequestForReview,
+  hasPullRequestReviewIncompleteMarker,
   hasPullRequestReviewMarker,
   parsePullRequestRef,
+  PR_REVIEW_INCOMPLETE_MARKER,
   PR_REVIEW_INCOMPLETE_NOTICE,
   PR_REVIEW_NO_OUTPUT_NOTICE,
   PullRequestReviewIncompleteError,
@@ -405,6 +407,36 @@ describe('review prompt and comment formatting', () => {
     ].join('\n');
 
     expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(true);
+  });
+});
+
+describe('hasPullRequestReviewIncompleteMarker', () => {
+  it("finds the marker on its own line of the bot's note", () => {
+    expect(hasPullRequestReviewIncompleteMarker(buildPullRequestReviewIncompleteComment())).toBe(true);
+  });
+
+  it('finds a marker padded with whitespace, as stripReviewMarkers strips it', () => {
+    const body = ['## Vanguard Review', '', 'Partial.', '', `\t${PR_REVIEW_INCOMPLETE_MARKER} `, ''].join('\r\n');
+
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(true);
+  });
+
+  it('rejects a marker inline with other text', () => {
+    const body = `## Vanguard Review\n\nWhy is ${PR_REVIEW_INCOMPLETE_MARKER} on the last review?`;
+
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(false);
+  });
+
+  it('rejects a multiline hidden marker comment', () => {
+    const body = ['## Vanguard Review', '', '<!--', ' vanguard-pr-review-incomplete', '-->'].join('\n');
+
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(false);
+  });
+
+  it('rejects a marker quoted in a code block', () => {
+    const body = ['The last review ended with:', '', '```', buildPullRequestReviewIncompleteComment(), '```'].join('\n');
+
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(false);
   });
 });
 
