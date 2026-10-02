@@ -62,9 +62,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('watch deps builders thread RunOptions', () => {
   it('watchLinearSource carries every option field', async () => {
-    process.env.LINEAR_API_KEY = 'key';
+    vi.stubEnv('LINEAR_API_KEY', 'key');
     await watchLinearSource(watchCommand({ source: 'linear', skillsDir: '/skills' }), undefined, ctx, signal);
     const deps = vi.mocked(watchLinear).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
@@ -86,10 +90,6 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
   const linearLoop = { source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' } as const;
   const githubLoop = { source: 'github', specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' } as const;
   const gitlabLoop = { ...githubLoop, source: 'gitlab', project: 'g/p' } as const;
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
 
   it.each([
     ['linear', linearLoop, watchLinearSource, watchLinearLoopV1],
@@ -149,10 +149,6 @@ describe('specOnlyReviewNote', () => {
 });
 
 describe('watchCommand', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it('prints the spec-only review note before it dispatches to the source', async () => {
     vi.stubEnv('LINEAR_API_KEY', 'key');
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'token');
@@ -180,5 +176,26 @@ describe('watchCommand', () => {
       log.mockRestore();
       once.mockRestore();
     }
+  });
+});
+
+describe('loop-v1 spec deps carry --base', () => {
+  const loopV1 = { specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' };
+
+  it('watchLinearSource', async () => {
+    vi.stubEnv('LINEAR_API_KEY', 'key');
+    const cmd = watchCommand({ source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' });
+    await watchLinearSource(cmd, undefined, ctx, signal);
+    expect(vi.mocked(watchLinearLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGithubSource', async () => {
+    await watchGithubSource(watchCommand({ repoSlug: 'o/r', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGithubLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
+  });
+
+  it('watchGitlabSource', async () => {
+    await watchGitlabSource(watchCommand({ source: 'gitlab', project: 'g/p', ...loopV1 }), undefined, ctx, signal);
+    expect(vi.mocked(watchGitlabLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
   });
 });

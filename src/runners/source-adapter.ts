@@ -509,7 +509,7 @@ export async function runSourcedIssue(
       // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
       // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
       const commitLeaks = partial
-        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, 'main'), task.id)
+        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, deps.baseBranch ?? 'main'), task.id)
         : [];
       // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
       // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the

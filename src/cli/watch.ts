@@ -124,6 +124,7 @@ export async function watchLinearSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchLinearLoopV1({
@@ -209,6 +210,7 @@ export async function watchGithubSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGithubLoopV1({
@@ -300,7 +302,7 @@ export async function watchGitlabSource(
     if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
       throw new Error('--agent-label and --needs-info-label are required with --spec-label for gitlab loop-v1');
     }
-    const specDeps = {
+    const specDeps: RunSpecGeneratorDeps = {
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitLabTaskFetcher(deps.project),
@@ -309,6 +311,7 @@ export async function watchGitlabSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGitlabLoopV1({

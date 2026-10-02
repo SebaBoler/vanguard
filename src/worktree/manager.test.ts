@@ -37,6 +37,10 @@ describe('WorktreeManager', () => {
     expect(wt.path.endsWith('904-r1')).toBe(true);
   });
 
+  it('refuses a base branch git would read as an option', async () => {
+    await expect(wm.create('task-1', '-dev')).rejects.toThrow('Invalid base branch');
+  });
+
   it('gives the same task a fresh branch and path on each run (no collision)', async () => {
     const first = await wm.create('dup', 'main');
     const second = await wm.create('dup', 'main');

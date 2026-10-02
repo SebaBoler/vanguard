@@ -723,6 +723,13 @@ describe('parseCli', () => {
     expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
   });
 
+  it('rejects an unsafe or empty watch --base before any polling starts', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base=-dev'], '/work');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/Invalid base branch "-dev"/);
+    const empty = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base='], '/work');
+    expect(empty.kind === 'error' && empty.message).toMatch(/cannot be empty/);
+  });
+
   it('parses review-pr --out (write-to-file, no PR comment)', () => {
     const cmd = parseCli(['review-pr', 'o/r#12', '--review-model', 'claude-fable-5', '--out', '.vanguard/reviews/12.md'], '/work');
     expect(cmd.kind).toBe('review-pr');
