@@ -1128,12 +1128,29 @@ describe('parseCli', () => {
     });
   });
 
-  it('returns an error when --spec-only advances to the spec trigger state', () => {
+  it('returns an error when --spec-only advances to the spec trigger state, ignoring case', () => {
     expect(
-      parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'Spec', '--spec-only'], '/work'),
+      parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'spec', '--spec-only'], '/work'),
     ).toEqual({
       kind: 'error',
       message: 'watch --spec-only cannot use the spec trigger state "Spec" as --agent-state; the spec pass would spec the same issues again on every poll.',
+    });
+  });
+
+  it('rejects --spec-only with an --agent-state matching the default spec state name in another case', () => {
+    expect(parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--agent-state', ' SPEC ', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('cannot use the spec trigger state "Spec" as --agent-state'),
+    });
+  });
+
+  it.each([
+    ['github', ['--source', 'github', '--github-repo', 'o/r']],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard']],
+  ])('rejects --spec-only on %s when --agent-label is the spec trigger label, ignoring case', (_name, sourceArgs) => {
+    expect(parseCli(['watch', ...sourceArgs, '--spec-label', 'Ready', '--agent-label', 'ready', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot use the spec trigger label "Ready" as --agent-label; the spec pass would spec the same issues again on every poll.',
     });
   });
 

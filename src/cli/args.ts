@@ -291,6 +291,10 @@ function fail(message: string): Command {
   return { kind: 'error', message };
 }
 
+function sameName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
@@ -846,6 +850,9 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
+        if (values['spec-only'] === true && sameName(agentLabel, specLabel)) {
+          return fail(`${commandKind} --spec-only cannot use the spec trigger label "${specLabel}" as --agent-label; the spec pass would spec the same issues again on every poll.`);
+        }
         // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
         // watches the routing labels directly; explicit --label narrows that further when desired.
       } else if (source === 'linear') {
@@ -857,7 +864,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
-        if (values['spec-only'] === true && agentState === specStateName) {
+        if (values['spec-only'] === true && agentState !== undefined && sameName(agentState, specStateName)) {
           return fail(`${commandKind} --spec-only cannot use the spec trigger state "${specStateName}" as --agent-state; the spec pass would spec the same issues again on every poll.`);
         }
       } else {
