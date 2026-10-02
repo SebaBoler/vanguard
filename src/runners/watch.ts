@@ -486,8 +486,9 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
  * agentPrimitives) once per tick. Continuous loops defer freshly-specced tickets to the next poll,
  * giving a human a window to intervene before the agent runs. One-shot runs carry freshly-specced
  * tickets into the same invocation, which avoids relying on GitHub's eventually consistent label
- * search in GitHub Actions. With specOnly the agent pass is skipped entirely, so advanced tickets
- * wait in the agent trigger until a separate (e.g. scheduled) agent-only watch picks them up.
+ * search in GitHub Actions. With specOnly the agent pass is skipped entirely: advanced tickets move
+ * to the spec pass's agent state/label (a review state in a review-window setup) and this watch
+ * never builds them.
  * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
  */
 export async function runLoopV1(
@@ -542,7 +543,7 @@ export interface WatchLinearLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
-  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  /** Run only the spec pass each poll; advanced issues move to spec.agentState and are not built by this watch. */
   specOnly?: boolean;
   signal?: AbortSignal;
 }
@@ -678,7 +679,7 @@ export interface WatchGithubLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
-  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
   specOnly?: boolean;
   signal?: AbortSignal;
 }
@@ -932,7 +933,7 @@ export interface WatchGitlabLoopV1Options {
   once?: boolean;
   /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
   maxTasks?: number;
-  /** Run only the spec pass each poll; advanced issues wait for a separate agent-only watch. */
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
   specOnly?: boolean;
   signal?: AbortSignal;
 }
