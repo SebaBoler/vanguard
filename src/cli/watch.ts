@@ -241,12 +241,13 @@ export async function watchGithubSource(
   });
 }
 
-async function watchGithubProjectSource(
+export async function watchGithubProjectSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
+  if (cmd.specOnly === true) throw new Error('--spec-only is not supported with --source project');
   // parseCli guarantees --project for the project source.
   const projectNumber = cmd.projectNumber!;
   const deps = await buildGithubDeps(cmd, auth, ctx);

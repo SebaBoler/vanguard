@@ -19,8 +19,8 @@ vi.mock('../runners/gitlab.js', () => ({
   gitlabDepsFromEnv: vi.fn(async (repoPath: string, project: string) => ({ repoPath, project })),
 }));
 
-import { watchLinear, watchGithub, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
-import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGitlabSource } from './watch.js';
+import { watchLinear, watchGithub, watchGithubProject, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
+import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGithubProjectSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -97,6 +97,7 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
     ['linear', { source: 'linear', skillsDir: '/skills' }, watchLinearSource, '--spec-state is required with --spec-only for linear loop-v1'],
     ['github', { source: 'github' }, watchGithubSource, '--spec-label is required with --spec-only for github loop-v1'],
     ['gitlab', { source: 'gitlab', project: 'g/p' }, watchGitlabSource, '--spec-label is required with --spec-only for gitlab loop-v1'],
+    ['project', { source: 'project', projectNumber: 7 }, watchGithubProjectSource, '--spec-only is not supported with --source project'],
   ] as const)('%s: specOnly without the spec trigger throws instead of running the single-pass watch', async (_name, single, source, message) => {
     vi.stubEnv('LINEAR_API_KEY', 'key');
     await expect(source(watchCommand({ ...single, specOnly: true }), undefined, ctx, signal)).rejects.toThrow(message);
@@ -104,5 +105,6 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
     expect(watchLinear).not.toHaveBeenCalled();
     expect(watchGithub).not.toHaveBeenCalled();
     expect(watchGitlab).not.toHaveBeenCalled();
+    expect(watchGithubProject).not.toHaveBeenCalled();
   });
 });
