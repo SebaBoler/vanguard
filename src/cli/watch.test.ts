@@ -20,7 +20,7 @@ vi.mock('../runners/gitlab.js', () => ({
 }));
 
 import { watchLinear, watchGithub, watchGithubProject, watchGitlab, watchLinearLoopV1, watchGithubLoopV1, watchGitlabLoopV1 } from '../runners/watch.js';
-import { buildGithubDeps, watchLinearSource, watchGithubSource, watchGithubProjectSource, watchGitlabSource } from './watch.js';
+import { buildGithubDeps, specOnlyReviewNote, watchLinearSource, watchGithubSource, watchGithubProjectSource, watchGitlabSource } from './watch.js';
 import { RUN_OPTIONS } from './run-options.fixture.js';
 import type { Command } from './args.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -106,5 +106,25 @@ describe('loop-v1 sources pass --spec-only to the loop', () => {
     expect(watchGithub).not.toHaveBeenCalled();
     expect(watchGitlab).not.toHaveBeenCalled();
     expect(watchGithubProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('specOnlyReviewNote', () => {
+  it.each([
+    ['linear without --agent-state', { source: 'linear', specOnly: true }, '--agent-state'],
+    ['github with the default agent label', { source: 'github', agentLabel: 'ready for agent', specOnly: true }, '--agent-label'],
+    ['gitlab with the default agent label', { source: 'gitlab', agentLabel: 'ready for agent', specOnly: true }, '--agent-label'],
+  ] as const)('warns for %s', (_name, overrides, flag) => {
+    const note = specOnlyReviewNote(watchCommand(overrides));
+    expect(note).toContain('so there is no review window');
+    expect(note).toContain(flag);
+  });
+
+  it.each([
+    ['linear with a review state', { source: 'linear', agentState: 'Spec Review', specOnly: true }],
+    ['github with a review label', { source: 'github', agentLabel: 'spec review', specOnly: true }],
+    ['a watch without --spec-only', { source: 'github', agentLabel: 'ready for agent' }],
+  ] as const)('stays quiet for %s', (_name, overrides) => {
+    expect(specOnlyReviewNote(watchCommand(overrides))).toBeUndefined();
   });
 });

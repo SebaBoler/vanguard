@@ -14,6 +14,7 @@ import { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL } 
 import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
+import { DEFAULT_GITHUB_AGENT_LABEL } from './args.js';
 import type { Command } from './args.js';
 import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 
@@ -51,6 +52,8 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
   console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
+  const reviewNote = specOnlyReviewNote(cmd);
+  if (reviewNote !== undefined) console.log(reviewNote);
   try {
     if (cmd.source === 'linear') {
       await watchLinearSource(cmd, auth, ctx, controller.signal);
@@ -64,6 +67,18 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   } finally {
     await ctx.destroy();
   }
+}
+
+/** Under --spec-only, advancing specced issues to the default build trigger leaves no review window. */
+export function specOnlyReviewNote(cmd: WatchCommand): string | undefined {
+  if (cmd.specOnly !== true) return undefined;
+  if (cmd.source === 'linear' && (cmd.agentState ?? 'Todo') === 'Todo') {
+    return 'watch: --spec-only advances specced issues to "Todo", the default build trigger, so there is no review window. Set --agent-state to a review state.';
+  }
+  if ((cmd.source === 'github' || cmd.source === 'gitlab') && cmd.agentLabel === DEFAULT_GITHUB_AGENT_LABEL) {
+    return `watch: --spec-only advances specced issues to "${DEFAULT_GITHUB_AGENT_LABEL}", the default build trigger, so there is no review window. Set --agent-label to a review label.`;
+  }
+  return undefined;
 }
 
 export async function watchLinearSource(
