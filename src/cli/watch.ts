@@ -14,6 +14,7 @@ import { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL } 
 import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
+import { DEFAULT_LINEAR_AGENT_STATE } from './args.js';
 import type { Command } from './args.js';
 import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 
@@ -72,7 +73,7 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 export function specOnlyReviewNote(cmd: WatchCommand): string | undefined {
   if (cmd.specOnly !== true) return undefined;
   if (cmd.source === 'linear') {
-    return `watch: --spec-only moves specced issues to state "${cmd.agentState ?? 'Todo'}". Its state type must differ from the --spec-state type, or the spec pass specs them again on every poll, and from the build job's trigger type (unstarted by default), or there is no review window.`;
+    return `watch: --spec-only moves specced issues to state "${cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE}". Its state type must differ from the --spec-state type, or the spec pass specs them again on every poll, and from the build job's trigger type (unstarted by default), or there is no review window.`;
   }
   return cmd.agentLabel !== undefined
     ? `watch: --spec-only moves specced issues to label "${cmd.agentLabel}". For a review window the build job must not trigger on it.`
@@ -132,7 +133,7 @@ export async function watchLinearSource(
         specTriggerState: cmd.specState,
         specTriggerStateName: specStateName,
         claimedState: cmd.specClaimedState ?? SPEC_CLAIMED_STATE,
-        agentState: cmd.agentState ?? 'Todo',
+        agentState: cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE,
         needsInfoState,
         ...(cmd.team !== undefined ? { team: cmd.team } : {}),
       },
@@ -140,7 +141,7 @@ export async function watchLinearSource(
         deps: agentDeps,
         label,
         triggerState: cmd.triggerState ?? 'unstarted',
-        triggerStateName: cmd.triggerStateName ?? cmd.agentState ?? 'Todo',
+        triggerStateName: cmd.triggerStateName ?? cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE,
         claimedState: cmd.claimedState ?? 'In Progress',
         reviewState: cmd.reviewState ?? 'In Review',
         needsInfoState,

@@ -282,6 +282,8 @@ const DEFAULT_GITHUB_NEEDS_INFO_LABEL = 'needs info';
 const DEFAULT_LINEAR_SPEC_STATE = 'triage';
 const DEFAULT_LINEAR_SPEC_STATE_NAME = 'Spec';
 const DEFAULT_LINEAR_NEEDS_INFO_STATE = 'Needs Info';
+/** State NAME the Linear spec pass advances to when --agent-state is absent. */
+export const DEFAULT_LINEAR_AGENT_STATE = 'Todo';
 const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
@@ -291,6 +293,7 @@ function fail(message: string): Command {
   return { kind: 'error', message };
 }
 
+// Case and surrounding spaces are not trusted to tell two names apart; a false match only rejects the config.
 function sameName(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
@@ -843,8 +846,11 @@ export function parseCli(argv: string[], cwd: string): Command {
 
     if (isLoopV1) {
       // Advancing into the spec trigger re-lists the issue for the spec pass, which runs first on every
-      // poll. Only a --once run without --spec-only builds the issue before anything polls again.
-      const respecLoop = values['spec-only'] === true || values.once !== true;
+      // poll. Only a --once watch without --spec-only builds the issue before anything polls again;
+      // doctor takes no --once, so it checks only the --spec-only case.
+      let respecWhen: string | undefined;
+      if (values['spec-only'] === true) respecWhen = 'with --spec-only';
+      else if (commandKind === 'watch' && values.once !== true) respecWhen = 'without --once';
       // Loop v1 validation per source.
       if (source === 'github' || source === 'gitlab') {
         if (specLabel === undefined || agentLabel === undefined || needsInfoLabel === undefined) {
@@ -853,8 +859,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
-        if (respecLoop && sameName(agentLabel, specLabel)) {
-          return fail(`${commandKind} cannot use the spec trigger label "${specLabel}" as --agent-label with --spec-only or without --once; the spec pass would spec the same issues again on every poll.`);
+        if (respecWhen !== undefined && sameName(agentLabel, specLabel)) {
+          return fail(`${commandKind} cannot advance specced issues into the spec trigger label "${specLabel}" ${respecWhen}; set --agent-label to another label, or the spec pass specs the same issues again on every poll.`);
         }
         // --label is an optional extra ownership filter in github loop-v1. A repo-scoped shorthand
         // watches the routing labels directly; explicit --label narrows that further when desired.
@@ -867,8 +873,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
-        if (respecLoop && agentState !== undefined && sameName(agentState, specStateName)) {
-          return fail(`${commandKind} cannot use the spec trigger state "${specStateName}" as --agent-state with --spec-only or without --once; the spec pass would spec the same issues again on every poll.`);
+        if (respecWhen !== undefined && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, specStateName)) {
+          return fail(`${commandKind} cannot advance specced issues into the spec trigger state "${specStateName}" ${respecWhen}; set --agent-state to another state, or the spec pass specs the same issues again on every poll.`);
         }
       } else {
         // project source does not support loop-v1
