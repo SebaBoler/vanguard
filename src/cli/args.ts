@@ -859,8 +859,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (source === 'gitlab' && label === undefined) {
           return fail('gitlab loop-v1 requires --label <name>.');
         }
-        if (values['spec-only'] === true && typeof values['agent-label'] !== 'string') {
-          return fail(`${commandKind} --spec-only requires --agent-label <review label>; the default "${agentLabel}" is the build trigger, so specced issues would get no review window.`);
+        if (values['spec-only'] === true && sameName(agentLabel, DEFAULT_GITHUB_AGENT_LABEL)) {
+          return fail(`${commandKind} --spec-only requires --agent-label <review label> other than "${DEFAULT_GITHUB_AGENT_LABEL}"; that default is the build trigger, so specced issues would get no review window.`);
         }
         if (respecWhen !== undefined && sameName(agentLabel, specLabel)) {
           return fail(`${commandKind} cannot advance specced issues into the spec trigger label "${specLabel}" ${respecWhen}; set --agent-label to another label, or the spec pass specs the same issues again on every poll.`);
@@ -876,9 +876,11 @@ export function parseCli(argv: string[], cwd: string): Command {
         if (label === undefined) {
           return fail(`${commandKind} --source linear loop-v1 requires --label <name>.`);
         }
-        if (values['spec-only'] === true && agentState === undefined) {
-          return fail(`${commandKind} --spec-only requires --agent-state <review state>; the default "${DEFAULT_LINEAR_AGENT_STATE}" is the build trigger, so specced issues would get no review window.`);
+        if (values['spec-only'] === true && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, DEFAULT_LINEAR_AGENT_STATE)) {
+          return fail(`${commandKind} --spec-only requires --agent-state <review state> other than "${DEFAULT_LINEAR_AGENT_STATE}"; that default is the build trigger, so specced issues would get no review window.`);
         }
+        // The spec pass lists by state TYPE (--spec-state); --spec-state-name is only its revert target. This
+        // name check catches the obvious case and assumes --spec-state-name is a state of the --spec-state type.
         if (respecWhen !== undefined && sameName(agentState ?? DEFAULT_LINEAR_AGENT_STATE, specStateName)) {
           return fail(`${commandKind} cannot advance specced issues into the spec trigger state "${specStateName}" ${respecWhen}; set --agent-state to another state, or the spec pass specs the same issues again on every poll.`);
         }

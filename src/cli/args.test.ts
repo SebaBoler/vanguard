@@ -1113,11 +1113,23 @@ describe('parseCli', () => {
     expect(cmd).toMatchObject({ kind: 'doctor', specOnly: true });
   });
 
+  const linearTargetError =
+    'watch --spec-only requires --agent-state <review state> other than "Todo"; that default is the build trigger, so specced issues would get no review window.';
+  const labelTargetError =
+    'watch --spec-only requires --agent-label <review label> other than "ready for agent"; that default is the build trigger, so specced issues would get no review window.';
+
   it.each([
-    ['linear', ['--loop-v1', '--label', 'vanguard'], 'watch --spec-only requires --agent-state <review state>; the default "Todo" is the build trigger, so specced issues would get no review window.'],
-    ['github', ['--source', 'github', '--github-repo', 'o/r'], 'watch --spec-only requires --agent-label <review label>; the default "ready for agent" is the build trigger, so specced issues would get no review window.'],
-    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'], 'watch --spec-only requires --agent-label <review label>; the default "ready for agent" is the build trigger, so specced issues would get no review window.'],
+    ['linear', ['--loop-v1', '--label', 'vanguard'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r'], labelTargetError],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'], labelTargetError],
   ])('rejects --spec-only on %s without an explicit review target', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', ' todo'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r', '--agent-label', 'Ready for agent'], labelTargetError],
+  ])('rejects --spec-only on %s when the review target is the default build trigger given explicitly', (_name, args, message) => {
     expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
   });
 
