@@ -167,8 +167,8 @@ export function validateCreateRun(params: unknown): void {
   if (p.maxTurns !== undefined && (typeof p.maxTurns !== 'number' || !Number.isInteger(p.maxTurns) || p.maxTurns <= 0)) {
     throw new BadRequestError(`maxTurns must be a positive integer, got ${String(p.maxTurns)}`);
   }
-  if (p.baseBranch !== undefined && (typeof p.baseBranch !== 'string' || p.baseBranch.trim() === '')) {
-    throw new BadRequestError(`baseBranch must be a non-blank string, got ${String(p.baseBranch)}`);
+  if (p.baseBranch !== undefined && typeof p.baseBranch !== 'string') {
+    throw new BadRequestError(`baseBranch must be a string, got ${String(p.baseBranch)}`);
   }
   if (typeof p.baseBranch === 'string') {
     try {
