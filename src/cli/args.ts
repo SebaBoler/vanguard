@@ -306,7 +306,8 @@ function sameName(a: string, b: string): boolean {
 /** Parse a `--limit` value into a positive integer, or undefined if absent/invalid. */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
-  return Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : undefined;
+  // The safe-integer ceiling keeps a derived cap (e.g. review-mr's 1.5x retry) finite and out of exponent notation.
+  return Number.isFinite(limit) && limit >= 1 && limit <= Number.MAX_SAFE_INTEGER ? Math.floor(limit) : undefined;
 }
 
 /**

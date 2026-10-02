@@ -1,4 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../sandbox/sandbox-context.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../sandbox/sandbox-context.js')>()),
+  startSandboxContext: vi.fn(async () => ({ destroy: async () => undefined })),
+}));
+vi.mock('../sandbox/llm-proxy.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../sandbox/llm-proxy.js')>()),
+  startProviderProxies: vi.fn(async () => ({ destroy: async () => undefined })),
+}));
+vi.mock('../core/vanguard.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/vanguard.js')>()),
+  prepareContext: vi.fn(async () => ({})),
+  runAgent: vi.fn(),
+  disposeContext: vi.fn(async () => undefined),
+}));
+
+import { runAgent } from '../core/vanguard.js';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -125,5 +142,32 @@ describe('reviewPrCommand', () => {
     } finally {
       await rm(outPath, { force: true });
     }
+  });
+
+  it('--max-turns sets the first attempt cap and 1.5x for the retry', async () => {
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'sk-ant-oat-test');
+    vi.mocked(runAgent).mockResolvedValue({
+      taskId: 't',
+      exitReason: 'completed',
+      completed: true,
+      turns: 1,
+      finalText: 'No blocking findings.',
+      worktreePath: '/wt',
+      worktreePreserved: false,
+    });
+    const pr = fakeResult().pr;
+    const reviewPullRequest = async (_ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> => {
+      await deps.reviewer(pr, { isRetry: false });
+      await deps.reviewer(pr, { isRetry: true });
+      return fakeResult();
+    };
+
+    await reviewPrCommand(
+      { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: true, maxTurns: 41 } satisfies Command,
+      { reviewPullRequest, log: () => undefined },
+    );
+
+    expect(vi.mocked(runAgent).mock.calls.map(([, input]) => input.maxTurns)).toEqual([41, 62]);
+    vi.unstubAllEnvs();
   });
 });

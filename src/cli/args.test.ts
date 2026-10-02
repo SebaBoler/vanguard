@@ -220,6 +220,7 @@ describe('parseCli', () => {
     expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '0'], '/work')).toBe(false);
     expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', '-3'], '/work')).toBe(false);
     expect('maxTurns' in parseCli(['run', '--linear', 'TES-1', '--max-turns', 'x'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '1e308'], '/work')).toBe(false);
   });
 
   it('rejects --max-repair-iterations 0, negative, or non-numeric (no override set)', () => {
