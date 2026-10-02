@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { FLOWS, TRANSPORTS } from '../api/capabilities.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { VanguardError } from '../core/errors.js';
 import { coerceFlowDoc, flowDocError, FlowError, FLOW_FILE_RE } from '../flows/repo.js';
 import type { RepoFlowInfo } from '../flows/repo.js';
@@ -168,6 +169,13 @@ export function validateCreateRun(params: unknown): void {
   }
   if (p.baseBranch !== undefined && (typeof p.baseBranch !== 'string' || p.baseBranch.trim() === '')) {
     throw new BadRequestError(`baseBranch must be a non-blank string, got ${String(p.baseBranch)}`);
+  }
+  if (typeof p.baseBranch === 'string') {
+    try {
+      assertSafeBaseBranch(p.baseBranch);
+    } catch (error) {
+      throw new BadRequestError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
   }
 }
 

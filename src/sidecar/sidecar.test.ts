@@ -113,6 +113,8 @@ describe('runSidecar', () => {
     ['fractional maxTurns', { issueRef: 'gh-1', repoPath: '/repo', maxTurns: 2.5 }],
     ['non-string baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 42 }],
     ['blank baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '  ' }],
+    ['option-like baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: '--upload-pack=false' }],
+    ['refspec baseBranch', { issueRef: 'gh-1', repoPath: '/repo', baseBranch: 'feature:main' }],
     ['empty issueRef', { issueRef: '' }],
     ['whitespace issueRef', { issueRef: '  \n ' }],
     ['missing issueRef', {}],
