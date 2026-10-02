@@ -469,6 +469,7 @@ describe('runPreflight gitlab source', () => {
       { ...baseCmd, specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true },
       { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
     );
+    expect(report.ok).toBe(false);
     expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
     expect(formatPreflightReport(report)).toContain('preflight: gitlab labels missing ready for agent, needs info -> stop before claim');
   });
