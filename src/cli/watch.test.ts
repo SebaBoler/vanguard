@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the watch runners so the deps builders run without entering a real poll loop. We capture the
 // deps each builder produces and assert the RunOptions fields survived — a guard the type system
@@ -49,9 +49,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('watch deps builders thread RunOptions', () => {
   it('watchLinearSource carries every option field', async () => {
-    process.env.LINEAR_API_KEY = 'key';
+    vi.stubEnv('LINEAR_API_KEY', 'key');
     await watchLinearSource(watchCommand({ source: 'linear', skillsDir: '/skills' }), undefined, ctx, signal);
     const deps = vi.mocked(watchLinear).mock.calls[0]![0].deps;
     expect(deps).toMatchObject(RUN_OPTIONS);
@@ -73,7 +77,7 @@ describe('loop-v1 spec deps carry --base', () => {
   const loopV1 = { specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info' };
 
   it('watchLinearSource', async () => {
-    process.env.LINEAR_API_KEY = 'key';
+    vi.stubEnv('LINEAR_API_KEY', 'key');
     const cmd = watchCommand({ source: 'linear', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info' });
     await watchLinearSource(cmd, undefined, ctx, signal);
     expect(vi.mocked(watchLinearLoopV1).mock.calls[0]![0].spec.deps.baseBranch).toBe(RUN_OPTIONS.baseBranch);
