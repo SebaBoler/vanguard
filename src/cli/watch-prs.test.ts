@@ -30,6 +30,7 @@ describe('watchPrsCommand', () => {
       llmProxy: true,
       provider: 'codex',
       reviewModel: 'gpt-5',
+      maxTurns: 48,
     };
 
     await watchPrsCommand(cmd, {
@@ -69,6 +70,7 @@ describe('watchPrsCommand', () => {
         llmProxy: true,
         provider: 'codex',
         reviewModel: 'gpt-5',
+        maxTurns: 48,
       }),
     );
     expect(logs).toEqual([

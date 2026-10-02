@@ -90,6 +90,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'doctor-prs';
@@ -244,6 +246,8 @@ export type Command =
       llmProxy?: boolean;
       provider?: ProviderName;
       reviewModel?: string;
+      /** First-attempt turn cap (default 16); the retry after an incomplete review gets 1.5x. */
+      maxTurns?: number;
     }
   | {
       kind: 'doctor-mrs';
@@ -305,12 +309,12 @@ function sameName(a: string, b: string): boolean {
 
 /**
  * Parse a positive-integer flag (--limit, --max-turns, --max-tasks, --max-repair-iterations, ...), or undefined
- * if absent or invalid. Like 0 or a negative value, a value above Number.MAX_SAFE_INTEGER sets no override: the
- * ceiling keeps derived caps (review-mr's and review-pr's 1.5x retry) finite and out of exponent notation.
+ * if absent or invalid. A huge value is clamped to Number.MAX_SAFE_INTEGER, so it still means "effectively
+ * unlimited" while derived caps (the review commands' 1.5x retry) stay finite and out of exponent notation.
  */
 function parseLimit(raw: string | boolean | undefined): number | undefined {
   const limit = Number(raw);
-  return Number.isFinite(limit) && limit >= 1 && limit <= Number.MAX_SAFE_INTEGER ? Math.floor(limit) : undefined;
+  return Number.isFinite(limit) && limit >= 1 ? Math.min(Math.floor(limit), Number.MAX_SAFE_INTEGER) : undefined;
 }
 
 /**
@@ -681,6 +685,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -743,6 +748,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
+      ...(maxTurns !== undefined ? { maxTurns } : {}),
     };
   }
 
@@ -1141,7 +1147,7 @@ Commands:
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the PR review (default: claude)
     --review-model <m>     Model for the PR review
-    --max-turns <n>        Turn cap for the first review attempt (default: 16); the retry after an incomplete review gets 1.5x
+    --max-turns <n>        Turn cap for the first review attempt (default: 16); the retry after an incomplete review gets 1.5x (opt-in, higher cost)
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
     --egress --llm-proxy --repo <path>         As for run/watch
 
@@ -1196,6 +1202,7 @@ Commands:
     --concurrency <n>      Max PRs reviewed at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
+    --max-turns <n>        As for review-pr
     --egress --llm-proxy --repo <path>         As for run/watch
 
     Example:
@@ -1226,6 +1233,7 @@ Commands:
     --concurrency <n>        Max MRs reviewed at once (default: 2)
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for MR review (default: claude)
     --review-model <m>       Model for the MR review
+    --max-turns <n>          As for review-pr
     --egress --llm-proxy --repo <path>         As for run/watch
 
     Example:
