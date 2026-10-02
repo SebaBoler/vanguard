@@ -195,6 +195,7 @@ function isBotAuthor(login: string, extraBotLogins: string[]): boolean {
 /**
  * Filter PullRequestFeedback down to items Vanguard should act on this round.
  * Drops: bot-authored items, items carrying the current head's PR-review marker,
+ * Vanguard's incomplete-review notices (the bot heading plus the marker on its own line),
  * items in resolved threads, and items older than the head commit (watermark).
  */
 export function selectActionableFeedback(fb: PullRequestFeedback, opts: ActionableOptions): FeedbackItem[] {

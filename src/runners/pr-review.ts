@@ -64,6 +64,9 @@ const PR_PATH_RE = /^([^/\s]+\/[^/\s]+)\/pull\/(\d+)$/;
 const NUMBER_RE = /^\d+$/;
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 const PR_REVIEW_MARKER_RE = /^<!--[ \t]*vanguard-pr-review:[ \t]*([a-fA-F0-9]+)[ \t]*-->$/gm;
+// Every incomplete-note builder must open the body with this heading: hasPullRequestReviewIncompleteMarker
+// checks it as an exact prefix, so a leading BOM, space or attribution line would turn the bot's own notice
+// into human feedback for revise-pr.
 const PR_REVIEW_HEADING = '## Vanguard Review';
 
 function normalizePullRequestReviewOutcome(outcome: string | PullRequestReviewOutcome): PullRequestReviewOutcome {
