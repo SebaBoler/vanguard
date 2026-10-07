@@ -12,8 +12,8 @@ export { controlCases, edgeCases, refusalCases };
  */
 export const JUDGE_MODEL = 'claude-haiku-4-5-20251001';
 
-/** Default model under test. Override via --produce-model when running vanguard eval. */
-export const DEFAULT_PRODUCE_MODEL = 'claude-sonnet-4-6';
+/** Default model under test (the factory's implementer generation). Override via --produce-model when running vanguard eval. */
+export const DEFAULT_PRODUCE_MODEL = 'claude-sonnet-5-5';
 
 /** The full eval corpus: control, edge, and refusal cases. */
 export const corpus: EvalCase[] = [...controlCases, ...edgeCases, ...refusalCases];

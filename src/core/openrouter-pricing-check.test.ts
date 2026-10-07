@@ -29,9 +29,9 @@ function payloadFromTable(): OpenRouterModelsResponse {
 
 describe('table integrity (offline, mandated by acceptance criteria)', () => {
   it('every OPENROUTER_PRICING key resolves and aliases are identity-equal to their dated row', () => {
-    expect(OPENROUTER_PRICING['opus']).toBe(PRICED_MODELS['claude-opus-4-8']);
-    expect(OPENROUTER_PRICING['sonnet']).toBe(PRICED_MODELS['claude-sonnet-5']);
-    expect(OPENROUTER_PRICING['haiku']).toBe(PRICED_MODELS['claude-haiku-4-5-20251001']);
+    expect(OPENROUTER_PRICING['opus']).toBe(PRICED_MODELS['claude-opus-5-5']);
+    expect(OPENROUTER_PRICING['sonnet']).toBe(PRICED_MODELS['claude-sonnet-5-5']);
+    expect(OPENROUTER_PRICING['haiku']).toBe(PRICED_MODELS['claude-haiku-5-5']);
     for (const key of Object.keys(OPENROUTER_PRICING)) {
       expect(OPENROUTER_PRICING[key]).toBeDefined();
     }

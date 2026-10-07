@@ -180,9 +180,15 @@ function add(bucket: Bucket, record: MetricRecord): void {
  * being folded into the model the operator asked for. Records predating the model field land in
  * one '(no model recorded)' row.
  */
+/** `sonnet` served as `claude-sonnet-5-5` is the alias doing its job, not a substitution. */
+function aliasResolvesTo(requested: string, served: string): boolean {
+  return /^[a-z]+$/.test(requested) && served.startsWith(`claude-${requested}-`);
+}
+
 export function modelKey(record: Pick<MetricRecord, 'model' | 'requestedModel'>): string {
   if (record.model === undefined) return record.requestedModel ?? '(no model recorded)';
   if (record.requestedModel === undefined || record.requestedModel === record.model) return record.model;
+  if (aliasResolvesTo(record.requestedModel, record.model)) return record.model;
   return `${record.model} (requested ${record.requestedModel})`;
 }
 

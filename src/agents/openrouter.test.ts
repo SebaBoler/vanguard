@@ -65,12 +65,12 @@ describe('OpenRouterProvider', () => {
   });
 
   it('maps Claude aliases/ids to OpenRouter slugs and rejects unknown bare names', async () => {
-    expect(toOpenRouterModel('haiku')).toBe('anthropic/claude-haiku-4.5');
+    expect(toOpenRouterModel('haiku')).toBe('anthropic/claude-haiku-5.5');
     expect(toOpenRouterModel('claude-sonnet-5')).toBe('anthropic/claude-sonnet-5');
     expect(toOpenRouterModel('z-ai/glm-5.2')).toBe('z-ai/glm-5.2');
     expect(() => toOpenRouterModel('opus-9')).toThrow(/not an OpenRouter slug/);
     const cmd = await captureCommand({ model: 'haiku' });
-    expect(cmd).toContain('anthropic/claude-haiku-4.5');
+    expect(cmd).toContain('anthropic/claude-haiku-5.5');
     expect(cmd).not.toMatch(/--model haiku\b/);
   });
 

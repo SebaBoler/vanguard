@@ -68,6 +68,9 @@ describe('aggregateMetrics', () => {
     expect(modelKey({ model: 'claude-fable-5', requestedModel: 'claude-fable-5' })).toBe('claude-fable-5');
     expect(modelKey({ model: 'claude-sonnet-4-6', requestedModel: 'claude-fable-5' })).toBe('claude-sonnet-4-6 (requested claude-fable-5)');
     expect(modelKey({ model: 'claude-opus-4-8' })).toBe('claude-opus-4-8');
+    // An alias resolving within its own family is not annotated; a cross-family swap still is.
+    expect(modelKey({ model: 'claude-sonnet-5-5', requestedModel: 'sonnet' })).toBe('claude-sonnet-5-5');
+    expect(modelKey({ model: 'claude-sonnet-4-6', requestedModel: 'opus' })).toBe('claude-sonnet-4-6 (requested opus)');
     expect(modelKey({ requestedModel: 'opus' })).toBe('opus');
     expect(modelKey({})).toBe('(no model recorded)');
   });
