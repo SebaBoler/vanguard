@@ -33,6 +33,22 @@ describe('LinearCliTaskFetcher', () => {
     });
   });
 
+  it('fetches labels over GraphQL since issue view omits them, and degrades to [] when that fails', async () => {
+    const sent: unknown[] = [];
+    const graphql = async (body: { query: string; variables: Record<string, unknown> }): Promise<unknown> => {
+      sent.push(body);
+      return { data: { issue: { labels: { nodes: [{ name: 'vanguard:model=claude-fable-5' }, { name: 'bug' }] } } } };
+    };
+    const task = await new LinearCliTaskFetcher({ linear: runner(viewIssue), graphql }).fetch('TES-1');
+    expect(task.labels).toEqual(['vanguard:model=claude-fable-5', 'bug']);
+    expect(sent).toHaveLength(1);
+    expect((sent[0] as { variables: { id: string } }).variables.id).toBe('TES-1');
+
+    const failing = async (): Promise<unknown> => { throw new Error('401'); };
+    const fallback = await new LinearCliTaskFetcher({ linear: runner(viewIssue), graphql: failing }).fetch('TES-1');
+    expect(fallback.labels).toEqual([]);
+  });
+
   it('defaults children to [] when the issue has none', async () => {
     const task = await new LinearCliTaskFetcher({ linear: runner({ identifier: 'TES-3', title: 'No kids' }) }).fetch('TES-3');
     expect(task.children).toEqual([]);

@@ -219,6 +219,37 @@ function branchIdFromTaskId(taskId: string): string {
  * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
  * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
  */
+/** Issue label that pins the implementer-tier model for ONE task: `vanguard:model=<model>`. */
+export const MODEL_LABEL_PREFIX = 'vanguard:model=';
+
+/**
+ * Model ids/aliases/slugs as every supported provider spells them (`opus`, `claude-sonnet-5`,
+ * `anthropic/claude-sonnet-4.6`, `gpt-5.6-sol`, `glm-5.2`). Labels are a lower-trust input than a CLI
+ * flag — anyone with triage permission can set one — so the value is allowlisted by shape before it
+ * becomes a `--model` argument, even though the arg is shell-quoted downstream.
+ */
+const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
+
+/**
+ * Per-task model override from the issue's labels. A human judging "this one is hard" beats any
+ * pre-run heuristic, so the label wins over the fleet-wide --provider-model. Last well-formed
+ * matching label wins; an empty or malformed value is ignored (and reported via `onInvalid`).
+ */
+export function modelFromLabels(labels: ReadonlyArray<string>, onInvalid?: (label: string) => void): string | undefined {
+  let model: string | undefined;
+  for (const label of labels) {
+    if (!label.startsWith(MODEL_LABEL_PREFIX)) continue;
+    const value = label.slice(MODEL_LABEL_PREFIX.length).trim();
+    if (value === '') continue;
+    if (!MODEL_NAME_RE.test(value)) {
+      onInvalid?.(label);
+      continue;
+    }
+    model = value;
+  }
+  return model;
+}
+
 export function conventionalCommitMessage(title: string, taskId: string): string {
   const prefix = 'feat: ';
   const suffix = ` (#${branchIdFromTaskId(taskId)})`;
@@ -326,8 +357,15 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const providerForcedModel = forcedProviderModel(deps.provider ?? 'claude', deps.customProviders);
+      const labelModel = modelFromLabels(task.labels, (label) =>
+        console.warn(`vanguard: ${task.id} ignoring malformed model label ${JSON.stringify(label)}`),
+      );
+      if (labelModel !== undefined) {
+        console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
+      }
       const pipeline = assembleReviewPipeline(scopedStages, agents, {
         ...deps,
+        ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
       // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
@@ -427,7 +465,9 @@ export async function runSourcedIssue(
         // demonstrably failed, later repairs resume the same session on --escalate-model. Reacting to
         // an observed red gate beats guessing task difficulty up front — a wrong guess down costs a
         // failed run plus repairs, a wrong guess up only costs today's price.
-        const escalate = repairIterations >= 2 && deps.escalateModel !== undefined;
+        // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
+        // override it (it could even downgrade).
+        const escalate = repairIterations >= 2 && deps.escalateModel !== undefined && labelModel === undefined;
         console.log(
           `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session${
             escalate ? ` on ${deps.escalateModel}` : ''
