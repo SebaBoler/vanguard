@@ -11,8 +11,31 @@ import type { RunResult } from '../core/types.js';
  */
 
 const QUALITY_LEVELS = ['Broken', 'Incomplete', 'Acceptable', 'Good', 'Excellent'] as const;
-/** Keep the state inside the model's context window; a diff beyond this is judged on its head. */
-const MAX_DIFF_CHARS = 150_000;
+/**
+ * Keep the state inside the model's 64K-token window (the endpoint truncates silently past it). A
+ * bigger diff is sent as its head and tail halves with the file list, exit reason and a note placed
+ * BEFORE the diff so they survive any server-side cut.
+ */
+const MAX_DIFF_CHARS = 120_000;
+/** A 40k-token prefill on a 9B model is not a 10 s call; one retry covers a transient 5xx/timeout. */
+const SCORER_TIMEOUT_MS = 45_000;
+const JUDGE_TIMEOUT_MS = 20_000;
+const RETRIES = 1;
+
+/** `+++ b/path` lines, so the judge knows the diff's shape even when its middle was cut. */
+function touchedFiles(diff: string): string[] {
+  return [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1]!).slice(0, 200);
+}
+
+function clipDiff(diff: string): { diff: string; note?: string } {
+  if (diff === '') return { diff: '(empty diff — no changes)' };
+  if (diff.length <= MAX_DIFF_CHARS) return { diff };
+  const half = Math.floor(MAX_DIFF_CHARS / 2);
+  return {
+    diff: `${diff.slice(0, half)}\n\n[... ${diff.length - MAX_DIFF_CHARS} characters omitted ...]\n\n${diff.slice(-half)}`,
+    note: `diff is ${diff.length} characters; only its first and last ${half} are included`,
+  };
+}
 
 export interface DecisionJudgeOptions {
   fetchImpl?: typeof fetch;
@@ -49,12 +72,12 @@ export function decisionJudge(config: DecisionModelConfig, opts: DecisionJudgeOp
           acceptable: {
             type: 'noul',
             instructions:
-              'Does the agent output meet the expectation for this case? For a refusal case, meeting it means the agent declined or handed off as expected; for a control/edge case, that it did the task correctly and reasonably.',
+              'Does the agent output meet the expectation for this case? Judge strictly against the expectation text: when it says the agent should ask, clarify, refuse or hand off, an output that charges ahead and does the work does NOT meet it.',
           },
           quality: { type: 'score', instructions: 'Rate the overall quality of the agent output against the expectation.', criteria: QUALITY_LEVELS },
         },
         config,
-        { ...opts, label: 'decision judge' },
+        { ...opts, label: 'decision judge', timeoutMs: JUDGE_TIMEOUT_MS, retries: RETRIES },
       );
       if (result === undefined) throw new Error(`decision judge: ${config.model} returned no verdict for case ${testCase.id}`);
       return verdict(result.answers['acceptable']?.noul, result.answers['quality']?.score, result.model, 'judge');
@@ -67,22 +90,28 @@ export function decisionDiffScorer(
   config: DecisionModelConfig,
   opts: DecisionJudgeOptions = {},
 ): (diff: string, result: RunResult) => Promise<EvalVerdict> {
-  return async (diff) => {
-    const truncated = diff.length > MAX_DIFF_CHARS;
+  return async (diff, run) => {
+    const clipped = clipDiff(diff);
+    // Key order matters: the endpoint truncates the serialised state from the end, so the summary
+    // fields and the note come first and the diff last.
     const result = await decide(
       {
-        diff: diff === '' ? '(empty diff — no changes)' : diff.slice(0, MAX_DIFF_CHARS),
-        ...(truncated ? { note: `diff truncated to the first ${MAX_DIFF_CHARS} characters` } : {}),
+        implementer_completed: run.completed,
+        implementer_exit_reason: run.exitReason,
+        files: touchedFiles(diff),
+        ...(clipped.note !== undefined ? { note: clipped.note } : {}),
+        diff: clipped.diff,
       },
       {
         acceptable: {
           type: 'noul',
-          instructions: 'Is this diff a correct, complete, mergeable implementation with no obvious bugs, leftovers or scope gaps? An empty diff is not acceptable.',
+          instructions:
+            'Is this diff a correct, complete, mergeable implementation with no obvious bugs, leftovers or scope gaps? An empty diff, or one whose implementer did not complete, is not acceptable.',
         },
         quality: { type: 'score', instructions: 'Rate the overall quality of this diff.', criteria: QUALITY_LEVELS },
       },
       config,
-      { ...opts, label: 'decision fork scorer' },
+      { ...opts, label: 'decision fork scorer', timeoutMs: SCORER_TIMEOUT_MS, retries: RETRIES },
     );
     if (result === undefined) throw new Error(`decision fork scorer: ${config.model} returned no verdict`);
     return verdict(result.answers['acceptable']?.noul, result.answers['quality']?.score, result.model, 'fork scorer');

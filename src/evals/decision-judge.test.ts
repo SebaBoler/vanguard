@@ -38,22 +38,28 @@ describe('decisionJudge', () => {
 });
 
 describe('decisionDiffScorer', () => {
-  it('scores a diff by P(acceptable) so higher-wins selection compares probabilities', async () => {
+  it('scores a diff by P(acceptable) with the run summary and file list placed before the diff', async () => {
     const record: { state?: unknown } = {};
     const score = decisionDiffScorer(cfg, { fetchImpl: answering({ acceptable: { noul: 0.64 }, quality: { score: 2.1 } }, record) });
-    const v = await score('+ real change', runResult);
+    const v = await score('--- a/src/a.ts\n+++ b/src/a.ts\n+ real change', runResult);
     expect(v.score).toBe(0.64);
     expect(v.passed).toBe(true);
-    expect(record.state).toEqual({ diff: '+ real change' });
+    expect(Object.keys(record.state as object)).toEqual(['implementer_completed', 'implementer_exit_reason', 'files', 'diff']);
+    expect(record.state).toMatchObject({ implementer_completed: true, implementer_exit_reason: 'completed', files: ['src/a.ts'] });
   });
 
-  it('labels an empty diff and notes truncation of an oversized one', async () => {
+  it('labels an empty diff and sends head + tail of an oversized one with the note ahead of the diff', async () => {
     const record: { state?: unknown } = {};
     const score = decisionDiffScorer(cfg, { fetchImpl: answering({ acceptable: { noul: 0.01 }, quality: { score: 0 } }, record) });
     await score('', runResult);
-    expect(record.state).toEqual({ diff: '(empty diff — no changes)' });
-    await score('x'.repeat(200_000), runResult);
-    expect((record.state as { note?: string }).note).toContain('truncated');
-    expect(((record.state as { diff: string }).diff).length).toBe(150_000);
+    expect((record.state as { diff: string }).diff).toBe('(empty diff — no changes)');
+    const big = `${'h'.repeat(100_000)}${'m'.repeat(50_000)}${'t'.repeat(100_000)}`;
+    await score(big, runResult);
+    const state = record.state as { note?: string; diff: string };
+    expect(state.note).toContain('250000 characters');
+    expect(Object.keys(state).indexOf('note')).toBeLessThan(Object.keys(state).indexOf('diff'));
+    expect(state.diff.startsWith('h'.repeat(60_000))).toBe(true);
+    expect(state.diff.endsWith('t'.repeat(60_000))).toBe(true);
+    expect(state.diff).toContain('characters omitted');
   });
 });

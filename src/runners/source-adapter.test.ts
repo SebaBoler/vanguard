@@ -100,7 +100,13 @@ vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})
 const { probeTaskDifficulty } = vi.hoisted(() => ({ probeTaskDifficulty: vi.fn(async () => undefined) }));
 vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty, decisionProbeConfig: vi.fn(() => undefined) }));
 const { decisionModelConfig } = vi.hoisted(() => ({ decisionModelConfig: vi.fn((): unknown => undefined) }));
-vi.mock('../core/decision-model.js', () => ({ decisionModelConfig }));
+vi.mock('../core/decision-model.js', () => ({
+  decisionModelConfig,
+  decide: vi.fn(async () => undefined),
+  decisionEgressAllowed: (env: NodeJS.ProcessEnv, whiteLabel: boolean) => !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all',
+  decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
+  DECISION_MODEL_DEFAULT: 'clef-flash',
+}));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -265,8 +271,14 @@ describe('runSourcedIssue', () => {
   it('--fork-scorer decision hands runStages a decision scorer, and fails fast without credentials', async () => {
     await expect(
       runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES)),
-    ).rejects.toThrow(/--fork-scorer decision needs/);
+    ).rejects.toThrow(/--fork-scorer decision: set CLOUDFLARE_ACCOUNT_ID/);
     expect(runStages).not.toHaveBeenCalled();
+
+    // A white-label run needs explicit consent before the client diff leaves the host.
+    decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision', commitAuthor: { name: 'c', email: 'c@x' } }, fakeAdapter([], STAGES)),
+    ).rejects.toThrow(/VANGUARD_DECISION_PROBE=all/);
 
     decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
     await runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES));

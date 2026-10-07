@@ -67,6 +67,16 @@ export function decisionModelConfig(
   };
 }
 
+/** Why decisionModelConfig returned undefined for this model, worded for the operator. */
+export function decisionModelMissing(model: string, env: NodeJS.ProcessEnv = process.env): string {
+  const url = env['VANGUARD_DECISION_URL'];
+  const hasCloudflare = (env['CLOUDFLARE_ACCOUNT_ID'] ?? '') !== '' && (env['CLOUDFLARE_AUTH_TOKEN'] ?? '') !== '';
+  if ((url === undefined || url === '') && hasCloudflare && !WORKERS_AI_MODELS.has(model)) {
+    return `"${model}" is not hosted on Workers AI (clef, clef-flash are); point VANGUARD_DECISION_URL at an endpoint that serves it.`;
+  }
+  return 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.';
+}
+
 /** Names that select a decision model instead of an LLM wherever a model flag accepts one. */
 export function isDecisionModelName(model: string): boolean {
   return model === 'clef' || model === 'clef-flash' || model === 'jev';
@@ -90,6 +100,26 @@ export interface DecideOptions {
   fetchImpl?: typeof fetch;
   /** Names the caller in the one warning line a failed call emits (never the URL: it embeds the account id). */
   label?: string;
+  /** Extra attempts on a timeout / network error / 5xx (not on 4xx or a malformed body). Default 0. */
+  retries?: number;
+}
+
+/**
+ * Client data (a white-label run's issue text or diff) may reach the decision model only with
+ * VANGUARD_DECISION_PROBE=all — one consent switch for every decision-model feature.
+ */
+export function decisionEgressAllowed(env: NodeJS.ProcessEnv = process.env, whiteLabel: boolean): boolean {
+  return !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all';
+}
+
+interface SystemOneError {
+  errors?: Array<{ code?: number; message?: string }>;
+}
+
+/** The first error message a Workers AI envelope carries, shortened; never the URL. */
+function errorDetail(body: unknown): string {
+  const message = (body as SystemOneError | null)?.errors?.[0]?.message;
+  return typeof message === 'string' && message !== '' ? `: ${message.slice(0, 160)}` : '';
 }
 
 /**
@@ -105,40 +135,48 @@ export async function decide(
 ): Promise<DecisionResult | undefined> {
   const label = opts.label ?? 'decision model';
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeout]) : timeout;
+  const body = JSON.stringify({ model: config.model, state, questions });
   const started = Date.now();
-  try {
-    const res = await fetchImpl(config.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(config.token !== undefined ? { authorization: `Bearer ${config.token}` } : {}),
-      },
-      body: JSON.stringify({ model: config.model, state, questions }),
-      signal,
-    });
-    if (!res.ok) {
-      console.warn(`vanguard: ${label} failed (HTTP ${res.status}) — check the decision-model credentials/model`);
-      return undefined;
-    }
-    const parsed = (await res.json()) as SystemOneResponse;
-    const body = parsed.result ?? parsed;
-    if (body.answers === undefined || typeof body.answers !== 'object') {
-      console.warn(`vanguard: ${label} returned no answers — is the endpoint System-One compatible?`);
-      return undefined;
-    }
-    const inputTokens = num(body.usage?.input_tokens);
-    return {
-      model: body.model ?? config.model,
-      answers: body.answers,
-      latencyMs: Date.now() - started,
-      ...(inputTokens !== undefined ? { inputTokens } : {}),
-    };
-  } catch (err) {
-    if (opts.signal?.aborted !== true) {
+  for (let attempt = 0; ; attempt += 1) {
+    const retryable = attempt < (opts.retries ?? 0) && opts.signal?.aborted !== true;
+    const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeout]) : timeout;
+    try {
+      const res = await fetchImpl(config.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(config.token !== undefined ? { authorization: `Bearer ${config.token}` } : {}),
+        },
+        body,
+        signal,
+      });
+      if (!res.ok) {
+        const detail = errorDetail(await res.json().catch(() => null));
+        if (res.status >= 500 && retryable) continue;
+        console.warn(`vanguard: ${label} failed (HTTP ${res.status}${detail}) — check the decision-model credentials/model`);
+        return undefined;
+      }
+      const parsed = (await res.json()) as SystemOneResponse & SystemOneError;
+      const inner = parsed.result ?? parsed;
+      const answers = inner.answers;
+      // `typeof null === 'object'` — a `{answers: null}` envelope must not reach the callers' indexing.
+      if (answers === undefined || answers === null || typeof answers !== 'object' || Array.isArray(answers)) {
+        console.warn(`vanguard: ${label} returned no answers${errorDetail(parsed)} — is the endpoint System-One compatible?`);
+        return undefined;
+      }
+      const inputTokens = num(inner.usage?.input_tokens);
+      return {
+        model: inner.model ?? config.model,
+        answers,
+        latencyMs: Date.now() - started,
+        ...(inputTokens !== undefined ? { inputTokens } : {}),
+      };
+    } catch (err) {
+      if (opts.signal?.aborted === true) return undefined;
+      if (retryable) continue;
       console.warn(`vanguard: ${label} failed (${err instanceof Error ? err.name : 'error'})`);
+      return undefined;
     }
-    return undefined;
   }
 }

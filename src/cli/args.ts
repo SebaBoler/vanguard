@@ -796,6 +796,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     const forkN = Number(values.fork);
     const forkScorer = parseForkScorer(values['fork-scorer']);
     if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
+    if (forkScorer !== undefined && !(Number.isFinite(forkN) && forkN >= 2)) return fail('--fork-scorer only applies with --fork <n> (n>=2).');
     return {
       kind: 'run',
       source: picked[0],

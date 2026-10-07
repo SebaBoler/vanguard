@@ -197,6 +197,8 @@ describe('parseCli', () => {
     expect(bare.kind === 'run' && 'forkScorer' in bare).toBe(false);
     const bad = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'coin'], '/work');
     expect(bad.kind === 'error' && bad.message).toMatch(/--fork-scorer expects llm or decision/);
+    const noFork = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'decision'], '/work');
+    expect(noFork.kind === 'error' && noFork.message).toMatch(/only applies with --fork/);
   });
 
   it('parses --provider-model and --review-model on run', () => {

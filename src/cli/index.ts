@@ -2,6 +2,7 @@
 import { parseCli, USAGE } from './args.js';
 import { runGc } from './gc.js';
 import { runCommand } from './run.js';
+import { resolveForkScorerConfig } from '../runners/source-adapter.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
 import { memoryCommand } from './memory.js';
@@ -28,12 +29,12 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  if (command.kind === 'run') {
-    await runCommand(command);
-    return;
-  }
-  if (command.kind === 'watch') {
-    await watchCommand(command);
+  if (command.kind === 'run' || command.kind === 'watch') {
+    // Validate decision-model credentials/consent ONCE here: in watch mode the runner's backstop would
+    // otherwise claim every ready issue and post a failure comment on each, every poll.
+    if (command.forkScorer === 'decision') resolveForkScorerConfig(command.commitAuthor !== undefined);
+    if (command.kind === 'run') await runCommand(command);
+    else await watchCommand(command);
     return;
   }
   if (command.kind === 'doctor') {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { decide, decisionModelConfig, isDecisionModelName } from './decision-model.js';
+import { decide, decisionModelConfig, decisionModelMissing, decisionEgressAllowed, isDecisionModelName } from './decision-model.js';
 
 const cfg = { url: 'https://example.test/run', token: 'tok', model: 'clef-flash' };
 const questions = { ok: { type: 'noul' as const, instructions: 'ok?' } };
@@ -42,14 +42,45 @@ describe('decide', () => {
     expect(bare?.model).toBe('jev');
   });
 
-  it('returns undefined (never throws) on non-2xx, a body without answers, or a network error', async () => {
+  it('returns undefined (never throws) on non-2xx, a body without/with null answers, or a network error, quoting the endpoint error', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(401, { errors: [] }) })).toBeUndefined();
-    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(200, { success: false, result: null }) })).toBeUndefined();
+    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(401, { errors: [{ code: 10000, message: 'Authentication error' }] }) })).toBeUndefined();
+    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(200, { success: false, result: null, errors: [{ message: 'No such model' }] }) })).toBeUndefined();
+    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(200, { result: { answers: null } }) })).toBeUndefined();
+    expect(await decide({}, questions, cfg, { fetchImpl: fakeFetch(200, { answers: [] }) })).toBeUndefined();
     const boom = (async () => { throw new Error('ECONNRESET'); }) as unknown as typeof fetch;
     expect(await decide({}, questions, cfg, { fetchImpl: boom, label: 'x' })).toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(3);
-    expect(warn.mock.calls.every(([line]) => !String(line).includes('example.test'))).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(5);
+    const lines = warn.mock.calls.map(([l]) => String(l));
+    expect(lines[0]).toContain('HTTP 401: Authentication error');
+    expect(lines[1]).toContain('No such model');
+    expect(lines.every((l) => !l.includes('example.test'))).toBe(true);
     warn.mockRestore();
+  });
+
+  it('retries once on a 5xx or network error, never on a 4xx', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let n = 0;
+    const flaky = (async () => {
+      n += 1;
+      return n === 1 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ answers: { ok: { noul: 0.9 } } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    expect((await decide({}, questions, cfg, { fetchImpl: flaky, retries: 1 }))?.answers['ok']?.noul).toBe(0.9);
+    expect(n).toBe(2);
+    let m = 0;
+    const forbidden = (async () => { m += 1; return new Response('{}', { status: 403 }); }) as unknown as typeof fetch;
+    expect(await decide({}, questions, cfg, { fetchImpl: forbidden, retries: 1 })).toBeUndefined();
+    expect(m).toBe(1);
+    warn.mockRestore();
+  });
+
+  it('decisionModelMissing explains jev-on-Workers-AI, and decisionEgressAllowed gates white-label on the consent switch', () => {
+    const cf = { CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' };
+    expect(decisionModelMissing('jev', cf)).toMatch(/not hosted on Workers AI/);
+    expect(decisionModelMissing('clef-flash', {})).toMatch(/set CLOUDFLARE_ACCOUNT_ID/);
+    expect(decisionEgressAllowed({}, false)).toBe(true);
+    expect(decisionEgressAllowed({}, true)).toBe(false);
+    expect(decisionEgressAllowed({ VANGUARD_DECISION_PROBE: '1' }, true)).toBe(false);
+    expect(decisionEgressAllowed({ VANGUARD_DECISION_PROBE: 'all' }, true)).toBe(true);
   });
 });
