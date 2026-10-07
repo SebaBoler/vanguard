@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -8,11 +8,13 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewPullRequest } from '../runners/pr-review.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
+import { DEFAULT_REVIEW_MAX_TURNS } from './args.js';
 import type { Command } from './args.js';
 
 type ReviewPrCommand = Extract<Command, { kind: 'review-pr' }>;
@@ -100,7 +102,7 @@ async function runDefaultReviewer(
   try {
     const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       secrets: {
         ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
@@ -111,14 +113,15 @@ async function runDefaultReviewer(
     });
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
     const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
         stageName: 'pr-review',
         agent: agents.agent,
-        promptTemplate: buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry }),
+        ...literalPrompt(buildPullRequestReviewPrompt(pr, { retryTriage: opts.isRetry })),
         systemPrompt: adversarySystemPrompt(),
         effort: opts.isRetry ? 'xhigh' : 'high',
-        maxTurns: opts.isRetry ? 24 : 16,
+        maxTurns: opts.isRetry ? Math.min(Math.ceil(baseTurns * 1.5), Number.MAX_SAFE_INTEGER) : baseTurns,
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });

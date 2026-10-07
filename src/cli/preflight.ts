@@ -2,7 +2,8 @@ import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
 import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
-import { SANDBOX_CLAUDE_VERSION, isOlderVersion } from '../sandbox/docker.js';
+import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
+import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
@@ -17,7 +18,7 @@ export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand |
 export type PreflightRunner = (
   cmd: string,
   args: string[],
-  opts: { cwd: string },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv; timeoutMs?: number },
 ) => Promise<{ stdout: string }>;
 
 export interface PreflightOptions {
@@ -38,15 +39,21 @@ export interface PreflightReport {
 }
 
 const MIN_NODE_MAJOR = 24;
-const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
 /** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
 export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
-  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  const { stdout } = await execa(cmd, args, {
+    cwd: opts.cwd,
+    ...(opts.env !== undefined ? { env: opts.env, extendEnv: false } : {}),
+    ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+  });
   return { stdout };
 };
+
+/** Environment variables glab sends as a token to whatever host a command names. */
+const GLAB_TOKEN_VARS = ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'CI_JOB_TOKEN'];
 
 function check(name: string, ok: boolean, reason?: string): PreflightCheck {
   return reason === undefined ? { name, ok } : { name, ok, reason };
@@ -93,14 +100,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   if (cmd.kind === 'doctor-prs') return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
   if (cmd.source !== 'github') return [];
   if (cmd.specLabel !== undefined) {
+    // A spec-only watch never runs the agent pass, so it never writes the claimed/review labels.
+    const agentPassLabels = cmd.specOnly === true ? [] : [cmd.claimedState ?? GITHUB_CLAIMED_LABEL, cmd.reviewState ?? GITHUB_REVIEW_LABEL];
     return unique([
       cmd.label,
       cmd.specLabel,
       cmd.agentLabel,
       cmd.needsInfoLabel,
       cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
-      cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
-      cmd.reviewState ?? GITHUB_REVIEW_LABEL,
+      ...agentPassLabels,
     ]);
   }
   return unique([
@@ -110,9 +118,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   ]);
 }
 
-async function runOk(run: PreflightRunner, cwd: string, cmd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+async function runOk(
+  run: PreflightRunner,
+  cwd: string,
+  cmd: string,
+  args: string[],
+  extra: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
   try {
-    const { stdout } = await run(cmd, args, { cwd });
+    const { stdout } = await run(cmd, args, { cwd, ...extra });
     return { ok: true, stdout };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -287,15 +301,23 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const dockerInfo = await runOk(run, cmd.repoPath, 'docker', ['info']);
   checks.push(dockerInfo.ok ? check('docker daemon', true) : check('docker daemon', false, 'unavailable'));
 
-  const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
-  checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
+  let image: string | undefined;
+  try {
+    image = sandboxImage(env);
+  } catch (error) {
+    checks.push(check('sandbox image', false, error instanceof Error ? error.message : String(error)));
+  }
+  const sandboxImageCheck = image === undefined ? undefined : await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', image]);
+  if (sandboxImageCheck !== undefined) {
+    checks.push(sandboxImageCheck.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${image}`));
+  }
 
-  if (sandboxImage.ok) {
-    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', SANDBOX_IMAGE, 'claude', '--version']);
+  if (image !== undefined && sandboxImageCheck?.ok === true) {
+    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', image, 'claude', '--version']);
     const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
     checks.push(
       found === undefined
-        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${SANDBOX_IMAGE}`)
+        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${image}`)
         : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
           ? check(
               SANDBOX_CLI_CHECK,
@@ -321,6 +343,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     } else {
       checks.push(await gitlabLabelsOk(run, cmd.repoPath, project, gitlabLabelsFor(cmd)));
     }
+    // The MR review dedupe counts only markers written by this user, and review-mr fails closed without it.
+    if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
+      const user = await runOk(run, cmd.repoPath, 'glab', ['api', 'user']);
+      checks.push(user.ok ? check('gitlab user', true) : check('gitlab user', false, 'unreadable (token cannot read GET /user)'));
+    }
   }
 
   if (isLoopCommand(cmd)) {
@@ -335,7 +362,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
         checks.push(check('github labels', false, 'repo unknown'));
       } else {
         checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
-        const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
+        // A spec-only watch never opens a PR, so the pr-create setting cannot block it.
+        const specOnly = cmd.kind !== 'doctor-prs' && cmd.specOnly === true;
+        const prCreate = specOnly ? undefined : await prCreateSettingOk(run, cmd.repoPath, repoSlug);
         if (prCreate !== undefined) checks.push(prCreate);
       }
     }
@@ -343,6 +372,34 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
       checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+    }
+
+    // The checks below guard publishing a Linear run's PR/MR; a spec-only watch never publishes.
+    if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear' && cmd.specOnly !== true) {
+      // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
+      const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
+      // A self-hosted GitLab that GITLAB_HOST does not name takes the gh path and would fail at publish, after
+      // the agent work: `glab auth login` sets no GITLAB_HOST, and a CI job may only have GITLAB_TOKEN.
+      const host = remote.ok && !gitlabOrigin ? remoteHostname(remote.stdout) : undefined;
+      const otherHost = host !== undefined && host !== 'github.com' ? host : undefined;
+      const auth = gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env);
+      checks.push(
+        !auth.ok && otherHost !== undefined
+          ? check(auth.name, false, `missing for origin host ${otherHost}; for a self-hosted GitLab set GITLAB_HOST=${otherHost}`)
+          : auth,
+      );
+      // glab sends GITLAB_TOKEN to whatever host a command names, and this host may be GitHub Enterprise or
+      // another forge, so the probe runs without token variables: only a login stored for this host counts.
+      const probeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !GLAB_TOKEN_VARS.includes(key)));
+      // A host that drops packets must not stall preflight until the OS connect timeout; a timeout reads as not logged in.
+      const probe = { env: probeEnv, timeoutMs: 10_000 };
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'], probe)).ok) {
+        checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
+      }
+      // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
+      if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
+        checks.push(check('gitlab project', false, `origin ${redactRemote(remote.stdout)} names no group/project`));
+      }
     }
   }
 

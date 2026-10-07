@@ -7,6 +7,7 @@ import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { roundUsd } from './budget.js';
+import { neutralizeQuickActions } from '../tasks/gitlab.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
@@ -1086,6 +1087,21 @@ export async function pushToExistingBranch(ctx: RunContext, opts: PushToExisting
   }
 }
 
+const DROPPED_CI_LISTED = 20;
+
+/**
+ * PR/MR body (and revision summary) note for CI config the agent changed but copy-back dropped, so the
+ * review does not look complete. Brand-neutral for white-label runs. Paths come from the sandbox, so
+ * they are reduced to a plain charset that cannot add markdown or HTML.
+ */
+export function droppedCiPathsNote(paths: Iterable<string> = []): string {
+  const sorted = [...paths].sort();
+  if (sorted.length === 0) return '';
+  const shown = sorted.slice(0, DROPPED_CI_LISTED).map((p) => `\`${p.replace(/[^\w./ -]/g, '?')}\``);
+  const more = sorted.length > DROPPED_CI_LISTED ? ` and ${sorted.length - DROPPED_CI_LISTED} more` : '';
+  return `**Not included:** changes to CI config are never copied into this branch: ${shown.join(', ')}${more}. Apply them by hand if this change needs them.`;
+}
+
 /**
  * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
  * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the
@@ -1098,6 +1114,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
+  const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
   if (tool === 'glab') {
     args = [
@@ -1105,7 +1122,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       '--source-branch', ctx.branch,
       '--target-branch', opts.baseBranch ?? 'main',
       '--title', opts.title,
-      '--description', opts.body ?? '',
+      '--description', neutralizeQuickActions(body),
     ];
     if (opts.draft === true) args.push('--draft');
   } else {
@@ -1114,7 +1131,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       '--head', ctx.branch,
       '--base', opts.baseBranch ?? 'main',
       '--title', opts.title,
-      '--body', opts.body ?? '',
+      '--body', body,
     ];
     if (opts.draft === true) args.push('--draft');
   }

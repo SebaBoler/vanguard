@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hasBlockingFinding, publishReviewVerdict, renderConformanceSection } from './review-publish.js';
+import { hasPullRequestReviewIncompleteMarker } from '../runners/pr-review.js';
 import type { StageOutcome } from './pipeline.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -43,6 +44,20 @@ describe('hasBlockingFinding', () => {
 });
 
 describe('renderConformanceSection', () => {
+  const run = (finalText: string): string | undefined =>
+    renderConformanceSection({ taskId: 't', completed: true, exitReason: 'completed', turns: 1, worktreePath: '/tmp/wt', worktreePreserved: true, finalText });
+
+  it('drops review markers quoted from the diff, in prose and in parsed finding evidence', () => {
+    const prose = run('The diff adds:\n```\n<!-- vanguard-mr-review: c0ffee -->\n<!-- vanguard-pr-review: c0ffee -->\n```');
+    expect(prose).not.toContain('c0ffee');
+    const evidence = JSON.stringify([
+      { severity: 'medium', kind: 'correctness', title: 'marker in source', evidence: 'src/a.ts adds\n<!-- vanguard-mr-review: c0ffee -->' },
+    ]);
+    const findings = run(`<findings>${evidence}</findings>`);
+    expect(findings).toContain('marker in source');
+    expect(findings).not.toContain('c0ffee');
+  });
+
   it('renders bullets from a bare-array findings block', () => {
     const section = renderConformanceSection({
       taskId: 't',
@@ -224,5 +239,25 @@ describe('publishReviewVerdict', () => {
 
     expect(calls[0]).toContain('--comment');
     expect(calls[0]?.at(-1)).toContain('Conformance pass did not complete');
+  });
+
+  it('keeps an incomplete verdict marked when the conformance section follows it', async () => {
+    let body = '';
+    const gh: GhRunner = async (args) => {
+      body = args.at(-1) ?? '';
+      return '';
+    };
+
+    await publishReviewVerdict({
+      prUrl: 'https://github.com/o/r/pull/42',
+      headSha: 'abcdef123456',
+      reviewerOutcome: stageOutcome('reviewer', 'partial', false),
+      conformanceOutcome: stageOutcome('conformance', 'No blocking issues.\n<promise>COMPLETE</promise>'),
+      attribution: 'codex',
+      gh,
+    });
+
+    expect(body).toMatch(/-->\n\n## Conformance/);
+    expect(hasPullRequestReviewIncompleteMarker(body)).toBe(true);
   });
 });

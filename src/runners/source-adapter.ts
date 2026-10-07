@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
@@ -287,7 +288,7 @@ export async function runSourcedIssue(
   try {
     const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
         ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
@@ -435,7 +436,8 @@ export async function runSourcedIssue(
         // silently hands the repair to the provider's default model.
         const repairModel = outcomes[implementerIdx]?.model;
         const repaired = await runAgent(ctx, {
-          promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          // Test output is author-controlled text; see literalPrompt.
+          ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
           agent: agents.agent,
           resumeSessionId,
           ...(repairModel !== undefined ? { model: repairModel } : {}),
@@ -520,7 +522,7 @@ export async function runSourcedIssue(
       // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
       // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
       const commitLeaks = partial
-        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, 'main'), task.id)
+        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, deps.baseBranch ?? 'main'), task.id)
         : [];
       // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
       // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the

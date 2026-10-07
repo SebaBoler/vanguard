@@ -14,6 +14,7 @@ import { GITLAB_CLAIMED_LABEL, GITLAB_REVIEW_LABEL, GITLAB_SPEC_CLAIMED_LABEL } 
 import { formatPreflightReport, runPreflight } from './preflight.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
+import { DEFAULT_GITHUB_AGENT_LABEL, DEFAULT_LINEAR_AGENT_STATE } from './args.js';
 import type { Command } from './args.js';
 import type { RunSpecGeneratorDeps } from '../runners/spec.js';
 
@@ -51,6 +52,8 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
 
   const labelSuffix = cmd.label !== undefined ? ` labeled "${cmd.label}"` : '';
   console.log(`watch[${cmd.source}]: polling every ${cmd.intervalMs / 1000}s for items${labelSuffix}. Ctrl-C to stop.`);
+  const reviewNote = specOnlyReviewNote(cmd);
+  if (reviewNote !== undefined) console.log(reviewNote);
   try {
     if (cmd.source === 'linear') {
       await watchLinearSource(cmd, auth, ctx, controller.signal);
@@ -64,6 +67,17 @@ export async function watchCommand(cmd: WatchCommand): Promise<void> {
   } finally {
     await ctx.destroy();
   }
+}
+
+/** Under --spec-only, where specced issues go; a build job that triggers there leaves no review window. */
+export function specOnlyReviewNote(cmd: WatchCommand): string | undefined {
+  if (cmd.specOnly !== true) return undefined;
+  if (cmd.source === 'linear') {
+    return `watch: --spec-only moves specced issues to state "${cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE}". Its state type must differ from the --spec-state type, or the spec pass specs them again on every poll, and from the build job's trigger type (unstarted by default), or there is no review window.`;
+  }
+  return cmd.agentLabel !== undefined
+    ? `watch: --spec-only moves specced issues to label "${cmd.agentLabel}". For a review window the build job must not trigger on it. Vanguard only checks that it is not the default build label "${DEFAULT_GITHUB_AGENT_LABEL}"; it cannot see a build job on another label. The build job's --label must be the approval label a human applies, not the loop-v1 ownership --label, which stays on every issue.`
+    : undefined;
 }
 
 export async function watchLinearSource(
@@ -110,6 +124,7 @@ export async function watchLinearSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchLinearLoopV1({
@@ -119,7 +134,7 @@ export async function watchLinearSource(
         specTriggerState: cmd.specState,
         specTriggerStateName: specStateName,
         claimedState: cmd.specClaimedState ?? SPEC_CLAIMED_STATE,
-        agentState: cmd.agentState ?? 'Todo',
+        agentState: cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE,
         needsInfoState,
         ...(cmd.team !== undefined ? { team: cmd.team } : {}),
       },
@@ -127,7 +142,7 @@ export async function watchLinearSource(
         deps: agentDeps,
         label,
         triggerState: cmd.triggerState ?? 'unstarted',
-        triggerStateName: cmd.triggerStateName ?? cmd.agentState ?? 'Todo',
+        triggerStateName: cmd.triggerStateName ?? cmd.agentState ?? DEFAULT_LINEAR_AGENT_STATE,
         claimedState: cmd.claimedState ?? 'In Progress',
         reviewState: cmd.reviewState ?? 'In Review',
         needsInfoState,
@@ -136,11 +151,14 @@ export async function watchLinearSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-state is required with --spec-only for linear loop-v1');
   await watchLinear({
     deps: agentDeps,
     label,
@@ -151,6 +169,7 @@ export async function watchLinearSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
     ...(cmd.team !== undefined ? { team: cmd.team } : {}),
   });
@@ -168,7 +187,7 @@ export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undef
   return deps;
 }
 
-async function watchGithubSource(
+export async function watchGithubSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
@@ -191,6 +210,7 @@ async function watchGithubSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGithubLoopV1({
@@ -214,11 +234,14 @@ async function watchGithubSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-label is required with --spec-only for github loop-v1');
   // parseCli guarantees --label for the single-pass github source.
   const label = cmd.label!;
   await watchGithub({
@@ -229,16 +252,18 @@ async function watchGithubSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }
 
-async function watchGithubProjectSource(
+export async function watchGithubProjectSource(
   cmd: WatchCommand,
   auth: AgentAuth | undefined,
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
+  if (cmd.specOnly === true) throw new Error('--spec-only is not supported with --source project');
   // parseCli guarantees --project for the project source.
   const projectNumber = cmd.projectNumber!;
   const deps = await buildGithubDeps(cmd, auth, ctx);
@@ -252,6 +277,7 @@ async function watchGithubProjectSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }
@@ -276,7 +302,7 @@ export async function watchGitlabSource(
     if (cmd.agentLabel === undefined || cmd.needsInfoLabel === undefined) {
       throw new Error('--agent-label and --needs-info-label are required with --spec-label for gitlab loop-v1');
     }
-    const specDeps = {
+    const specDeps: RunSpecGeneratorDeps = {
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitLabTaskFetcher(deps.project),
@@ -285,6 +311,7 @@ export async function watchGitlabSource(
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
       ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
+      ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     };
     await watchGitlabLoopV1({
@@ -308,11 +335,14 @@ export async function watchGitlabSource(
       concurrency: cmd.concurrency,
       intervalMs: cmd.intervalMs,
       once: cmd.once,
+      ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
+      ...(cmd.specOnly === true ? { specOnly: true } : {}),
       signal,
     });
     return;
   }
 
+  if (cmd.specOnly === true) throw new Error('--spec-label is required with --spec-only for gitlab loop-v1');
   if (cmd.label === undefined) throw new Error('--label is required for gitlab watch source');
   await watchGitlab({
     deps,
@@ -322,6 +352,7 @@ export async function watchGitlabSource(
     concurrency: cmd.concurrency,
     intervalMs: cmd.intervalMs,
     once: cmd.once,
+    ...(cmd.maxTasks !== undefined ? { maxTasks: cmd.maxTasks } : {}),
     signal,
   });
 }

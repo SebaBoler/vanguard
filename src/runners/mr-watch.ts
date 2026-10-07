@@ -1,6 +1,7 @@
 import { fanOut } from '../pipeline/fan-out.js';
-import { defaultGlabRunner, encodeProject } from '../tasks/gitlab.js';
-import { hasMergeRequestReviewMarker } from './mr-review.js';
+import { defaultGlabRunner, neutralizeQuickActions } from '../tasks/gitlab.js';
+import { MergeRequestReviewIncompleteError, hasMergeRequestReviewForHead } from './mr-review.js';
+import { stripReviewMarkers } from './review-prompt.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { MergeRequestReviewTarget } from './mr-review.js';
 
@@ -57,11 +58,6 @@ interface GlabMrListItem {
   author?: { username?: string } | null;
   sha?: string;
   labels?: string[];
-}
-
-interface GlabMrNoteItem {
-  body?: string | null;
-  system?: boolean;
 }
 
 function mrId(item: MergeRequestWatchItem): string {
@@ -121,14 +117,7 @@ async function hasExistingReviewForHead(
     return false;
   }
   try {
-    const out = await glab([
-      'api',
-      `projects/${encodeProject(item.project)}/merge_requests/${item.iid}/notes?per_page=100&sort=desc&order_by=created_at`,
-    ]);
-    const notes = JSON.parse(out) as GlabMrNoteItem[];
-    return notes.some(
-      (n) => !n.system && n.body !== undefined && n.body !== null && hasMergeRequestReviewMarker(n.body, item.sha),
-    );
+    return await hasMergeRequestReviewForHead(item, item.sha, glab);
   } catch (err) {
     // best-effort: transient failure → re-review rather than skip
     log?.(`watch-mrs ${mrId(item)}: dedup check failed (${String(err)}), will re-review`);
@@ -190,19 +179,25 @@ export function gitlabMergeRequestWatchPrimitives(
         add: [opts.reviewedLabel],
       }).then(() => {}),
     onFailure: async (item, error) => {
+      // An incomplete review (typically a diff too large for the budget) would fail the same way on every
+      // poll, at two agent runs each. Leave the trigger label off so it waits for a human to re-add it, but
+      // only once the note that tells them so is posted; otherwise the MR would sit with no label and no note.
+      let terminal = error instanceof MergeRequestReviewIncompleteError;
       try {
         await glab([
           'mr', 'note', 'create',
           String(item.iid),
           '--repo', item.project,
-          '-m', `Vanguard MR review failed: ${String(error)}`,
+          // This note is written by the glab user, so a marker quoted in the error would count for the dedupe.
+          '-m', neutralizeQuickActions(`Vanguard MR review failed: ${stripReviewMarkers(String(error))}${terminal ? ` Re-add the "${opts.label}" label to retry.` : ''}`),
         ]);
       } catch {
-        // note posting is best-effort; always restore the trigger label
+        // note posting is best-effort; always fix the labels
+        terminal = false;
       }
       await editMrLabels(glab, item.project, item.iid, {
         remove: [opts.reviewingLabel],
-        add: [opts.label],
+        ...(terminal ? {} : { add: [opts.label] }),
       });
     },
   };
@@ -255,8 +250,10 @@ export async function watchMergeRequestsOnce(
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    const onAbort = (): void => { clearTimeout(timer); resolve(); };
+    // Detach on the timer path too, or a long-lived signal gains one listener per tick.
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
