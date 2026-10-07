@@ -5,13 +5,14 @@ import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
+import { probeTaskDifficulty } from '../core/decision-probe.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
+import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
 import { scanForSecrets } from '../core/secret-scan.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
@@ -368,6 +369,15 @@ export async function runSourcedIssue(
         ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
+      // Log-only difficulty probe (decision model, opt-in via env): recorded next to the run so stats
+      // can later tell whether it predicts repairs/escalation. It never alters routing.
+      const probe = await probeTaskDifficulty(task, pipeline.find((s) => s.name === STAGE.IMPLEMENTER)?.model);
+      if (probe !== undefined) {
+        await persistDecisionProbe(deps.repoPath, adapter.taskId(task), probe).catch(() => undefined);
+        console.log(
+          `vanguard: ${task.id} difficulty probe (${probe.model}, ${probe.latencyMs}ms): first-try ${probe.completesFirstTry.toFixed(2)}, difficulty ${probe.difficulty.toFixed(2)}/4, spec clear ${probe.specClear.toFixed(2)}`,
+        );
+      }
       // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
       // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
       // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.

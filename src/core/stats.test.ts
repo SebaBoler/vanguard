@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMetrics, aggregateMetrics, formatStats, modelKey } from './stats.js';
+import { parseMetrics, parseProbes, aggregateMetrics, formatStats, modelKey, probeReport } from './stats.js';
 
 const line = (o: Record<string, unknown>): string => JSON.stringify({ evt: 'run_complete', ...o });
 
@@ -89,5 +89,27 @@ describe('formatStats', () => {
     expect(out).toContain('TOTAL');
     expect(out).toContain('0.2500');
     expect(out).toContain('90%'); // 900/(100+900)
+  });
+});
+
+describe('decision probe join', () => {
+  const probe = (taskId: string, difficulty: number, completesFirstTry: number): string =>
+    JSON.stringify({ evt: 'decision_probe', ts: 't', taskId, completesFirstTry, difficulty, specClear: 0.8 });
+
+  it('buckets probes by predicted level and reports predicted vs observed first-try rate', () => {
+    const text = [
+      probe('a', 0.9, 0.9), line({ taskId: 'a', stage: 'implementer', exitReason: 'completed' }),
+      probe('b', 1.2, 0.8), line({ taskId: 'b', stage: 'implementer', exitReason: 'completed', attempts: 2, firstExitReason: 'maxTurns' }),
+      probe('c', 3.4, 0.2), line({ taskId: 'c', stage: 'implementer', exitReason: 'incomplete' }),
+      probe('d', 2.0, 0.5), // no implementer record → dropped
+      line({ taskId: 'e', stage: 'implementer', exitReason: 'completed' }), // no probe → not in the table
+    ].join('\n');
+    const report = probeReport(parseMetrics(text), parseProbes(text));
+    expect(report).toEqual([
+      { level: 'Routine', runs: 2, repaired: 1, predictedFirstTry: 0.85, observedFirstTry: 0.5 },
+      { level: 'Hard', runs: 1, repaired: 1, predictedFirstTry: 0.2, observedFirstTry: 0 },
+    ]);
+    expect(formatStats(aggregateMetrics(parseMetrics(text), parseProbes(text)))).toContain('PROBE: predicted difficulty');
+    expect(aggregateMetrics(parseMetrics(text))).not.toHaveProperty('probes');
   });
 });
