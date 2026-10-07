@@ -23,6 +23,8 @@ describe('decisionJudge', () => {
     const v = await judge.judge({ testCase, output: 'done x' });
     expect(v).toEqual({ passed: true, score: 0.82, reason: 'clef-flash: P(acceptable)=0.82, quality Good (2.60/4)' });
     expect(record.state).toMatchObject({ case_kind: 'control', input: 'do x', expectation: 'x done', agent_output: 'done x' });
+    // Truncation priority: the judged output comes before the (possibly long) input.
+    expect(Object.keys(record.state as object)).toEqual(['case_kind', 'expectation', 'agent_output', 'input']);
     expect(record.questions?.['acceptable']?.type).toBe('noul');
     expect(record.questions?.['quality']?.type).toBe('score');
   });
@@ -31,7 +33,12 @@ describe('decisionJudge', () => {
     const low = decisionJudge(cfg, { fetchImpl: answering({ acceptable: { noul: 0.2 } }) });
     expect((await low.judge({ testCase, output: 'nope' })).passed).toBe(false);
     const missing = decisionJudge(cfg, { fetchImpl: answering({ quality: { score: 3 } }) });
-    await expect(missing.judge({ testCase, output: 'x' })).rejects.toThrow(/no "acceptable" answer/);
+    await expect(missing.judge({ testCase, output: 'x' })).rejects.toThrow(/no usable "acceptable" probability/);
+    // A 0–100 scale or a string must not read as "always passes".
+    const percent = decisionJudge(cfg, { fetchImpl: answering({ acceptable: { noul: 82 } }) });
+    await expect(percent.judge({ testCase, output: 'x' })).rejects.toThrow(/got 82/);
+    const stringy = decisionJudge(cfg, { fetchImpl: answering({ acceptable: { noul: '0.8' } }) });
+    await expect(stringy.judge({ testCase, output: 'x' })).rejects.toThrow(/got "0.8"/);
     const dead = decisionJudge(cfg, { fetchImpl: (async () => new Response('x', { status: 500 })) as unknown as typeof fetch });
     await expect(dead.judge({ testCase, output: 'x' })).rejects.toThrow(/no verdict for case c1/);
   });

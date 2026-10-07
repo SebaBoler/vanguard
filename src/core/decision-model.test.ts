@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { decide, decisionModelConfig, decisionModelMissing, decisionEgressAllowed, isDecisionModelName } from './decision-model.js';
+import { decide, decisionModelConfig, decisionModelMissing, decisionEgressAllowed, isDecisionModelName, probability } from './decision-model.js';
 
 const cfg = { url: 'https://example.test/run', token: 'tok', model: 'clef-flash' };
 const questions = { ok: { type: 'noul' as const, instructions: 'ok?' } };
@@ -58,12 +58,12 @@ describe('decide', () => {
     warn.mockRestore();
   });
 
-  it('retries once on a 5xx or network error, never on a 4xx', async () => {
+  it('retries once on a 5xx/429 or network error, never on another 4xx', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     let n = 0;
     const flaky = (async () => {
       n += 1;
-      return n === 1 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify({ answers: { ok: { noul: 0.9 } } }), { status: 200 });
+      return n === 1 ? new Response('{}', { status: 429 }) : new Response(JSON.stringify({ answers: { ok: { noul: 0.9 } } }), { status: 200 });
     }) as unknown as typeof fetch;
     expect((await decide({}, questions, cfg, { fetchImpl: flaky, retries: 1 }))?.answers['ok']?.noul).toBe(0.9);
     expect(n).toBe(2);
@@ -78,9 +78,13 @@ describe('decide', () => {
     const cf = { CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' };
     expect(decisionModelMissing('jev', cf)).toMatch(/not hosted on Workers AI/);
     expect(decisionModelMissing('clef-flash', {})).toMatch(/set CLOUDFLARE_ACCOUNT_ID/);
-    expect(decisionEgressAllowed({}, false)).toBe(true);
-    expect(decisionEgressAllowed({}, true)).toBe(false);
-    expect(decisionEgressAllowed({ VANGUARD_DECISION_PROBE: '1' }, true)).toBe(false);
-    expect(decisionEgressAllowed({ VANGUARD_DECISION_PROBE: 'all' }, true)).toBe(true);
+    expect(decisionEgressAllowed(false, {})).toBe(true);
+    expect(decisionEgressAllowed(true, {})).toBe(false);
+    expect(decisionEgressAllowed(true, { VANGUARD_DECISION_PROBE: '1' })).toBe(false);
+    expect(decisionEgressAllowed(true, { VANGUARD_DECISION_PROBE: 'all' })).toBe(true);
+    expect(probability(0.5)).toBe(0.5);
+    expect(probability(82)).toBeUndefined();
+    expect(probability('0.8')).toBeUndefined();
+    expect(probability(null)).toBeUndefined();
   });
 });

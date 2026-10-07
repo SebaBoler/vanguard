@@ -294,7 +294,7 @@ async function resolveBaseStages(
  * needs the same explicit consent as the difficulty probe (VANGUARD_DECISION_PROBE=all).
  */
 export function resolveForkScorerConfig(whiteLabel: boolean, env: NodeJS.ProcessEnv = process.env): DecisionModelConfig {
-  if (!decisionEgressAllowed(env, whiteLabel)) {
+  if (!decisionEgressAllowed(whiteLabel, env)) {
     throw new VanguardError(
       '--fork-scorer decision on a white-label run (--commit-author) sends the client diff to the decision model; set VANGUARD_DECISION_PROBE=all to allow that.',
     );

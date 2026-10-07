@@ -1,4 +1,4 @@
-import { decide, type DecisionModelConfig } from '../core/decision-model.js';
+import { decide, num, probability, type DecisionModelConfig } from '../core/decision-model.js';
 import type { EvalVerdict, Judge } from './types.js';
 import type { RunResult } from '../core/types.js';
 
@@ -42,13 +42,16 @@ export interface DecisionJudgeOptions {
   signal?: AbortSignal;
 }
 
-function verdict(
-  acceptable: number | undefined,
-  quality: number | undefined,
-  model: string,
-  what: string,
-): EvalVerdict {
-  if (acceptable === undefined) throw new Error(`decision ${what}: ${model} returned no "acceptable" answer`);
+/** Judge fields are clipped so the field under judgement is never the one a server-side cut removes. */
+const MAX_FIELD_CHARS = 20_000;
+const clip = (text: string): string => (text.length <= MAX_FIELD_CHARS ? text : `${text.slice(0, MAX_FIELD_CHARS)}\n[... ${text.length - MAX_FIELD_CHARS} characters omitted ...]`);
+
+function verdict(rawAcceptable: unknown, rawQuality: unknown, model: string, what: string): EvalVerdict {
+  // Both paths this replaces validated their numbers (verdictSchema's 0..1, the probe's num()); an
+  // endpoint answering on a 0–100 scale or with a string must fail loudly, not pass every case.
+  const acceptable = probability(rawAcceptable);
+  if (acceptable === undefined) throw new Error(`decision ${what}: ${model} returned no usable "acceptable" probability (got ${JSON.stringify(rawAcceptable)})`);
+  const quality = num(rawQuality);
   const level = quality !== undefined ? QUALITY_LEVELS[Math.min(QUALITY_LEVELS.length - 1, Math.max(0, Math.round(quality)))] : undefined;
   return {
     passed: acceptable >= 0.5,
@@ -61,12 +64,13 @@ function verdict(
 export function decisionJudge(config: DecisionModelConfig, opts: DecisionJudgeOptions = {}): Judge {
   return {
     judge: async ({ testCase, output }): Promise<EvalVerdict> => {
+      // Key order = truncation priority (the endpoint cuts the serialised state from the end).
       const result = await decide(
         {
           case_kind: testCase.kind,
-          input: testCase.input,
-          expectation: testCase.expectation ?? '(none — judge reasonableness)',
-          agent_output: output,
+          expectation: clip(testCase.expectation ?? '(none — judge reasonableness)'),
+          agent_output: clip(output),
+          input: clip(testCase.input),
         },
         {
           acceptable: {

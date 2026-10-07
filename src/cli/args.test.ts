@@ -188,11 +188,11 @@ describe('parseCli', () => {
     expect(bare.kind === 'run' && 'escalateModel' in bare).toBe(false);
   });
 
-  it('parses --fork-scorer on run and watch and rejects unknown values', () => {
+  it('parses --fork-scorer on run, rejects it on watch and rejects unknown values', () => {
     const run = parseCli(['run', '--linear', 'TES-1', '--fork', '3', '--fork-scorer', 'decision'], '/work');
     expect(run.kind === 'run' && run.forkScorer).toBe('decision');
     const watch = parseCli(['watch', '--label', 'vanguard', '--fork-scorer', 'llm'], '/work');
-    expect(watch.kind === 'watch' && watch.forkScorer).toBe('llm');
+    expect(watch.kind === 'error' && watch.message).toMatch(/watch does not fork/);
     const bare = parseCli(['run', '--linear', 'TES-1'], '/work');
     expect(bare.kind === 'run' && 'forkScorer' in bare).toBe(false);
     const bad = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'coin'], '/work');

@@ -1,5 +1,5 @@
 import type { Task } from '../tasks/fetcher.js';
-import { decide, decisionModelConfig, type DecisionModelConfig, type DecisionQuestion } from './decision-model.js';
+import { decide, decisionModelConfig, num, type DecisionModelConfig, type DecisionQuestion } from './decision-model.js';
 
 /**
  * Log-only "decision model" probe (System One API: Cloudflare Clef / Typesafe Jev). Before the
@@ -82,8 +82,6 @@ const QUESTIONS: Record<string, DecisionQuestion> = {
     instructions: 'Is the task specified clearly enough (acceptance criteria, files, expected behaviour) to implement without guessing?',
   },
 };
-
-const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
 export interface ProbeOptions {
   config?: DecisionProbeConfig | undefined;

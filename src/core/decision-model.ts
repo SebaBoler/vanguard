@@ -92,7 +92,16 @@ interface SystemOneResponse extends SystemOneBody {
   result?: SystemOneBody | null;
 }
 
-const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+/** A finite number, else undefined — answers are unvalidated JSON from an endpoint the operator chose. */
+export const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+/** A probability in [0, 1], else undefined: an endpoint answering on a 0–100 scale must not read as "always yes". */
+export const probability = (v: unknown): number | undefined => {
+  const n = num(v);
+  return n !== undefined && n >= 0 && n <= 1 ? n : undefined;
+};
+
+const RETRY_BACKOFF_MS = 1_000;
 
 export interface DecideOptions {
   signal?: AbortSignal;
@@ -100,7 +109,7 @@ export interface DecideOptions {
   fetchImpl?: typeof fetch;
   /** Names the caller in the one warning line a failed call emits (never the URL: it embeds the account id). */
   label?: string;
-  /** Extra attempts on a timeout / network error / 5xx (not on 4xx or a malformed body). Default 0. */
+  /** Extra attempts on a timeout / network error / 5xx / 429, after a short backoff (not on other 4xx or a malformed body). Default 0. */
   retries?: number;
 }
 
@@ -108,7 +117,7 @@ export interface DecideOptions {
  * Client data (a white-label run's issue text or diff) may reach the decision model only with
  * VANGUARD_DECISION_PROBE=all — one consent switch for every decision-model feature.
  */
-export function decisionEgressAllowed(env: NodeJS.ProcessEnv = process.env, whiteLabel: boolean): boolean {
+export function decisionEgressAllowed(whiteLabel: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
   return !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all';
 }
 
@@ -153,7 +162,10 @@ export async function decide(
       });
       if (!res.ok) {
         const detail = errorDetail(await res.json().catch(() => null));
-        if (res.status >= 500 && retryable) continue;
+        if ((res.status >= 500 || res.status === 429) && retryable) {
+          await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+          continue;
+        }
         console.warn(`vanguard: ${label} failed (HTTP ${res.status}${detail}) — check the decision-model credentials/model`);
         return undefined;
       }
@@ -174,7 +186,10 @@ export async function decide(
       };
     } catch (err) {
       if (opts.signal?.aborted === true) return undefined;
-      if (retryable) continue;
+      if (retryable) {
+        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+        continue;
+      }
       console.warn(`vanguard: ${label} failed (${err instanceof Error ? err.name : 'error'})`);
       return undefined;
     }

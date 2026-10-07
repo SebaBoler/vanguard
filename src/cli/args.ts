@@ -946,8 +946,8 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values['max-tasks'] !== undefined && maxTasks === undefined) {
       return fail(`--max-tasks needs a positive integer, got "${String(values['max-tasks'])}".`);
     }
-    const forkScorer = parseForkScorer(values['fork-scorer']);
-    if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
+    // watch has no --fork, so a fork scorer there could only be a silent no-op or a spurious failure.
+    if (values['fork-scorer'] !== undefined) return fail('--fork-scorer applies to `run --fork <n>` only; watch does not fork.');
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
@@ -968,7 +968,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
-      ...(forkScorer !== undefined ? { forkScorer } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -1157,8 +1156,6 @@ Commands:
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
                              model has failed (default: stay on the implementer model)
-    --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
-                             decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
