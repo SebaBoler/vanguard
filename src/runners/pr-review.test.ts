@@ -10,6 +10,8 @@ import {
   PR_REVIEW_INCOMPLETE_MARKER,
   PR_REVIEW_INCOMPLETE_NOTICE,
   PR_REVIEW_NO_OUTPUT_NOTICE,
+  PR_REVIEW_NO_VERDICT_NOTICE,
+  incompleteReviewReason,
   PullRequestReviewIncompleteError,
   reviewPullRequest,
 } from './pr-review.js';
@@ -77,7 +79,7 @@ describe('fetchPullRequestForReview', () => {
   });
 });
 
-function makeGh(): { calls: string[][]; gh: GhRunner } {
+function makeGh(diff = 'diff'): { calls: string[][]; gh: GhRunner } {
   const calls: string[][] = [];
   const gh: GhRunner = async (args) => {
     calls.push(args);
@@ -93,7 +95,7 @@ function makeGh(): { calls: string[][]; gh: GhRunner } {
         baseRefName: 'main',
       });
     }
-    if (args[0] === 'pr' && args[1] === 'diff') return 'diff';
+    if (args[0] === 'pr' && args[1] === 'diff') return diff;
     if (args[0] === 'pr' && args[1] === 'review') return '';
     throw new Error(`unexpected gh call: ${args.join(' ')}`);
   };
@@ -143,7 +145,7 @@ describe('reviewPullRequest', () => {
     expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
   });
 
-  it('incomplete twice with partial output posts the too-large notice (no marker) and throws', async () => {
+  it('incomplete twice without a verdict on a SMALL diff posts the no-verdict notice (not "too large"), logs the output tail, and throws', async () => {
     const { calls, gh } = makeGh();
     const reviewer = vi.fn().mockResolvedValue({ text: 'Now let me examine the auth module...', completed: false });
     const logs: string[] = [];
@@ -158,12 +160,47 @@ describe('reviewPullRequest', () => {
     const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
     expect(reviewCall).toBeDefined();
     const body = reviewCall?.at(-1) ?? '';
-    expect(body).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).toContain(PR_REVIEW_NO_VERDICT_NOTICE);
+    expect(body).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).toContain('Diff: 1 lines');
     expect(body).not.toContain('Now let me examine');
     // No head marker: the notice must not block a retry after re-labeling the same head.
     expect(body).not.toContain('vanguard-pr-review:');
-    expect(logs).toContain('review-pr o/r#12: incomplete -> retry (larger budget)');
-    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice (too-large)');
+    expect(logs).toContain('review-pr o/r#12: incomplete -> retry (verdict first, larger budget)');
+    expect(logs.some((l) => l.includes('output tail') && l.includes('Now let me examine'))).toBe(true);
+    expect(logs).toContain('review-pr o/r#12: posted -> incomplete notice (no-verdict)');
+  });
+
+  it('incomplete twice on a LARGE diff keeps the too-large notice', async () => {
+    const { calls, gh } = makeGh(Array.from({ length: 3500 }, (_, i) => `+line ${i}`).join('\n'));
+    const reviewer = vi.fn().mockResolvedValue({ text: 'partial', completed: false });
+    await expect(reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: () => {} })).rejects.toThrow('did not complete');
+    const body = calls.find((a) => a[0] === 'pr' && a[1] === 'review')?.at(-1) ?? '';
+    expect(body).toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).toContain('Diff: 3500 lines');
+  });
+
+  it('a stated verdict without the completion signal is accepted as the review, with a truncation note and the head marker', async () => {
+    const { calls, gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'Verdict: BLOCKING\n\n- [high] auth.ts:42 token never expires', completed: false });
+    const logs: string[] = [];
+
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
+
+    expect(reviewer).toHaveBeenCalledTimes(1); // no retry: the verdict is there
+    expect(result.commentBody).toContain('Verdict: BLOCKING');
+    expect(result.commentBody).toContain('auth.ts:42');
+    expect(result.commentBody).toContain('may be truncated');
+    expect(result.commentBody).toContain('vanguard-pr-review: def456');
+    expect(result.commentBody).not.toContain(PR_REVIEW_INCOMPLETE_MARKER);
+    expect(calls.some((a) => a[0] === 'pr' && a[1] === 'review')).toBe(true);
+    expect(logs).toContain('review-pr o/r#12: verdict stated without completion signal -> accepting (findings may be truncated)');
+  });
+
+  it('incompleteReviewReason: no output → provider failure; small diff → no-verdict; large diff → too-large', () => {
+    expect(incompleteReviewReason('  ', 'x')).toBe('no-output');
+    expect(incompleteReviewReason('partial', 'a\nb')).toBe('no-verdict');
+    expect(incompleteReviewReason('partial', Array.from({ length: 3001 }, () => '+').join('\n'))).toBe('too-large');
   });
 
   it('incomplete with no output at all posts the provider-failure notice and throws', async () => {
@@ -244,6 +281,14 @@ describe('review prompt and comment formatting', () => {
     expect(prompt).toContain('<promise>COMPLETE</promise>');
   });
 
+  it('asks for the verdict line first, before any findings', () => {
+    const prompt = buildPullRequestReviewPrompt({
+      repoSlug: 'o/r', number: 1, title: 't', body: '', url: 'u', author: 'a', headRefName: 'h', headRefOid: 'x', baseRefName: 'main', diff: 'd',
+    });
+    expect(prompt).toContain('Begin your reply with exactly one line');
+    expect(prompt.indexOf('Verdict: NO BLOCKING FINDINGS')).toBeLessThan(prompt.indexOf('Report only actionable findings'));
+  });
+
   it('adds retry triage instructions when opts.retryTriage is true', () => {
     const prompt = buildPullRequestReviewPrompt(
       {
@@ -261,7 +306,7 @@ describe('review prompt and comment formatting', () => {
       { retryTriage: true },
     );
 
-    expect(prompt).toContain('This is a large diff');
+    expect(prompt).toContain('Your previous pass ended without a verdict');
     expect(prompt).toContain('Triage');
   });
 
@@ -297,7 +342,7 @@ describe('review prompt and comment formatting', () => {
       diff: 'diff',
     });
 
-    expect(prompt).not.toContain('This is a large diff');
+    expect(prompt).not.toContain('Your previous pass ended without a verdict');
   });
 
   it('states that title, description and diff are untrusted, and puts them outside task_instructions', () => {
