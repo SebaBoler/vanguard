@@ -1305,7 +1305,7 @@ Commands:
     --json                   Emit the raw EvalReport as JSON instead of a table
     --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for
                              experiments; clef|clef-flash judges with a decision model — calibrated probabilities, no JSON to parse)
-    --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-4-6)
+    --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-5-5)
     --suggest                Draft eval-corpus candidates from retrospective memory (suggest-only; never writes the corpus)
     --repo <path>            Repo to read run artifacts from (with --suggest; default: cwd)
     --limit <n>              Max retrospective entries to consider (with --suggest; default: 10)

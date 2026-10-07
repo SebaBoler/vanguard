@@ -196,14 +196,14 @@ describe('summarizeOutcomes', () => {
       durationMs: 500,
       usage: { inputTokens: 0, outputTokens: 200_000, cacheReadInputTokens: 0 },
     };
-    // haiku output: 100_000*5/1e6 = 0.5, 200_000*5/1e6 = 1.0 → total 1.5
+    // haiku (5.5) output: 100_000*0.5/1e6 = 0.05, 200_000*0.5/1e6 = 0.1 → total 0.15
     const out = summarizeOutcomes([
       { name: 'a', result: result1, model: 'haiku' },
       { name: 'b', result: result2, model: 'haiku' },
     ]);
     const lines = out.split('\n');
     const totalLine = lines.find(l => l.includes('TOTAL'))!;
-    expect(totalLine).toContain('1.5000');
+    expect(totalLine).toContain('0.1500');
     expect(totalLine).not.toContain('~');
   });
 });
