@@ -88,6 +88,14 @@ describe('mergeAttempts', () => {
     expect(merged.cacheEfficiency).toBeCloseTo(950 / 1100);
   });
 
+  it('keeps the reporting side when only one attempt carries cost/usage/duration', () => {
+    const prior: RunResult = {
+      ...baseResult, costUsd: 0.3, durationMs: 1000, usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 0 },
+    };
+    const merged = mergeAttempts(prior, { ...baseResult, turns: 1 });
+    expect(merged).toMatchObject({ turns: 4, costUsd: 0.3, durationMs: 1000, usage: prior.usage, cacheEfficiency: 0 });
+  });
+
   it('leaves cost/usage/duration absent when neither attempt reports them', () => {
     const merged = mergeAttempts(baseResult, { ...baseResult, turns: 1 });
     expect(merged.turns).toBe(4);

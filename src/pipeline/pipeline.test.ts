@@ -825,6 +825,36 @@ describe('runBudgetedStages fork option', () => {
     expect(received[2]?.prompt).toContain('feature.txt');
     await disposeContext(ctx);
   });
+
+  it('folds the losing variants\' cost/turns into the winner while keeping the winner\'s identity', async () => {
+    const wm = new WorktreeManager(repo);
+    let call = 0;
+    const agent: AgentProvider = {
+      name: 'costly',
+      async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        const i = call++;
+        return { finalText: `variant-${i}`, turns: i === 0 ? 3 : 2, costUsd: i === 0 ? 0.2 : 0.1, sessionId: `sess-${i}`,
+          usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0 } };
+      },
+    };
+    let scoreCall = 0;
+    const complete: Complete = async () => {
+      const score = scoreCall++ === 0 ? 0.9 : 0.3;
+      return `<verdict>{"passed":true,"score":${score},"reason":"ok"}</verdict>`;
+    };
+    const ctx = await prepareContext({ taskId: 'fork-merge', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const result = await runBudgetedStages(ctx, [{ name: 'implementer', promptTemplate: 'x' }], { agent, fork: { n: 2, complete } });
+    await disposeContext(ctx);
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      const stage = result.outcomes[0]?.result;
+      expect(stage?.finalText).toBe('variant-0');
+      expect(stage?.sessionId).toBe('sess-0');
+      expect(stage?.costUsd).toBeCloseTo(0.3);
+      expect(stage?.turns).toBe(5);
+      expect(stage?.usage).toEqual({ inputTokens: 20, outputTokens: 10, cacheReadInputTokens: 0 });
+    }
+  });
 });
 
 describe('assembleReviewPipeline', () => {
@@ -899,6 +929,33 @@ describe('assembleReviewPipeline', () => {
     expect(planned.find((s) => s.name === 'adversary')?.model).toBe('opus');
     expect(planned.find((s) => s.name === 'implementer')?.model).toBe('claude-sonnet-5');
     expect(planned.find((s) => s.name === 'repairer')?.model).toBe('claude-sonnet-5');
+  });
+
+  it('an unpinned planner-tier stage (repo HCL flow) still takes providerModel', () => {
+    const unpinned: PipelineStage[] = [
+      { name: 'planner', promptTemplate: 'plan' },
+      { name: 'implementer', promptTemplate: 'do' },
+    ];
+    const routed = assembleReviewPipeline(unpinned, { agent }, { providerModel: 'claude-sonnet-5' });
+    expect(routed.every((s) => s.model === 'claude-sonnet-5')).toBe(true);
+  });
+
+  it('a forced-model provider cannot serve the pinned opus: planner-tier takes providerModel, else the forced model', () => {
+    const withModel = assembleReviewPipeline(planImplementAdversaryStages(), { agent: stubAgent('openrouter') }, {
+      provider: 'openrouter',
+      providerModel: 'anthropic/claude-sonnet-5',
+      providerForcedModel: 'anthropic/claude-sonnet-4.6',
+    });
+    expect(withModel.find((s) => s.name === 'planner')?.model).toBe('anthropic/claude-sonnet-5');
+    expect(withModel.find((s) => s.name === 'adversary')?.model).toBe('anthropic/claude-sonnet-5');
+    const forcedOnly = assembleReviewPipeline(planImplementAdversaryStages(), { agent: stubAgent('openrouter') }, {
+      provider: 'openrouter',
+      providerForcedModel: 'anthropic/claude-sonnet-4.6',
+    });
+    expect(forcedOnly.find((s) => s.name === 'planner')?.model).toBe('anthropic/claude-sonnet-4.6');
+    // Non-planner stages keep their own pinned model; the provider default applies where none is set.
+    expect(forcedOnly.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
+    expect(assembleReviewPipeline(base, { agent }, { providerForcedModel: 'glm-5.2' })).toEqual(base);
   });
 
   it('reviewModel overrides model on reviewer only', () => {

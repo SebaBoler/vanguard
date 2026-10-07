@@ -88,6 +88,7 @@ vi.mock('../sandbox/docker.js', () => ({ DockerSandboxProvider: class { construc
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
+  forcedProviderModel: vi.fn(() => undefined),
 }));
 const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
   wmDiff: vi.fn(async () => ''),

@@ -263,6 +263,8 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       const implementerOutcome = outcomes.find((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerOutcome?.result.sessionId;
       const implementerModel = implementerOutcome?.model;
+      // runAgent's default turn cap (6) is useless for finishing work that already used the implementer's.
+      const implementerMaxTurns = pipeline.find((s) => s.name === STAGE.IMPLEMENTER)?.maxTurns;
       let verification: VerificationResult | undefined;
       if (verifyCmd !== undefined) {
         let verifyRepairs = 0;
@@ -279,6 +281,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
             resumeSessionId,
             // Same model the implementer ran on; otherwise the repair drops to the provider default.
             ...(implementerModel !== undefined ? { model: implementerModel } : {}),
+            ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
           });
           resumeSessionId = repaired.sessionId ?? resumeSessionId;
         }

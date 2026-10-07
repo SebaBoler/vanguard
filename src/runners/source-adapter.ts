@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
-import { selectAgents } from '../agents/registry.js';
+import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
@@ -321,7 +321,11 @@ export async function runSourcedIssue(
         deps.maxRepairIterations !== undefined
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
-      const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      const providerForcedModel = forcedProviderModel(deps.provider ?? 'claude', deps.customProviders);
+      const pipeline = assembleReviewPipeline(scopedStages, agents, {
+        ...deps,
+        ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
+      });
       // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
       // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
       // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.
@@ -388,6 +392,9 @@ export async function runSourcedIssue(
       let implementerDone = false;
       let gatePassed = false;
       let repairIterations = 0;
+      // try/finally so the per-stage cost table is printed even when a repair call throws or the run
+      // is cancelled mid-loop — and, on the happy path, after the loop so repairs show up in it.
+      try {
       for (;;) {
         // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
         // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
@@ -424,9 +431,9 @@ export async function runSourcedIssue(
         ]
           .filter((s): s is string => s !== undefined)
           .join('\n\n');
-        // Resume on the model the implementer actually ran on (routed --provider-model or fallback) —
-        // omitting it here silently hands the repair to the provider's default model.
-        const repairModel = outcomes[implementerIdx]?.model ?? implementerStage?.model;
+        // Resume on the implementer's configured model (routed --provider-model) — omitting it here
+        // silently hands the repair to the provider's default model.
+        const repairModel = outcomes[implementerIdx]?.model;
         const repaired = await runAgent(ctx, {
           promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
           agent: agents.agent,
@@ -442,9 +449,10 @@ export async function runSourcedIssue(
         if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: mergeAttempts(prior.result, repaired) };
         resumeSessionId = repaired.sessionId ?? resumeSessionId;
       }
+      } finally {
+        console.log(summarizeOutcomes(outcomes));
+      }
       console.log(`vanguard: gate ${gatePassed ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`);
-      // Printed after the gate loop so repair attempts show up in the per-stage cost table.
-      console.log(summarizeOutcomes(outcomes));
 
       const visualProof = await resolveAndRunVisualProof(
         ctx.sandbox,
