@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseMetrics, aggregateMetrics, formatStats } from '../core/stats.js';
+import { parseMetrics, parseProbes, aggregateMetrics, formatStats } from '../core/stats.js';
 import type { Command } from './args.js';
 
 type StatsCommand = Extract<Command, { kind: 'stats' }>;
@@ -16,7 +16,7 @@ export async function statsCommand(cmd: StatsCommand): Promise<void> {
     return;
   }
   const records = parseMetrics(text);
-  const report = aggregateMetrics(records);
+  const report = aggregateMetrics(records, parseProbes(text));
   if (cmd.json) {
     console.log(JSON.stringify(report, null, 2));
     return;

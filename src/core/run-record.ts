@@ -5,6 +5,7 @@ import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
+import type { DecisionProbeResult } from './decision-probe.js';
 
 export interface PersistOptions {
   /** ISO timestamp; defaults to now. Injected for deterministic tests. */
@@ -87,6 +88,22 @@ export async function persistVerification(
   const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
   return file;
+}
+
+/**
+ * Append one `{ evt: 'decision_probe', ts, taskId, ... }` line to metrics.jsonl — the log-only
+ * difficulty probe, joined to the stage outcomes by taskId in `vanguard stats`.
+ */
+export async function persistDecisionProbe(
+  localRepoPath: string,
+  taskId: string,
+  probe: DecisionProbeResult,
+  opts: { timestamp?: string } = {},
+): Promise<void> {
+  const runsDir = join(localRepoPath, '.vanguard', 'runs');
+  await mkdir(runsDir, { recursive: true });
+  const metric = { evt: 'decision_probe', ts: opts.timestamp ?? new Date().toISOString(), taskId, ...probe };
+  await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
 }
 
 export interface PersistVisualProofOptions {

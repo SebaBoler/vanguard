@@ -97,6 +97,8 @@ vi.mock('../sandbox/docker.js', () => ({
   sandboxImage,
 }));
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
+const { probeTaskDifficulty } = vi.hoisted(() => ({ probeTaskDifficulty: vi.fn(async () => undefined) }));
+vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty, decisionProbeConfig: vi.fn(() => undefined) }));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -121,10 +123,12 @@ vi.mock('../core/retrospective-memory.js', () => ({
   loadRetrospectiveMemory: vi.fn(async () => ''),
   refreshRetrospectiveMemory: vi.fn(async () => {}),
 }));
+const { persistDecisionProbe } = vi.hoisted(() => ({ persistDecisionProbe: vi.fn(async () => {}) }));
 vi.mock('../core/run-record.js', () => ({
   persistStageOutcomes: (...args: unknown[]) => persistStageOutcomes(...(args as [])),
   persistVerification: vi.fn(async () => {}),
   persistVisualProof: vi.fn(async () => {}),
+  persistDecisionProbe: (...args: unknown[]) => persistDecisionProbe(...(args as [])),
 }));
 vi.mock('../core/run-summary.js', () => ({ summarizeOutcomes: vi.fn(() => '') }));
 vi.mock('../pipeline/verify.js', () => ({
@@ -254,6 +258,22 @@ describe('runSourcedIssue', () => {
 
     expect(runAgent).toHaveBeenCalledTimes(2);
     expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-fable-5' });
+  });
+
+  it('the difficulty probe is log-only: persisted with the implementer model, never routing', async () => {
+    probeTaskDifficulty.mockResolvedValueOnce({ model: 'clef-flash', completesFirstTry: 0.3, difficulty: 3.1, difficultyConfidence: 0.7, specClear: 0.6, latencyMs: 90 } as never);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', providerModel: 'claude-sonnet-5' }, fakeAdapter([], STAGES));
+    expect(probeTaskDifficulty).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }), 'claude-sonnet-5', expect.objectContaining({}));
+    expect(persistDecisionProbe).toHaveBeenCalledWith('/repo', 'gl-1', expect.objectContaining({ difficulty: 3.1 }));
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.model).toBe('claude-sonnet-5');
+  });
+
+  it('a probe that is disabled or fails leaves no trace and does not block the run', async () => {
+    probeTaskDifficulty.mockResolvedValueOnce(undefined as never);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+    expect(result.prUrl).toBe(MR_URL);
+    expect(persistDecisionProbe).not.toHaveBeenCalled();
   });
 
   it('modelFromLabels: last matching label wins, blanks ignored, none → undefined', () => {

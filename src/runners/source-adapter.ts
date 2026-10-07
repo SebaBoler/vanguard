@@ -5,13 +5,14 @@ import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
+import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
+import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
 import { scanForSecrets } from '../core/secret-scan.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
@@ -335,6 +336,16 @@ export async function runSourcedIssue(
     });
 
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    // Log-only difficulty probe (decision model, opt-in via env): kicked off here so its round trip
+    // hides under sandbox + worktree provisioning; awaited once the pipeline is assembled. Recorded
+    // next to the run so stats can later tell whether it predicts repairs/escalation. Never routes.
+    const labelModel = modelFromLabels(task.labels, (label) =>
+      console.warn(`vanguard: ${task.id} ignoring malformed model label ${JSON.stringify(label)}`),
+    );
+    const probePromise = probeTaskDifficulty(task, labelModel ?? deps.providerModel, {
+      config: decisionProbeConfig(process.env, { whiteLabel }),
+      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+    });
     const ctx = await prepareContext(
       {
         taskId: adapter.taskId(task),
@@ -357,9 +368,6 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const providerForcedModel = forcedProviderModel(deps.provider ?? 'claude', deps.customProviders);
-      const labelModel = modelFromLabels(task.labels, (label) =>
-        console.warn(`vanguard: ${task.id} ignoring malformed model label ${JSON.stringify(label)}`),
-      );
       if (labelModel !== undefined) {
         console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
       }
@@ -368,6 +376,13 @@ export async function runSourcedIssue(
         ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
+      const probe = await probePromise;
+      if (probe !== undefined && deps.signal?.aborted !== true) {
+        await persistDecisionProbe(deps.repoPath, adapter.taskId(task), probe).catch(() => undefined);
+        console.log(
+          `vanguard: ${task.id} difficulty probe (${probe.model}, ${probe.latencyMs}ms): first-try ${probe.completesFirstTry.toFixed(2)}, difficulty ${probe.difficulty.toFixed(2)}/4, spec clear ${probe.specClear.toFixed(2)}`,
+        );
+      }
       // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
       // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
       // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMetrics, aggregateMetrics, formatStats, modelKey } from './stats.js';
+import { parseMetrics, parseProbes, aggregateMetrics, formatStats, modelKey, probeReport } from './stats.js';
 
 const line = (o: Record<string, unknown>): string => JSON.stringify({ evt: 'run_complete', ...o });
 
@@ -89,5 +89,42 @@ describe('formatStats', () => {
     expect(out).toContain('TOTAL');
     expect(out).toContain('0.2500');
     expect(out).toContain('90%'); // 900/(100+900)
+  });
+});
+
+describe('decision probe join', () => {
+  const T = (n: number): string => `2026-10-07T10:${String(n).padStart(2, '0')}:00.000Z`;
+  const probe = (taskId: string, difficulty: number, completesFirstTry: number, ts = T(0)): string =>
+    JSON.stringify({ evt: 'decision_probe', ts, taskId, completesFirstTry, difficulty, specClear: 0.8 });
+  const run = (taskId: string, ts: string, extra: Record<string, unknown> = {}): string =>
+    line({ taskId, ts, stage: 'implementer', exitReason: 'completed', ...extra });
+
+  it('buckets probes by predicted level and reports predicted vs observed first-try rate', () => {
+    const text = [
+      probe('a', 0.9, 0.9), run('a', T(1)),
+      probe('b', 1.2, 0.8), run('b', T(1), { attempts: 2, firstExitReason: 'maxTurns' }),
+      probe('c', 3.4, 0.2), run('c', T(1), { exitReason: 'incomplete' }),
+      probe('d', 2.0, 0.5), // no implementer record → dropped
+      run('e', T(1)), // no probe → not in the table
+    ].join('\n');
+    const report = probeReport(parseMetrics(text), parseProbes(text));
+    expect(report).toEqual([
+      { level: 'Routine', runs: 2, repaired: 1, predictedFirstTry: 0.85, observedFirstTry: 0.5 },
+      { level: 'Hard', runs: 1, repaired: 1, predictedFirstTry: 0.2, observedFirstTry: 0 },
+    ]);
+    expect(formatStats(aggregateMetrics(parseMetrics(text), parseProbes(text)))).toContain('PROBE: predicted difficulty');
+    expect(aggregateMetrics(parseMetrics(text))).not.toHaveProperty('probes');
+  });
+
+  it('joins each probe to the run it preceded, so a re-run task yields one pair per run', () => {
+    const text = [
+      probe('a', 1.0, 0.9, T(0)), run('a', T(1), { attempts: 2 }), // 1st run: repaired
+      probe('a', 1.0, 0.9, T(2)), run('a', T(3)), // 2nd run: clean
+      probe('a', 1.0, 0.9, T(4)), // 3rd probe: run cancelled before the pipeline → no record → dropped
+      run('a', '2026-10-07T09:59:00.000Z'), // an implementer line BEFORE the first probe never matches
+    ].join('\n');
+    expect(probeReport(parseMetrics(text), parseProbes(text))).toEqual([
+      { level: 'Routine', runs: 2, repaired: 1, predictedFirstTry: 0.9, observedFirstTry: 0.5 },
+    ]);
   });
 });
