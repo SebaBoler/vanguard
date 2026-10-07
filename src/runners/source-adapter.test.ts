@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
-import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
+import { pickRunOptions, runSourcedIssue, conventionalCommitMessage, modelFromLabels } from './source-adapter.js';
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
@@ -215,6 +215,23 @@ describe('runSourcedIssue', () => {
     // assembleReviewPipeline appends the conformance stage when deps.conformance is true.
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
+  });
+
+  it('a vanguard:model=<m> label pins the implementer model for that task, over --provider-model', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['ready for agent', 'vanguard:model=claude-fable-5'] } }));
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', providerModel: 'claude-sonnet-5', reviewModel: 'claude-opus-4-8' }, labelled);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.model).toBe('claude-fable-5');
+    // --review-model is untouched: the label is implementer-tier only.
+    expect(assembled.find((s) => s.name === 'reviewer')?.model).toBe('claude-opus-4-8');
+  });
+
+  it('modelFromLabels: last matching label wins, blanks ignored, none → undefined', () => {
+    expect(modelFromLabels(['bug', 'vanguard:model=opus', 'vanguard:model=claude-fable-5'])).toBe('claude-fable-5');
+    expect(modelFromLabels(['vanguard:model= '])).toBeUndefined();
+    expect(modelFromLabels(['ready for agent'])).toBeUndefined();
   });
 
   it('builds the sandbox with the shared sandboxImage() resolver, so a VANGUARD_SANDBOX_IMAGE override reaches it too', async () => {

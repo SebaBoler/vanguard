@@ -219,6 +219,24 @@ function branchIdFromTaskId(taskId: string): string {
  * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
  * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
  */
+/** Issue label that pins the implementer-tier model for ONE task: `vanguard:model=<model>`. */
+export const MODEL_LABEL_PREFIX = 'vanguard:model=';
+
+/**
+ * Per-task model override from the issue's labels. A human judging "this one is hard" beats any
+ * pre-run heuristic, so the label wins over the fleet-wide --provider-model. Last matching label
+ * wins; an empty value is ignored.
+ */
+export function modelFromLabels(labels: ReadonlyArray<string>): string | undefined {
+  let model: string | undefined;
+  for (const label of labels) {
+    if (!label.startsWith(MODEL_LABEL_PREFIX)) continue;
+    const value = label.slice(MODEL_LABEL_PREFIX.length).trim();
+    if (value !== '') model = value;
+  }
+  return model;
+}
+
 export function conventionalCommitMessage(title: string, taskId: string): string {
   const prefix = 'feat: ';
   const suffix = ` (#${branchIdFromTaskId(taskId)})`;
@@ -326,8 +344,13 @@ export async function runSourcedIssue(
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
       const providerForcedModel = forcedProviderModel(deps.provider ?? 'claude', deps.customProviders);
+      const labelModel = modelFromLabels(task.labels);
+      if (labelModel !== undefined) {
+        console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
+      }
       const pipeline = assembleReviewPipeline(scopedStages, agents, {
         ...deps,
+        ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
       // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
