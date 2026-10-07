@@ -72,6 +72,9 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AUTH_TOKEN: ${{ secrets.CLOUDFLARE_AUTH_TOKEN }}
+          VANGUARD_DECISION_PROBE: '1'
         run: |
           # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
           node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model claude-sonnet-5 --review-provider codex --escalate-model claude-fable-5
