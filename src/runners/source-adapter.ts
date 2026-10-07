@@ -43,6 +43,8 @@ import type { SkillRegistry } from '../context/skill-registry.js';
 export interface RunOptions extends ProviderChoice {
   providerModel?: string;
   reviewModel?: string;
+  /** Model for gate repairs after the first failed one; undefined = keep the implementer model. */
+  escalateModel?: string;
   noSimplify?: boolean;
   verifyCmd?: string;
   visualProofCmd?: string;
@@ -99,6 +101,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+    ...(cmd.escalateModel !== undefined ? { escalateModel: cmd.escalateModel } : {}),
     ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
@@ -420,8 +423,15 @@ export async function runSourcedIssue(
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
+        // Reactive escalation: the first repair stays on the (cheap) implementer model; once that has
+        // demonstrably failed, later repairs resume the same session on --escalate-model. Reacting to
+        // an observed red gate beats guessing task difficulty up front — a wrong guess down costs a
+        // failed run plus repairs, a wrong guess up only costs today's price.
+        const escalate = repairIterations >= 2 && deps.escalateModel !== undefined;
         console.log(
-          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
+          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session${
+            escalate ? ` on ${deps.escalateModel}` : ''
+          }`,
         );
         const feedback = [
           !implementerDone
@@ -434,7 +444,7 @@ export async function runSourcedIssue(
           .join('\n\n');
         // Resume on the implementer's configured model (routed --provider-model) — omitting it here
         // silently hands the repair to the provider's default model.
-        const repairModel = outcomes[implementerIdx]?.model;
+        const repairModel = escalate ? deps.escalateModel : outcomes[implementerIdx]?.model;
         const repaired = await runAgent(ctx, {
           // Test output is author-controlled text; see literalPrompt.
           ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
@@ -448,7 +458,15 @@ export async function runSourcedIssue(
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
         });
         const prior = outcomes[implementerIdx];
-        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: mergeAttempts(prior.result, repaired) };
+        // An escalated repair re-labels the stage's configured model, so stats attribute the final
+        // attempt to the model that actually closed the gate rather than reading it as a gateway swap.
+        if (prior !== undefined) {
+          outcomes[implementerIdx] = {
+            ...prior,
+            result: mergeAttempts(prior.result, repaired),
+            ...(escalate && deps.escalateModel !== undefined ? { model: deps.escalateModel } : {}),
+          };
+        }
         resumeSessionId = repaired.sessionId ?? resumeSessionId;
       }
       } finally {

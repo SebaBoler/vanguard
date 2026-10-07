@@ -124,6 +124,8 @@ export type Command =
       reviewProvider?: string;
       providerModel?: string;
       reviewModel?: string;
+      /** Model for gate repairs after the first one failed (reactive escalation); default: stay on the implementer model. */
+      escalateModel?: string;
       verifyCmd?: string;
       specModel?: string;
       specLabel?: string;
@@ -406,6 +408,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // model selection per stage (run + watch)
         'provider-model': { type: 'string' },
         'review-model': { type: 'string' },
+        // model for the 2nd+ gate repair — escalate only once the cheap model has demonstrably failed
+        'escalate-model': { type: 'string' },
         // skip the simplifier stage (lean run: implement -> review only)
         'no-simplify': { type: 'boolean' },
         // conformance review pass (opt-in; planner-tier model checks diff against spec)
@@ -800,6 +804,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
@@ -946,6 +951,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
+      ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -1038,6 +1044,8 @@ Commands:
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
+    --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
+                             model has failed (default: stay on the implementer model)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
@@ -1128,6 +1136,8 @@ Commands:
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
+    --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
+                             model has failed (default: stay on the implementer model)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)

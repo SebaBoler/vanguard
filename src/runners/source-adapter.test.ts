@@ -607,6 +607,52 @@ describe('runSourcedIssue', () => {
     expect(body).not.toContain(`Closes ${task.id}`);
   });
 
+  it('--escalate-model: first repair stays on the implementer model, later repairs resume on the escalated one', async () => {
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-sonnet-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent
+      .mockResolvedValueOnce({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'claude-sonnet-5' } as never)
+      .mockResolvedValueOnce({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'claude-fable-5' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo', escalateModel: 'claude-fable-5' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-fable-5' });
+    // The stage record is re-labelled to the model that closed the gate.
+    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
+    expect(persisted?.[1].find((o) => o.name === 'implementer')?.model).toBe('claude-fable-5');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('without --escalate-model every repair stays on the implementer model', async () => {
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-sonnet-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 1 } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-sonnet-5' });
+  });
+
   it('exhausts the shared repair cap on persistent red verification and declares partial scope', async () => {
     runStages.mockResolvedValueOnce([stageOutcome('implementer', 'sess-1'), stageOutcome('reviewer')]);
     vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');

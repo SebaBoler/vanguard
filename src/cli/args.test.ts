@@ -179,6 +179,15 @@ describe('parseCli', () => {
     });
   });
 
+  it('parses --escalate-model on run and watch', () => {
+    const run = parseCli(['run', '--linear', 'TES-1', '--escalate-model', 'claude-fable-5'], '/work');
+    expect(run.kind === 'run' && run.escalateModel).toBe('claude-fable-5');
+    const watch = parseCli(['watch', '--label', 'vanguard', '--escalate-model', 'opus'], '/work');
+    expect(watch.kind === 'watch' && watch.escalateModel).toBe('opus');
+    const bare = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(bare.kind === 'run' && 'escalateModel' in bare).toBe(false);
+  });
+
   it('parses --provider-model and --review-model on run', () => {
     const cmd = parseCli(['run', '--linear', 'TES-1', '--provider-model', 'opus', '--review-model', 'haiku'], '/work');
     expect(cmd.kind === 'run' && cmd.providerModel).toBe('opus');
