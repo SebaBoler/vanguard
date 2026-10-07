@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMetrics, aggregateMetrics, formatStats } from './stats.js';
+import { parseMetrics, aggregateMetrics, formatStats, modelKey } from './stats.js';
 
 const line = (o: Record<string, unknown>): string => JSON.stringify({ evt: 'run_complete', ...o });
 
@@ -43,7 +43,7 @@ describe('aggregateMetrics', () => {
     expect(impl?.costUsd).toBeCloseTo(0.50);
 
     expect(report.total.entries).toBe(3);
-    expect(report.byModel.map((m) => m.key)).toEqual(['(unknown)']);
+    expect(report.byModel.map((m) => m.key)).toEqual(['(no model recorded)']);
     expect(report.total.costUsd).toBeCloseTo(0.60);
     expect(report.total.cacheReadInputTokens).toBe(950);
   });
@@ -62,6 +62,14 @@ describe('aggregateMetrics', () => {
     expect(sonnet?.entries).toBe(2);
     expect(sonnet?.costUsd).toBeCloseTo(0.5);
     expect(report.byModel.find((m) => m.key === 'claude-fable-5')?.costUsd).toBeCloseTo(0.5);
+  });
+
+  it('modelKey makes a gateway substitution its own row', () => {
+    expect(modelKey({ model: 'claude-fable-5', requestedModel: 'claude-fable-5' })).toBe('claude-fable-5');
+    expect(modelKey({ model: 'claude-sonnet-4-6', requestedModel: 'claude-fable-5' })).toBe('claude-sonnet-4-6 (requested claude-fable-5)');
+    expect(modelKey({ model: 'claude-opus-4-8' })).toBe('claude-opus-4-8');
+    expect(modelKey({ requestedModel: 'opus' })).toBe('opus');
+    expect(modelKey({})).toBe('(no model recorded)');
   });
 
   it('empty input yields a zeroed report', () => {

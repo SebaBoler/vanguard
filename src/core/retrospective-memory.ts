@@ -62,6 +62,8 @@ interface FailedRunEvent {
   taskId: string;
   exitReason: string;
   stage?: string;
+  /** Set when the stage was repaired/resumed after the failure (the final exitReason is 'completed'). */
+  repairedAfterAttempts?: number;
 }
 
 interface FailedVerifyEvent {
@@ -88,13 +90,18 @@ function parseRelevantMetrics(text: string): MetricEvent[] {
 
     if (parsed.evt === 'run_complete' && typeof parsed.taskId === 'string' && typeof parsed.ts === 'string') {
       const exitReason = typeof parsed.exitReason === 'string' ? parsed.exitReason : '';
-      if (exitReason !== 'completed') {
+      // A multi-attempt stage carries its FIRST exit reason: a truncated-then-repaired implementer is
+      // still a failure signal worth remembering, even though the stage ended 'completed'.
+      const firstExitReason = typeof parsed.firstExitReason === 'string' ? parsed.firstExitReason : exitReason;
+      const attempts = typeof parsed.attempts === 'number' ? parsed.attempts : 1;
+      if (firstExitReason !== 'completed') {
         events.push({
           kind: 'failed_run',
           ts: parsed.ts,
           taskId: parsed.taskId,
-          exitReason,
+          exitReason: firstExitReason,
           ...(typeof parsed.stage === 'string' ? { stage: parsed.stage } : {}),
+          ...(exitReason === 'completed' && attempts > 1 ? { repairedAfterAttempts: attempts } : {}),
         });
       }
       continue;
@@ -231,7 +238,9 @@ export async function buildRetrospectiveMemory(repoPath: string, opts?: BuildOpt
         kind: 'failed_run',
         taskId: evt.taskId,
         timestamp: evt.ts,
-        detail: `exitReason: ${evt.exitReason}${stagePart}`,
+        detail: `exitReason: ${evt.exitReason}${stagePart}${
+          evt.repairedAfterAttempts !== undefined ? ` (completed after ${evt.repairedAfterAttempts} attempts)` : ''
+        }`,
       });
     } else if (evt.kind === 'failed_proof') {
       const proof = await loadProof(runsDir, evt.taskId, evt.ts);

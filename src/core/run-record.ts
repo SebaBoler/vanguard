@@ -13,6 +13,8 @@ export interface PersistOptions {
   label?: string;
   /** The PR opened for this run, if any. */
   prUrl?: string;
+  /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
+  requestedModel?: string;
 }
 
 /**
@@ -51,7 +53,7 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const metric = {
     evt: 'run_complete',
     ts: timestamp,
-    ...stageMetric(result, opts.label),
+    ...stageMetric(result, opts.label, opts.requestedModel !== undefined ? { requestedModel: opts.requestedModel } : undefined),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
   };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
@@ -128,7 +130,7 @@ export async function persistVisualProof(
 /** Persist one record per pipeline stage under a shared timestamp (the per-task AFK trace). */
 export async function persistStageOutcomes(
   localRepoPath: string,
-  outcomes: ReadonlyArray<{ name: string; result: RunResult }>,
+  outcomes: ReadonlyArray<{ name: string; result: RunResult; model?: string }>,
   prUrl?: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -137,6 +139,7 @@ export async function persistStageOutcomes(
       timestamp,
       label: outcome.name,
       ...(prUrl !== undefined ? { prUrl } : {}),
+      ...(outcome.model !== undefined ? { requestedModel: outcome.model } : {}),
     });
   }
 }
