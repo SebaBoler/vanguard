@@ -228,10 +228,47 @@ describe('runSourcedIssue', () => {
     expect(assembled.find((s) => s.name === 'reviewer')?.model).toBe('claude-opus-4-8');
   });
 
+  it('the label routes like --provider-model: a same-provider reviewer without --review-model takes it too', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['vanguard:model=claude-fable-5'] } }));
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', provider: 'claude' }, labelled);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.every((s) => s.model === 'claude-fable-5')).toBe(true);
+  });
+
+  it('--escalate-model does not override a per-task model label on later repairs', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['vanguard:model=claude-fable-5'] } }));
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-fable-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 1 } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', escalateModel: 'opus' }, labelled);
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-fable-5' });
+  });
+
   it('modelFromLabels: last matching label wins, blanks ignored, none → undefined', () => {
     expect(modelFromLabels(['bug', 'vanguard:model=opus', 'vanguard:model=claude-fable-5'])).toBe('claude-fable-5');
     expect(modelFromLabels(['vanguard:model= '])).toBeUndefined();
     expect(modelFromLabels(['ready for agent'])).toBeUndefined();
+  });
+
+  it('modelFromLabels: malformed values are ignored and reported, well-formed slugs pass', () => {
+    const bad: string[] = [];
+    const labels = ['vanguard:model=opus; rm -rf /', 'vanguard:model=$(id)', 'vanguard:model=anthropic/claude-sonnet-4.6'];
+    expect(modelFromLabels(labels, (l) => bad.push(l))).toBe('anthropic/claude-sonnet-4.6');
+    expect(bad).toEqual(['vanguard:model=opus; rm -rf /', 'vanguard:model=$(id)']);
+    expect(modelFromLabels(['vanguard:model=gpt-5.6-sol'])).toBe('gpt-5.6-sol');
+    expect(modelFromLabels([`vanguard:model=${'a'.repeat(81)}`])).toBeUndefined();
   });
 
   it('builds the sandbox with the shared sandboxImage() resolver, so a VANGUARD_SANDBOX_IMAGE override reaches it too', async () => {
