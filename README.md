@@ -308,6 +308,26 @@ To compare them on the corpus, run `vanguard eval --json` twice (default judge, 
 
 **Difficulty probe (experimental, log-only).** Decision models (Cloudflare's [Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/), Typesafe's Jev) answer typed questions with calibrated probabilities in milliseconds instead of generating text. Opt in with `VANGUARD_DECISION_PROBE=1` plus credentials: `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AUTH_TOKEN` (Workers AI; `VANGUARD_DECISION_MODEL` is `clef-flash` or `clef`), or `VANGUARD_DECISION_URL` [+ `VANGUARD_DECISION_TOKEN`] for any System-One-compatible endpoint. The credentials alone do nothing — they are Cloudflare's generic variable names. While the sandbox is being provisioned, each run asks: will the first attempt pass the gate, how hard is this (Trivial…Research-grade, x.5 rounds up), is the spec clear? The answer is logged (`decision_probe` line in `metrics.jsonl`, one console line) and **changes nothing** about routing. After enough runs, `vanguard stats` prints a `PROBE` table of predicted vs observed first-try rate per predicted level, one pair per run — if they track, the probe earns the right to set `vanguard:model=` automatically; if not, unset the switch. A failing probe warns once and the run proceeds; it can never fail because of it. **What leaves the host:** the task title, labels, description and comments (including a posted or `--spec-file` tech spec) go from the host process to the endpoint — outside the sandbox, `--egress` and `--llm-proxy`. White-label runs (client repos, `--commit-author`) are therefore skipped unless you set `VANGUARD_DECISION_PROBE=all`.
 
+**Decision model quick start (Cloudflare Workers AI, free tier).** Workers AI includes 10,000 Neurons a day at no charge; `clef-flash` costs 8,182 Neurons per million input tokens, so the probe (~500 tokens a run) and the eval judge fit in the free allocation many times over.
+
+1. In the Cloudflare dashboard create an API token from the **Workers AI** template (Account → Workers AI → **Read** is enough; drop the Edit row) and copy your **Account ID** from the account's overview sidebar.
+2. Export the credentials outside any dotfiles repo (Vanguard reads the process environment, not `.env`), and switch the probe on:
+   ```bash
+   export CLOUDFLARE_ACCOUNT_ID=…   # 32 hex chars
+   export CLOUDFLARE_AUTH_TOKEN=…   # the token, shown once
+   export VANGUARD_DECISION_PROBE=1
+   ```
+   For the GitHub Actions factory, add the same two values as repository secrets and map them in the workflow's `env:` block next to `CLAUDE_CODE_OAUTH_TOKEN`.
+3. Run anything. The probe logs one line per run and `vanguard stats` grows a `PROBE` table; `vanguard eval --judge-model clef-flash` and `run --fork 3 --fork-scorer decision` use the same credentials.
+
+What a live call looks like (recorded 2026-10-07, `clef-flash`, 485 input tokens, 518 ms):
+
+```
+vanguard: SebaBoler/vanguard#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
+```
+
+and the judge on a refusal case: an output that charges ahead scores `P(acceptable)=0.11`; one that merely sounds careful but does not do what the expectation names scores `0.48` — the judge reads the expectation, not the tone. The fork scorer gives a small, tested diff `0.91` and an empty diff `0.03`.
+
 `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
 
 By default `run` uses the implement → review → simplify pipeline (the implementer plans inline). Pass `--plan` to prepend a dedicated planning stage (opus, high effort) that emits a `<plan>` for the implementer to follow — the plan → implement → review pipeline. Combine with `--review-model opus` to also review on the planner-tier model:
