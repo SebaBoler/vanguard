@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
+import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
@@ -27,6 +28,9 @@ export const STAGE = {
   ADVERSARY: 'adversary',
   TECH_SPEC: 'tech-spec',
 } as const;
+
+/** Stages whose flow-pinned model (opus) survives --provider-model: they plan/red-team, not implement. */
+const PLANNER_TIER: ReadonlySet<string> = new Set([STAGE.PLANNER, STAGE.ADVERSARY]);
 
 /** Union of all canonical stage name string literals. A typo is a compile error. */
 export type StageName = (typeof STAGE)[keyof typeof STAGE];
@@ -294,8 +298,12 @@ export async function runBudgetedStages(
         ...(isFiniteCap ? { stageBudgetUsd: effectiveCap } : {}),
         ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
       });
-      const result = forkResult.winner;
-      const forkStageCost = roundUsd(forkResult.variants.reduce((sum, v) => sum + (v.result.costUsd ?? 0), 0));
+      // The winner keeps its identity; the losing variants' cost/tokens fold in so the stage metric
+      // reflects everything the fork spent, not just the chosen branch.
+      const result = forkResult.variants
+        .filter((_, i) => i !== forkResult.winnerIndex)
+        .reduce((acc, loser) => mergeAttempts(loser.result, acc), forkResult.winner);
+      const forkStageCost = roundUsd(result.costUsd ?? 0);
       outcomes.push({
         name: stage.name,
         result,
@@ -384,7 +392,7 @@ export async function runBudgetedStages(
         { taskId: ctx.taskId, stage: stage.name, exitReason: result.exitReason, resumesLeft },
         'stage incomplete — resuming session',
       );
-      result = await runAgent(ctx, {
+      const resumed = await runAgent(ctx, {
         ...stageOpts,
         promptTemplate: stage.resumeNudge ?? RESUME_NUDGE,
         agent: effectiveAgent,
@@ -392,7 +400,10 @@ export async function runBudgetedStages(
         resumeSessionId: result.sessionId,
         ...(isFiniteCap ? { maxBudgetUsd: effectiveCap - stageCost } : {}),
       });
-      stageCost = roundUsd(stageCost + (result.costUsd ?? 0));
+      // Fold the resume into the stage result so the persisted metric carries every attempt's cost;
+      // the loop's cap check reads the same figure.
+      result = mergeAttempts(result, resumed);
+      stageCost = roundUsd(result.costUsd ?? 0);
     }
 
     outcomes.push({
@@ -645,6 +656,12 @@ export interface ReviewPipelineDeps {
   conformance?: boolean;
   /** Model override for the conformance stage only (e.g. 'opus' for planner-tier). */
   conformanceModel?: string;
+  /**
+   * Model the implement provider forces when a stage names none (zai → glm, openrouter → its slug, a
+   * custom's `model`). Set only for such providers: a flow-pinned planner-tier model (opus) cannot be
+   * served there, so those stages take `providerModel` or, failing that, this forced model.
+   */
+  providerForcedModel?: string;
 }
 
 /**
@@ -675,10 +692,12 @@ export function resolveRouting(
  * fallback wiring in one place so neither the GitHub nor Linear runner needs to inline these steps.
  *
  * Membership is decided first (filter/append); then a flat routing config is built and applied by
- * resolveRouting in one pass. Two subtle rules live as explicit config-building code: (1) a
+ * resolveRouting in one pass. Three subtle rules live as explicit config-building code: (1) a
  * cross-provider reviewer is excluded from `providerModel` — an Anthropic model name handed to a
- * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it; and
- * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins).
+ * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it;
+ * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins); and
+ * (3) a planner-tier stage (PLANNER_TIER) with a flow-pinned model keeps it — unless the provider
+ * forces its own model (`providerForcedModel`), which cannot serve the pinned alias.
  */
 export function assembleReviewPipeline(
   base: PipelineStage[],
@@ -697,15 +716,23 @@ export function assembleReviewPipeline(
     config[name] = { ...config[name], ...patch };
   };
 
-  if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
-    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
-    // stage (incl. conformance, planning side) gets providerModel.
+  if (deps.providerModel !== undefined || deps.providerForcedModel !== undefined) {
+    // Only a CROSS-provider reviewer and the pinned planner-tier stages are excluded from the implement
+    // model. Gating on the mere presence of reviewAgent would wrongly strip the model when
+    // --review-provider equals --provider. Planner/adversary keep the stronger model their flow pins
+    // (opus) — the whole point of --plan/flow-b is "plan and red-team high, implement cheap", which a
+    // single implement model flag must not flatten. The exception is a forced-model provider, which
+    // cannot serve `opus` at all: there the pinned tier takes providerModel (or the forced default) so
+    // the flow still runs. An UNPINNED planner-tier stage (repo HCL flow) gets providerModel like any
+    // other stage. Everything else (incl. conformance) gets providerModel.
     const crossProviderReview =
       deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
     for (const stage of pipeline) {
       if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
-      route(stage.name as StageName, { model: deps.providerModel });
+      const pinnedPlannerTier = PLANNER_TIER.has(stage.name) && stage.model !== undefined;
+      if (pinnedPlannerTier && deps.providerForcedModel === undefined) continue;
+      const model = deps.providerModel ?? (pinnedPlannerTier ? deps.providerForcedModel : undefined);
+      if (model !== undefined) route(stage.name as StageName, { model });
     }
   }
   // Cross-provider reviewer: route it to its own provider, and fall back to the planning provider on

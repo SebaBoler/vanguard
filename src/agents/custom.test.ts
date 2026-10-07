@@ -152,6 +152,7 @@ describe('registry resolution with customs', () => {
     const { model: _m, ...noModel } = ENTRY;
     expect(forcedProviderModel('my-proxy', [{ index: 0, name: 'my-proxy', spec: noModel }])).toBeUndefined();
     expect(forcedProviderModel('zai')).toBe('glm-5.2');
+    expect(forcedProviderModel('openrouter')).toBe('anthropic/claude-sonnet-4.6');
     expect(forcedProviderModel('claude')).toBeUndefined();
   });
 

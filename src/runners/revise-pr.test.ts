@@ -960,11 +960,33 @@ describe('runRevisePullRequest — revise-pass verification', () => {
 
     // One bounded repair iteration on red: implement/review/simplify + a single resumed repair.
     expect(agentInputs).toHaveLength(4);
+    // No --provider-model: the repair carries no model, so the provider default applies.
+    expect(agentInputs[3]?.model).toBeUndefined();
     // A red verification forces the Part-of path — never a silent stale Closes.
     const body = editBodies.find((b) => b.includes('o/r#42'));
     expect(body).toBeDefined();
     expect(body).toContain('Part of o/r#42');
     expect(body).not.toContain('Closes o/r#42');
+  });
+
+  it('the verify repair resumes on the implementer\'s routed model and turn cap', async () => {
+    const agentInputs: AgentRunInput[] = [];
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh([], []),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(1),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+      providerModel: 'claude-sonnet-5',
+    });
+    expect(agentInputs).toHaveLength(4);
+    expect(agentInputs[3]?.model).toBe('claude-sonnet-5');
+    expect(agentInputs[3]?.maxTurns).toBe(agentInputs[0]?.maxTurns);
   });
 });
 

@@ -2,7 +2,7 @@ import { ClaudeCodeProvider } from './claude-code.js';
 import { CodexProvider } from './codex.js';
 import { CursorProvider } from './cursor.js';
 import { ZaiProvider, ZAI_BASE_URL, ZAI_DEFAULT_MODEL } from './zai.js';
-import { OpenRouterProvider, OPENROUTER_BASE_URL } from './openrouter.js';
+import { OpenRouterProvider, OPENROUTER_BASE_URL, OPENROUTER_DEFAULT_MODEL } from './openrouter.js';
 import { MeridianProvider, MERIDIAN_PLACEHOLDER_TOKEN } from './meridian.js';
 import { CustomProvider } from './custom.js';
 import { AgentError } from '../core/errors.js';
@@ -143,6 +143,8 @@ const PROVIDERS = {
     factory: () => new OpenRouterProvider(),
     transport: 'anthropic',
     ownsAnthropicTransport: true,
+    // OpenRouter expects dotted slugs, so a Claude-only name like spec's `haiku` must not reach it.
+    forcedModel: OPENROUTER_DEFAULT_MODEL,
     key: {
       hostEnv: ['OPENROUTER_API_KEY'],
       toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: OPENROUTER_BASE_URL, ANTHROPIC_AUTH_TOKEN: key }),

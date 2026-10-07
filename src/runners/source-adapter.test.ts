@@ -99,6 +99,7 @@ vi.mock('../sandbox/docker.js', () => ({
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
+  forcedProviderModel: vi.fn(() => undefined),
 }));
 const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
   wmDiff: vi.fn(async () => ''),
@@ -579,21 +580,28 @@ describe('runSourcedIssue', () => {
     runStages.mockResolvedValueOnce([
       {
         name: 'implementer',
+        model: 'claude-sonnet-5',
         result: {
           taskId: 'gl-1', completed: false, exitReason: 'incomplete', turns: 4,
           worktreePath: '/wt', worktreePreserved: true, finalText: 'still going',
-          sessionId: 'sess-1',
+          sessionId: 'sess-1', costUsd: 0.5,
         },
       },
       stageOutcome('reviewer'),
     ]);
-    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: false, exitReason: 'incomplete' } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: false, exitReason: 'incomplete', turns: 3, costUsd: 0.25 } as never);
 
     const adapter = fakeAdapter([], STAGES);
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(result.prUrl).toBe(MR_URL);
     expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
+    // Repairs resume on the implementer's routed model, and their cost folds into the stage record.
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
+    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
+    const implementer = persisted?.[1].find((o) => o.name === 'implementer');
+    expect(implementer?.result.costUsd).toBeCloseTo(1.0);
+    expect(implementer?.result.turns).toBe(10);
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Part of ${task.id}`);
     expect(body).not.toContain(`Closes ${task.id}`);

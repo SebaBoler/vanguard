@@ -1,3 +1,5 @@
+import { cacheEfficiency } from '../agents/provider.js';
+import { roundUsd } from './usd.js';
 import type { ExitReason, RunResult } from './types.js';
 
 /** Flat, single-source metric shape consumed by metrics.jsonl, the run summary, and logs. */
@@ -44,5 +46,36 @@ export function stageMetric(result: RunResult, stageName?: string, budgetInfo?: 
     ...(result.model !== undefined ? { model: result.model } : {}),
     ...(budgetInfo?.stageCapUsd !== undefined ? { stageCapUsd: budgetInfo.stageCapUsd } : {}),
     ...(budgetInfo?.remainingBudgetUsd !== undefined ? { remainingBudgetUsd: budgetInfo.remainingBudgetUsd } : {}),
+  };
+}
+
+/** Sum two optional numbers; undefined only when both sides are absent. */
+const sumOpt = (a?: number, b?: number): number | undefined =>
+  a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+
+/**
+ * Fold a follow-up attempt (auto-resume, gate repair, losing fork variant) into a stage's result so
+ * the persisted stage metric reflects what the stage actually cost. Identity fields (session,
+ * completion, exit reason, final text, model) come from `next`; cost, turns, tokens and duration are
+ * summed. Without this, metrics.jsonl recorded only the LAST attempt of a resumed/repaired stage.
+ * NB: the first attempt's exitReason is dropped on purpose — a repaired stage reads as its final state.
+ */
+export function mergeAttempts(prior: RunResult, next: RunResult): RunResult {
+  const usage =
+    prior.usage !== undefined || next.usage !== undefined
+      ? {
+          inputTokens: sumOpt(prior.usage?.inputTokens, next.usage?.inputTokens) ?? 0,
+          outputTokens: sumOpt(prior.usage?.outputTokens, next.usage?.outputTokens) ?? 0,
+          cacheReadInputTokens: sumOpt(prior.usage?.cacheReadInputTokens, next.usage?.cacheReadInputTokens) ?? 0,
+        }
+      : undefined;
+  const costUsd = sumOpt(prior.costUsd, next.costUsd);
+  const durationMs = sumOpt(prior.durationMs, next.durationMs);
+  return {
+    ...next,
+    turns: prior.turns + next.turns,
+    ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
+    ...(costUsd !== undefined ? { costUsd: roundUsd(costUsd) } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
   };
 }
