@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractReviewVerdict, reviewOutcomeUsable, outputTail } from './review-prompt.js';
+import { extractReviewVerdict, reviewOutcomeUsable, outputTail, verdictContradictsFindings } from './review-prompt.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { renderConformanceSection } from '../pipeline/review-publish.js';
 import { publishGitlabVerdict } from './gitlab.js';
@@ -272,6 +272,13 @@ describe('extractReviewVerdict', () => {
     expect(reviewOutcomeUsable({ text: 'anything', completed: true })).toBe(true);
     expect(reviewOutcomeUsable({ text: 'Verdict: BLOCKING\n…', completed: false })).toBe(true);
     expect(reviewOutcomeUsable({ text: 'still reading', completed: false })).toBe(false);
+  });
+
+  it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding', () => {
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [high] auth.ts:1 token never expires')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [low] nit')).toBe(false);
+    expect(verdictContradictsFindings('Verdict: BLOCKING\n- [critical] x')).toBe(false);
+    expect(verdictContradictsFindings('no verdict line [high]')).toBe(false);
   });
 
   it('outputTail keeps the end of a long reply', () => {

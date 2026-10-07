@@ -13,6 +13,7 @@ import {
   outputTail,
   reviewOutcomeUsable,
   stripReviewMarkers,
+  verdictContradictsFindings,
 } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -353,6 +354,9 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
 
   if (!outcome.completed) {
     deps.log?.(`review-pr ${id}: verdict stated without completion signal -> accepting (findings may be truncated)`);
+  }
+  if (verdictContradictsFindings(outcome.text)) {
+    deps.log?.(`review-pr ${id}: verdict says NO BLOCKING FINDINGS but the body lists a [high]/[critical] finding — posting as written`);
   }
   const commentBody = buildPullRequestReviewComment(outcome.text, pr.headRefOid, { completed: outcome.completed });
   if (deps.publish !== false) {

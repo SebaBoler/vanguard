@@ -32,6 +32,15 @@ export function reviewOutcomeUsable(outcome: { text: string; completed: boolean 
   return outcome.completed || extractReviewVerdict(outcome.text) !== undefined;
 }
 
+/**
+ * A reply that opens with NO BLOCKING FINDINGS and then lists a high/critical finding contradicts
+ * itself. Nothing gates on the verdict value, so this only surfaces in the log — but a reviewer that
+ * does it often is worth knowing about before the verdict ever drives anything.
+ */
+export function verdictContradictsFindings(text: string): boolean {
+  return extractReviewVerdict(text) === 'clean' && /\[(high|critical)\]/i.test(text);
+}
+
 export const VERDICT_WITHOUT_COMPLETION_NOTE =
   '_The reviewer stated its verdict but ended before its completion signal; the findings below may be truncated._';
 

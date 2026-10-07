@@ -198,6 +198,15 @@ describe('reviewPullRequest', () => {
     expect(logs).toContain('review-pr o/r#12: verdict stated without completion signal -> accepting (findings may be truncated)');
   });
 
+  it('logs when a clean verdict is contradicted by a high finding, but posts the review as written', async () => {
+    const { gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'Verdict: NO BLOCKING FINDINGS\n\n- [high] auth.ts:42 token never expires\n<promise>COMPLETE</promise>', completed: true });
+    const logs: string[] = [];
+    const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
+    expect(logs.some((l) => l.includes('contradict') || l.includes('verdict says NO BLOCKING FINDINGS'))).toBe(true);
+    expect(result.commentBody).toContain('[high] auth.ts:42');
+  });
+
   it('incompleteReviewReason: no output → provider failure; small diff → no-verdict; large diff → too-large', () => {
     expect(incompleteReviewReason('  ', 'x')).toBe('no-output');
     expect(incompleteReviewReason('partial', 'a\nb')).toBe('no-verdict');
