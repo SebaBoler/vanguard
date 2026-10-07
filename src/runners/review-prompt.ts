@@ -1,8 +1,10 @@
-/** Prompt text shared by the PR and MR review builders. */
-
-/** Prepended on the incomplete-review retry so the larger budget ends in a verdict instead of a second timeout. */
+/**
+ * Shared by the PR and MR review paths: prompt text, the verdict/completion contract, and the
+ * blocking-finding detector the merge gate and the external reviewers agree on.
+ */
 import { extractFindings } from '../structured/findings.js';
 
+/** Prepended on the incomplete-review retry so the larger budget ends in a verdict instead of a second timeout. */
 export const RETRY_TRIAGE_INSTRUCTION =
   'Your previous pass ended without a verdict. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). State the verdict line FIRST, keep each finding to a few lines, and finish within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, then write <promise>COMPLETE</promise>.';
 
@@ -35,10 +37,14 @@ export function reviewOutcomeUsable(outcome: { text: string; completed: boolean 
 }
 
 /**
- * Does the verdict text carry a blocking (high/critical) finding? The structured <findings> block
- * wins; without one, prose is scanned for the severity forms reviewers actually write — `high-severity`,
- * `critical`, and the bracketed `[high]` label. Shared by the main-loop merge gate (review-publish,
- * gitlab) and the external review-pr/review-mr contradiction check, so the two can never disagree.
+ * Does the verdict text carry a blocking (high/critical) finding? This is the MERGE GATE
+ * (publishReviewVerdict → request-changes; publishGitlabVerdict → blocking warning) as well as the
+ * external reviewers' contradiction check, so the two can never disagree. The structured <findings>
+ * block takes precedence; without one, prose is scanned for `critical` / `high-severity`, and for a
+ * `[high]`/`[critical]` label that OPENS a line or list item — the reviewer's own finding layout — so a
+ * label quoted from a diff hunk (`+- [high] …`) or mid-sentence does not count. The prose scan still
+ * covers the whole reply, so an author who gets the reviewer to quote a bare label line can only push
+ * the gate towards request-changes (fail-closed), never away from it.
  */
 export function hasBlockingFinding(verdictText: string): boolean {
   try {
@@ -46,20 +52,24 @@ export function hasBlockingFinding(verdictText: string): boolean {
     return findings.some((f) => f.severity === 'high' || f.severity === 'critical');
   } catch {
     // No structured findings block — scan prose for severity keywords.
-    return /\b(critical|high[- ]severity)\b|\[(high|critical)\]/i.test(verdictText);
+    return /\b(critical|high[- ]severity)\b/i.test(verdictText) || /^[ \t]*(?:[-*]\s*)?\[(high|critical)\]/im.test(verdictText);
   }
 }
 
 /**
  * A reply that opens with NO BLOCKING FINDINGS and then carries a high/critical finding contradicts
- * itself. Nothing gates on the verdict value, so this only surfaces in the log — but a reviewer that
- * does it often is worth knowing about before the verdict ever drives anything. Caveat: the scan
- * covers the whole reply, including diff hunks the reviewer quoted, so a PR author can add false
- * positives (never suppress a real one); keep that in mind before this ever feeds a gate or metric.
+ * itself. Nothing gates on the verdict VALUE, so this only surfaces in the log — but a reviewer that
+ * does it often is worth knowing about before the verdict ever drives anything. Inherits
+ * hasBlockingFinding's semantics: a parsed <findings> block wins over prose (so prose findings next to
+ * an empty block go unflagged), and quoted label lines can add false positives.
  */
 export function verdictContradictsFindings(text: string): boolean {
   return extractReviewVerdict(text) === 'clean' && hasBlockingFinding(text);
 }
+
+/** Log suffix when a review opens clean but carries a high/critical finding (see verdictContradictsFindings). */
+export const VERDICT_CONTRADICTION_LOG =
+  'verdict says NO BLOCKING FINDINGS but the body carries a high/critical finding';
 
 export const VERDICT_WITHOUT_COMPLETION_NOTE =
   '_The reviewer stated its verdict but ended before its completion signal; the findings below may be truncated._';

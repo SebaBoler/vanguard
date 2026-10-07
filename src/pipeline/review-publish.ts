@@ -29,13 +29,8 @@ export function buildReviewerAttribution(outcome: StageOutcome | undefined, fall
     : outcome?.providerName ?? fallbackName;
 }
 
-/**
- * Determine whether a reviewer verdict contains blocking (high or critical severity) findings.
- * Prefers a structured <findings> JSON block when present; falls back to keyword detection in the
- * Markdown text for robustness when the reviewer produces free-form prose only.
- */
-// Lives in review-prompt.ts so the external review-pr/review-mr path shares one detector; re-exported
-// here for the existing gate callers (publishReviewVerdict, gitlab.ts).
+// hasBlockingFinding lives in review-prompt.ts so the external review-pr/review-mr path shares one
+// detector with this merge gate; re-exported for the existing callers (publishReviewVerdict, gitlab.ts).
 export { hasBlockingFinding };
 
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;

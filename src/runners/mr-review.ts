@@ -1,7 +1,7 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject, neutralizeQuickActions } from '../tasks/gitlab.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, outputTail, reviewOutcomeUsable, stripReviewMarkers, verdictContradictsFindings } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -310,7 +310,7 @@ export async function reviewMergeRequest(
   await postMergeRequestNote(target, commentBody, glab);
   deps.log?.(`review-mr ${target.project}!${target.iid}: posted -> mr note`);
   if (verdictContradictsFindings(outcome.text)) {
-    deps.log?.(`review-mr ${id}: verdict says NO BLOCKING FINDINGS but the body carries a high/critical finding — posted as written`);
+    deps.log?.(`review-mr ${id}: ${VERDICT_CONTRADICTION_LOG} — posted as written`);
   }
   return { mr, commentBody };
 }
