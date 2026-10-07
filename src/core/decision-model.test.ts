@@ -23,6 +23,27 @@ describe('decisionModelConfig', () => {
     expect(decisionModelConfig({ ...cf, VANGUARD_DECISION_URL: 'http://ai-box/decide' }, 'jev')).toEqual({ url: 'http://ai-box/decide', model: 'jev' });
   });
 
+  it('warns once when a bearer token would travel over plain http to a non-local host', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide', VANGUARD_DECISION_TOKEN: 't' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://100.64.0.9:8080/decide', VANGUARD_DECISION_TOKEN: 't' }); // Tailscale
+    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://localhost:8080/decide', VANGUARD_DECISION_TOKEN: 't' });
+    decisionModelConfig({ VANGUARD_DECISION_URL: 'http://ai-box.example.com/decide' }); // no token, nothing to leak
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('a malformed success body is "no answers", not a retry', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let n = 0;
+    const junk = (async () => { n += 1; return new Response('not json', { status: 200 }); }) as unknown as typeof fetch;
+    expect(await decide({}, questions, cfg, { fetchImpl: junk, retries: 1 })).toBeUndefined();
+    expect(n).toBe(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('no answers');
+    warn.mockRestore();
+  });
+
   it('isDecisionModelName recognises the decision-model names only', () => {
     expect(isDecisionModelName('clef')).toBe(true);
     expect(isDecisionModelName('clef-flash')).toBe(true);

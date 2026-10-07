@@ -37,9 +37,13 @@ function runCommand(overrides: Partial<RunCommand> = {}): RunCommand {
     repoPath: '/repo',
     concurrency: 2,
     ...RUN_OPTIONS,
+    ...RUN_ONLY_OPTIONS,
     ...overrides,
   } as RunCommand;
 }
+
+/** Flags that exist on `run` but not `watch`, threaded through pickRunOptions all the same. */
+const RUN_ONLY_OPTIONS = { forkN: 2, forkScorer: 'decision' } as const;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,25 +54,25 @@ describe('run deps builders thread RunOptions', () => {
     process.env.LINEAR_API_KEY = 'key';
     const cmd = runCommand({ source: 'linear', skillsDir: '/skills' });
     const deps = linearDeps(cmd, undefined, undefined, undefined, undefined);
-    expect(deps).toMatchObject(RUN_OPTIONS);
+    expect(deps).toMatchObject({ ...RUN_OPTIONS, forkScorer: 'decision' });
   });
 
   it('runGithub carries every option field', async () => {
     await runGithub(runCommand(), undefined, undefined, undefined);
     const deps = vi.mocked(runGithubIssue).mock.calls[0]![1];
-    expect(deps).toMatchObject(RUN_OPTIONS);
+    expect(deps).toMatchObject({ ...RUN_OPTIONS, forkScorer: 'decision' });
   });
 
   it('runGitlab carries every option field', async () => {
     await runGitlab(runCommand({ source: 'gitlab', project: 'g/p' }), undefined, undefined, undefined);
     const deps = vi.mocked(runGitlabIssue).mock.calls[0]![1];
-    expect(deps).toMatchObject(RUN_OPTIONS);
+    expect(deps).toMatchObject({ ...RUN_OPTIONS, forkScorer: 'decision' });
   });
 
   // AC-5 / T4: runProject silently dropped conformance/conformanceModel before this refactor.
   it('runProject carries every option field, including conformance', async () => {
     await runProject(runCommand({ source: 'project' }), undefined, undefined, undefined);
     const deps = vi.mocked(runGithubProject).mock.calls[0]![0];
-    expect(deps).toMatchObject(RUN_OPTIONS);
+    expect(deps).toMatchObject({ ...RUN_OPTIONS, forkScorer: 'decision' });
   });
 });

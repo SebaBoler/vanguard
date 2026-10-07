@@ -51,8 +51,10 @@ function verdict(rawAcceptable: unknown, rawQuality: unknown, model: string, wha
   // endpoint answering on a 0–100 scale or with a string must fail loudly, not pass every case.
   const acceptable = probability(rawAcceptable);
   if (acceptable === undefined) throw new Error(`decision ${what}: ${model} returned no usable "acceptable" probability (got ${JSON.stringify(rawAcceptable)})`);
-  const quality = num(rawQuality);
-  const level = quality !== undefined ? QUALITY_LEVELS[Math.min(QUALITY_LEVELS.length - 1, Math.max(0, Math.round(quality)))] : undefined;
+  const q = num(rawQuality);
+  // Out-of-rubric quality is dropped from the reason rather than clamped to "Excellent".
+  const quality = q !== undefined && q >= 0 && q <= QUALITY_LEVELS.length - 1 ? q : undefined;
+  const level = quality !== undefined ? QUALITY_LEVELS[Math.round(quality)] : undefined;
   return {
     passed: acceptable >= 0.5,
     score: acceptable,

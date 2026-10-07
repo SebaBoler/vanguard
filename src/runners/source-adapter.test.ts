@@ -103,6 +103,8 @@ const { decisionModelConfig } = vi.hoisted(() => ({ decisionModelConfig: vi.fn((
 vi.mock('../core/decision-model.js', () => ({
   decisionModelConfig,
   decide: vi.fn(async () => undefined),
+  num: (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined),
+  probability: (v: unknown) => (typeof v === 'number' && v >= 0 && v <= 1 ? v : undefined),
   decisionEgressAllowed: (whiteLabel: boolean, env: NodeJS.ProcessEnv) => !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all',
   decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
   DECISION_MODEL_DEFAULT: 'clef-flash',

@@ -39,6 +39,9 @@ describe('decisionJudge', () => {
     await expect(percent.judge({ testCase, output: 'x' })).rejects.toThrow(/got 82/);
     const stringy = decisionJudge(cfg, { fetchImpl: answering({ acceptable: { noul: '0.8' } }) });
     await expect(stringy.judge({ testCase, output: 'x' })).rejects.toThrow(/got "0.8"/);
+    // An off-rubric quality is left out of the reason instead of clamping to Excellent.
+    const offScale = decisionJudge(cfg, { fetchImpl: answering({ acceptable: { noul: 0.7 }, quality: { score: 42 } }) });
+    expect((await offScale.judge({ testCase, output: 'x' })).reason).toBe('clef-flash: P(acceptable)=0.70');
     const dead = decisionJudge(cfg, { fetchImpl: (async () => new Response('x', { status: 500 })) as unknown as typeof fetch });
     await expect(dead.judge({ testCase, output: 'x' })).rejects.toThrow(/no verdict for case c1/);
   });

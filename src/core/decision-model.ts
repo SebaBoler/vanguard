@@ -51,7 +51,11 @@ export function decisionModelConfig(
 ): DecisionModelConfig | undefined {
   const url = env['VANGUARD_DECISION_URL'];
   if (url !== undefined && url !== '') {
-    return { url, model, ...(env['VANGUARD_DECISION_TOKEN'] !== undefined ? { token: env['VANGUARD_DECISION_TOKEN'] } : {}) };
+    const token = env['VANGUARD_DECISION_TOKEN'];
+    if (token !== undefined && isPlainHttpOffHost(url)) {
+      console.warn('vanguard: VANGUARD_DECISION_URL is plain http on a non-local host — the bearer token and the state travel unencrypted');
+    }
+    return { url, model, ...(token !== undefined ? { token } : {}) };
   }
   const account = env['CLOUDFLARE_ACCOUNT_ID'];
   const token = env['CLOUDFLARE_AUTH_TOKEN'];
@@ -65,6 +69,18 @@ export function decisionModelConfig(
     token,
     model,
   };
+}
+
+/** http:// to anything but loopback or RFC-1918/Tailscale-style private space. */
+function isPlainHttpOffHost(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:') return false;
+    const h = u.hostname;
+    return !(h === 'localhost' || h === '::1' || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h));
+  } catch {
+    return false;
+  }
 }
 
 /** Why decisionModelConfig returned undefined for this model, worded for the operator. */
@@ -169,7 +185,8 @@ export async function decide(
         console.warn(`vanguard: ${label} failed (HTTP ${res.status}${detail}) — check the decision-model credentials/model`);
         return undefined;
       }
-      const parsed = (await res.json()) as SystemOneResponse & SystemOneError;
+      // A malformed success body is not transient: no retry, just the "no answers" path.
+      const parsed = ((await res.json().catch(() => ({}))) ?? {}) as SystemOneResponse & SystemOneError;
       const inner = parsed.result ?? parsed;
       const answers = inner.answers;
       // `typeof null === 'object'` — a `{answers: null}` envelope must not reach the callers' indexing.
