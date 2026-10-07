@@ -37,8 +37,8 @@ describe('buildMergeRequestReviewPrompt', () => {
   it('adds the retry triage instruction inside task_instructions only when retryTriage is true', () => {
     const prompt = buildMergeRequestReviewPrompt(BASE_MR, { retryTriage: true });
     const instructions = prompt.slice(prompt.indexOf('<task_instructions>'), prompt.indexOf('</task_instructions>'));
-    expect(instructions).toContain('This is a large diff');
-    expect(buildMergeRequestReviewPrompt(BASE_MR)).not.toContain('This is a large diff');
+    expect(instructions).toContain('Your previous pass ended without a verdict');
+    expect(buildMergeRequestReviewPrompt(BASE_MR)).not.toContain('Your previous pass ended without a verdict');
   });
 
   it('tells the reviewer to apply the repository review guidelines inside task_instructions', () => {
@@ -321,7 +321,7 @@ describe('reviewMergeRequest incomplete retry', () => {
     expect(reviewer).toHaveBeenCalledTimes(2);
     expect(reviewer).toHaveBeenNthCalledWith(1, expect.anything(), { isRetry: false });
     expect(reviewer).toHaveBeenNthCalledWith(2, expect.anything(), { isRetry: true });
-    expect(lines).toContain(`review-mr g/p!5: incomplete -> retry (larger budget)`);
+    expect(lines).toContain(`review-mr g/p!5: incomplete -> retry (verdict first, larger budget)`);
     expect(posted(calls)).toHaveLength(1);
     expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
   });
@@ -333,6 +333,18 @@ describe('reviewMergeRequest incomplete retry', () => {
     await expect(reviewMergeRequest('5', { project: 'g/p', glab, reviewer })).rejects.toThrow(MergeRequestReviewIncompleteError);
     expect(reviewer).toHaveBeenCalledTimes(2);
     expect(posted(calls)).toEqual([]);
+  });
+
+  it('accepts a stated verdict without the completion signal, with the marker and a truncation note', async () => {
+    const { glab, calls } = makeGlab();
+    const reviewer = vi.fn(async () => ({ text: 'Verdict: NO BLOCKING FINDINGS\n\nMinor nits only.', completed: false }));
+
+    const result = await reviewMergeRequest('5', { project: 'g/p', glab, reviewer });
+
+    expect(reviewer).toHaveBeenCalledOnce();
+    expect(posted(calls)).toHaveLength(1);
+    expect(result.commentBody).toContain(mergeRequestReviewMarker(HEAD));
+    expect(result.commentBody).toContain('may be truncated');
   });
 
   it('treats a string-returning reviewer as complete on the first attempt', async () => {

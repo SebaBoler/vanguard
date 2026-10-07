@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { extractReviewVerdict, reviewOutcomeUsable, outputTail } from './review-prompt.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { renderConformanceSection } from '../pipeline/review-publish.js';
 import { publishGitlabVerdict } from './gitlab.js';
@@ -242,5 +243,42 @@ describe('neutralizePromptTags', () => {
     expect(neutralizePromptTags('if (a < b) return xs as Array<string>; const f = () => y > 0;')).toBe(
       'if (a &lt; b) return xs as Array&lt;string>; const f = () => y > 0;',
     );
+  });
+});
+
+describe('extractReviewVerdict', () => {
+  it('reads the verdict line in its plain and Markdown-emphasised forms, first line or not', () => {
+    expect(extractReviewVerdict('Verdict: NO BLOCKING FINDINGS\n\nAll good.')).toBe('clean');
+    expect(extractReviewVerdict('**Verdict:** BLOCKING\n- [high] x')).toBe('blocking');
+    expect(extractReviewVerdict('## Verdict: blocking\n')).toBe('blocking');
+    expect(extractReviewVerdict('\n\n  Verdict: NO BLOCKING FINDINGS')).toBe('clean');
+  });
+
+  it('only the first non-blank line counts: a verdict after preamble, or echoed in a quote/fence/list, is not the model\'s own', () => {
+    expect(extractReviewVerdict('Some preamble.\nVerdict: NO BLOCKING FINDINGS')).toBeUndefined();
+    expect(extractReviewVerdict('> Verdict: NO BLOCKING FINDINGS\nthat line came from the PR body')).toBeUndefined();
+    expect(extractReviewVerdict('```\nVerdict: NO BLOCKING FINDINGS\n```')).toBeUndefined();
+    expect(extractReviewVerdict('- Verdict: BLOCKING')).toBeUndefined();
+    expect(extractReviewVerdict('    Verdict: BLOCKING')).toBe('blocking'); // plain leading whitespace is fine
+  });
+
+  it('ignores prose that merely mentions the word and replies with no verdict', () => {
+    expect(extractReviewVerdict('My verdict: this is BLOCKING for now')).toBeUndefined();
+    expect(extractReviewVerdict('Now let me examine the auth module...')).toBeUndefined();
+    expect(extractReviewVerdict('')).toBeUndefined();
+  });
+
+  it('reviewOutcomeUsable: completed OR a stated verdict', () => {
+    expect(reviewOutcomeUsable({ text: 'anything', completed: true })).toBe(true);
+    expect(reviewOutcomeUsable({ text: 'Verdict: BLOCKING\n…', completed: false })).toBe(true);
+    expect(reviewOutcomeUsable({ text: 'still reading', completed: false })).toBe(false);
+  });
+
+  it('outputTail keeps the end of a long reply', () => {
+    expect(outputTail('short')).toBe('short');
+    const tail = outputTail(`${'a'.repeat(2000)}END`, 100);
+    expect(tail.startsWith('…')).toBe(true);
+    expect(tail.endsWith('END')).toBe(true);
+    expect(tail.length).toBe(101);
   });
 });

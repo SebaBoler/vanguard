@@ -94,6 +94,8 @@ export {
   buildPullRequestReviewIncompleteComment,
   PR_REVIEW_INCOMPLETE_NOTICE,
   PR_REVIEW_NO_OUTPUT_NOTICE,
+  PR_REVIEW_NO_VERDICT_NOTICE,
+  incompleteReviewReason,
   PullRequestReviewIncompleteError,
   pullRequestReviewMarker,
   hasPullRequestReviewMarker,
