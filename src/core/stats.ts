@@ -5,6 +5,8 @@ import { DIFFICULTY_LEVELS } from './decision-probe.js';
 /** One parsed `run_complete` line from .vanguard/runs/metrics.jsonl. */
 export interface MetricRecord {
   taskId: string;
+  /** ISO timestamp of the line; used to join probes to the run they preceded. */
+  ts?: string;
   stage?: string;
   model?: string;
   requestedModel?: string;
@@ -32,6 +34,7 @@ export interface Bucket {
 /** One `decision_probe` line: the log-only difficulty probe taken before a run. */
 export interface ProbeRecord {
   taskId: string;
+  ts: string;
   completesFirstTry: number;
   difficulty: number;
   specClear: number;
@@ -85,6 +88,7 @@ export function parseMetrics(text: string): MetricRecord[] {
     if (parsed.evt !== 'run_complete' || typeof parsed.taskId !== 'string') continue;
     records.push({
       taskId: parsed.taskId,
+      ...(typeof parsed.ts === 'string' ? { ts: parsed.ts } : {}),
       ...(typeof parsed.stage === 'string' ? { stage: parsed.stage } : {}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       ...(typeof parsed.requestedModel === 'string' ? { requestedModel: parsed.requestedModel } : {}),
@@ -105,32 +109,46 @@ export function parseMetrics(text: string): MetricRecord[] {
 export function parseProbes(text: string): ProbeRecord[] {
   const probes: ProbeRecord[] = [];
   for (const parsed of parseJsonlLines(text)) {
-    if (parsed.evt !== 'decision_probe' || typeof parsed.taskId !== 'string') continue;
+    if (parsed.evt !== 'decision_probe' || typeof parsed.taskId !== 'string' || typeof parsed.ts !== 'string') continue;
     if (typeof parsed.completesFirstTry !== 'number' || typeof parsed.difficulty !== 'number' || typeof parsed.specClear !== 'number') continue;
-    probes.push({ taskId: parsed.taskId, completesFirstTry: parsed.completesFirstTry, difficulty: parsed.difficulty, specClear: parsed.specClear });
+    probes.push({ taskId: parsed.taskId, ts: parsed.ts, completesFirstTry: parsed.completesFirstTry, difficulty: parsed.difficulty, specClear: parsed.specClear });
   }
   return probes;
 }
 
 /**
- * Join each probe to that task's LAST implementer record and bucket by the rounded difficulty level.
- * "Repaired" = the stage needed more than one attempt or did not end completed — the outcome the
- * probe is supposed to predict. Tasks without an implementer record are dropped (run never finished).
+ * Join each probe to the implementer record of THE RUN IT PRECEDED — the first implementer line for
+ * that task at or after the probe's timestamp and before the task's next probe — and bucket by the
+ * rounded difficulty level (x.5 rounds up). "Repaired" = the stage needed more than one attempt or did
+ * not end completed, i.e. the outcome the probe is supposed to predict. A probe whose run never
+ * produced an implementer record (cancelled, threw before the pipeline) is dropped, and a re-run task
+ * contributes one pair per run instead of N probes against its last outcome.
  */
 export function probeReport(records: ReadonlyArray<MetricRecord>, probes: ReadonlyArray<ProbeRecord>): ProbeBucket[] {
-  const implementerByTask = new Map<string, MetricRecord>();
-  for (const r of records) if (r.stage === 'implementer') implementerByTask.set(r.taskId, r);
+  const implementersByTask = new Map<string, MetricRecord[]>();
+  for (const r of records) {
+    if (r.stage !== 'implementer' || r.ts === undefined) continue;
+    implementersByTask.set(r.taskId, [...(implementersByTask.get(r.taskId) ?? []), r]);
+  }
+  for (const list of implementersByTask.values()) list.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''));
+  const probesByTask = new Map<string, ProbeRecord[]>();
+  for (const p of probes) probesByTask.set(p.taskId, [...(probesByTask.get(p.taskId) ?? []), p]);
   const acc = new Map<number, { runs: number; repaired: number; predicted: number }>();
-  for (const probe of probes) {
-    const run = implementerByTask.get(probe.taskId);
-    if (run === undefined) continue;
-    const level = Math.min(DIFFICULTY_LEVELS.length - 1, Math.max(0, Math.round(probe.difficulty)));
-    const bucket = acc.get(level) ?? { runs: 0, repaired: 0, predicted: 0 };
-    bucket.runs += 1;
-    bucket.predicted += probe.completesFirstTry;
-    const repaired = (run.attempts ?? 1) > 1 || run.firstExitReason !== undefined || (run.exitReason !== undefined && run.exitReason !== 'completed');
-    if (repaired) bucket.repaired += 1;
-    acc.set(level, bucket);
+  for (const [taskId, taskProbes] of probesByTask) {
+    taskProbes.sort((a, b) => a.ts.localeCompare(b.ts));
+    const runs = implementersByTask.get(taskId) ?? [];
+    for (const [i, probe] of taskProbes.entries()) {
+      const next = taskProbes[i + 1]?.ts;
+      const run = runs.find((r) => (r.ts ?? '') >= probe.ts && (next === undefined || (r.ts ?? '') < next));
+      if (run === undefined) continue;
+      const level = Math.min(DIFFICULTY_LEVELS.length - 1, Math.max(0, Math.round(probe.difficulty)));
+      const bucket = acc.get(level) ?? { runs: 0, repaired: 0, predicted: 0 };
+      bucket.runs += 1;
+      bucket.predicted += probe.completesFirstTry;
+      const repaired = (run.attempts ?? 1) > 1 || (run.exitReason !== undefined && run.exitReason !== 'completed');
+      if (repaired) bucket.repaired += 1;
+      acc.set(level, bucket);
+    }
   }
   return [...acc.entries()]
     .sort(([a], [b]) => a - b)

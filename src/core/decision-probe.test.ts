@@ -25,20 +25,31 @@ function fakeFetch(status: number, body: unknown, calls: { url: string; init: Re
 }
 
 describe('decisionProbeConfig', () => {
-  it('is disabled without credentials', () => {
+  const cf = { CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' };
+
+  it('is disabled without the explicit switch, even when Cloudflare credentials are exported', () => {
     expect(decisionProbeConfig({})).toBeUndefined();
-    expect(decisionProbeConfig({ CLOUDFLARE_ACCOUNT_ID: 'acc' })).toBeUndefined();
+    expect(decisionProbeConfig(cf)).toBeUndefined();
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '0' })).toBeUndefined();
+    expect(decisionProbeConfig({ VANGUARD_DECISION_PROBE: '1', CLOUDFLARE_ACCOUNT_ID: 'acc' })).toBeUndefined();
   });
 
-  it('builds the Workers AI URL from the Cloudflare pair, defaulting to clef-flash', () => {
-    const cfg = decisionProbeConfig({ CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' });
+  it('builds the Workers AI URL from the Cloudflare pair, defaulting to clef-flash, and refuses other models there', () => {
+    const cfg = decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1' });
     expect(cfg).toEqual({ url: 'https://api.cloudflare.com/client/v4/accounts/acc/ai/run/@cf/cloudflare/clef-flash', token: 't', model: 'clef-flash' });
-    expect(decisionProbeConfig({ CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't', VANGUARD_DECISION_MODEL: 'clef' })?.model).toBe('clef');
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_MODEL: 'clef' })?.model).toBe('clef');
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_MODEL: 'jev' })).toBeUndefined();
+    expect(decisionProbeConfig({ VANGUARD_DECISION_PROBE: '1', CLOUDFLARE_ACCOUNT_ID: 'a/../b', CLOUDFLARE_AUTH_TOKEN: 't' })?.url).toContain('/accounts/a%2F..%2Fb/');
   });
 
-  it('a generic System-One endpoint wins and may run without a token', () => {
-    expect(decisionProbeConfig({ VANGUARD_DECISION_URL: 'http://ai-box:8080/decide', CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' }))
+  it('a generic System-One endpoint wins and never receives the Cloudflare token', () => {
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_URL: 'http://ai-box:8080/decide' }))
       .toEqual({ url: 'http://ai-box:8080/decide', model: 'clef-flash' });
+  });
+
+  it('white-label runs are skipped unless the switch is `all`', () => {
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1' }, { whiteLabel: true })).toBeUndefined();
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: 'all' }, { whiteLabel: true })?.model).toBe('clef-flash');
   });
 });
 
@@ -47,7 +58,7 @@ describe('probeTaskDifficulty', () => {
 
   it('posts the typed questions and maps a Workers-AI-wrapped answer', async () => {
     const calls: { url: string; init: RequestInit }[] = [];
-    const result = await probeTaskDifficulty(task, 'claude-sonnet-5', cfg, fakeFetch(200, { success: true, result: { model: 'clef-flash', answers, usage: { input_tokens: 812, output_tokens: 0 } } }, calls));
+    const result = await probeTaskDifficulty(task, 'claude-sonnet-5', { config: cfg, fetchImpl: fakeFetch(200, { success: true, result: { model: 'clef-flash', answers, usage: { input_tokens: 812, output_tokens: 0 } } }, calls) });
     expect(result).toMatchObject({ model: 'clef-flash', completesFirstTry: 0.72, difficulty: 1.6, difficultyConfidence: 0.55, specClear: 0.9, inputTokens: 812 });
     expect(result?.latencyMs).toBeGreaterThanOrEqual(0);
     expect(calls[0]?.url).toBe(cfg.url);
@@ -60,16 +71,27 @@ describe('probeTaskDifficulty', () => {
   });
 
   it('accepts a bare System-One body (no result wrapper)', async () => {
-    const result = await probeTaskDifficulty(task, undefined, cfg, fakeFetch(200, { model: 'jev', answers, usage: { input_tokens: 1, output_tokens: 0 } }));
+    const result = await probeTaskDifficulty(task, undefined, { config: cfg, fetchImpl: fakeFetch(200, { model: 'jev', answers, usage: { input_tokens: 1, output_tokens: 0 } }) });
     expect(result?.model).toBe('jev');
   });
 
   it('returns undefined — never throws — on no config, non-2xx, malformed body, or network error', async () => {
-    expect(await probeTaskDifficulty(task, undefined, undefined, fakeFetch(200, {}))).toBeUndefined();
-    expect(await probeTaskDifficulty(task, undefined, cfg, fakeFetch(401, { errors: [{ message: 'nope' }] }))).toBeUndefined();
-    expect(await probeTaskDifficulty(task, undefined, cfg, fakeFetch(200, { result: { answers: { difficulty: { score: 1 } } } }))).toBeUndefined();
+    expect(await probeTaskDifficulty(task, undefined, { config: undefined, fetchImpl: fakeFetch(200, {}) })).toBeUndefined();
+    expect(await probeTaskDifficulty(task, undefined, { config: cfg, fetchImpl: fakeFetch(401, { errors: [{ message: 'nope' }] }) })).toBeUndefined();
+    expect(await probeTaskDifficulty(task, undefined, { config: cfg, fetchImpl: fakeFetch(200, { result: { answers: { difficulty: { score: 1 } } } }) })).toBeUndefined();
     const boom = (async () => { throw new Error('ECONNRESET'); }) as unknown as typeof fetch;
-    expect(await probeTaskDifficulty(task, undefined, cfg, boom)).toBeUndefined();
+    expect(await probeTaskDifficulty(task, undefined, { config: cfg, fetchImpl: boom })).toBeUndefined();
+  });
+
+  it('honours the run cancel signal', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const slow = ((_u: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) reject(new DOMException('aborted', 'AbortError'));
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      })) as unknown as typeof fetch;
+    expect(await probeTaskDifficulty(task, undefined, { config: cfg, signal: controller.signal, fetchImpl: slow })).toBeUndefined();
   });
 
   it('truncates long description/spec in the state', () => {

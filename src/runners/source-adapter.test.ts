@@ -98,7 +98,7 @@ vi.mock('../sandbox/docker.js', () => ({
 }));
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
 const { probeTaskDifficulty } = vi.hoisted(() => ({ probeTaskDifficulty: vi.fn(async () => undefined) }));
-vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty }));
+vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty, decisionProbeConfig: vi.fn(() => undefined) }));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -263,7 +263,7 @@ describe('runSourcedIssue', () => {
   it('the difficulty probe is log-only: persisted with the implementer model, never routing', async () => {
     probeTaskDifficulty.mockResolvedValueOnce({ model: 'clef-flash', completesFirstTry: 0.3, difficulty: 3.1, difficultyConfidence: 0.7, specClear: 0.6, latencyMs: 90 } as never);
     await runSourcedIssue('group/project#1', { repoPath: '/repo', providerModel: 'claude-sonnet-5' }, fakeAdapter([], STAGES));
-    expect(probeTaskDifficulty).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }), 'claude-sonnet-5');
+    expect(probeTaskDifficulty).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }), 'claude-sonnet-5', expect.objectContaining({}));
     expect(persistDecisionProbe).toHaveBeenCalledWith('/repo', 'gl-1', expect.objectContaining({ difficulty: 3.1 }));
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.find((s) => s.name === 'implementer')?.model).toBe('claude-sonnet-5');
