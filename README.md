@@ -277,7 +277,7 @@ vanguard run    --linear TES-1 --provider claude --review-provider codex
 vanguard watch  --label vanguard --provider codex --review-provider claude
 ```
 
-**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
+**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. `--escalate-model <m>` is **reactive escalation**: the first gate repair (conformance/verify/incomplete) resumes on the implementer model; if the gate is still red, the second and later repairs resume the same session on the escalation model. Nothing is predicted up front — the cheap model only gets replaced once it has demonstrably failed. `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
 
 By default `run` uses the implement → review → simplify pipeline (the implementer plans inline). Pass `--plan` to prepend a dedicated planning stage (opus, high effort) that emits a `<plan>` for the implementer to follow — the plan → implement → review pipeline. Combine with `--review-model opus` to also review on the planner-tier model:
 
@@ -311,6 +311,7 @@ The quality pipeline (reviewer, conformance, verification) still runs and still 
 ```bash
 vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/implement big, review cheap
 vanguard run --linear TES-1 --provider-model sonnet --conformance --conformance-model opus   # implement on sonnet, check conformance on opus
+vanguard run --linear TES-1 --provider-model claude-sonnet-5 --review-model claude-fable-5 --escalate-model claude-fable-5   # cheap implement; a 2nd failed gate repair escalates
 vanguard run --github o/r#1 --commit-author "Sebastian Pietrzak <spietrza@gmail.com>"   # commit authored as you
 ```
 
