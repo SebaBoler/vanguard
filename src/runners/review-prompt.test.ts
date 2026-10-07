@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractReviewVerdict, reviewOutcomeUsable, outputTail } from './review-prompt.js';
+import { extractReviewVerdict, reviewOutcomeUsable, outputTail, verdictContradictsFindings, hasBlockingFinding } from './review-prompt.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { renderConformanceSection } from '../pipeline/review-publish.js';
 import { publishGitlabVerdict } from './gitlab.js';
@@ -272,6 +272,26 @@ describe('extractReviewVerdict', () => {
     expect(reviewOutcomeUsable({ text: 'anything', completed: true })).toBe(true);
     expect(reviewOutcomeUsable({ text: 'Verdict: BLOCKING\n…', completed: false })).toBe(true);
     expect(reviewOutcomeUsable({ text: 'still reading', completed: false })).toBe(false);
+  });
+
+  it('hasBlockingFinding: a [high]/[critical] label counts only when it opens a line or list item (a quoted diff hunk does not)', () => {
+    expect(hasBlockingFinding('- [high] auth.ts:42 token never expires')).toBe(true);
+    expect(hasBlockingFinding('* [critical] rce')).toBe(true);
+    expect(hasBlockingFinding('[High] bare label line')).toBe(true);
+    expect(hasBlockingFinding('- [low] nit')).toBe(false);
+    expect(hasBlockingFinding('+- [high] quoted from the diff')).toBe(false);
+    expect(hasBlockingFinding('the author wrote [high] in a sentence')).toBe(false);
+    expect(hasBlockingFinding('one high-severity leak')).toBe(true);
+  });
+
+  it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding in any form the gate recognises', () => {
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [high] auth.ts:1 token never expires')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"high","kind":"security","title":"t","evidence":"e"}]}</findings>')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\nOne high-severity issue: tokens never expire.')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [low] nit')).toBe(false);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"low","kind":"style","title":"t","evidence":"e"}]}</findings>')).toBe(false);
+    expect(verdictContradictsFindings('Verdict: BLOCKING\n- [critical] x')).toBe(false);
+    expect(verdictContradictsFindings('no verdict line [high]')).toBe(false);
   });
 
   it('outputTail keeps the end of a long reply', () => {

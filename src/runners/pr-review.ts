@@ -13,6 +13,8 @@ import {
   outputTail,
   reviewOutcomeUsable,
   stripReviewMarkers,
+  VERDICT_CONTRADICTION_LOG,
+  verdictContradictsFindings,
 } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
@@ -202,6 +204,8 @@ export const PR_REVIEW_NO_OUTPUT_NOTICE =
 export const PR_REVIEW_NO_VERDICT_NOTICE =
   'Vanguard review did not complete: two passes ended without a verdict line. This is the reviewer stopping short, not the size of the PR — remove and re-add the trigger label (or run the review workflow by hand) to retry; if it repeats, review manually.';
 
+export { VERDICT_CONTRADICTION_LOG };
+
 export type PullRequestReviewIncompleteReason = 'too-large' | 'no-output' | 'no-verdict';
 
 const INCOMPLETE_NOTICES: Record<PullRequestReviewIncompleteReason, string> = {
@@ -357,7 +361,12 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   const commentBody = buildPullRequestReviewComment(outcome.text, pr.headRefOid, { completed: outcome.completed });
   if (deps.publish !== false) {
     await postPullRequestReview(target, commentBody, 'comment', gh);
-    deps.log?.(`review-pr ${target.repoSlug}#${target.number}: posted -> pr review`);
+    deps.log?.(`review-pr ${id}: posted -> pr review`);
+  }
+  // The signal this exists to collect must also show in dry-run/local (`--out`) runs; the suffix says
+  // which happened so the line never claims a post that was not made.
+  if (verdictContradictsFindings(outcome.text)) {
+    deps.log?.(`review-pr ${id}: ${VERDICT_CONTRADICTION_LOG} — ${deps.publish !== false ? 'posted as written' : 'not posted (publish disabled)'}`);
   }
   return { pr, commentBody };
 }

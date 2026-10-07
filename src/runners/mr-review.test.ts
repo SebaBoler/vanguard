@@ -335,6 +335,15 @@ describe('reviewMergeRequest incomplete retry', () => {
     expect(posted(calls)).toEqual([]);
   });
 
+  it('logs a clean verdict contradicted by a high finding after posting it as written', async () => {
+    const { glab, calls } = makeGlab();
+    const reviewer = vi.fn(async () => ({ text: 'Verdict: NO BLOCKING FINDINGS\n- [high] auth.ts:42 token never expires\n<promise>COMPLETE</promise>', completed: true }));
+    const lines: string[] = [];
+    await reviewMergeRequest('5', { project: 'g/p', glab, reviewer, log: (l) => lines.push(l) });
+    expect(posted(calls)).toHaveLength(1);
+    expect(lines).toContain('review-mr g/p!5: verdict says NO BLOCKING FINDINGS but the body carries a high/critical finding — posted as written');
+  });
+
   it('accepts a stated verdict without the completion signal, with the marker and a truncation note', async () => {
     const { glab, calls } = makeGlab();
     const reviewer = vi.fn(async () => ({ text: 'Verdict: NO BLOCKING FINDINGS\n\nMinor nits only.', completed: false }));
