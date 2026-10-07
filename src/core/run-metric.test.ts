@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stageMetric } from './run-metric.js';
+import { stageMetric, mergeAttempts } from './run-metric.js';
 import type { RunResult } from './types.js';
 
 const baseResult: RunResult = {
@@ -66,5 +66,33 @@ describe('stageMetric', () => {
       remainingBudgetUsd: 1,
     });
     expect(stageMetric(baseResult, 'plan', {})).not.toHaveProperty('stageCapUsd');
+  });
+});
+
+describe('mergeAttempts', () => {
+  it('sums cost/turns/tokens/duration and keeps the follow-up attempt identity', () => {
+    const prior: RunResult = {
+      ...baseResult, completed: false, exitReason: 'incomplete', turns: 4, sessionId: 's1', costUsd: 0.3,
+      durationMs: 1000, usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 900 },
+    };
+    const next: RunResult = {
+      ...baseResult, turns: 2, sessionId: 's2', costUsd: 0.1, durationMs: 500, finalText: 'fixed',
+      usage: { inputTokens: 50, outputTokens: 5, cacheReadInputTokens: 50 }, model: 'claude-sonnet-5',
+    };
+    const merged = mergeAttempts(prior, next);
+    expect(merged).toMatchObject({
+      completed: true, exitReason: 'completed', sessionId: 's2', finalText: 'fixed', model: 'claude-sonnet-5',
+      turns: 6, costUsd: 0.4, durationMs: 1500,
+      usage: { inputTokens: 150, outputTokens: 15, cacheReadInputTokens: 950 },
+    });
+    expect(merged.cacheEfficiency).toBeCloseTo(950 / 1100);
+  });
+
+  it('leaves cost/usage/duration absent when neither attempt reports them', () => {
+    const merged = mergeAttempts(baseResult, { ...baseResult, turns: 1 });
+    expect(merged.turns).toBe(4);
+    expect(merged).not.toHaveProperty('costUsd');
+    expect(merged).not.toHaveProperty('usage');
+    expect(merged).not.toHaveProperty('durationMs');
   });
 });

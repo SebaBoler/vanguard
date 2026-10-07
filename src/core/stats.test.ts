@@ -43,8 +43,25 @@ describe('aggregateMetrics', () => {
     expect(impl?.costUsd).toBeCloseTo(0.50);
 
     expect(report.total.entries).toBe(3);
+    expect(report.byModel.map((m) => m.key)).toEqual(['(unknown)']);
     expect(report.total.costUsd).toBeCloseTo(0.60);
     expect(report.total.cacheReadInputTokens).toBe(950);
+  });
+
+  it('buckets by served model so a model swap can be compared', () => {
+    const report = aggregateMetrics(
+      parseMetrics(
+        [
+          line({ taskId: 'a', stage: 'implementer', model: 'claude-sonnet-5', costUsd: 0.3 }),
+          line({ taskId: 'a', stage: 'reviewer', model: 'claude-fable-5', costUsd: 0.5 }),
+          line({ taskId: 'b', stage: 'implementer', model: 'claude-sonnet-5', costUsd: 0.2 }),
+        ].join('\n'),
+      ),
+    );
+    const sonnet = report.byModel.find((m) => m.key === 'claude-sonnet-5');
+    expect(sonnet?.entries).toBe(2);
+    expect(sonnet?.costUsd).toBeCloseTo(0.5);
+    expect(report.byModel.find((m) => m.key === 'claude-fable-5')?.costUsd).toBeCloseTo(0.5);
   });
 
   it('empty input yields a zeroed report', () => {
@@ -60,6 +77,7 @@ describe('formatStats', () => {
     const out = formatStats(report);
     expect(out).toContain('BY TASK');
     expect(out).toContain('BY STAGE');
+    expect(out).toContain('BY MODEL');
     expect(out).toContain('TOTAL');
     expect(out).toContain('0.2500');
     expect(out).toContain('90%'); // 900/(100+900)

@@ -1,3 +1,4 @@
+import { cacheEfficiency } from '../agents/provider.js';
 import type { ExitReason, RunResult } from './types.js';
 
 /** Flat, single-source metric shape consumed by metrics.jsonl, the run summary, and logs. */
@@ -44,5 +45,37 @@ export function stageMetric(result: RunResult, stageName?: string, budgetInfo?: 
     ...(result.model !== undefined ? { model: result.model } : {}),
     ...(budgetInfo?.stageCapUsd !== undefined ? { stageCapUsd: budgetInfo.stageCapUsd } : {}),
     ...(budgetInfo?.remainingBudgetUsd !== undefined ? { remainingBudgetUsd: budgetInfo.remainingBudgetUsd } : {}),
+  };
+}
+
+/**
+ * Fold a follow-up attempt (auto-resume, gate repair, losing fork variant) into a stage's result so
+ * the persisted stage metric reflects what the stage actually cost. Identity fields (session,
+ * completion, exit reason, final text, model) come from `next`; cost, turns, tokens and duration are
+ * summed. Without this, metrics.jsonl recorded only the LAST attempt of a resumed/repaired stage.
+ */
+export function mergeAttempts(prior: RunResult, next: RunResult): RunResult {
+  const usage =
+    prior.usage !== undefined || next.usage !== undefined
+      ? {
+          inputTokens: (prior.usage?.inputTokens ?? 0) + (next.usage?.inputTokens ?? 0),
+          outputTokens: (prior.usage?.outputTokens ?? 0) + (next.usage?.outputTokens ?? 0),
+          cacheReadInputTokens: (prior.usage?.cacheReadInputTokens ?? 0) + (next.usage?.cacheReadInputTokens ?? 0),
+        }
+      : undefined;
+  const costUsd =
+    prior.costUsd !== undefined || next.costUsd !== undefined
+      ? Math.round(((prior.costUsd ?? 0) + (next.costUsd ?? 0)) * 1e6) / 1e6
+      : undefined;
+  const durationMs =
+    prior.durationMs !== undefined || next.durationMs !== undefined
+      ? (prior.durationMs ?? 0) + (next.durationMs ?? 0)
+      : undefined;
+  return {
+    ...next,
+    turns: prior.turns + next.turns,
+    ...(usage !== undefined ? { usage, cacheEfficiency: cacheEfficiency(usage) } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
   };
 }

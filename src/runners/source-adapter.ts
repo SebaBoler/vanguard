@@ -4,6 +4,7 @@ import { DockerSandboxProvider } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { mergeAttempts } from '../core/run-metric.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
@@ -349,8 +350,6 @@ export async function runSourcedIssue(
         ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
-      console.log(summarizeOutcomes(outcomes));
-
       // Deterministic spec-manifest vs diff conformance gate, joined with the verify command into a
       // single shared-cap repair loop: either gate failing resumes the implementer's own session with
       // a combined gap report (bounded, budget/turn caps already apply to the resumed stage) —
@@ -425,10 +424,14 @@ export async function runSourcedIssue(
         ]
           .filter((s): s is string => s !== undefined)
           .join('\n\n');
+        // Resume on the model the implementer actually ran on (routed --provider-model or fallback) —
+        // omitting it here silently hands the repair to the provider's default model.
+        const repairModel = outcomes[implementerIdx]?.model ?? implementerStage?.model;
         const repaired = await runAgent(ctx, {
           promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
           agent: agents.agent,
           resumeSessionId,
+          ...(repairModel !== undefined ? { model: repairModel } : {}),
           ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
           ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
           // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
@@ -436,10 +439,12 @@ export async function runSourcedIssue(
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
         });
         const prior = outcomes[implementerIdx];
-        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
+        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: mergeAttempts(prior.result, repaired) };
         resumeSessionId = repaired.sessionId ?? resumeSessionId;
       }
       console.log(`vanguard: gate ${gatePassed ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`);
+      // Printed after the gate loop so repair attempts show up in the per-stage cost table.
+      console.log(summarizeOutcomes(outcomes));
 
       const visualProof = await resolveAndRunVisualProof(
         ctx.sandbox,

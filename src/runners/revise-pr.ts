@@ -260,7 +260,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // pattern as runSourcedIssue so a red revision never silently ships (alpha-window#901: 5
       // NameError tests pushed through revise). Auto-detect only touches the worktree, no manifest.
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
-      let resumeSessionId = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.sessionId;
+      const implementerOutcome = outcomes.find((o) => o.name === STAGE.IMPLEMENTER);
+      let resumeSessionId = implementerOutcome?.result.sessionId;
+      const implementerModel = implementerOutcome?.model;
       let verification: VerificationResult | undefined;
       if (verifyCmd !== undefined) {
         let verifyRepairs = 0;
@@ -275,6 +277,8 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
             promptTemplate: `${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`,
             agent: agents.agent,
             resumeSessionId,
+            // Same model the implementer ran on; otherwise the repair drops to the provider default.
+            ...(implementerModel !== undefined ? { model: implementerModel } : {}),
           });
           resumeSessionId = repaired.sessionId ?? resumeSessionId;
         }

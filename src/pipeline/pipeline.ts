@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
+import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
@@ -26,6 +27,9 @@ export const STAGE = {
   ADVERSARY: 'adversary',
   TECH_SPEC: 'tech-spec',
 } as const;
+
+/** Stages whose flow-pinned model (opus) survives --provider-model: they plan/red-team, not implement. */
+const PLANNER_TIER: ReadonlySet<string> = new Set([STAGE.PLANNER, STAGE.ADVERSARY]);
 
 /** Union of all canonical stage name string literals. A typo is a compile error. */
 export type StageName = (typeof STAGE)[keyof typeof STAGE];
@@ -293,7 +297,11 @@ export async function runBudgetedStages(
         ...(isFiniteCap ? { stageBudgetUsd: effectiveCap } : {}),
         ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
       });
-      const result = forkResult.winner;
+      // The winner keeps its identity; the losing variants' cost/tokens fold in so the stage metric
+      // reflects everything the fork spent, not just the chosen branch.
+      const result = forkResult.variants
+        .filter((_, i) => i !== forkResult.winnerIndex)
+        .reduce((acc, loser) => mergeAttempts(loser.result, acc), forkResult.winner);
       const forkStageCost = roundUsd(forkResult.variants.reduce((sum, v) => sum + (v.result.costUsd ?? 0), 0));
       outcomes.push({
         name: stage.name,
@@ -383,7 +391,7 @@ export async function runBudgetedStages(
         { taskId: ctx.taskId, stage: stage.name, exitReason: result.exitReason, resumesLeft },
         'stage incomplete — resuming session',
       );
-      result = await runAgent(ctx, {
+      const resumed = await runAgent(ctx, {
         ...stageOpts,
         promptTemplate: stage.resumeNudge ?? RESUME_NUDGE,
         agent: effectiveAgent,
@@ -391,7 +399,9 @@ export async function runBudgetedStages(
         resumeSessionId: result.sessionId,
         ...(isFiniteCap ? { maxBudgetUsd: effectiveCap - stageCost } : {}),
       });
-      stageCost = roundUsd(stageCost + (result.costUsd ?? 0));
+      stageCost = roundUsd(stageCost + (resumed.costUsd ?? 0));
+      // Fold the resume into the stage result so the persisted metric carries every attempt's cost.
+      result = mergeAttempts(result, resumed);
     }
 
     outcomes.push({
@@ -697,13 +707,16 @@ export function assembleReviewPipeline(
   };
 
   if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
-    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
-    // stage (incl. conformance, planning side) gets providerModel.
+    // Only a CROSS-provider reviewer and the planner-tier stages are excluded from the implement model.
+    // Gating on the mere presence of reviewAgent would wrongly strip the model when --review-provider
+    // equals --provider. Planner/adversary keep the stronger model their flow pins (opus) — the whole
+    // point of --plan/flow-b is "plan and red-team high, implement cheap", which a single implement
+    // model flag must not flatten. Every other stage (incl. conformance) gets providerModel.
     const crossProviderReview =
       deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
     for (const stage of pipeline) {
       if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
+      if (PLANNER_TIER.has(stage.name)) continue;
       route(stage.name as StageName, { model: deps.providerModel });
     }
   }

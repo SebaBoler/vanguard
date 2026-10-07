@@ -893,6 +893,14 @@ describe('assembleReviewPipeline', () => {
     expect(result.find((s) => s.name === 'implementer')?.model).toBe('sonnet');
   });
 
+  it('leaves planner-tier stages (planner, adversary) on their flow-pinned model under providerModel', () => {
+    const planned = assembleReviewPipeline(planImplementAdversaryStages(), { agent }, { providerModel: 'claude-sonnet-5' });
+    expect(planned.find((s) => s.name === 'planner')?.model).toBe('opus');
+    expect(planned.find((s) => s.name === 'adversary')?.model).toBe('opus');
+    expect(planned.find((s) => s.name === 'implementer')?.model).toBe('claude-sonnet-5');
+    expect(planned.find((s) => s.name === 'repairer')?.model).toBe('claude-sonnet-5');
+  });
+
   it('reviewModel overrides model on reviewer only', () => {
     const result = assembleReviewPipeline(base, { agent }, {
       providerModel: 'sonnet',
@@ -1202,6 +1210,9 @@ describe('per-stage budget cap', () => {
       // stageCost for 'a' = 2 calls × $0.15 = $0.30; total spentUsd ≈ $0.60 (2 stages × $0.30)
       expect(result.outcomes[0]?.name).toBe('a');
       expect(result.outcomes[1]?.name).toBe('b');
+      // The persisted stage result carries BOTH attempts, not just the last resume.
+      expect(result.outcomes[0]?.result.costUsd).toBeCloseTo(0.3);
+      expect(result.outcomes[0]?.result.turns).toBe(2);
     }
   });
 

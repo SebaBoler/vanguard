@@ -5,6 +5,7 @@ import { alignTable } from './table.js';
 export interface MetricRecord {
   taskId: string;
   stage?: string;
+  model?: string;
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
@@ -25,6 +26,8 @@ export interface Bucket {
 export interface StatsReport {
   byTask: Array<{ key: string } & Bucket>;
   byStage: Array<{ key: string } & Bucket>;
+  /** Keyed by the model actually served, so a model swap can be priced against its predecessor. */
+  byModel: Array<{ key: string } & Bucket>;
   total: Bucket;
 }
 
@@ -55,6 +58,7 @@ export function parseMetrics(text: string): MetricRecord[] {
     records.push({
       taskId: parsed.taskId,
       ...(typeof parsed.stage === 'string' ? { stage: parsed.stage } : {}),
+      ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
       costUsd: num(parsed.costUsd),
       inputTokens: num(parsed.inputTokens),
       outputTokens: num(parsed.outputTokens),
@@ -78,26 +82,26 @@ function add(bucket: Bucket, record: MetricRecord): void {
   bucket.durationMs += record.durationMs;
 }
 
-/** Aggregate records into per-task, per-stage, and grand-total buckets. */
+/** Aggregate records into per-task, per-stage, per-model, and grand-total buckets. */
 export function aggregateMetrics(records: ReadonlyArray<MetricRecord>): StatsReport {
   const byTask = new Map<string, Bucket>();
   const byStage = new Map<string, Bucket>();
+  const byModel = new Map<string, Bucket>();
   const total = emptyBucket();
+  const addTo = (map: Map<string, Bucket>, key: string, record: MetricRecord): void => {
+    const bucket = map.get(key) ?? emptyBucket();
+    add(bucket, record);
+    map.set(key, bucket);
+  };
   for (const record of records) {
-    const taskBucket = byTask.get(record.taskId) ?? emptyBucket();
-    add(taskBucket, record);
-    byTask.set(record.taskId, taskBucket);
-
-    const stageKey = record.stage ?? '(none)';
-    const stageBucket = byStage.get(stageKey) ?? emptyBucket();
-    add(stageBucket, record);
-    byStage.set(stageKey, stageBucket);
-
+    addTo(byTask, record.taskId, record);
+    addTo(byStage, record.stage ?? '(none)', record);
+    addTo(byModel, record.model ?? '(unknown)', record);
     add(total, record);
   }
   const entries = (map: Map<string, Bucket>): Array<{ key: string } & Bucket> =>
     [...map.entries()].map(([key, bucket]) => ({ key, ...bucket }));
-  return { byTask: entries(byTask), byStage: entries(byStage), total };
+  return { byTask: entries(byTask), byStage: entries(byStage), byModel: entries(byModel), total };
 }
 
 function pct(bucket: Bucket): string {
@@ -124,7 +128,7 @@ function row(label: string, bucket: Bucket): string[] {
 
 const HEADER = ['', 'runs', 'in', 'out', 'cacheR', 'cache%', '$cost', 'time'];
 
-/** Render a stats report: a per-task table, a per-stage table, and a grand total. */
+/** Render a stats report: per-task, per-stage and per-model tables, and a grand total. */
 export function formatStats(report: StatsReport): string {
   const taskTable = alignTable([
     ['BY TASK', ...HEADER.slice(1)],
@@ -134,6 +138,10 @@ export function formatStats(report: StatsReport): string {
     ['BY STAGE', ...HEADER.slice(1)],
     ...report.byStage.map((b) => row(b.key, b)),
   ]);
+  const modelTable = alignTable([
+    ['BY MODEL', ...HEADER.slice(1)],
+    ...report.byModel.map((b) => row(b.key, b)),
+  ]);
   const totalLine = alignTable([row('TOTAL', report.total)]);
-  return [taskTable, '', stageTable, '', totalLine].join('\n');
+  return [taskTable, '', stageTable, '', modelTable, '', totalLine].join('\n');
 }
