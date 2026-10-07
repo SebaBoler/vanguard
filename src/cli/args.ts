@@ -126,6 +126,8 @@ export type Command =
       reviewModel?: string;
       /** Model for gate repairs after the first one failed (reactive escalation); default: stay on the implementer model. */
       escalateModel?: string;
+      /** How --fork variants are scored: an LLM verdict (default) or a decision model (clef via Cloudflare or VANGUARD_DECISION_URL). */
+      forkScorer?: 'llm' | 'decision';
       verifyCmd?: string;
       specModel?: string;
       specLabel?: string;
@@ -283,6 +285,12 @@ export type Command =
 /** The repo-configured provider-name grammar (S6, mirrors custom.ts) — every built-in matches too. */
 const CUSTOM_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
+/** `--fork-scorer` value: undefined when absent, null when unrecognised. */
+function parseForkScorer(raw: unknown): 'llm' | 'decision' | undefined | null {
+  if (raw === undefined) return undefined;
+  return raw === 'llm' || raw === 'decision' ? raw : null;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_HOURS = 6;
 const DEFAULT_CONCURRENCY = 2;
@@ -410,6 +418,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         'review-model': { type: 'string' },
         // model for the 2nd+ gate repair — escalate only once the cheap model has demonstrably failed
         'escalate-model': { type: 'string' },
+        // fork-variant scorer: 'llm' (one-shot agent verdict, default) or 'decision' (decision model)
+        'fork-scorer': { type: 'string' },
         // skip the simplifier stage (lean run: implement -> review only)
         'no-simplify': { type: 'boolean' },
         // conformance review pass (opt-in; planner-tier model checks diff against spec)
@@ -784,6 +794,8 @@ export function parseCli(argv: string[], cwd: string): Command {
     }
     const concurrency = Number(values.concurrency);
     const forkN = Number(values.fork);
+    const forkScorer = parseForkScorer(values['fork-scorer']);
+    if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
     return {
       kind: 'run',
       source: picked[0],
@@ -805,6 +817,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
+      ...(forkScorer !== undefined ? { forkScorer } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
@@ -932,6 +945,8 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values['max-tasks'] !== undefined && maxTasks === undefined) {
       return fail(`--max-tasks needs a positive integer, got "${String(values['max-tasks'])}".`);
     }
+    const forkScorer = parseForkScorer(values['fork-scorer']);
+    if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
@@ -952,6 +967,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
+      ...(forkScorer !== undefined ? { forkScorer } : {}),
       ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
       ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
       ...(commitAuthor !== undefined ? { commitAuthor } : {}),
@@ -1046,6 +1062,8 @@ Commands:
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
                              model has failed (default: stay on the implementer model)
+    --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
+                             decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
     --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
@@ -1138,6 +1156,8 @@ Commands:
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
                              model has failed (default: stay on the implementer model)
+    --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
+                             decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
     --no-simplify            Skip the simplifier stage (lean: implement -> review only)
     --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
     --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
@@ -1285,7 +1305,8 @@ Commands:
 
   eval options:
     --json                   Emit the raw EvalReport as JSON instead of a table
-    --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for experiments)
+    --judge-model <m>        Model used to judge agent outputs (default: pinned claude-haiku-4-5-20251001; override for
+                             experiments; clef|clef-flash judges with a decision model — calibrated probabilities, no JSON to parse)
     --produce-model <m>      Model under test whose outputs are judged (default: claude-sonnet-4-6)
     --suggest                Draft eval-corpus candidates from retrospective memory (suggest-only; never writes the corpus)
     --repo <path>            Repo to read run artifacts from (with --suggest; default: cwd)

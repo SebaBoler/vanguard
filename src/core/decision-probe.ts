@@ -1,4 +1,5 @@
 import type { Task } from '../tasks/fetcher.js';
+import { decide, decisionModelConfig, type DecisionModelConfig, type DecisionQuestion } from './decision-model.js';
 
 /**
  * Log-only "decision model" probe (System One API: Cloudflare Clef / Typesafe Jev). Before the
@@ -18,18 +19,13 @@ import type { Task } from '../tasks/fetcher.js';
  * switch is `all`.
  */
 
-export const DECISION_MODEL_DEFAULT = 'clef-flash';
+export { DECISION_MODEL_DEFAULT } from './decision-model.js';
 /** Ordered difficulty rubric; the score answer is a probability-weighted index into it (0..4). */
 export const DIFFICULTY_LEVELS = ['Trivial', 'Routine', 'Moderate', 'Hard', 'Research-grade'] as const;
-const REQUEST_TIMEOUT_MS = 10_000;
 /** State is truncated so a long thread never blows the model's 64K context or the request budget. */
 const MAX_STATE_CHARS = 24_000;
 
-export interface DecisionProbeConfig {
-  url: string;
-  token?: string;
-  model: string;
-}
+export type DecisionProbeConfig = DecisionModelConfig;
 
 export interface DecisionProbeResult {
   model: string;
@@ -44,9 +40,6 @@ export interface DecisionProbeResult {
   inputTokens?: number;
 }
 
-/** Workers AI only hosts these two; anything else on that route is a typo that would 400 silently. */
-const WORKERS_AI_MODELS = new Set(['clef', 'clef-flash']);
-
 /**
  * Resolve the probe endpoint from the host environment; undefined = probe disabled. `whiteLabel`
  * runs need VANGUARD_DECISION_PROBE=all — client issue text must not leave the host by default.
@@ -58,23 +51,7 @@ export function decisionProbeConfig(
   const enabled = env['VANGUARD_DECISION_PROBE'];
   if (enabled !== '1' && enabled !== 'all') return undefined;
   if (opts.whiteLabel === true && enabled !== 'all') return undefined;
-  const model = env['VANGUARD_DECISION_MODEL'] ?? DECISION_MODEL_DEFAULT;
-  const url = env['VANGUARD_DECISION_URL'];
-  if (url !== undefined && url !== '') {
-    return { url, model, ...(env['VANGUARD_DECISION_TOKEN'] !== undefined ? { token: env['VANGUARD_DECISION_TOKEN'] } : {}) };
-  }
-  const account = env['CLOUDFLARE_ACCOUNT_ID'];
-  const token = env['CLOUDFLARE_AUTH_TOKEN'];
-  if (account === undefined || account === '' || token === undefined || token === '') return undefined;
-  if (!WORKERS_AI_MODELS.has(model)) {
-    console.warn(`vanguard: difficulty probe disabled — VANGUARD_DECISION_MODEL "${model}" is not a Workers AI decision model (clef, clef-flash)`);
-    return undefined;
-  }
-  return {
-    url: `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/ai/run/@cf/cloudflare/${model}`,
-    token,
-    model,
-  };
+  return decisionModelConfig(env);
 }
 
 /** The state handed to the model: title, body, labels, and the spec thread, truncated. */
@@ -89,7 +66,7 @@ export function probeState(task: Task, implementerModel: string | undefined): Re
   };
 }
 
-const QUESTIONS = {
+const QUESTIONS: Record<string, DecisionQuestion> = {
   completes_first_try: {
     type: 'noul',
     instructions:
@@ -98,26 +75,13 @@ const QUESTIONS = {
   difficulty: {
     type: 'score',
     instructions: 'How hard is this task for an autonomous coding agent, considering scope, ambiguity, and how many files/subsystems it touches?',
-    criteria: [...DIFFICULTY_LEVELS],
+    criteria: DIFFICULTY_LEVELS,
   },
   spec_clear: {
     type: 'noul',
     instructions: 'Is the task specified clearly enough (acceptance criteria, files, expected behaviour) to implement without guessing?',
   },
-} as const;
-
-interface SystemOneResponse {
-  result?: SystemOneBody;
-  // A bare System-One endpoint returns the body directly; Workers AI wraps it in `result`.
-  model?: string;
-  answers?: SystemOneBody['answers'];
-  usage?: SystemOneBody['usage'];
-}
-interface SystemOneBody {
-  model?: string;
-  answers?: Record<string, { type?: string; noul?: number; score?: number; confidence?: number }>;
-  usage?: { input_tokens?: number };
-}
+};
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
@@ -129,10 +93,8 @@ export interface ProbeOptions {
 }
 
 /**
- * Ask the decision model about the task. Never throws: any failure (network, non-2xx, malformed body,
- * timeout, cancel) returns undefined — a log-only probe must not be able to fail a run. A configured
- * probe that fails says so on stderr (one line, no URL: the path embeds the account id), because a
- * misconfiguration that looks exactly like "disabled" would never get fixed.
+ * Ask the decision model about the task. Never throws: any failure returns undefined — a log-only
+ * probe must not be able to fail a run. A configured probe that fails says so on stderr (one line).
  */
 export async function probeTaskDifficulty(
   task: Task,
@@ -141,50 +103,27 @@ export async function probeTaskDifficulty(
 ): Promise<DecisionProbeResult | undefined> {
   const config = 'config' in opts ? opts.config : decisionProbeConfig();
   if (config === undefined) return undefined;
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const signal = opts.signal !== undefined ? AbortSignal.any([opts.signal, timeout]) : timeout;
-  const started = Date.now();
-  try {
-    const res = await fetchImpl(config.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(config.token !== undefined ? { authorization: `Bearer ${config.token}` } : {}),
-      },
-      body: JSON.stringify({ model: config.model, state: probeState(task, implementerModel), questions: QUESTIONS }),
-      signal,
-    });
-    if (!res.ok) {
-      console.warn(`vanguard: difficulty probe failed (HTTP ${res.status}) — check the probe credentials/model`);
-      return undefined;
-    }
-    const parsed = (await res.json()) as SystemOneResponse;
-    const body = parsed.result ?? parsed;
-    const a = body.answers ?? {};
-    const completesFirstTry = num(a['completes_first_try']?.noul);
-    const difficulty = num(a['difficulty']?.score);
-    const difficultyConfidence = num(a['difficulty']?.confidence);
-    const specClear = num(a['spec_clear']?.noul);
-    if (completesFirstTry === undefined || difficulty === undefined || specClear === undefined) {
-      console.warn('vanguard: difficulty probe returned no usable answers — is the endpoint System-One compatible?');
-      return undefined;
-    }
-    const inputTokens = num(body.usage?.input_tokens);
-    return {
-      model: body.model ?? config.model,
-      completesFirstTry,
-      difficulty,
-      difficultyConfidence: difficultyConfidence ?? 0,
-      specClear,
-      latencyMs: Date.now() - started,
-      ...(inputTokens !== undefined ? { inputTokens } : {}),
-    };
-  } catch (err) {
-    // A cancelled run is not a misconfiguration; everything else is worth one line.
-    if (opts.signal?.aborted !== true) {
-      console.warn(`vanguard: difficulty probe failed (${err instanceof Error ? err.name : 'error'})`);
-    }
+  const result = await decide(probeState(task, implementerModel), QUESTIONS, config, {
+    label: 'difficulty probe',
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+    ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+  if (result === undefined) return undefined;
+  const a = result.answers;
+  const completesFirstTry = num(a['completes_first_try']?.noul);
+  const difficulty = num(a['difficulty']?.score);
+  const specClear = num(a['spec_clear']?.noul);
+  if (completesFirstTry === undefined || difficulty === undefined || specClear === undefined) {
+    console.warn('vanguard: difficulty probe returned no usable answers — is the endpoint System-One compatible?');
     return undefined;
   }
+  return {
+    model: result.model,
+    completesFirstTry,
+    difficulty,
+    difficultyConfidence: num(a['difficulty']?.confidence) ?? 0,
+    specClear,
+    latencyMs: result.latencyMs,
+    ...(result.inputTokens !== undefined ? { inputTokens: result.inputTokens } : {}),
+  };
 }
