@@ -151,6 +151,8 @@ export interface ForkOptions {
   n?: number;
   /** LLM completion function used to score each variant's diff. Higher score wins. */
   complete: Complete;
+  /** Scorer override (e.g. a decision model); when set, `complete` is not used for scoring. */
+  score?: (diff: string, result: RunResult) => Promise<EvalVerdict>;
   /**
    * Name of the stage to run via forkAndSelect. Defaults to 'implementer'.
    * If no stage with this name exists in the pipeline, fork is silently ignored.
@@ -291,7 +293,7 @@ export async function runBudgetedStages(
       const forkResult = await forkAndSelect(ctx, stage, {
         agent,
         ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
-        score: makeDiffScorer(opts.fork.complete),
+        score: opts.fork.score ?? makeDiffScorer(opts.fork.complete),
         variables,
         ...(resume && sessionId !== undefined ? { forkFromSessionId: sessionId } : {}),
         ...(opts.signal !== undefined ? { signal: opts.signal } : {}),

@@ -2,6 +2,7 @@
 import { parseCli, USAGE } from './args.js';
 import { runGc } from './gc.js';
 import { runCommand } from './run.js';
+import { resolveForkScorerConfig } from '../runners/source-adapter.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
 import { memoryCommand } from './memory.js';
@@ -29,6 +30,9 @@ async function main(): Promise<void> {
     return;
   }
   if (command.kind === 'run') {
+    // Validate decision-model credentials/consent ONCE, before the tracker fetch, sidecars and sandbox
+    // (a `run --parent` fan-out would otherwise fail every child the same way).
+    if (command.forkScorer === 'decision') resolveForkScorerConfig(command.commitAuthor !== undefined);
     await runCommand(command);
     return;
   }

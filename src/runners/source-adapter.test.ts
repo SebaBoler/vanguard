@@ -99,6 +99,16 @@ vi.mock('../sandbox/docker.js', () => ({
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
 const { probeTaskDifficulty } = vi.hoisted(() => ({ probeTaskDifficulty: vi.fn(async () => undefined) }));
 vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty, decisionProbeConfig: vi.fn(() => undefined) }));
+const { decisionModelConfig } = vi.hoisted(() => ({ decisionModelConfig: vi.fn((): unknown => undefined) }));
+vi.mock('../core/decision-model.js', () => ({
+  decisionModelConfig,
+  decide: vi.fn(async () => undefined),
+  num: (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined),
+  probability: (v: unknown) => (typeof v === 'number' && v >= 0 && v <= 1 ? v : undefined),
+  decisionEgressAllowed: (whiteLabel: boolean, env: NodeJS.ProcessEnv) => !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all',
+  decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
+  DECISION_MODEL_DEFAULT: 'clef-flash',
+}));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -258,6 +268,29 @@ describe('runSourcedIssue', () => {
 
     expect(runAgent).toHaveBeenCalledTimes(2);
     expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-fable-5' });
+  });
+
+  it('--fork-scorer decision hands runStages a decision scorer, and fails fast without credentials', async () => {
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES)),
+    ).rejects.toThrow(/--fork-scorer decision: set CLOUDFLARE_ACCOUNT_ID/);
+    expect(runStages).not.toHaveBeenCalled();
+
+    // A white-label run needs explicit consent before the client diff leaves the host.
+    decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision', commitAuthor: { name: 'c', email: 'c@x' } }, fakeAdapter([], STAGES)),
+    ).rejects.toThrow(/VANGUARD_DECISION_PROBE=all/);
+
+    decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES));
+    const opts = runStages.mock.calls[0]?.[2] as { fork?: { n: number; score?: unknown } };
+    expect(opts.fork?.n).toBe(2);
+    expect(typeof opts.fork?.score).toBe('function');
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2 }, fakeAdapter([], STAGES));
+    const plain = runStages.mock.calls[1]?.[2] as { fork?: { score?: unknown } };
+    expect(plain.fork?.score).toBeUndefined();
   });
 
   it('the difficulty probe is log-only: persisted with the implementer model, never routing', async () => {

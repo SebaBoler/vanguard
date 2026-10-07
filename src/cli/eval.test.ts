@@ -63,6 +63,18 @@ describe('evalCommand', () => {
     expect(models).not.toContain(JUDGE_MODEL);
   });
 
+  it('routes --judge-model clef-flash to the decision judge instead of an LLM completion', async () => {
+    const models: string[] = [];
+    const decisionModels: string[] = [];
+    const cmd = { kind: 'eval' as const, json: false, suggest: false, repoPath: '/repo', judgeModel: 'clef-flash' };
+    await evalCommand(cmd, makeTestFactory(models), (model) => {
+      decisionModels.push(model);
+      return { judge: async () => ({ passed: true, score: 0.9, reason: 'p' }) };
+    });
+    expect(decisionModels).toEqual(['clef-flash']);
+    expect(models).toEqual([DEFAULT_PRODUCE_MODEL]); // only the producer runs through the LLM path
+  });
+
   it('respects a --produce-model override', async () => {
     const models: string[] = [];
     const cmd = {

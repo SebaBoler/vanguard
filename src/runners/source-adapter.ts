@@ -6,6 +6,9 @@ import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
+import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
+import { VanguardError } from '../core/errors.js';
+import { decisionDiffScorer } from '../evals/decision-judge.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
@@ -46,6 +49,8 @@ export interface RunOptions extends ProviderChoice {
   reviewModel?: string;
   /** Model for gate repairs after the first failed one; undefined = keep the implementer model. */
   escalateModel?: string;
+  /** How --fork variants are scored; 'decision' needs decision-model credentials (fails fast without). */
+  forkScorer?: 'llm' | 'decision';
   noSimplify?: boolean;
   verifyCmd?: string;
   visualProofCmd?: string;
@@ -103,6 +108,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
     ...(cmd.escalateModel !== undefined ? { escalateModel: cmd.escalateModel } : {}),
+    ...(cmd.forkScorer !== undefined ? { forkScorer: cmd.forkScorer } : {}),
     ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
@@ -282,6 +288,24 @@ async function resolveBaseStages(
   return stages;
 }
 
+/**
+ * Credentials and consent for `--fork-scorer decision`. Checked by the CLI before anything runs and
+ * again here as a backstop. A white-label run ships the CLIENT's diff to the decision model, so it
+ * needs the same explicit consent as the difficulty probe (VANGUARD_DECISION_PROBE=all).
+ */
+export function resolveForkScorerConfig(whiteLabel: boolean, env: NodeJS.ProcessEnv = process.env): DecisionModelConfig {
+  if (!decisionEgressAllowed(whiteLabel, env)) {
+    throw new VanguardError(
+      '--fork-scorer decision on a white-label run (--commit-author) sends the client diff to the decision model; set VANGUARD_DECISION_PROBE=all to allow that.',
+    );
+  }
+  const config = decisionModelConfig(env);
+  if (config === undefined) {
+    throw new VanguardError(`--fork-scorer decision: ${decisionModelMissing(env['VANGUARD_DECISION_MODEL'] ?? DECISION_MODEL_DEFAULT, env)}`);
+  }
+  return config;
+}
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
@@ -335,6 +359,10 @@ export async function runSourcedIssue(
       ...(deps.network !== undefined ? { network: deps.network } : {}),
     });
 
+    // A decision-model fork scorer needs credentials; resolve them BEFORE the sandbox is built so a
+    // missing key fails in a second, not after a full implementer run.
+    const forkScore =
+      deps.forkN !== undefined && deps.forkScorer === 'decision' ? decisionDiffScorer(resolveForkScorerConfig(whiteLabel), deps.signal !== undefined ? { signal: deps.signal } : {}) : undefined;
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     // Log-only difficulty probe (decision model, opt-in via env): kicked off here so its round trip
     // hides under sandbox + worktree provisioning; awaited once the pipeline is assembled. Recorded
@@ -407,7 +435,9 @@ export async function runSourcedIssue(
           ...(adapter.variables?.(issueRef, task) ?? {}),
           RETROSPECTIVE_MEMORY: retrospectiveMemory,
         },
-        ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
+        ...(deps.forkN !== undefined
+          ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent), ...(forkScore !== undefined ? { score: forkScore } : {}) } }
+          : {}),
         ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });

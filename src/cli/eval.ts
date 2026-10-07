@@ -1,6 +1,9 @@
 import { execa } from 'execa';
 import { runEvals } from '../evals/run-evals.js';
 import { llmJudge } from '../evals/judges.js';
+import { decisionJudge } from '../evals/decision-judge.js';
+import { decisionModelConfig, decisionModelMissing, isDecisionModelName } from '../core/decision-model.js';
+import type { Judge } from '../evals/types.js';
 import { corpus, JUDGE_MODEL, DEFAULT_PRODUCE_MODEL } from '../evals/corpus/index.js';
 import { formatEvalReport } from '../evals/eval-report.js';
 import { evalSuggestCommand } from './eval-suggest.js';
@@ -17,6 +20,13 @@ export function makeCliComplete(model: string): (prompt: string) => Promise<stri
   };
 }
 
+/** A decision model as the judge: calibrated P(acceptable) instead of an LLM's self-rated JSON. */
+export function makeDecisionJudge(model: string, env: NodeJS.ProcessEnv = process.env): Judge {
+  const config = decisionModelConfig(env, model);
+  if (config === undefined) throw new Error(`--judge-model ${model}: ${decisionModelMissing(model, env)}`);
+  return decisionJudge(config);
+}
+
 /**
  * Run the committed eval corpus and print a per-kind pass-rate report.
  * The optional makeComplete parameter is injectable for testing.
@@ -24,6 +34,7 @@ export function makeCliComplete(model: string): (prompt: string) => Promise<stri
 export async function evalCommand(
   cmd: EvalCommand,
   makeComplete: (model: string) => (prompt: string) => Promise<string> = makeCliComplete,
+  makeDecision: (model: string) => Judge = makeDecisionJudge,
 ): Promise<void> {
   if (cmd.suggest) {
     await evalSuggestCommand(cmd);
@@ -33,10 +44,9 @@ export async function evalCommand(
   const judgeModel = cmd.judgeModel ?? JUDGE_MODEL;
   const produceModel = cmd.produceModel ?? DEFAULT_PRODUCE_MODEL;
 
-  const judgeComplete = makeComplete(judgeModel);
   const produceComplete = makeComplete(produceModel);
 
-  const judge = llmJudge(judgeComplete);
+  const judge = isDecisionModelName(judgeModel) ? makeDecision(judgeModel) : llmJudge(makeComplete(judgeModel));
   const produce = (testCase: EvalCase) => produceComplete(testCase.input);
 
   const report = await runEvals({ cases: corpus, produce, judge });

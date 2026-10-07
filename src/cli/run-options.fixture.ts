@@ -21,4 +21,5 @@ export const RUN_OPTIONS = {
   baseBranch: 'dev',
   maxTurns: 80,
   maxRepairIterations: 5,
+  escalateModel: 'claude-fable-5',
 } as const;
