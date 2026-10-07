@@ -563,7 +563,7 @@ vanguard watch-prs --github-repo owner/repo \
 |---|---|
 | `ready for vanguard review` | Picked up on the next poll. The label is removed and `vanguard:reviewing` is added before the review starts. |
 | `vanguard:reviewing` | Claimed/in progress. Later polls skip it. |
-| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass; the same commit is deduped by the hidden review marker. |
+| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass; the same commit is deduped by the hidden review marker. A review whose reply stated its `Verdict:` line but stopped before the completion signal counts as posted (with a truncation note), so it is deduped too. A reply with no verdict after two passes posts an incomplete notice without the marker — remove and re-add the trigger label (or run the workflow by hand) to retry. |
 
 Operator logs stay compact:
 

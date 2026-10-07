@@ -162,6 +162,7 @@ describe('reviewPullRequest', () => {
     const body = reviewCall?.at(-1) ?? '';
     expect(body).toContain(PR_REVIEW_NO_VERDICT_NOTICE);
     expect(body).not.toContain(PR_REVIEW_INCOMPLETE_NOTICE);
+    expect(body).not.toMatch(/diff is small/i);
     expect(body).toContain('Diff: 1 lines');
     expect(body).not.toContain('Now let me examine');
     // No head marker: the notice must not block a retry after re-labeling the same head.
@@ -285,7 +286,7 @@ describe('review prompt and comment formatting', () => {
     const prompt = buildPullRequestReviewPrompt({
       repoSlug: 'o/r', number: 1, title: 't', body: '', url: 'u', author: 'a', headRefName: 'h', headRefOid: 'x', baseRefName: 'main', diff: 'd',
     });
-    expect(prompt).toContain('Begin your reply with exactly one line');
+    expect(prompt).toContain('Begin your final reply (the review itself, after any investigation) with exactly one line');
     expect(prompt.indexOf('Verdict: NO BLOCKING FINDINGS')).toBeLessThan(prompt.indexOf('Report only actionable findings'));
   });
 

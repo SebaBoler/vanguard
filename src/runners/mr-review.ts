@@ -295,12 +295,12 @@ export async function reviewMergeRequest(
   deps.log?.(`review-mr ${target.project}!${target.iid}: agent -> reviewing`);
   let outcome = normalizeMergeRequestReviewOutcome(await deps.reviewer(mr, { isRetry: false }));
   if (!reviewOutcomeUsable(outcome)) {
-    deps.log?.(`review-mr ${id}: pass 1 ended without a verdict; output tail:\n${outputTail(outcome.text)}`);
+    deps.log?.(`review-mr ${id}: pass 1 ended without a verdict; output tail:\n${outputTail(outcome.text) || '(no output)'}`);
     deps.log?.(`review-mr ${id}: incomplete -> retry (verdict first, larger budget)`);
     outcome = normalizeMergeRequestReviewOutcome(await deps.reviewer(mr, { isRetry: true }));
   }
   if (!reviewOutcomeUsable(outcome)) {
-    deps.log?.(`review-mr ${id}: pass 2 ended without a verdict; output tail:\n${outputTail(outcome.text)}`);
+    deps.log?.(`review-mr ${id}: pass 2 ended without a verdict; output tail:\n${outputTail(outcome.text) || '(no output)'}`);
     throw new MergeRequestReviewIncompleteError(mr);
   }
   if (!outcome.completed) {

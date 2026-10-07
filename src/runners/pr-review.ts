@@ -200,7 +200,7 @@ export const PR_REVIEW_INCOMPLETE_NOTICE =
 export const PR_REVIEW_NO_OUTPUT_NOTICE =
   'Vanguard review did not complete: the model returned no output (provider error or rate limit). Retry once the provider recovers.';
 export const PR_REVIEW_NO_VERDICT_NOTICE =
-  'Vanguard review did not complete: two passes ended without a verdict line. The diff is small, so this is the reviewer failing, not the PR — re-label to retry; if it repeats, review manually.';
+  'Vanguard review did not complete: two passes ended without a verdict line. This is the reviewer stopping short, not the size of the PR — remove and re-add the trigger label (or run the review workflow by hand) to retry; if it repeats, review manually.';
 
 export type PullRequestReviewIncompleteReason = 'too-large' | 'no-output' | 'no-verdict';
 
@@ -331,13 +331,13 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   let outcome = normalizePullRequestReviewOutcome(await deps.reviewer(pr, { isRetry: false }));
   if (!reviewOutcomeUsable(outcome)) {
     // The discarded reply goes to the log: without it an incomplete pass is undiagnosable (#405).
-    deps.log?.(`review-pr ${id}: pass 1 ended without a verdict; output tail:\n${outputTail(outcome.text)}`);
+    deps.log?.(`review-pr ${id}: pass 1 ended without a verdict; output tail:\n${outputTail(outcome.text) || '(no output)'}`);
     deps.log?.(`review-pr ${id}: incomplete -> retry (verdict first, larger budget)`);
     outcome = normalizePullRequestReviewOutcome(await deps.reviewer(pr, { isRetry: true }));
   }
 
   if (!reviewOutcomeUsable(outcome)) {
-    deps.log?.(`review-pr ${id}: pass 2 ended without a verdict; output tail:\n${outputTail(outcome.text)}`);
+    deps.log?.(`review-pr ${id}: pass 2 ended without a verdict; output tail:\n${outputTail(outcome.text) || '(no output)'}`);
     // No output at all = the model call itself failed (provider error / rate limit). Output without a
     // verdict on a small diff is the reviewer's failure, not the PR's — say which, instead of dressing
     // every failure up as "too large".

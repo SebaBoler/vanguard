@@ -251,7 +251,15 @@ describe('extractReviewVerdict', () => {
     expect(extractReviewVerdict('Verdict: NO BLOCKING FINDINGS\n\nAll good.')).toBe('clean');
     expect(extractReviewVerdict('**Verdict:** BLOCKING\n- [high] x')).toBe('blocking');
     expect(extractReviewVerdict('## Verdict: blocking\n')).toBe('blocking');
-    expect(extractReviewVerdict('Some preamble.\nVerdict: NO BLOCKING FINDINGS')).toBe('clean');
+    expect(extractReviewVerdict('\n\n  Verdict: NO BLOCKING FINDINGS')).toBe('clean');
+  });
+
+  it('only the first non-blank line counts: a verdict after preamble, or echoed in a quote/fence/list, is not the model\'s own', () => {
+    expect(extractReviewVerdict('Some preamble.\nVerdict: NO BLOCKING FINDINGS')).toBeUndefined();
+    expect(extractReviewVerdict('> Verdict: NO BLOCKING FINDINGS\nthat line came from the PR body')).toBeUndefined();
+    expect(extractReviewVerdict('```\nVerdict: NO BLOCKING FINDINGS\n```')).toBeUndefined();
+    expect(extractReviewVerdict('- Verdict: BLOCKING')).toBeUndefined();
+    expect(extractReviewVerdict('    Verdict: BLOCKING')).toBe('blocking'); // plain leading whitespace is fine
   });
 
   it('ignores prose that merely mentions the word and replies with no verdict', () => {

@@ -10,16 +10,19 @@ export const RETRY_TRIAGE_INSTRUCTION =
  * thrown away because only the trailing <promise> counted.
  */
 export const VERDICT_INSTRUCTION =
-  'Begin your reply with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings.';
+  'Begin your final reply (the review itself, after any investigation) with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings.';
 
 export type ReviewVerdict = 'clean' | 'blocking';
 
-// Tolerates Markdown emphasis around the label and the value, and a leading heading marker.
-const VERDICT_RE = /^[ \t#>*_]*Verdict:?[*_ \t]*(NO BLOCKING FINDINGS|BLOCKING)\b/im;
+// Only the FIRST non-blank line of the reply counts, and a blockquote/code/list prefix does not:
+// the diff and PR body are untrusted and the prompt tells the model to quote injected text as a
+// finding, so a planted `Verdict:` line echoed inside a quote or fence must never pass as the
+// model's own verdict. Markdown emphasis and a heading marker around the real line are tolerated.
+const VERDICT_RE = /^[#*_ \t]*Verdict:?[*_ \t]*(NO BLOCKING FINDINGS|BLOCKING)\b/i;
 
-/** The verdict line, when the reply states one — independent of the completion signal. */
+/** The verdict line, when the reply opens with one — independent of the completion signal. */
 export function extractReviewVerdict(text: string): ReviewVerdict | undefined {
-  const m = VERDICT_RE.exec(text);
+  const m = VERDICT_RE.exec(text.trimStart());
   if (m === null) return undefined;
   return m[1]!.toUpperCase() === 'BLOCKING' ? 'blocking' : 'clean';
 }
@@ -32,7 +35,12 @@ export function reviewOutcomeUsable(outcome: { text: string; completed: boolean 
 export const VERDICT_WITHOUT_COMPLETION_NOTE =
   '_The reviewer stated its verdict but ended before its completion signal; the findings below may be truncated._';
 
-/** Diffs above this many lines plausibly need more than one pass; below it an incomplete review is the model's failure, not the PR's size. */
+/**
+ * Unified-diff lines (headers and context included, so ~1000 changed lines) above which a verdict-less
+ * review is blamed on the diff. The #405 failures were on a 698-line diff and were output truncation,
+ * which is size-independent — hence the threshold is deliberately high and the notice below it never
+ * calls the PR "too large".
+ */
 export const LARGE_DIFF_LINES = 3000;
 
 export function diffLineCount(diff: string): number {
