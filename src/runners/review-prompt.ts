@@ -1,6 +1,8 @@
 /** Prompt text shared by the PR and MR review builders. */
 
 /** Prepended on the incomplete-review retry so the larger budget ends in a verdict instead of a second timeout. */
+import { extractFindings } from '../structured/findings.js';
+
 export const RETRY_TRIAGE_INSTRUCTION =
   'Your previous pass ended without a verdict. Do not attempt to read every file exhaustively. Triage: scan the whole diff first, then focus only on the highest-risk changes (correctness, security, data loss, broken contracts). State the verdict line FIRST, keep each finding to a few lines, and finish within the turn budget. If you cannot cover everything, report the findings you are confident in and state what you did not cover, then write <promise>COMPLETE</promise>.';
 
@@ -33,12 +35,30 @@ export function reviewOutcomeUsable(outcome: { text: string; completed: boolean 
 }
 
 /**
- * A reply that opens with NO BLOCKING FINDINGS and then lists a high/critical finding contradicts
+ * Does the verdict text carry a blocking (high/critical) finding? The structured <findings> block
+ * wins; without one, prose is scanned for the severity forms reviewers actually write — `high-severity`,
+ * `critical`, and the bracketed `[high]` label. Shared by the main-loop merge gate (review-publish,
+ * gitlab) and the external review-pr/review-mr contradiction check, so the two can never disagree.
+ */
+export function hasBlockingFinding(verdictText: string): boolean {
+  try {
+    const { findings } = extractFindings(verdictText);
+    return findings.some((f) => f.severity === 'high' || f.severity === 'critical');
+  } catch {
+    // No structured findings block — scan prose for severity keywords.
+    return /\b(critical|high[- ]severity)\b|\[(high|critical)\]/i.test(verdictText);
+  }
+}
+
+/**
+ * A reply that opens with NO BLOCKING FINDINGS and then carries a high/critical finding contradicts
  * itself. Nothing gates on the verdict value, so this only surfaces in the log — but a reviewer that
- * does it often is worth knowing about before the verdict ever drives anything.
+ * does it often is worth knowing about before the verdict ever drives anything. Caveat: the scan
+ * covers the whole reply, including diff hunks the reviewer quoted, so a PR author can add false
+ * positives (never suppress a real one); keep that in mind before this ever feeds a gate or metric.
  */
 export function verdictContradictsFindings(text: string): boolean {
-  return extractReviewVerdict(text) === 'clean' && /\[(high|critical)\]/i.test(text);
+  return extractReviewVerdict(text) === 'clean' && hasBlockingFinding(text);
 }
 
 export const VERDICT_WITHOUT_COMPLETION_NOTE =

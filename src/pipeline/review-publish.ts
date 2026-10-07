@@ -1,6 +1,6 @@
 import { parsePullRequestUrl, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
+import { stripReviewMarkers, hasBlockingFinding } from '../runners/review-prompt.js';
 import { extractFindings } from '../structured/findings.js';
-import { stripReviewMarkers } from '../runners/review-prompt.js';
 import type { StageOutcome } from './pipeline.js';
 import type { RunResult } from '../core/types.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -34,15 +34,9 @@ export function buildReviewerAttribution(outcome: StageOutcome | undefined, fall
  * Prefers a structured <findings> JSON block when present; falls back to keyword detection in the
  * Markdown text for robustness when the reviewer produces free-form prose only.
  */
-export function hasBlockingFinding(verdictText: string): boolean {
-  try {
-    const { findings } = extractFindings(verdictText);
-    return findings.some((f) => f.severity === 'high' || f.severity === 'critical');
-  } catch {
-    // No structured findings block — scan prose for severity keywords.
-    return /\b(critical|high[- ]severity)\b/i.test(verdictText);
-  }
-}
+// Lives in review-prompt.ts so the external review-pr/review-mr path shares one detector; re-exported
+// here for the existing gate callers (publishReviewVerdict, gitlab.ts).
+export { hasBlockingFinding };
 
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 

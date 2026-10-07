@@ -11,6 +11,7 @@ import {
   PR_REVIEW_INCOMPLETE_NOTICE,
   PR_REVIEW_NO_OUTPUT_NOTICE,
   PR_REVIEW_NO_VERDICT_NOTICE,
+  VERDICT_CONTRADICTION_LOG,
   incompleteReviewReason,
   PullRequestReviewIncompleteError,
   reviewPullRequest,
@@ -199,12 +200,22 @@ describe('reviewPullRequest', () => {
   });
 
   it('logs when a clean verdict is contradicted by a high finding, but posts the review as written', async () => {
-    const { gh } = makeGh();
+    const { calls, gh } = makeGh();
     const reviewer = vi.fn().mockResolvedValue({ text: 'Verdict: NO BLOCKING FINDINGS\n\n- [high] auth.ts:42 token never expires\n<promise>COMPLETE</promise>', completed: true });
     const logs: string[] = [];
     const result = await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, log: (l) => logs.push(l) });
-    expect(logs.some((l) => l.includes('contradict') || l.includes('verdict says NO BLOCKING FINDINGS'))).toBe(true);
+    expect(logs).toContain(`review-pr o/r#12: ${VERDICT_CONTRADICTION_LOG}`);
+    const reviewCall = calls.find((a) => a[0] === 'pr' && a[1] === 'review');
+    expect(reviewCall?.at(-1)).toContain('[high] auth.ts:42');
     expect(result.commentBody).toContain('[high] auth.ts:42');
+  });
+
+  it('does not claim a post it never made: the contradiction log stays silent under publish:false', async () => {
+    const { gh } = makeGh();
+    const reviewer = vi.fn().mockResolvedValue({ text: 'Verdict: NO BLOCKING FINDINGS\n- [high] x\n<promise>COMPLETE</promise>', completed: true });
+    const logs: string[] = [];
+    await reviewPullRequest('12', { repoSlug: 'o/r', gh, reviewer, publish: false, log: (l) => logs.push(l) });
+    expect(logs.some((l) => l.includes(VERDICT_CONTRADICTION_LOG))).toBe(false);
   });
 
   it('incompleteReviewReason: no output → provider failure; small diff → no-verdict; large diff → too-large', () => {

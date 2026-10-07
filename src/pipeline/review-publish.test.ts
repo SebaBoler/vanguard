@@ -34,6 +34,9 @@ describe('hasBlockingFinding', () => {
 
   it('does not treat an empty structured findings block as blocking', () => {
     expect(hasBlockingFinding('No blocking issues.\n<findings>{"findings":[]}</findings>')).toBe(false);
+    // Prose fallback also recognises the bracketed label reviewers write in Markdown lists.
+    expect(hasBlockingFinding('- [high] auth.ts:42 token never expires')).toBe(true);
+    expect(hasBlockingFinding('- [low] nit')).toBe(false);
   });
 
   it('uses a bare-array findings block as blocking', () => {

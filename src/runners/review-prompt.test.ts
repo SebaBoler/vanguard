@@ -274,9 +274,12 @@ describe('extractReviewVerdict', () => {
     expect(reviewOutcomeUsable({ text: 'still reading', completed: false })).toBe(false);
   });
 
-  it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding', () => {
+  it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding in any form the gate recognises', () => {
     expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [high] auth.ts:1 token never expires')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"high","kind":"security","title":"t","evidence":"e"}]}</findings>')).toBe(true);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\nOne high-severity issue: tokens never expire.')).toBe(true);
     expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [low] nit')).toBe(false);
+    expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"low","kind":"style","title":"t","evidence":"e"}]}</findings>')).toBe(false);
     expect(verdictContradictsFindings('Verdict: BLOCKING\n- [critical] x')).toBe(false);
     expect(verdictContradictsFindings('no verdict line [high]')).toBe(false);
   });
