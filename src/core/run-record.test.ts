@@ -3,7 +3,7 @@ import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { persistRunRecord, persistVerification, persistVisualProof } from './run-record.js';
+import { persistRunRecord, persistVerification, persistVisualProof, persistStageOutcomes } from './run-record.js';
 import type { RunResult } from './types.js';
 
 const TS = '2026-06-06T10:00:00.000Z';
@@ -185,5 +185,15 @@ describe('persistRunRecord', () => {
     expect(metrics).toHaveLength(2);
     expect(JSON.parse(metrics[0]!).stage).toBe('implementer');
     expect(JSON.parse(metrics[1]!).stage).toBe('reviewer');
+  });
+
+  it('persistStageOutcomes records the configured model next to the served one', async () => {
+    await persistStageOutcomes(repo, [
+      { name: 'implementer', result: { ...result, model: 'claude-sonnet-4-6' }, model: 'claude-fable-5' },
+      { name: 'reviewer', result },
+    ]);
+    const metrics = (await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8')).trim().split('\n');
+    expect(JSON.parse(metrics[0]!)).toMatchObject({ model: 'claude-sonnet-4-6', requestedModel: 'claude-fable-5' });
+    expect(JSON.parse(metrics[1]!)).not.toHaveProperty('requestedModel');
   });
 });

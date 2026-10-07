@@ -6,6 +6,7 @@ export interface MetricRecord {
   taskId: string;
   stage?: string;
   model?: string;
+  requestedModel?: string;
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
@@ -26,7 +27,7 @@ export interface Bucket {
 export interface StatsReport {
   byTask: Array<{ key: string } & Bucket>;
   byStage: Array<{ key: string } & Bucket>;
-  /** Keyed by the model actually served, so a model swap can be priced against its predecessor. */
+  /** Keyed by the model actually served (see modelKey), so a model swap can be priced against its predecessor. */
   byModel: Array<{ key: string } & Bucket>;
   total: Bucket;
 }
@@ -59,6 +60,7 @@ export function parseMetrics(text: string): MetricRecord[] {
       taskId: parsed.taskId,
       ...(typeof parsed.stage === 'string' ? { stage: parsed.stage } : {}),
       ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
+      ...(typeof parsed.requestedModel === 'string' ? { requestedModel: parsed.requestedModel } : {}),
       costUsd: num(parsed.costUsd),
       inputTokens: num(parsed.inputTokens),
       outputTokens: num(parsed.outputTokens),
@@ -82,6 +84,18 @@ function add(bucket: Bucket, record: MetricRecord): void {
   bucket.durationMs += record.durationMs;
 }
 
+/**
+ * Bucket key for the BY MODEL table: the served model, annotated with the configured one when a
+ * gateway served something else — a silent substitution then shows up as its own row instead of
+ * being folded into the model the operator asked for. Records predating the model field land in
+ * one '(no model recorded)' row.
+ */
+export function modelKey(record: Pick<MetricRecord, 'model' | 'requestedModel'>): string {
+  if (record.model === undefined) return record.requestedModel ?? '(no model recorded)';
+  if (record.requestedModel === undefined || record.requestedModel === record.model) return record.model;
+  return `${record.model} (requested ${record.requestedModel})`;
+}
+
 /** Aggregate records into per-task, per-stage, per-model, and grand-total buckets. */
 export function aggregateMetrics(records: ReadonlyArray<MetricRecord>): StatsReport {
   const byTask = new Map<string, Bucket>();
@@ -96,7 +110,7 @@ export function aggregateMetrics(records: ReadonlyArray<MetricRecord>): StatsRep
   for (const record of records) {
     addTo(byTask, record.taskId, record);
     addTo(byStage, record.stage ?? '(none)', record);
-    addTo(byModel, record.model ?? '(unknown)', record);
+    addTo(byModel, modelKey(record), record);
     add(total, record);
   }
   const entries = (map: Map<string, Bucket>): Array<{ key: string } & Bucket> =>

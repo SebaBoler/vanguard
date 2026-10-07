@@ -60,6 +60,17 @@ describe('stageMetric', () => {
     expect(stageMetric(baseResult, 'plan').stage).toBe('plan');
   });
 
+  it('includes attempts/firstExitReason only for multi-attempt results, and requestedModel when given', () => {
+    expect(stageMetric(baseResult)).not.toHaveProperty('attempts');
+    const repaired: RunResult = { ...baseResult, attempts: 3, firstExitReason: 'maxTurns' };
+    expect(stageMetric(repaired, 'implementer', { requestedModel: 'opus' })).toMatchObject({
+      attempts: 3,
+      firstExitReason: 'maxTurns',
+      requestedModel: 'opus',
+    });
+    expect(stageMetric({ ...baseResult, attempts: 1 })).not.toHaveProperty('attempts');
+  });
+
   it('includes budget fields only when provided', () => {
     expect(stageMetric(baseResult, 'plan', { stageCapUsd: 0.5, remainingBudgetUsd: 1 })).toMatchObject({
       stageCapUsd: 0.5,
@@ -86,6 +97,12 @@ describe('mergeAttempts', () => {
       usage: { inputTokens: 150, outputTokens: 15, cacheReadInputTokens: 950 },
     });
     expect(merged.cacheEfficiency).toBeCloseTo(950 / 1100);
+    // The truncation stays visible: two attempts, first ended 'incomplete'.
+    expect(merged.attempts).toBe(2);
+    expect(merged.firstExitReason).toBe('incomplete');
+    const third = mergeAttempts(merged, { ...baseResult, turns: 1 });
+    expect(third.attempts).toBe(3);
+    expect(third.firstExitReason).toBe('incomplete');
   });
 
   it('keeps the reporting side when only one attempt carries cost/usage/duration', () => {
