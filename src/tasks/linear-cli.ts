@@ -131,6 +131,16 @@ const LIST_QUERY = `query($f: IssueFilter, $after: String, $first: Int!) {
   }
 }`;
 
+/** Labels for ONE issue; `issue(id:)` accepts the human identifier (`TES-1`) as well as the UUID. */
+const LABELS_QUERY = `query($id: String!) {
+  issue(id: $id) { labels { nodes { name } } }
+}`;
+
+interface LabelsResponse {
+  data?: { issue?: { labels?: LinearCliIssue['labels'] } | null };
+  errors?: { message?: string }[];
+}
+
 interface IssuePage {
   data?: { issues?: { pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }; nodes?: LinearCliIssue[] } };
   errors?: { message?: string }[];
@@ -159,13 +169,29 @@ export class LinearCliTaskFetcher implements TaskFetcher {
     return this.options.linear ?? defaultRunner;
   }
 
-  /** `issue view <id> --json` (includes the description; labels are not returned by view). */
+  /**
+   * `issue view <id> --json` (includes the description) plus the issue's labels over GraphQL, which
+   * `view` does not return. Labels drive routing (`vanguard:model=<m>`), so they are fetched for real;
+   * a failed label query degrades to `labels: []` rather than failing the run — the view already
+   * proved the issue exists, and label-less is how fetch() always behaved before.
+   */
   async fetch(id: string): Promise<Task> {
     const issue = JSON.parse(await this.run(['issue', 'view', id, '--json'])) as LinearCliIssue;
     if (issue.identifier === undefined && issue.id === undefined) {
       throw new VanguardError(`Linear issue not found: ${id}`);
     }
-    return toTask(issue);
+    const labels = issue.labels ?? (await this.fetchLabels(issue.identifier ?? issue.id ?? id));
+    return toTask({ ...issue, ...(labels !== undefined ? { labels } : {}) });
+  }
+
+  private async fetchLabels(id: string): Promise<LinearCliIssue['labels'] | undefined> {
+    try {
+      const send = await this.sender();
+      const res = (await send({ query: LABELS_QUERY, variables: { id } })) as LabelsResponse;
+      return res.data?.issue?.labels;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
