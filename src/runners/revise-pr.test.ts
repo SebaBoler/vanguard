@@ -230,11 +230,21 @@ describe('runRevisePullRequest secret gate', () => {
       expect(result.secretBlocked).toBe(true);
       expect(result.committed).toBe(false);
       expect(result.pushed).toBe(false);
+      expect(result.addressed).toBeGreaterThan(0); // items abandoned, not "nothing actionable"
     } finally {
       spy.mockRestore();
     }
     expect(pushCalls).toEqual([]);
-    expect(ghCalls.some((a) => a[0] === 'pr' && (a[1] === 'comment' || a[1] === 'ready' || a[1] === 'edit'))).toBe(false);
+    // Ordering pin: no branch anywhere in the repo moved past the initial commit — the gate ran before commitStage.
+    const mainSha = (await execa('git', ['rev-parse', 'main'], { cwd: repo })).stdout;
+    const refs = (await execa('git', ['for-each-ref', '--format=%(objectname)', 'refs/heads'], { cwd: repo })).stdout.split('\n');
+    expect(refs.every((sha) => sha === mainSha)).toBe(true);
+    // Visible: a masked comment went to the PR and the routing labels were handed back; no undraft.
+    const comment = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
+    expect(comment?.join(' ')).toMatch(/secret/i);
+    expect(comment?.join(' ')).not.toContain('ghp_' + 'A'.repeat(40));
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--remove-label'))).toBe(true);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'ready')).toBe(false);
     // The operator sees the finding masked, never the raw token.
     expect(errors.join('\n')).toMatch(/secret scan blocked revise push .*fix\.txt \[github-token\]/);
     expect(errors.join('\n')).not.toContain('ghp_' + 'A'.repeat(40));

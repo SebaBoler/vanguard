@@ -60,6 +60,10 @@ function logResult(result: ReviseGithubPrResult, log: (line: string) => void): v
     log(`revise-pr ${id}: dry-run written to ${result.dryRunOut} (nothing pushed or commented)`);
     return;
   }
+  if (result.secretBlocked === true) {
+    log(`revise-pr ${id}: BLOCKED — the revision diff carries a secret; nothing pushed (${result.addressed} item(s) abandoned)`);
+    return;
+  }
   if (!result.committed) {
     log(`revise-pr ${id}: done (no changes committed)`);
   } else {

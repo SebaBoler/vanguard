@@ -22,7 +22,8 @@ import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
-import { scanForSecrets } from '../core/secret-scan.js';
+import { scanForSecrets, renderSecretBlockComment } from '../core/secret-scan.js';
+import type { SecretBlock } from '../core/secret-scan.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import {
@@ -117,7 +118,7 @@ export interface ReviseGithubPrResult {
   undrafted: boolean;
   /** Absolute path of the dry-run preview file, when --out was given (push/comment were skipped). */
   dryRunOut?: string;
-  /** The revision diff carried a secret (or the scan failed): nothing was committed or pushed. */
+  /** The revision diff carried a secret (or the scan failed): nothing was committed or pushed; `addressed` counts the items abandoned. */
   secretBlocked?: boolean;
 }
 
@@ -302,6 +303,32 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      const whiteLabel = deps.commitAuthor !== undefined;
+
+      // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
+      // a commit, the PR branch, or the --out preview a human will read and share. A scan error blocks
+      // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
+      // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
+      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
+      let block: SecretBlock | undefined;
+      try {
+        const findings = scanForSecrets(revisionDiff);
+        if (findings.length > 0) {
+          console.error(
+            `vanguard: secret scan blocked revise push for ${target.repoSlug}#${target.number}:`,
+            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+          );
+          block = { reason: 'findings', findings };
+        }
+      } catch (err) {
+        console.error(`vanguard: secret scan failed for ${target.repoSlug}#${target.number}, blocking push as a precaution:`, err);
+        block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
+      }
+      if (block !== undefined) {
+        if (!whiteLabel) await commentPullRequest(target, renderSecretBlockComment(block), gh).catch(() => undefined);
+        await handBackPrLabels(gh, target.repoSlug, target.number, log);
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+      }
 
       // Diff-true "what changed" point per feedback item — uses the diff, not a commit sha, so the
       // dry-run below can build proposed replies without committing.
@@ -329,24 +356,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
       }
 
-      // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
-      // a commit, let alone the PR branch. Scan-error blocks too, as a precaution.
-      try {
-        const findings = scanForSecrets(revisionDiff);
-        if (findings.length > 0) {
-          console.error(
-            `vanguard: secret scan blocked revise push for ${target.repoSlug}#${target.number}:`,
-            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
-          );
-          return { pr, addressed: 0, committed: false, pushed: false, undrafted: false, secretBlocked: true };
-        }
-      } catch (err) {
-        console.error(`vanguard: secret scan failed for ${target.repoSlug}#${target.number}, blocking push as a precaution:`, err);
-        return { pr, addressed: 0, committed: false, pushed: false, undrafted: false, secretBlocked: true };
-      }
-
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
-      const whiteLabel = deps.commitAuthor !== undefined;
       const commit = await commitStage(ctx, {
         message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
         ...(deps.commitAuthor !== undefined
