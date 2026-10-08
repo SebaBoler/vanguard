@@ -59,13 +59,14 @@ describe('deliverChange', () => {
     const calls: string[][] = [];
     try {
       await withWork('token = "ghp_' + 'A'.repeat(40) + '"', async (ctx) => {
+        const before = (await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath })).stdout;
         const r = await deliverChange(ctx, {
           taskId: 'T-1',
           commitMessage: 'feat: x',
           target: { kind: 'existing-branch', prHeadRef: 'pr-head', runner: async (_f, a) => { calls.push(a); return ''; } },
         });
         expect(r.kind).toBe('secret-blocked');
-        expect((await execa('git', ['log', '--oneline'], { cwd: ctx.worktreePath })).stdout.split('\n')).toHaveLength(1); // only init
+        expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: ctx.worktreePath })).stdout).toBe(before); // no commit
       });
     } finally {
       spy.mockRestore();
@@ -119,7 +120,8 @@ describe('deliverChange', () => {
           runner: async (file, a) => {
             calls.push([file, ...a]);
             if (file === 'gh') return 'https://github.com/o/r/pull/9';
-            if (a[0] === 'rev-parse') return 'rebasedhead';
+            // Only the branch-head read after the push rebase reports the rewritten commit.
+            if (a[0] === 'rev-parse' && String(a[1]).startsWith('refs/heads/')) return 'rebasedhead';
             return '';
           },
         },

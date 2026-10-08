@@ -311,7 +311,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
       // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
       // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
-      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`);
+      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push');
       if (block !== undefined) {
         // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
         // write no preview (it would carry the raw secret), and leave the labels alone.
@@ -368,7 +368,6 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         taskId: `${target.repoSlug}#${target.number}`,
         commitMessage: `fix: address review feedback (${target.repoSlug}#${target.number})`,
         ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
-        outgoingDiff: revisionDiff,
         target: {
           kind: 'existing-branch',
           prHeadRef: pr.headRefName,
@@ -377,9 +376,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         },
       });
       if (delivery.kind === 'secret-blocked') {
-        // Unreachable in practice: the gate above already scanned this very diff before the --out branch.
-        // Kept so deliverChange's contract holds even if the early gate moves.
-        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+        // The gate above scanned the same worktree before the --out branch and handled the block
+        // (comment, labels). Reaching here means the worktree changed in between — fail loudly rather
+        // than strand the PR silently.
+        throw new VanguardError(`revise-pr ${target.repoSlug}#${target.number}: secret found at delivery after a clean pre-scan`);
       }
       if (delivery.kind === 'no-changes') {
         log(`revise-pr ${target.repoSlug}#${target.number}: no changes — skipping push`);

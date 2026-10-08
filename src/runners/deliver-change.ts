@@ -1,3 +1,5 @@
+// Imported through the pipeline.js shim on purpose: source-adapter.test.ts mocks '../pipeline/pipeline.js' and
+// relies on this module hitting the same mock. Re-point that mock when the shim goes (see pipeline.ts).
 import { commitStage, publishForReview, pushToExistingBranch } from '../pipeline/pipeline.js';
 import { scanForSecrets } from '../core/secret-scan.js';
 import { scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
@@ -48,8 +50,6 @@ export interface DeliverChangeOptions {
   target: DeliveryTarget;
   /** Scan the new commits for `Closes #N` against this base (a partial delivery must not auto-close). */
   closingKeywordBase?: string;
-  /** The outgoing diff, when the caller already captured it; otherwise read from the worktree. */
-  outgoingDiff?: string;
 }
 
 export type DeliverChangeResult =
@@ -65,26 +65,25 @@ export type DeliverChangeResult =
  * Nothing with a secret ever reaches a commit; a scan error blocks too, as a precaution. Exported so a
  * caller that must gate earlier than the commit (revise's --out preview) runs the same scan.
  */
-export function scanOutgoingForSecrets(outgoing: string, taskId: string): SecretBlock | undefined {
+export function scanOutgoingForSecrets(outgoing: string, taskId: string, phase: 'publish' | 'revise push' = 'publish'): SecretBlock | undefined {
   try {
     const findings = scanForSecrets(outgoing);
     if (findings.length === 0) return undefined;
     console.error(
-      `vanguard: secret scan blocked publish for ${taskId}:`,
+      `vanguard: secret scan blocked ${phase} for ${taskId}:`,
       findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
     );
     return { reason: 'findings', findings };
   } catch (err) {
-    console.error(`vanguard: secret scan failed for ${taskId}, blocking publish as a precaution:`, err);
+    console.error(`vanguard: secret scan failed for ${taskId}, blocking ${phase} as a precaution:`, err);
     return { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
   }
 }
 
 export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions): Promise<DeliverChangeResult> {
   // Gate before the commit: a push happens before any label can be attached, so the raw secret must
-  // never reach a commit in the first place.
-  const outgoing = opts.outgoingDiff ?? (await ctx.wm.diff(ctx.worktreePath));
-  const block = scanOutgoingForSecrets(outgoing, opts.taskId);
+  // never reach a commit in the first place. Always the worktree's own diff — never a caller's snapshot.
+  const block = scanOutgoingForSecrets(await ctx.wm.diff(ctx.worktreePath), opts.taskId, opts.target.kind === 'new-pr' ? 'publish' : 'revise push');
   if (block !== undefined) return { kind: 'secret-blocked', block };
 
   const identity = opts.commitAuthor !== undefined ? { authorName: opts.commitAuthor.name, authorEmail: opts.commitAuthor.email } : {};
