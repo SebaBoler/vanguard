@@ -263,7 +263,8 @@ export type Command =
       provider?: ProviderName;
       llmProxy?: boolean;
     }
-  | { kind: 'stats'; repoPath: string; json: boolean }
+  | { kind: 'stats'; repoPath: string; json: boolean; /** Read the metrics file from this remote branch instead of the local .vanguard/runs. */ branch?: string }
+  | { kind: 'metrics'; action: 'push'; repoPath: string; branch?: string }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
   | {
       kind: 'eval';
@@ -446,8 +447,10 @@ export function parseCli(argv: string[], cwd: string): Command {
         'research-model': { type: 'string' },
         // revise-pr
         'max-rounds': { type: 'string' },
-        // stats / memory
+        // stats / memory / metrics
         json: { type: 'boolean' },
+        // stats --branch / metrics push --branch: the orphan branch that holds durable metrics
+        branch: { type: 'string' },
         limit: { type: 'string' },
         // eval
         'judge-model': { type: 'string' },
@@ -533,7 +536,17 @@ export function parseCli(argv: string[], cwd: string): Command {
   const maxRepairIterations = parseLimit(values['max-repair-iterations']);
 
   if (positionals[0] === 'stats') {
-    return { kind: 'stats', repoPath, json: values.json === true };
+    return {
+      kind: 'stats',
+      repoPath,
+      json: values.json === true,
+      ...(typeof values.branch === 'string' ? { branch: values.branch } : {}),
+    };
+  }
+
+  if (positionals[0] === 'metrics') {
+    if (positionals[1] !== 'push') return fail('metrics expects a subcommand: vanguard metrics push [--repo <path>] [--branch <name>].');
+    return { kind: 'metrics', action: 'push', repoPath, ...(typeof values.branch === 'string' ? { branch: values.branch } : {}) };
   }
 
   if (positionals[0] === 'memory') {
@@ -1024,7 +1037,10 @@ Commands:
   review-mr Review an existing GitLab MR and post a non-blocking Vanguard review comment.
   watch-mrs Poll GitLab MRs by label and run the non-blocking Vanguard review loop.
   doctor-mrs Check whether watch-mrs can run AFK before any MR is claimed.
-  stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage).
+  stats  Aggregate .vanguard/runs/metrics.jsonl into a cost/token/time rollup (per task, per stage,
+         per model, probe); --branch reads the durable copy from the metrics branch instead.
+  metrics push  Append this checkout's metrics.jsonl lines to the orphan vanguard-metrics branch and
+         push, so an ephemeral CI run leaves a durable trace (idempotent; needs push rights).
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
@@ -1294,7 +1310,13 @@ Commands:
 
   stats options:
     --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to read (default: cwd)
+    --branch <name>        Read metrics.jsonl from this remote branch instead (what 'metrics push' wrote;
+                           default name: vanguard-metrics)
     --json                 Emit the aggregated report as JSON instead of tables
+
+  metrics push options:
+    --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to persist (default: cwd)
+    --branch <name>        Target branch (default: vanguard-metrics)
 
   memory options:
     --repo <path>          Repo to read run artifacts from (default: cwd)

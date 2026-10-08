@@ -1,19 +1,31 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseMetrics, parseProbes, aggregateMetrics, formatStats } from '../core/stats.js';
+import { readBranchMetrics } from '../core/metrics-branch.js';
 import type { Command } from './args.js';
 
 type StatsCommand = Extract<Command, { kind: 'stats' }>;
 
-/** Read .vanguard/runs/metrics.jsonl and print an aggregated cost/token/time rollup. */
+/**
+ * Read metrics.jsonl — the local .vanguard/runs copy, or with --branch the durable copy `metrics push`
+ * keeps on the metrics branch — and print an aggregated cost/token/time rollup.
+ */
 export async function statsCommand(cmd: StatsCommand): Promise<void> {
-  const file = join(cmd.repoPath, '.vanguard', 'runs', 'metrics.jsonl');
   let text: string;
-  try {
-    text = await readFile(file, 'utf8');
-  } catch {
-    console.log(`No metrics found at ${file} — run a task first.`);
-    return;
+  if (cmd.branch !== undefined) {
+    text = await readBranchMetrics(cmd.repoPath, { branch: cmd.branch });
+    if (text === '') {
+      console.log(`No metrics on branch ${cmd.branch} — has \`vanguard metrics push\` run yet?`);
+      return;
+    }
+  } else {
+    const file = join(cmd.repoPath, '.vanguard', 'runs', 'metrics.jsonl');
+    try {
+      text = await readFile(file, 'utf8');
+    } catch {
+      console.log(`No metrics found at ${file} — run a task first.`);
+      return;
+    }
   }
   const records = parseMetrics(text);
   const report = aggregateMetrics(records, parseProbes(text));

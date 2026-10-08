@@ -188,6 +188,15 @@ describe('parseCli', () => {
     expect(bare.kind === 'run' && 'escalateModel' in bare).toBe(false);
   });
 
+  it('parses stats --branch and metrics push, and rejects an unknown metrics subcommand', () => {
+    expect(parseCli(['stats', '--branch', 'vanguard-metrics'], '/work')).toMatchObject({ kind: 'stats', branch: 'vanguard-metrics' });
+    expect(parseCli(['stats'], '/work')).not.toHaveProperty('branch');
+    expect(parseCli(['metrics', 'push'], '/work')).toEqual({ kind: 'metrics', action: 'push', repoPath: '/work' });
+    expect(parseCli(['metrics', 'push', '--repo', '/r', '--branch', 'b'], '/work')).toMatchObject({ kind: 'metrics', repoPath: '/r', branch: 'b' });
+    const bad = parseCli(['metrics', 'pull'], '/work');
+    expect(bad.kind === 'error' && bad.message).toMatch(/metrics expects a subcommand/);
+  });
+
   it('parses --fork-scorer on run, rejects it on watch and rejects unknown values', () => {
     const run = parseCli(['run', '--linear', 'TES-1', '--fork', '3', '--fork-scorer', 'decision'], '/work');
     expect(run.kind === 'run' && run.forkScorer).toBe('decision');
