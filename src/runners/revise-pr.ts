@@ -22,6 +22,9 @@ import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
+import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { scanForSecrets, renderSecretBlockComment } from '../core/secret-scan.js';
+import type { SecretBlock } from '../core/secret-scan.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import {
@@ -58,7 +61,9 @@ import type { AgentProvider } from '../agents/provider.js';
 const NEEDS_REVISION_LABEL = 'needs revision';
 const VANGUARD_REVISING_LABEL = 'vanguard:revising';
 const DEFAULT_MAX_ROUNDS = 2;
-const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL], add: [GITHUB_REVIEW_LABEL] };
+// secret-blocked is removed too: a round that pushes cleanly after the human stripped the secret must
+// not leave the PR mapped to verify-failed on the board.
+const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL, GITHUB_SECRET_BLOCKED_LABEL], add: [GITHUB_REVIEW_LABEL] };
 
 /** Cap on implement-session resumes triggered by a red verification in the revise pass — one bounded repair. */
 const MAX_VERIFY_REPAIRS = 1;
@@ -116,6 +121,8 @@ export interface ReviseGithubPrResult {
   undrafted: boolean;
   /** Absolute path of the dry-run preview file, when --out was given (push/comment were skipped). */
   dryRunOut?: string;
+  /** The revision diff carried a secret (or the scan failed): nothing was committed or pushed; `addressed` counts the items abandoned. */
+  secretBlocked?: boolean;
 }
 
 function editPrLabels(
@@ -299,6 +306,49 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
       const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      const whiteLabel = deps.commitAuthor !== undefined;
+
+      // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
+      // a commit, the PR branch, or the --out preview a human will read and share. A scan error blocks
+      // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
+      // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
+      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
+      let block: SecretBlock | undefined;
+      try {
+        const findings = scanForSecrets(revisionDiff);
+        if (findings.length > 0) {
+          console.error(
+            `vanguard: secret scan blocked revise push for ${target.repoSlug}#${target.number}:`,
+            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+          );
+          block = { reason: 'findings', findings };
+        }
+      } catch (err) {
+        console.error(`vanguard: secret scan failed for ${target.repoSlug}#${target.number}, blocking push as a precaution:`, err);
+        block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
+      }
+      if (block !== undefined) {
+        // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
+        // write no preview (it would carry the raw secret), and leave the labels alone.
+        if (deps.out === undefined) {
+          await handBackPrLabels(gh, target.repoSlug, target.number, log);
+          // White-label runs keep the automation invisible in the client repo: no branded comment and no
+          // secret-blocked label (same rule as the first delivery); the hand-back label is the one the
+          // revise loop already relies on.
+          if (!whiteLabel) {
+            const notice = [
+              renderSecretBlockComment(block, 'revision'),
+              'Remove the secret from the revision and re-label `needs revision`.',
+              droppedCiPathsNote(ctx.droppedCiPaths),
+            ].filter((part) => part !== '').join('\n\n');
+            await commentPullRequest(target, notice, gh).catch(() => undefined);
+            // Same marker as the first delivery, so the board maps it to verify-failed, not to a clean hand-back.
+            await gh(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', target.repoSlug, '--force']).catch(() => undefined);
+            await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--add-label', GITHUB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
+          }
+        }
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+      }
 
       // Diff-true "what changed" point per feedback item — uses the diff, not a commit sha, so the
       // dry-run below can build proposed replies without committing.
@@ -327,7 +377,6 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
-      const whiteLabel = deps.commitAuthor !== undefined;
       const commit = await commitStage(ctx, {
         message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
         ...(deps.commitAuthor !== undefined

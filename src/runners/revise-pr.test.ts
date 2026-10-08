@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -64,7 +65,7 @@ afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
 });
 
-function makeSandbox(): IsolatedSandboxProvider {
+function makeSandbox(fixContent = 'fix applied'): IsolatedSandboxProvider {
   return {
     id: 'fake',
     start: async (): Promise<void> => {},
@@ -79,7 +80,7 @@ function makeSandbox(): IsolatedSandboxProvider {
       if (sandboxPath === '/workspace') {
         await mkdir(hostPath, { recursive: true });
         // Agent writes a file in the sandbox → synced to worktree
-        await writeFile(join(hostPath, 'fix.txt'), 'fix applied');
+        await writeFile(join(hostPath, 'fix.txt'), fixContent);
       }
     },
     exists: async (): Promise<boolean> => true,
@@ -197,6 +198,93 @@ function makeFeedbackJsonWithNonThreadItems(): string {
 // ---------------------------------------------------------------------------
 // Happy path
 // ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest secret gate', () => {
+  it('blocks the push when the revision diff carries a secret — no commit, masked comment, labels handed back, no undraft', async () => {
+    const ghCalls: string[][] = [];
+    const pushCalls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    try {
+      const result = await runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox('token = "ghp_' + 'A'.repeat(40) + '"\n'),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async (_f, a) => { pushCalls.push(a); return ''; },
+        _baseBranch: 'feature-branch',
+        provider: 'claude',
+      });
+      expect(result.secretBlocked).toBe(true);
+      expect(result.committed).toBe(false);
+      expect(result.pushed).toBe(false);
+      expect(result.addressed).toBeGreaterThan(0); // items abandoned, not "nothing actionable"
+    } finally {
+      spy.mockRestore();
+    }
+    expect(pushCalls).toEqual([]);
+    // Ordering pin: no branch anywhere in the repo moved past the initial commit — the gate ran before commitStage.
+    const mainSha = (await execa('git', ['rev-parse', 'main'], { cwd: repo })).stdout;
+    const refs = (await execa('git', ['for-each-ref', '--format=%(objectname)', 'refs/heads'], { cwd: repo })).stdout.split('\n');
+    expect(refs.every((sha) => sha === mainSha)).toBe(true);
+    // Visible: a masked comment went to the PR and the routing labels were handed back; no undraft.
+    const comment = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
+    expect(comment?.join(' ')).toMatch(/secret/i);
+    expect(comment?.join(' ')).not.toContain('ghp_' + 'A'.repeat(40));
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--remove-label'))).toBe(true);
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'ready')).toBe(false);
+    // The operator sees the finding masked, never the raw token.
+    expect(errors.join('\n')).toMatch(/secret scan blocked revise push .*fix\.txt \[github-token\]/);
+    expect(errors.join('\n')).not.toContain('ghp_' + 'A'.repeat(40));
+    expect(comment?.join(' ')).toMatch(/Nothing was pushed to this branch/);
+    expect(comment?.join(' ')).not.toContain('No PR was opened');
+    expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--add-label') && a.includes('vanguard:secret-blocked'))).toBe(true);
+  });
+
+  it('--out: a secret in the revision diff is reported but the dry-run touches neither the PR nor the labels and writes no preview', async () => {
+    const ghCalls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+    const out = join(repo, 'preview.md');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await runRevisePullRequest('7', {
+        repoPath: repo, repoSlug: 'o/r', gh, out,
+        _sandbox: makeSandbox('token = "ghp_' + 'A'.repeat(40) + '"\n'),
+        _agent: agentThatCompletes([]), _worktrees: new WorktreeManager(repo), _pushRunner: async () => '', _baseBranch: 'feature-branch', provider: 'claude',
+      });
+      expect(result.secretBlocked).toBe(true);
+      expect(result.dryRunOut).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(existsSync(out)).toBe(false);
+    expect(ghCalls.some((a) => a[0] === 'pr' && (a[1] === 'comment' || a[1] === 'edit' || a[1] === 'ready'))).toBe(false);
+    expect(ghCalls.some((a) => a[0] === 'label')).toBe(false);
+  });
+});
 
 describe('runRevisePullRequest happy path', () => {
   it('applies fixes, pushes, replies+resolves threads, undrafts, and flips labels', async () => {

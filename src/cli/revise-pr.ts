@@ -56,6 +56,10 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
 
 function logResult(result: ReviseGithubPrResult, log: (line: string) => void): void {
   const id = `${result.pr.repoSlug}#${result.pr.number}`;
+  if (result.secretBlocked === true) {
+    log(`revise-pr ${id}: BLOCKED — the revision diff carries a secret; nothing pushed (${result.addressed} item(s) abandoned)`);
+    return;
+  }
   if (result.dryRunOut !== undefined) {
     log(`revise-pr ${id}: dry-run written to ${result.dryRunOut} (nothing pushed or commented)`);
     return;

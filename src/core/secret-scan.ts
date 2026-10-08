@@ -185,23 +185,30 @@ export function scanForSecrets(diff: string): SecretFinding[] {
 /** Why publish was blocked by the secret scan: real findings, or the scan itself failing (precautionary block). */
 export type SecretBlock = { reason: 'findings'; findings: SecretFinding[] } | { reason: 'scan-error'; message: string };
 
-const FINDINGS_BLOCK_HEADER =
-  '🔒 Vanguard blocked publish — the secret scan found credential-shaped content in the outgoing diff. ' +
-  'No PR was opened. Findings are **masked**; review the listed lines.';
+/** What the block stopped: the first delivery opens a PR; a revision pushes onto an existing one. */
+export type SecretBlockStage = 'first-delivery' | 'revision';
 
-const SCAN_ERROR_BLOCK_HEADER =
-  '🔒 Vanguard blocked publish as a precaution — the secret scan itself failed to run, so the outgoing ' +
-  'diff could not be verified clean. No PR was opened.';
+const OUTCOME: Record<SecretBlockStage, string> = {
+  'first-delivery': 'No PR was opened.',
+  revision: 'Nothing was pushed to this branch; the requested changes remain unaddressed.',
+};
 
 /**
  * Render the GitHub/GitLab/Linear comment body for a secret-scan block. Uses only
  * `SecretFinding.file/patternName/masked` (already redactTokens-masked) — the raw secret is
  * structurally unreachable — and never interpolates the raw diff or exception payload.
  */
-export function renderSecretBlockComment(block: SecretBlock): string {
+export function renderSecretBlockComment(block: SecretBlock, stage: SecretBlockStage = 'first-delivery'): string {
+  const outcome = OUTCOME[stage];
   if (block.reason === 'scan-error') {
-    return [SCAN_ERROR_BLOCK_HEADER, '', `Error: ${block.message}`].join('\n');
+    const header =
+      '🔒 Vanguard blocked publish as a precaution — the secret scan itself failed to run, so the outgoing ' +
+      `diff could not be verified clean. ${outcome}`;
+    return [header, '', `Error: ${block.message}`].join('\n');
   }
+  const header =
+    '🔒 Vanguard blocked publish — the secret scan found credential-shaped content in the outgoing diff. ' +
+    `${outcome} Findings are **masked**; review the listed lines.`;
   const lines = block.findings.map((f) => `- \`${f.file}\` [${f.patternName}] ${f.masked}`);
-  return [FINDINGS_BLOCK_HEADER, '', ...lines].join('\n');
+  return [header, '', ...lines].join('\n');
 }
