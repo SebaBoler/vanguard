@@ -12,6 +12,8 @@ export interface RunOptions {
   localRepoPath: string;
   baseBranch?: string;
   reuse?: boolean;
+  /** Keep a local base that is ahead of/diverged from origin (default: outside CI only). See resolveRemoteBaseRef. */
+  keepLocalIfAhead?: boolean;
   promptTemplate: string;
   variables?: Record<string, string>;
   skills?: string[];

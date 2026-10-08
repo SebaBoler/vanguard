@@ -119,6 +119,43 @@ describe('resolveRemoteBaseRef', () => {
     expect(redactGitError(err)).toBe("fatal: unable to access 'https://***@github.com/o/r/': 403");
   });
 
+  it('retries a fetch that lost the ref lock to a concurrent fetch (#434)', async () => {
+    const { origin, clone } = await originAndClone();
+    await commit(origin, 'v2');
+    // Hold the lock the way a concurrent `git fetch` would, release it after the first attempt failed.
+    const lock = join(clone, '.git', 'refs', 'remotes', 'origin', 'main.lock');
+    await writeFile(lock, '');
+    // Hold the lock until the resolver reports its first retry (git's own 100 ms lock timeout has then
+    // expired and our attempt genuinely failed), then release it so the retry can succeed. A safety
+    // timer releases it regardless so a regression cannot hang the suite.
+    const lines: string[] = [];
+    const safety = setTimeout(() => { void rm(lock, { force: true }); }, 5000);
+    const logger = {
+      warn: (_o: unknown, m: string) => {
+        lines.push(m);
+        if (/retrying/.test(m)) void rm(lock, { force: true });
+      },
+      info: () => {},
+    } as never;
+    try {
+      const got = await resolveRemoteBaseRef(clone, 'main', { logger });
+      expect(got).toBe((await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout);
+    } finally {
+      clearTimeout(safety);
+      await rm(lock, { force: true });
+    }
+    expect(lines.some((l) => /locked by a concurrent fetch — retrying/.test(l))).toBe(true);
+  });
+
+  it('logs a fetch failure that is not a missing ref and keeps the local base', async () => {
+    const { clone } = await originAndClone();
+    await execa('git', ['remote', 'set-url', 'origin', join(clone, 'no-such-remote')], { cwd: clone });
+    const lines: string[] = [];
+    const got = await resolveRemoteBaseRef(clone, 'main', { logger: { warn: (_o: unknown, m: string) => { lines.push(m); }, info: () => {} } as never });
+    expect(got).toBe('refs/heads/main');
+    expect(lines[0]).toMatch(/git fetch origin main failed — using local main/);
+  });
+
   it('rejects an unsafe base before touching git', async () => {
     await expect(resolveRemoteBaseRef('/nowhere', '-x')).rejects.toThrow(/Invalid base branch/);
     // `*` would make the explicit refspec a wildcard fetch of every branch.

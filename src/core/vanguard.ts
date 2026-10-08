@@ -438,7 +438,10 @@ export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResu
   // and review see the tree the PR will land on (#423). A reused branch keeps its own history.
   const baseBranch = opts.reuse === true
     ? opts.baseBranch
-    : await resolveRemoteBaseRef(opts.localRepoPath, opts.baseBranch ?? 'main', { ...(opts.logger !== undefined ? { logger: opts.logger } : {}) });
+    : await resolveRemoteBaseRef(opts.localRepoPath, opts.baseBranch ?? 'main', {
+        ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
+        ...(opts.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: opts.keepLocalIfAhead } : {}),
+      });
   const ctx = await prepareContext(
     {
       taskId: opts.taskId,
