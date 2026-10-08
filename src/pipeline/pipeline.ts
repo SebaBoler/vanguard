@@ -1026,6 +1026,9 @@ export interface PublishOptions {
   title: string;
   body?: string;
   baseBranch?: string;
+  /** Git identity for the pre-push rebase (same default as commitStage). */
+  authorName?: string;
+  authorEmail?: string;
   draft?: boolean;
   remote?: string;
   /** CLI tool to use for PR/MR creation. Default 'gh' (GitHub). Use 'glab' for GitLab MRs. */
@@ -1104,29 +1107,51 @@ export function droppedCiPathsNote(paths: Iterable<string> = []): string {
   return `**Not included:** changes to CI config are never copied into this branch: ${shown.join(', ')}${more}. Apply them by hand if this change needs them.`;
 }
 
+export interface RebaseOntoRemoteBaseOptions {
+  remote: string;
+  base: string;
+  authorName?: string;
+  authorEmail?: string;
+  log?: (line: string) => void;
+}
+
 /**
  * Rebase the task branch onto the remote base when the base moved during the run. The worktree is cut
  * from the LOCAL base (on Actions: the event SHA), so a commit that lands on the remote base mid-run —
  * typically a Dependabot workflow bump — leaves the branch behind. GitHub compares a NEW branch's
  * workflow files against the default branch, so a stale `.github/workflows/*` is then rejected as a
  * workflow update the token may not make (#423), even though the agent never touched those files.
- * No remote / offline: push as-is, like before.
+ * Never worse than pushing as-is: a failed fetch or rebase is logged and the push proceeds unchanged
+ * (only the stale-workflow case is then still rejected by GitHub, exactly as before).
+ * Returns true when the branch was rebased.
  */
-export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, remote: string, base: string): Promise<boolean> {
+export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts: RebaseOntoRemoteBaseOptions): Promise<boolean> {
+  const log = opts.log ?? ((line: string): void => console.log(line));
+  const target = `${opts.remote}/${opts.base}`;
   try {
-    await run('git', ['fetch', remote, base], cwd);
-  } catch {
+    await run('git', ['fetch', opts.remote, opts.base], cwd);
+  } catch (cause) {
+    log(`publish: could not fetch ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
   }
-  const behind = (await run('git', ['rev-list', '--count', `HEAD..${remote}/${base}`], cwd)).trim();
+  const behind = (await run('git', ['rev-list', '--count', `HEAD..${target}`], cwd)).trim();
   if (behind === '' || behind === '0') return false;
+  // The host worktree has no git identity; rebase replays commits and needs one (same as commitStage).
+  const name = opts.authorName ?? 'Vanguard';
+  const email = opts.authorEmail ?? 'vanguard@local';
   try {
-    await run('git', ['rebase', `${remote}/${base}`], cwd);
+    await run('git', ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'rebase', '--no-verify', target], cwd);
   } catch (cause) {
     await run('git', ['rebase', '--abort'], cwd).catch(() => undefined);
-    throw new Error(`base ${base} moved during the run (${behind} new commit(s) on ${remote}/${base}) and the branch does not rebase cleanly onto it`, { cause });
+    log(`publish: ${opts.base} moved during the run (${behind} new commit(s) on ${target}) but the branch does not rebase onto it, pushing as-is: ${errorMessage(cause)}`);
+    return false;
   }
+  log(`publish: rebased onto ${target} (${behind} new commit(s) on the base since the run started)`);
   return true;
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message.split('\n')[0] ?? '' : String(cause);
 }
 
 /**
@@ -1140,7 +1165,12 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // --no-verify skips the target repo's pre-push hook (e.g. a Conventional-Branch name check that
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
-  await rebaseOntoRemoteBase(run, ctx.worktreePath, opts.remote ?? 'origin', opts.baseBranch ?? 'main');
+  await rebaseOntoRemoteBase(run, ctx.worktreePath, {
+    remote: opts.remote ?? 'origin',
+    base: opts.baseBranch ?? 'main',
+    ...(opts.authorName !== undefined ? { authorName: opts.authorName } : {}),
+    ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),
+  });
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
   const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];

@@ -367,41 +367,39 @@ describe('publishForReview', () => {
     await disposeContext(ctx);
   });
 
-  it('rebases onto the remote base before pushing when the base moved during the run (#423)', async () => {
+  it('rebases onto the remote base, then pushes, when the base moved during the run (#423)', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r2');
+    const ctx = await prepareContext({ taskId: 'pub2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      if (file === 'gh') return 'https://github.com/o/r/pull/43';
       calls.push(args);
       return args[0] === 'rev-list' ? '2\n' : '';
     };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).toBe(true);
+    await publishForReview(ctx, { title: 'PR', runner, authorName: 'Bot', authorEmail: 'bot@x' });
     expect(calls).toEqual([
       ['fetch', 'origin', 'main'],
       ['rev-list', '--count', 'HEAD..origin/main'],
-      ['rebase', 'origin/main'],
+      ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'origin/main'],
+      ['push', '--no-verify', '-u', 'origin', 'chore/vanguard-pub2-r2'],
     ]);
+    await disposeContext(ctx);
   });
 
-  it('rebaseOntoRemoteBase aborts the rebase and fails loudly on a conflict', async () => {
+  it('still pushes when the base cannot be fetched (no remote / offline)', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r3');
+    const ctx = await prepareContext({ taskId: 'pub3', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      if (file === 'gh') return 'https://github.com/o/r/pull/44';
       calls.push(args);
-      if (args[0] === 'rev-list') return '1';
-      if (args[0] === 'rebase' && args[1] !== '--abort') throw new Error('CONFLICT');
+      if (args[0] === 'fetch') throw new Error('fatal: no such remote');
       return '';
     };
-    await expect(rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).rejects.toThrow(/base main moved during the run/);
-    expect(calls.at(-1)).toEqual(['rebase', '--abort']);
-  });
-
-  it('rebaseOntoRemoteBase pushes as-is when there is no remote to fetch from', async () => {
-    const calls: string[][] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      calls.push(args);
-      if (args[0] === 'fetch') throw new Error('no remote');
-      return '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).toBe(false);
-    expect(calls).toEqual([['fetch', 'origin', 'main']]);
+    const out = await publishForReview(ctx, { title: 'PR', runner });
+    expect(out.prUrl).toBe('https://github.com/o/r/pull/44');
+    expect(calls.map((c) => c[0])).toEqual(['fetch', 'push']);
+    await disposeContext(ctx);
   });
 
   it('publishForReview with glab calls glab mr create with gitlab flags', async () => {
@@ -1428,5 +1426,55 @@ describe('planImplementReviewStages defaults', () => {
   it('carries the deliver-every-AC / do-not-stop-partway clause in the implementer prompt', () => {
     const stages = planImplementReviewStages();
     expect(stages.find((s) => s.name === 'implementer')?.promptTemplate).toContain(DELIVER_FULL_SCOPE_CLAUSE);
+  });
+});
+
+describe('rebaseOntoRemoteBase', () => {
+  const identity = ['-c', 'user.name=Vanguard', '-c', 'user.email=vanguard@local'];
+
+  it('does nothing when the branch is not behind (rev-list prints 0)', async () => {
+    const calls: string[][] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      return args[0] === 'rev-list' ? '0\n' : '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main' })).toBe(false);
+    expect(calls.map((c) => c[0])).toEqual(['fetch', 'rev-list']);
+  });
+
+  it('rebases with the default identity and --no-verify when behind', async () => {
+    const calls: string[][] = [];
+    const lines: string[] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      return args[0] === 'rev-list' ? '1' : '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(true);
+    expect(calls[2]).toEqual([...identity, 'rebase', '--no-verify', 'origin/main']);
+    expect(lines[0]).toMatch(/rebased onto origin\/main \(1 new commit/);
+  });
+
+  it('aborts a failed rebase, logs the real cause and reports no rebase (push proceeds as-is)', async () => {
+    const calls: string[][] = [];
+    const lines: string[] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      if (args[0] === 'rev-list') return '1';
+      if (args.includes('rebase') && !args.includes('--abort')) throw new Error('CONFLICT (content): Merge conflict in a.ts\nmore');
+      return '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
+    expect(calls.at(-1)).toEqual(['rebase', '--abort']);
+    expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\)/);
+  });
+
+  it('logs a failed fetch instead of hiding it', async () => {
+    const lines: string[] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      if (args[0] === 'fetch') throw new Error('fatal: could not read Username');
+      return '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
+    expect(lines[0]).toMatch(/could not fetch origin\/main, pushing as-is \(fatal: could not read Username\)/);
   });
 });
