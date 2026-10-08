@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/SebaBoler/vanguard/compare/v1.1.0...v1.1.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* rebase the task branch onto the remote base before publishing ([#423](https://github.com/SebaBoler/vanguard/issues/423)) ([#426](https://github.com/SebaBoler/vanguard/issues/426)) ([16d70d1](https://github.com/SebaBoler/vanguard/commit/16d70d1918e8a46bf2e9003a16673208c1823217))
+
 ## [1.1.0](https://github.com/SebaBoler/vanguard/compare/v1.0.0...v1.1.0) (2026-10-08)
 
 
