@@ -51,3 +51,20 @@ test('registers a nav guard while dirty and unregisters when clean', async () =>
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
   await waitFor(() => expect(registry.guarded()).toBe(false));
 });
+
+// T12 / AC-8 (#339 follow-up): after the refactor onto the shared `useDiscardGuard` hook the
+// editor must still release its slot on unmount — a stale guard would block the next navigation.
+test('unmounting a dirty editor releases the nav guard (shared useDiscardGuard hook)', async () => {
+  const registry = createNavGuardRegistry();
+  const { unmount } = render(
+    <NavGuardContext.Provider value={registry}>
+      <WorkflowEditor project="/repo" />
+    </NavGuardContext.Provider>,
+  );
+  await screen.findByText('a');
+  fireEvent.change(screen.getByPlaceholderText('new-flow-name'), { target: { value: 'fresh' } });
+  fireEvent.click(screen.getByRole('button', { name: /create flow/i }));
+  await waitFor(() => expect(registry.guarded()).toBe(true));
+  unmount();
+  expect(registry.guarded()).toBe(false);
+});

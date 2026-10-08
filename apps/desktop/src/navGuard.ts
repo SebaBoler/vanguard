@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useRef } from 'react';
 
 /**
  * App-level navigation guard (S8, issue #339). A screen holding unsaved state registers a guard;
@@ -9,6 +9,14 @@ import { createContext, useContext } from 'react';
  *
  * Pure registry (no React) so the semantics are unit-testable: last registration wins (one dirty
  * screen at a time in practice), unregister is idempotent and only removes the current guard.
+ *
+ * Dirty-screen inventory (#339 follow-up): `WorkflowEditor` and `Settings` hold real unsaved work
+ * behind an explicit Save and register a confirm guard via `useDiscardGuard`. `TaskDraftScreen`
+ * persists via debounced autosave plus an unmount flush and a close-time `registerFlush` — nothing
+ * to confirm, it is never lost. `StageInspector`'s text buffer and `NewRunForm`'s launch params are
+ * transient/reconstructible — not "work" worth a prompt. This holds together only because
+ * `Inspector` renders screens as an exclusive ternary — at most one confirm-guard registrant is
+ * ever mounted, which is exactly what the single-slot registry below assumes.
  */
 export interface NavGuardRegistry {
   register: (guard: () => boolean) => void;
@@ -69,4 +77,24 @@ export const NavGuardContext = createContext<NavGuardRegistry | null>(null);
 
 export function useNavGuardRegistry(): NavGuardRegistry | null {
   return useContext(NavGuardContext);
+}
+
+/**
+ * Register a discard confirm with the App registry while `dirty`. Every dirty screen uses this —
+ * shell navigation (project switch, Rail screen switch, home, remove, running-run open, window
+ * close) unmounts or remounts the screen, so a component-local confirm never fires for any of them.
+ *
+ * `confirmDiscard` is read through a ref at fire time: its identity changes every render (it closes
+ * over the message), and re-registering per keystroke would churn the single registry slot.
+ */
+export function useDiscardGuard(dirty: boolean, confirmDiscard: () => boolean): void {
+  const registry = useNavGuardRegistry();
+  const confirmRef = useRef(confirmDiscard);
+  confirmRef.current = confirmDiscard;
+  useEffect(() => {
+    if (registry === null || !dirty) return;
+    const guard = (): boolean => confirmRef.current();
+    registry.register(guard);
+    return () => registry.unregister(guard);
+  }, [registry, dirty]);
 }

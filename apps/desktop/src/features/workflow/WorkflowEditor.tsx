@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { useNavGuardRegistry } from '../../navGuard';
+import { useDiscardGuard } from '../../navGuard';
 import { Button, CodeBlock, Input } from '@/ui';
 import { AlertTriangle, Pencil, Plus, Trash2 } from 'lucide-react';
 import { apiCapabilitiesCached, apiDeleteFlow, apiListFlows, apiReadFlow, apiWriteFlow } from '../../ipc';
@@ -33,18 +33,9 @@ export function WorkflowEditor({ project }: { project: string }) {
   const confirmDiscard = (): boolean =>
     !state.dirty || window.confirm(`Discard unsaved changes to ${state.doc?.name ?? state.file}?`);
 
-  // Shell-level navigations (project switch, Rail screen switch, home, remove, running-run open,
-  // window close) unmount/remount this whole component — the local confirmDiscard above never
-  // fires for them. While dirty, register it with the App's nav-guard registry (S8, #339).
-  const navGuard = useNavGuardRegistry();
-  const confirmRef = useRef(confirmDiscard);
-  confirmRef.current = confirmDiscard;
-  useEffect(() => {
-    if (navGuard === null || !state.dirty) return;
-    const guard = (): boolean => confirmRef.current();
-    navGuard.register(guard);
-    return () => navGuard.unregister(guard);
-  }, [navGuard, state.dirty]);
+  // Shell-level navigation unmounts/remounts this whole component — the local confirmDiscard above
+  // never fires for them. See useDiscardGuard (S8, #339).
+  useDiscardGuard(state.dirty, confirmDiscard);
 
   const refreshList = useCallback(async (): Promise<void> => {
     const issued = gen.current;
