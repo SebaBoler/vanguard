@@ -106,8 +106,8 @@ jobs:
 
       # Fail loudly rather than let actions/checkout silently build the default branch.
       - name: Resolve vanguard source ref
-        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
-        run: echo "::error::neither inputs.vanguard-ref nor job.workflow_sha is set" && exit 1
+        if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
+        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha / job.workflow_repository did not resolve" && exit 1
 
       # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
       # the CLI at the same revision as the YAML.
@@ -183,7 +183,7 @@ jobs:
 
       - name: Persist run metrics
         # Only once the loop ran (success or failure); not after a blocked gate or a failed build.
-        if: ${{ inputs.persist-metrics && contains(fromJSON('["success","failure"]'), steps.loop.conclusion) }}
+        if: ${{ always() && inputs.persist-metrics && contains(fromJSON('["success","failure"]'), steps.loop.conclusion) }}
         env:
           IN_METRICS_BRANCH: ${{ inputs.metrics-branch }}
         run: |
