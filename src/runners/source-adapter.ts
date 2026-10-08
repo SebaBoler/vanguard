@@ -629,7 +629,8 @@ export async function runSourcedIssue(
         deps.onEvent?.({ type: 'run-end' });
         return { task };
       }
-      const pr = { prUrl: delivery.prUrl!, headSha: delivery.headSha };
+      if (delivery.kind !== 'delivered-pr') throw new VanguardError(`unexpected delivery outcome ${delivery.kind} for a new-pr target`);
+      const pr = { prUrl: delivery.prUrl, headSha: delivery.headSha };
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
       // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing

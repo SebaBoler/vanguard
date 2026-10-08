@@ -55,7 +55,10 @@ export interface DeliverChangeOptions {
 export type DeliverChangeResult =
   | { kind: 'secret-blocked'; block: SecretBlock }
   | { kind: 'no-changes' }
-  | { kind: 'delivered'; sha: string; headSha: string; prUrl?: string; commitLeaks: CommitClosingLeak[] };
+  /** new-pr: the branch was pushed and a PR/MR opened; headSha is the pushed head (rebase may have rewritten the commit). */
+  | { kind: 'delivered-pr'; sha: string; headSha: string; prUrl: string; commitLeaks: CommitClosingLeak[] }
+  /** existing-branch: the commit was pushed onto the PR head. */
+  | { kind: 'delivered-push'; sha: string; headSha: string; commitLeaks: CommitClosingLeak[] };
 
 /**
  * The secret gate: scan an outgoing diff, log the masked findings, and return the block to report.
@@ -108,12 +111,12 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
       ...identity,
     });
     // The pre-push rebase may have rewritten the commit; the review marker must name the pushed head.
-    return { kind: 'delivered', sha, headSha: pr.headSha ?? sha, prUrl: pr.prUrl, commitLeaks };
+    return { kind: 'delivered-pr', sha, headSha: pr.headSha ?? sha, prUrl: pr.prUrl, commitLeaks };
   }
   await pushToExistingBranch(ctx, {
     prHeadRef: target.prHeadRef,
     ...(target.pushToken !== undefined ? { pushToken: target.pushToken, host: target.host ?? 'github.com' } : {}),
     ...(target.runner !== undefined ? { runner: target.runner } : {}),
   });
-  return { kind: 'delivered', sha, headSha: sha, commitLeaks };
+  return { kind: 'delivered-push', sha, headSha: sha, commitLeaks };
 }

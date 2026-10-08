@@ -95,10 +95,9 @@ describe('deliverChange', () => {
         commitAuthor: { name: 'Acme Bot', email: 'bot@acme.test' },
         target: { kind: 'existing-branch', prHeadRef: 'pr-head', runner: async (_f, a) => { calls.push(a); return ''; } },
       });
-      expect(r.kind).toBe('delivered');
-      if (r.kind !== 'delivered') return;
+      expect(r.kind).toBe('delivered-push');
+      if (r.kind !== 'delivered-push') return;
       expect(r.headSha).toBe(r.sha);
-      expect(r.prUrl).toBeUndefined();
       const log = (await execa('git', ['log', '-1', '--format=%an <%ae> %s'], { cwd: ctx.worktreePath })).stdout;
       expect(log).toBe('Acme Bot <bot@acme.test> fix: address review feedback');
     });
@@ -125,8 +124,8 @@ describe('deliverChange', () => {
           },
         },
       });
-      expect(r.kind).toBe('delivered');
-      if (r.kind !== 'delivered') return;
+      expect(r.kind).toBe('delivered-pr');
+      if (r.kind !== 'delivered-pr') return;
       expect(r.prUrl).toBe('https://github.com/o/r/pull/9');
       expect(r.headSha).toBe('rebasedhead');
       expect(r.commitLeaks.length).toBeGreaterThan(0);

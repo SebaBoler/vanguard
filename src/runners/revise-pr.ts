@@ -385,6 +385,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         log(`revise-pr ${target.repoSlug}#${target.number}: no changes — skipping push`);
         return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
+      if (delivery.kind !== 'delivered-push') throw new VanguardError(`unexpected delivery outcome ${delivery.kind} for an existing-branch target`);
       log(`revise-pr ${target.repoSlug}#${target.number}: pushed -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
       const sha = delivery.sha;
 
