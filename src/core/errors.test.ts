@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { formatFailureComment, visibleError, VanguardError } from './errors.js';
+import { failureReason, formatFailureComment, visibleError, VanguardError } from './errors.js';
+
+describe('failureReason', () => {
+  it('masks credentials and collapses the message to one line, since it lands in a public CI log', () => {
+    const key = `sk-${'A1b2'.repeat(12)}`;
+    const reason = failureReason(new Error(`codex exec failed\n\n  OPENAI_API_KEY=${key} rejected\n  Authorization: Bearer ${'x'.repeat(40)}`));
+    expect(reason).toBe('codex exec failed OPENAI_API_KEY=[REDACTED-KEY] rejected Authorization: Bearer [REDACTED]');
+    expect(reason).not.toContain(key);
+  });
+
+  it('caps a multi-kilobyte provider dump to a short excerpt', () => {
+    const reason = failureReason('x'.repeat(2000));
+    expect(reason.length).toBeLessThanOrEqual(201);
+    expect(reason.endsWith('…')).toBe(true);
+  });
+
+  it('handles a non-Error throw', () => {
+    expect(failureReason('plain string')).toBe('plain string');
+  });
+});
 
 describe('formatFailureComment', () => {
   it('carries the throwing site, so a bare TypeError is diagnosable from the comment alone', () => {

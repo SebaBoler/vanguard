@@ -350,10 +350,9 @@ export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   // Only a provider with no key wiring of its own (Claude) consumes authSecrets. Codex/Cursor bring their
   // own key; Zai/OpenRouter/customs own the Anthropic transport with theirs. So a Codex-only review needs
   // no Anthropic credential at all (#391) — before, every non-transport-owner demanded one.
-  return used.some((n) => {
-    const spec = resolveSpec(n, choice.customProviders);
-    return spec.key === undefined && spec.ownsAnthropicTransport !== true;
-  });
+  // Sibling of selectAgents' injectAnthropicAuth: that one answers "may the Anthropic auth be layered in"
+  // (false only for transport owners), this one "is it required at all".
+  return used.some((n) => !requiresApiKey(n, choice.customProviders));
 }
 
 /** A resolved choice: the agents to run plus the secrets split into sandbox-safe and proxy-held buckets. */

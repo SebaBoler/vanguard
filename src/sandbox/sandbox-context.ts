@@ -60,6 +60,15 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { destroy: async (): Promise<void> => {} };
   }
 
+  // The primary sidecar's upstream follows the provider; the credential comes uniformly from `auth`.
+  // Checked before the enclave exists: a throw after startEgressEnclave would leave the network and
+  // proxy container behind until `vanguard gc` (a codex/cursor-only run under --llm-proxy hits this).
+  if (opts.llmProxy && opts.auth === undefined) {
+    throw new Error(
+      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, ZAI_API_KEY, or OPENROUTER_API_KEY).',
+    );
+  }
+
   // Custom-provider hosts (S6) extend the allowlist here, at enclave creation — the list is baked
   // into the proxy container's env at start, so it cannot be widened later in the run.
   const extras = opts.extraEgressHosts ?? [];
@@ -73,12 +82,7 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { proxyUrl: enclave.proxyUrl, network: enclave.network, destroy: enclave.destroy };
   }
 
-  // The primary sidecar's upstream follows the provider; the credential comes uniformly from `auth`.
-  if (opts.auth === undefined) {
-    throw new Error(
-      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, ZAI_API_KEY, or OPENROUTER_API_KEY).',
-    );
-  }
+  if (opts.auth === undefined) throw new Error('unreachable: llm-proxy credential checked above');
   const upstream: Upstream = opts.provider === 'zai' || opts.provider === 'openrouter' ? opts.provider : 'anthropic';
   const auth = llmProxyAuth(opts.auth);
   const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });

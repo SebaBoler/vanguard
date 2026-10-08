@@ -112,6 +112,23 @@ describe('watchMergeRequestsOnce', () => {
     expect(tick.reviewed).toHaveLength(0);
     expect(tick.failed).toHaveLength(0);
   });
+
+  it('logs why a review failed, so the job log is diagnosable without a dist patch', async () => {
+    const logs: string[] = [];
+    const item = { project: 'g/p', iid: 7, title: 'T', draft: false, author: 'alice', sha: 'abc', labels: [] };
+    const primitives = {
+      listReady: async () => [item],
+      claim: async () => {},
+      review: async () => {
+        throw new Error('review boom');
+      },
+      markReviewed: async () => {},
+      onFailure: async () => {},
+    };
+    const tick = await watchMergeRequestsOnce(primitives, { log: (line) => logs.push(line), concurrency: 1 });
+    expect(tick.failed).toEqual(['g/p!7']);
+    expect(logs).toContain('watch-mrs g/p!7: failed -> retry later (review boom)');
+  });
 });
 
 describe('watchMergeRequests', () => {
