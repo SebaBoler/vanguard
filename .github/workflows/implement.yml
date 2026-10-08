@@ -69,6 +69,10 @@ on:
         description: 'Orphan branch for persisted metrics (--branch). Empty = CLI default (vanguard-metrics).'
         type: string
         default: ''
+      max-tasks:
+        description: 'Cap how many ready issues one run claims per phase (--max-tasks), so a mislabelled batch cannot flood the runner. Empty = no cap.'
+        type: string
+        default: ''
       skills:
         description: 'Skills directory (--skills), relative to the workspace.'
         type: string
@@ -93,7 +97,16 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
+      # A caller repo with its own `packageManager` (e.g. pnpm@9) would make `pnpm store path` (setup-node's
+      # cache key) run under that version while the install in .vanguard-src uses Vanguard's; the paths then
+      # differ and the cache post-step fails. Keep the action-provided pnpm everywhere.
+      npm_config_manage_package_manager_versions: "false"
     steps:
+      # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
+      - name: Check allowed-actors shape
+        if: ${{ !startsWith(inputs.allowed-actors, '[') }}
+        run: echo "::error::allowed-actors must be a JSON array, e.g. '[\"octocat\"]'" && exit 1
+
       # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
       # the run loudly instead of skipping the job and reporting the caller green.
       - name: Enforce allowed-actors
@@ -104,6 +117,12 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Check max-tasks
+        if: ${{ inputs.max-tasks != '' }}
+        env:
+          IN_MAX_TASKS: ${{ inputs.max-tasks }}
+        run: '[[ "$IN_MAX_TASKS" =~ ^[1-9][0-9]*$ ]] || { echo "::error::max-tasks must be a positive integer, got ''$IN_MAX_TASKS''"; exit 1; }'
+
       # Fail loudly rather than let actions/checkout silently build the default branch.
       - name: Resolve vanguard source ref
         if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
@@ -113,7 +132,7 @@ jobs:
       # the CLI at the same revision as the YAML.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
           ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
           path: .vanguard-src
 
@@ -127,6 +146,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: .vanguard-src/pnpm-lock.yaml
 
+      # --ignore-scripts skips esbuild's postinstall (pnpm.onlyBuiltDependencies); fine because only `pnpm build`
+      # (tsc + cp) and `node dist/` run here. Anything invoking tsx/vitest from .vanguard-src would need it.
       - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
         working-directory: .vanguard-src
 
@@ -164,6 +185,7 @@ jobs:
           IN_ESCALATE_MODEL: ${{ inputs.escalate-model }}
           IN_CONFORMANCE: ${{ inputs.conformance }}
           IN_CONFORMANCE_MODEL: ${{ inputs.conformance-model }}
+          IN_MAX_TASKS: ${{ inputs.max-tasks }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
           IN_SKILLS: ${{ inputs.skills }}
         run: |
@@ -178,6 +200,7 @@ jobs:
           [ -n "$IN_ESCALATE_MODEL" ] && args+=(--escalate-model "$IN_ESCALATE_MODEL")
           [ "$IN_CONFORMANCE" = "true" ] && args+=(--conformance)
           [ -n "$IN_CONFORMANCE_MODEL" ] && args+=(--conformance-model "$IN_CONFORMANCE_MODEL")
+          [ -n "$IN_MAX_TASKS" ] && args+=(--max-tasks "$IN_MAX_TASKS")
           [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
           node .vanguard-src/dist/cli/index.js "${args[@]}"
 
