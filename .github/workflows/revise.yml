@@ -47,6 +47,10 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       GH_TOKEN: ${{ github.token }}
+      # A caller repo with its own `packageManager` (e.g. pnpm@9) would make `pnpm store path` (setup-node's
+      # cache key) run under that version while the install in .vanguard-src uses Vanguard's; the paths then
+      # differ and the cache post-step fails. Keep the action-provided pnpm everywhere.
+      npm_config_manage_package_manager_versions: "false"
     steps:
       # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
       - name: Check allowed-actors shape
