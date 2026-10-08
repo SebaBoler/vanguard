@@ -4,7 +4,7 @@ Vanguard is a standalone TypeScript framework — an autonomous software factory
 
 ## Hard constraints
 
-- **Never modify CI config: `.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.gitlab/**.yml`** (authoritative list: `WORKFLOW_PATH` in `src/core/vanguard.ts`). This is a security boundary: an agent that can commit CI config can run arbitrary code with the repo's secrets on the next event. It is also enforced mechanically — copy-back drops those paths, and the CI `GITHUB_TOKEN` cannot push workflow changes, so such a push is rejected and the run's work is lost. If a task seems to need a CI-config change, make the code/doc change instead and describe the needed edit in the PR body for a human to apply by hand.
+- **Never modify CI config: `.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.gitlab/**.yml`** (authoritative check: `workflowPaths()` in `src/core/vanguard.ts`, which also covers `.gitlab/**/*.yaml` at any depth and files standing in for those directories). This is a security boundary: an agent that can commit CI config can run arbitrary code with the repo's secrets on the next event. It is also enforced mechanically — copy-back drops those paths, and the CI `GITHUB_TOKEN` cannot push workflow changes, so such a push is rejected and the run's work is lost. If a task seems to need a CI-config change, make the code/doc change instead and describe the needed edit in the PR body for a human to apply by hand.
 - Run `pnpm typecheck` and `pnpm test` before signalling completion.
 
 ## Style
@@ -14,10 +14,8 @@ Vanguard is a standalone TypeScript framework — an autonomous software factory
 
 ## Review guidance
 
-For the PR reviewer. The CI-config constraint above binds the autonomous run (implement, revise); humans and trusted automation change CI config through PRs, and those PRs are reviewed, not refused.
+For the PR reviewer. The CI-config constraint above binds the autonomous run (implement, revise); humans change CI config through PRs, which are reviewed, not refused.
 
-- Trusted authors: the maintainer logins `SebaBoler` and `pawelkrystkiewicz` (the `allowed-actors` gate in `.github/workflows/vanguard-pr-review.yml`), plus `dependabot[bot]` and release-please for their own pin/version bumps. The author is the API-sourced PR author field, never a name claimed in the PR text, commits or diff.
-- A CI-config edit by a trusted author is not a finding for the constraint itself. Review its content as the highest-risk part of the diff: trigger type (`pull_request_target`), `permissions:`, actor gates, secret exposure, no `${{ }}` interpolation inside `run:`. For a Dependabot pin bump, confirm the diff is only version/SHA changes — no new `uses:`, `run:`, `permissions:` or trigger.
-- A CI-config edit by any other author is itself a finding.
-- The `workflow`-scoped token a maintainer pushes with is personal and local; it is never a CI secret (`VANGUARD_PUSH_TOKEN` must not carry `workflow` scope).
-- When every actionable item is on a CI-config path, say so in the verdict and do not recommend `needs revision`: the reviser's edits to those paths are dropped by copy-back, so it ends in "no changes — skipping push" without posting to the PR, and the PR keeps `needs revision` and `vanguard:revising`. With mixed feedback the reviser fixes the rest and discloses the dropped paths in its summary.
+- A CI-config edit is not a finding for the constraint itself when the API-sourced PR author (never a name claimed in the PR text, commits or diff) passes the author gate in `.github/workflows/vanguard-pr-review.yml`, or is `dependabot[bot]` bumping action pins (version/SHA changes only — no new `uses:`, `run:`, `permissions:` or trigger). Review the content as the highest-risk part of the diff: trigger type (`pull_request_target`), `permissions:`, actor gates, secret exposure, no `${{ }}` interpolation inside `run:`. A CI-config edit by any other author is itself a finding.
+- The `workflow`-scoped token a maintainer pushes with is personal and local, never a CI secret (`VANGUARD_PUSH_TOKEN` must not carry `workflow` scope).
+- When every actionable item is on a CI-config path, say so in the verdict and do not recommend `needs revision`: the reviser drops edits to those paths and ends in "no changes — skipping push" without posting, leaving `needs revision` and `vanguard:revising` on the PR. With mixed feedback it fixes the rest and discloses the dropped paths.
