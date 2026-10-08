@@ -13,6 +13,7 @@ import {
   fastStages,
   defaultSystemPrompt,
   publishForReview,
+  rebaseOntoRemoteBase,
   pushToExistingBranch,
   pushAuthConfigArgs,
   planImplementReviewStages,
@@ -355,13 +356,52 @@ describe('publishForReview', () => {
     const out = await publishForReview(ctx, { title: 'PR', body: 'b', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/42');
     expect(out.branch).toBe('chore/vanguard-pub-r1');
-    expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toContain('push');
-    expect(calls[1]?.file).toBe('gh');
-    expect(calls[1]?.args).toEqual(
+    const push = calls.findIndex((c) => c.file === 'git' && c.args[0] === 'push');
+    expect(push).toBeGreaterThan(-1);
+    // The base is fetched and compared before the push; the runner stub reports "not behind", so no rebase.
+    expect(calls.slice(0, push).map((c) => c.args[0])).toEqual(['fetch', 'rev-list']);
+    expect(calls[push + 1]?.file).toBe('gh');
+    expect(calls[push + 1]?.args).toEqual(
       expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
     );
     await disposeContext(ctx);
+  });
+
+  it('rebases onto the remote base before pushing when the base moved during the run (#423)', async () => {
+    const calls: string[][] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      return args[0] === 'rev-list' ? '2\n' : '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).toBe(true);
+    expect(calls).toEqual([
+      ['fetch', 'origin', 'main'],
+      ['rev-list', '--count', 'HEAD..origin/main'],
+      ['rebase', 'origin/main'],
+    ]);
+  });
+
+  it('rebaseOntoRemoteBase aborts the rebase and fails loudly on a conflict', async () => {
+    const calls: string[][] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      if (args[0] === 'rev-list') return '1';
+      if (args[0] === 'rebase' && args[1] !== '--abort') throw new Error('CONFLICT');
+      return '';
+    };
+    await expect(rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).rejects.toThrow(/base main moved during the run/);
+    expect(calls.at(-1)).toEqual(['rebase', '--abort']);
+  });
+
+  it('rebaseOntoRemoteBase pushes as-is when there is no remote to fetch from', async () => {
+    const calls: string[][] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      calls.push(args);
+      if (args[0] === 'fetch') throw new Error('no remote');
+      return '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', 'origin', 'main')).toBe(false);
+    expect(calls).toEqual([['fetch', 'origin', 'main']]);
   });
 
   it('publishForReview with glab calls glab mr create with gitlab flags', async () => {

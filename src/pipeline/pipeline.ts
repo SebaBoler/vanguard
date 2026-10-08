@@ -1105,6 +1105,31 @@ export function droppedCiPathsNote(paths: Iterable<string> = []): string {
 }
 
 /**
+ * Rebase the task branch onto the remote base when the base moved during the run. The worktree is cut
+ * from the LOCAL base (on Actions: the event SHA), so a commit that lands on the remote base mid-run —
+ * typically a Dependabot workflow bump — leaves the branch behind. GitHub compares a NEW branch's
+ * workflow files against the default branch, so a stale `.github/workflows/*` is then rejected as a
+ * workflow update the token may not make (#423), even though the agent never touched those files.
+ * No remote / offline: push as-is, like before.
+ */
+export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, remote: string, base: string): Promise<boolean> {
+  try {
+    await run('git', ['fetch', remote, base], cwd);
+  } catch {
+    return false;
+  }
+  const behind = (await run('git', ['rev-list', '--count', `HEAD..${remote}/${base}`], cwd)).trim();
+  if (behind === '' || behind === '0') return false;
+  try {
+    await run('git', ['rebase', `${remote}/${base}`], cwd);
+  } catch (cause) {
+    await run('git', ['rebase', '--abort'], cwd).catch(() => undefined);
+    throw new Error(`base ${base} moved during the run (${behind} new commit(s) on ${remote}/${base}) and the branch does not rebase cleanly onto it`, { cause });
+  }
+  return true;
+}
+
+/**
  * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
  * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the
  * review surface only; the task source of truth (e.g. Linear) is separate.
@@ -1115,6 +1140,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // --no-verify skips the target repo's pre-push hook (e.g. a Conventional-Branch name check that
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
+  await rebaseOntoRemoteBase(run, ctx.worktreePath, opts.remote ?? 'origin', opts.baseBranch ?? 'main');
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
   const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
