@@ -17,6 +17,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test:coverage
+      # apps/desktop is its own pnpm project (own lockfile + workspace), so it installs separately.
+      - run: pnpm --dir apps/desktop install --frozen-lockfile
+      - run: pnpm test:desktop
       # SBOM over the installed dependency tree (node_modules present after install), SPDX JSON,
       # uploaded as a build artifact for provenance/audit.
       - name: Generate SBOM (SPDX)
