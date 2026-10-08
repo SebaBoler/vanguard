@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/SebaBoler/vanguard/compare/v1.1.1...v1.2.0) (2026-10-08)
+
+
+### Features
+
+* deps: migrate to execa 10 (SebaBoler/vanguard[#397](https://github.com/SebaBoler/vanguard/issues/397)) ([#432](https://github.com/SebaBoler/vanguard/issues/432)) ([3eb4fa9](https://github.com/SebaBoler/vanguard/commit/3eb4fa9b8fadcffc3856c99b413761abc1db498d))
+
+
+### Bug Fixes
+
+* cut the task worktree from origin/&lt;base&gt; when it is ahead of the local base ([#429](https://github.com/SebaBoler/vanguard/issues/429)) ([#431](https://github.com/SebaBoler/vanguard/issues/431)) ([50cf147](https://github.com/SebaBoler/vanguard/commit/50cf147736e394a687f40b77262ff53815e5fe02))
+
 ## [1.1.1](https://github.com/SebaBoler/vanguard/compare/v1.1.0...v1.1.1) (2026-10-08)
 
 
