@@ -147,3 +147,21 @@ describe('llm-proxy-server (booted child)', () => {
   }, 60_000);
 });
 
+
+describe('llm-proxy-server (execa 10 handle)', () => {
+  it('exposes the Node ChildProcess via nodeChildProcess and reports a SIGKILL teardown', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'llm-proxy-handle-'));
+    const secretFile = join(dir, 'secret');
+    await writeFile(secretFile, 'nonce\n');
+    const child = spawnServer(secretFile, await freePort());
+    try {
+      expect(child.nodeChildProcess.pid).toBe(child.pid);
+      expect(child.nodeChildProcess.exitCode).toBeNull();
+      child.kill('SIGKILL');
+      const result = await child;
+      expect(result.isTerminated).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

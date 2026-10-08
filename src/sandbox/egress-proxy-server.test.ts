@@ -74,7 +74,7 @@ test('serves after start: disallowed CONNECT gets 403 and the process stays aliv
       setTimeout(() => reject(new Error('probe timeout')), 10_000);
     });
     expect(status).toBe('HTTP/1.1 403 Forbidden');
-    expect(server.exitCode).toBeNull(); // still serving
+    expect(server.nodeChildProcess.exitCode).toBeNull(); // still serving
   } finally {
     server.kill();
     await server.catch(() => {});
@@ -119,7 +119,7 @@ test('a client that RSTs mid-403 must not kill the proxy (dogfood #352, second f
     }
     // Give a crash time to surface, then prove the proxy still answers.
     await new Promise((r) => setTimeout(r, 300));
-    expect(server.exitCode).toBeNull();
+    expect(server.nodeChildProcess.exitCode).toBeNull();
     const status = await new Promise<string>((resolve, reject) => {
       const s = connect(port, '127.0.0.1', () => {
         s.write('CONNECT evil.example:443 HTTP/1.1\r\nHost: evil.example:443\r\n\r\n');
@@ -137,5 +137,22 @@ test('a client that RSTs mid-403 must not kill the proxy (dogfood #352, second f
   } finally {
     server.kill();
     await server.catch(() => {});
+  }
+});
+
+test('nodeChildProcess.exitCode reports the real exit code once the proxy dies (negative control for the liveness asserts)', async () => {
+  const { port, close } = await occupyPort();
+  try {
+    const server = execa('node', [serverPath], {
+      env: { PORT: String(port), ALLOW: 'a.example' },
+      reject: false,
+      timeout: 10_000,
+    });
+    const result = await server;
+    expect(result.exitCode).not.toBe(0);
+    expect(server.nodeChildProcess.exitCode).not.toBeNull();
+    expect(server.nodeChildProcess.exitCode).toBe(result.exitCode);
+  } finally {
+    close();
   }
 });
