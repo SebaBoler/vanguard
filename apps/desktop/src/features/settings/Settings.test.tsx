@@ -91,3 +91,18 @@ test('the provider dropdown offers healthy customs; reviewProvider stays built-i
   expect(values(providerSelect)).toContain('my-proxy');
   expect(values(reviewSelect)).not.toContain('my-proxy');
 });
+
+// T13 (#339 follow-up): every case in this file renders <Settings> WITHOUT a NavGuardContext
+// provider, so they exercise useDiscardGuard's null-registry path end-to-end (AC-1 clause 4).
+// Make that explicit: a dirty, provider-less Settings must neither throw nor touch window.confirm.
+test('a dirty Settings with no nav-guard provider is inert — no throw, no confirm prompt', async () => {
+  const confirmSpy = vi.spyOn(window, 'confirm');
+  read.mockResolvedValueOnce({});
+  const { unmount } = render(<Settings project="/repo" />);
+  await waitFor(() => expect(screen.getByPlaceholderText('vanguard-ready')).toBeInTheDocument());
+  fireEvent.change(screen.getByPlaceholderText('vanguard-ready'), { target: { value: 'x' } });
+  expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+  expect(() => unmount()).not.toThrow();
+  expect(confirmSpy).not.toHaveBeenCalled();
+  confirmSpy.mockRestore();
+});

@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Button, Input } from '@/ui';
 import { writeAppConfig } from '../../ipc';
 import { useAppConfig } from '../../hooks';
+import { useDiscardGuard } from '../../navGuard';
 import { SOURCES } from '../../sources';
 import { projectColor } from '../../color';
 import { customProviderRowError, PROVIDERS } from './customProviders';
@@ -60,6 +61,9 @@ export function Settings({ project }: { project: string }) {
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Shell navigation unmounts this screen — see useDiscardGuard (S8 seam, #339 follow-up).
+  useDiscardGuard(dirty, () => window.confirm('Discard unsaved changes to .vanguard/app.json?'));
+
   const set = <K extends keyof AppConfig>(k: K, v: AppConfig[K]): void => {
     setCfg((c) => ({ ...c, [k]: v }));
     setDirty(true);
@@ -81,8 +85,18 @@ export function Settings({ project }: { project: string }) {
   // would replace the user's hand-edited JSON with defaults. Invalid custom rows also block.
   const savable = dirty && cfgStatus === 'ready' && customsValid;
 
+  // Latest cfg, readable after an await (the save closure's `cfg` is the render's snapshot).
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+
   const save = async (): Promise<void> => {
-    await writeAppConfig(project, cfg);
+    const shipped = cfg; // the exact object written — dirty clears only if it is still current
+    await writeAppConfig(project, shipped);
+    // An edit made while the write was in flight lives in cfg but NOT on disk. Clearing dirty would
+    // disable Save and disarm the guard above, letting the next navigation discard it silently —
+    // the same rule flowEditorReducer's saveOk follows. Every `set` builds a new object, so
+    // reference identity is exactly "unchanged since save".
+    if (cfgRef.current !== shipped) return;
     setDirty(false);
     setSaved(true);
   };
