@@ -1,0 +1,1 @@
+{"evt":"run_complete","ts":"2026-06-14T04:08:30.700Z","taskId":"spec-sebaboler-vanguard-101","stage":"spec","exitReason":"completed","completed":true,"turns":2,"costUsd":0.09901164999999999,"cacheEfficiency":0.9995181455113735,"inputTokens":111,"outputTokens":4212,"cacheReadInputTokens":230249,"durationMs":48243}
