@@ -66,6 +66,15 @@ describe('revisePrCommand', () => {
     expect(logs.some((l) => l.includes('no changes'))).toBe(true);
   });
 
+  it('logs a BLOCKED line (not the done/no-changes/dry-run lines) when the revision carried a secret', async () => {
+    // The runner never returns secretBlocked together with dryRunOut; both are set here only to pin that BLOCKED wins.
+    const logs: string[] = [];
+    const revisePullRequest = vi.fn(async (): Promise<ReviseGithubPrResult> => ({ ...makeResult(false), addressed: 2, secretBlocked: true, dryRunOut: '/tmp/x.md' }));
+    await revisePrCommand(makeCmd(), { revisePullRequest, log: (line) => logs.push(line) });
+    expect(logs.some((l) => /BLOCKED .*secret.*nothing pushed \(2 item\(s\) abandoned\)/.test(l))).toBe(true);
+    expect(logs.some((l) => l.includes('no changes') || l.includes('dry-run written'))).toBe(false);
+  });
+
   it('passes prRef from --github-pr via cmd.prRef', async () => {
     const revisePullRequest = vi.fn(async (): Promise<ReviseGithubPrResult> => makeResult());
     await revisePrCommand(makeCmd({ prRef: 'https://github.com/o/r/pull/42' }), { revisePullRequest });
