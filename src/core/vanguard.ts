@@ -192,7 +192,7 @@ async function seedSandboxGit(sandbox: IsolatedSandboxProvider): Promise<void> {
   await sandbox.exec(script).catch(() => undefined);
 }
 
-/** CI config paths (`.github/workflows/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) among changed paths. Empty ⇒ clean. */
+/** CI config paths (`.github/workflows/`, `.github/actions/`, `.gitlab-ci.yml`, `.gitlab/**.yml`) among changed paths. Empty ⇒ clean. */
 export function workflowPaths(paths: string[]): string[] {
   return paths.filter((path) => WORKFLOW_PATH.test(path) || CI_DIR_NAME.test(path)).sort();
 }
