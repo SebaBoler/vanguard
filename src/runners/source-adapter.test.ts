@@ -853,7 +853,7 @@ describe('runSourcedIssue', () => {
 
     await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'master' }, fakeAdapter([], STAGES));
 
-    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', 'origin/master')   // the resolved remote base, same ref the worktree was cut from;
+    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', 'origin/master'); // the resolved remote base, same ref the worktree was cut from
   });
 
   it('omits the commit-leak warning on a full green pass', async () => {

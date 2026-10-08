@@ -21,21 +21,34 @@ export interface ResolveRemoteBaseRefOptions {
   logger?: VanguardLogger;
   /** Log-line prefix naming the pass ('spec', 'worktree'). */
   label?: string;
+  /**
+   * Keep a local base that is ahead of or diverged from origin (it may carry unpushed commits).
+   * Default: outside CI only — on a CI checkout the local branch is the event SHA and can never hold
+   * unpushed work, so there the remote copy always wins.
+   */
+  keepLocalIfAhead?: boolean;
 }
+
+/** Git never prompts for credentials from a daemon; an unreachable origin fails fast instead. */
+const FETCH_ENV = { GIT_TERMINAL_PROMPT: '0' } as const;
+const FETCH_TIMEOUT_MS = 60_000;
 
 /**
  * Resolve the ref a task worktree is cut from: fetch `base` from `origin` and prefer the remote
  * copy when it is ahead of the local branch, so the run (sandbox, verification, review) sees the
  * branch as it exists on the remote — on Actions the checkout is the event SHA and main may already
- * have moved (#423). A local base that is ahead of, or diverged from, origin is kept: it carries
- * commits the remote does not have yet. Best-effort: with no `origin`, offline, or a branch the
- * remote does not carry, it logs and returns the local `base` so the run still happens.
+ * have moved (#423). Best-effort: with no `origin`, offline, or a branch the remote does not carry,
+ * it logs and returns the local `base` so the run still happens. The fetch names the destination
+ * ref explicitly, so a single-branch clone (actions/checkout) tracks the base too, and the returned
+ * ref is the full `refs/remotes/origin/<base>` — a tag or branch literally named `origin/<base>`
+ * cannot shadow it.
  *
  * @throws VanguardError when git would misread `base` (see assertSafeBaseBranch).
  */
 export async function resolveRemoteBaseRef(repoPath: string, base: string, opts: ResolveRemoteBaseRefOptions = {}): Promise<string> {
   assertSafeBaseBranch(base);
   const label = opts.label ?? 'worktree';
+  const keepLocal = opts.keepLocalIfAhead ?? process.env.CI === undefined;
   // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
   // you which ref the run was actually cut from (vs a silent fallback to a stale local copy).
   const log = opts.logger ?? createLogger();
@@ -44,36 +57,29 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
     log.info({ base }, `${label}: no origin remote — using local ${base}`);
     return base;
   }
-  try {
-    await execa('git', ['fetch', '--end-of-options', 'origin', base], { cwd: repoPath });
-  } catch (err) {
-    log.warn({ base, reason: redactGitError(err) }, `${label}: git fetch origin ${base} failed — using local ${base} (may be stale)`);
+  const remoteRef = `refs/remotes/origin/${base}`;
+  const fetch = await execa('git', ['fetch', '--end-of-options', 'origin', `+refs/heads/${base}:${remoteRef}`], { cwd: repoPath, reject: false, env: FETCH_ENV, timeout: FETCH_TIMEOUT_MS });
+  if (fetch.exitCode !== 0) {
+    if (/couldn't find remote ref|remote ref does not exist/i.test(fetch.stderr)) {
+      log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
+    } else {
+      log.warn({ base, reason: redactGitError(fetch) }, `${label}: git fetch origin ${base} failed — using local ${base} (may be stale)`);
+    }
     return base;
   }
-  // Prefer the remote-tracking ref; a single-branch clone (actions/checkout) only tracks its own branch,
-  // so for another base read FETCH_HEAD, which the fetch above always writes — but hand back its SHA:
-  // FETCH_HEAD is per-repository state, invisible inside the linked worktree and rewritten by any later
-  // fetch (spec pass, concurrent tasks).
-  const tracking = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath, reject: false });
-  const tracked = tracking.exitCode === 0;
-  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', tracked ? `refs/remotes/origin/${base}` : 'FETCH_HEAD'], { cwd: repoPath, reject: false })).stdout.trim();
-  if (sha === '') {
-    log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
-    return base;
-  }
-  const remoteRef = tracked ? `origin/${base}` : sha;
+  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', remoteRef], { cwd: repoPath, reject: false })).stdout.trim();
   const local = (await execa('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoPath, reject: false })).exitCode === 0;
-  if (local) {
+  if (local && keepLocal) {
     // Exit 1 = local is ahead of or diverged from origin: keep it, it may carry unpushed commits.
     // Any other failure is a git error, reported as such; the remote copy is still the better cut.
-    const ancestor = await execa('git', ['merge-base', '--is-ancestor', `refs/heads/${base}`, sha], { cwd: repoPath, reject: false });
+    const ancestor = await execa('git', ['merge-base', '--is-ancestor', `refs/heads/${base}`, remoteRef], { cwd: repoPath, reject: false });
     if (ancestor.exitCode === 1) {
       log.warn({ base, sha }, `${label}: local ${base} is ahead of or diverged from origin/${base} — using local ${base}`);
       return base;
     }
     if (ancestor.exitCode !== 0) log.warn({ base, reason: redactGitError(ancestor) }, `${label}: git merge-base failed — assuming origin/${base} is current`);
   }
-  log.info({ base, sha, ref: remoteRef }, `${label}: using origin/${base} @ ${sha.slice(0, 7)}`);
+  log.info({ base, sha }, `${label}: using origin/${base} @ ${sha.slice(0, 7)}`);
   return remoteRef;
 }
 

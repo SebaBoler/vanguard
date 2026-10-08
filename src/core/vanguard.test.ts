@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { chmod, lstat, mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -671,5 +671,39 @@ describe('vanguard.run', () => {
 
     expect(result.diff).toContain('app.ts');
     expect(entries.some((e) => e.msg.includes('workflows'))).toBe(false);
+  });
+});
+
+describe('vanguard.run base resolution (#429)', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  });
+  const commitFile = async (cwd: string, content: string): Promise<void> => {
+    await writeFile(join(cwd, 'f.txt'), content);
+    await execa('git', ['add', '.'], { cwd });
+    await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', content], { cwd });
+  };
+
+  it('cuts the worktree from origin when the remote base moved past the local checkout', async () => {
+    const origin = await mkdtemp(join(tmpdir(), 'vg-origin-'));
+    dirs.push(origin);
+    await execa('git', ['init', '-q', '-b', 'main'], { cwd: origin });
+    await commitFile(origin, 'v1');
+    const clone = await mkdtemp(join(tmpdir(), 'vg-clone-'));
+    dirs.push(clone);
+    await execa('git', ['clone', '-q', origin, clone]);
+    await commitFile(origin, 'v2'); // main moved after the checkout — the #423 window
+
+    let copiedIn = '';
+    const { sandbox } = makeSandbox();
+    // copyIn(hostPath = the freshly cut worktree, '/workspace'): capture what the sandbox is seeded with.
+    (sandbox as unknown as { copyIn: (hostPath: string) => Promise<void> }).copyIn = async (hostPath) => {
+      copiedIn = await readFile(join(hostPath, 'f.txt'), 'utf8');
+    };
+    const agent = fakeAgent([{ text: 'done <promise>COMPLETE</promise>' }], { finalText: 'done <promise>COMPLETE</promise>', sessionId: 's1', turns: 1 });
+    await run({ taskId: 'rb', localRepoPath: clone, promptTemplate: 'p', sandbox, agent }, { worktrees: new WorktreeManager(clone) });
+    // The sandbox received origin's tree, not the stale local main.
+    expect(copiedIn).toBe('v2');
   });
 });

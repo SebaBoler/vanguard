@@ -615,7 +615,7 @@ describe('resolveSpecBaseRef', () => {
     await commit(origin, 'v2');
 
     const staleLocal = (await execa('git', ['rev-parse', 'main'], { cwd: clone })).stdout;
-    expect(await resolveSpecBaseRef(clone, 'main')).toBe('origin/main');
+    expect(await resolveSpecBaseRef(clone, 'main')).toBe('refs/remotes/origin/main');
 
     const cut = (await execa('git', ['rev-parse', 'origin/main'], { cwd: clone })).stdout;
     const originHead = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
