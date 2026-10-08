@@ -27,6 +27,20 @@ describe('redactTokens', () => {
     expect(redactTokens('account is not active')).toBe('account is not active');
   });
 
+  it('redacts URL userinfo, bare GitHub/GitLab tokens and Basic auth — the shapes git and gh print into errors', () => {
+    const glpat = `glpat-${'Ab1'.repeat(8)}`;
+    const ghp = `ghp_${'A1b2c3d4e5'.repeat(4)}`;
+    expect(redactTokens(`fatal: unable to access 'https://oauth2:${glpat}@gitlab.com/g/p.git/'`)).toBe(
+      "fatal: unable to access 'https://[REDACTED]@gitlab.com/g/p.git/'",
+    );
+    expect(redactTokens(`https://x-access-token:${ghp}@github.com/o/r.git`)).toBe('https://[REDACTED]@github.com/o/r.git');
+    expect(redactTokens(`token ${ghp} rejected`)).toBe('token [REDACTED-GH] rejected');
+    expect(redactTokens(`${glpat} is expired`)).toBe('[REDACTED-GL] is expired');
+    expect(redactTokens(`github_pat_${'Zy9'.repeat(10)}_x`)).toBe('[REDACTED-GH]');
+    expect(redactTokens('Authorization: Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng==')).toBe('Authorization: Basic [REDACTED]');
+    expect(redactTokens('https://github.com/o/r.git')).toBe('https://github.com/o/r.git');
+  });
+
   it('redacts a bare fake sk- key and a key=value assignment (new patterns)', () => {
     expect(redactTokens(`OPENAI_API_KEY=${FAKE_SK_KEY}`)).toContain('[REDACTED');
     expect(redactTokens(`export ${FAKE_SK_KEY}`)).toBe(`export [REDACTED-KEY]`);

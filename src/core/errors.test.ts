@@ -9,6 +9,11 @@ describe('failureReason', () => {
     expect(reason).not.toContain(key);
   });
 
+  it('strips credentials from a git remote URL, the shape a failed push or fetch prints', () => {
+    const reason = failureReason(new Error(`fatal: unable to access 'https://oauth2:glpat-${'Ab1'.repeat(8)}@gitlab.com/g/p.git/'`));
+    expect(reason).toBe("fatal: unable to access 'https://[REDACTED]@gitlab.com/g/p.git/'");
+  });
+
   it('caps a multi-kilobyte provider dump to a short excerpt', () => {
     const reason = failureReason('x'.repeat(2000));
     expect(reason.length).toBeLessThanOrEqual(201);

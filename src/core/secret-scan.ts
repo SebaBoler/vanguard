@@ -91,6 +91,14 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
     replacement: '$1[REDACTED]"',
   },
   { name: 'openai-key', re: /sk-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED-KEY]' },
+  // Credentials in URL userinfo (`https://oauth2:glpat-…@gitlab.com/g/p.git`, `x-access-token:ghp_…@`):
+  // the shape git itself prints in push/fetch errors. Greedy to the last `@` before the path, like
+  // redactRemote, so an unencoded `@` in the password cannot leave a fragment. Runs before the bare
+  // token patterns so the whole userinfo goes, not just the token inside it.
+  { name: 'url-userinfo', re: /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/]*@/gi, replacement: '$1[REDACTED]@' },
+  { name: 'github-token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g, replacement: '[REDACTED-GH]' },
+  { name: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED-GL]' },
+  { name: 'basic-auth', re: /(Basic\s+)[A-Za-z0-9+/=]{16,}/g, replacement: '$1[REDACTED]' },
   {
     name: 'assignment',
     re: /((?:token|api[_-]?key|secret|password|auth)\s*[=:]\s*['"]?)([A-Za-z0-9_.~+\-/=]{12,})/gi,

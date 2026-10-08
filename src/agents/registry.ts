@@ -342,8 +342,9 @@ export interface ProviderChoice {
   customProviders?: readonly CustomProviderEntry[];
 }
 
-/** True when the run needs an Anthropic-family credential (subscription token / API key). A used
- *  provider that owns the Anthropic transport with its own creds (zai, customs) suppresses the need. */
+/** True when the run needs an Anthropic-family credential (subscription token / API key): some used
+ *  provider has no key wiring of its own (Claude). Codex/Cursor-only, or Zai/OpenRouter/customs with
+ *  their own keys, need none. */
 export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   const provider = choice.provider ?? 'claude';
   const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];

@@ -234,8 +234,7 @@ export async function watchMergeRequestsOnce(
         try {
           await primitives.onFailure(item, error);
         } catch (restoreError) {
-          const msg = restoreError instanceof Error ? restoreError.message : String(restoreError);
-          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${msg})`);
+          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${failureReason(restoreError)})`);
         }
         opts.log?.(`${phase} ${id}: failed -> retry later (${failureReason(error)})`);
         return { id, kind: 'failed' };
