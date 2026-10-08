@@ -37,13 +37,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
-      # the run loudly instead of skipping the job and reporting the caller green.
       # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
       - name: Check allowed-actors shape
         if: ${{ !startsWith(inputs.allowed-actors, '[') }}
         run: echo "::error::allowed-actors must be a JSON array, e.g. '[\"octocat\"]'" && exit 1
 
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
       - name: Enforce allowed-actors
         if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
         env:
@@ -54,14 +54,14 @@ jobs:
 
       # Fail loudly rather than let actions/checkout silently build the default branch.
       - name: Resolve vanguard source ref
-        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
-        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha did not resolve" && exit 1
+        if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
+        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha / job.workflow_repository did not resolve" && exit 1
 
       # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
       # the CLI at the same revision as the YAML.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: SebaBoler/vanguard   # fixed: a caller never wants its own repo as the Vanguard source
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
           ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
           path: .vanguard-src
 
