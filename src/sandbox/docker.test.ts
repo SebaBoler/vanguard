@@ -340,3 +340,10 @@ describe('DockerSandboxProvider secret validation', () => {
     expect(sb.shellCommand()).toMatch(/^docker exec -it vg-.* bash$/);
   });
 });
+
+describe('toExecResult on a real execa 10 result (reject: false)', () => {
+  it('normalises a failed subprocess result exactly as it did under execa 9', async () => {
+    const raw = await execa('node', ['-e', 'process.stderr.write("boom"); process.exit(7)'], { reject: false });
+    expect(toExecResult(raw)).toEqual({ stdout: '', stderr: 'boom', exitCode: 7 });
+  });
+});
