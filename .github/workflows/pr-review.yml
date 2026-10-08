@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted non-fatally: a fallback whose credential is missing is disabled with a warning, never a red job. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted: a fallback whose credential is missing is disabled with a warning (never a red job); any other preflight failure, e.g. an unknown provider name, fails the run. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
         type: string
         default: ''
       fallback-model:
@@ -130,14 +130,27 @@ jobs:
           preflight "$IN_PROVIDER"
           # The fallback is only useful if its credential is in place before the first attempt fails — but a
           # fallback whose credential is missing must not take the primary down with it (a caller with a
-          # Codex primary and an unset Claude secret would otherwise go red before Codex ever ran). Warn and
-          # review without the fallback instead.
+          # Codex primary and an unset Claude secret would otherwise go red before Codex ever ran). Warn,
+          # note it in the run summary and review without the fallback instead.
           fallback_ok=false
           if [ -n "$IN_FALLBACK_PROVIDER" ]; then
-            if preflight "$IN_FALLBACK_PROVIDER"; then
+            if out=$(preflight "$IN_FALLBACK_PROVIDER" 2>&1); then
+              printf '%s\n' "$out"
               fallback_ok=true
             else
-              echo "::warning::fallback provider '$IN_FALLBACK_PROVIDER' failed preflight (see above); reviewing without a fallback"
+              printf '%s\n' "$out"
+              # Only a missing credential degrades to "no fallback". Any other failing check (unknown provider
+              # name, malformed CODEX_AUTH_JSON, gh/label/sandbox trouble) is a caller mistake or an outage and
+              # stays fatal, exactly as for the primary.
+              cred_re='^preflight: (llm auth missing|provider auth .* in the environment\.) -> stop before claim'
+              missing_cred=$(printf '%s\n' "$out" | grep -Ec "$cred_re" || true)
+              other_fail=$(printf '%s\n' "$out" | grep -- '-> stop before claim' | grep -Evc "$cred_re" || true)
+              if [ "$missing_cred" -eq 0 ] || [ "$other_fail" -ne 0 ]; then
+                echo "::error::fallback provider '$IN_FALLBACK_PROVIDER' failed preflight for a reason other than a missing credential (see above)"
+                exit 1
+              fi
+              echo "::warning::fallback provider '$IN_FALLBACK_PROVIDER' has no credential in this repo; reviewing without a fallback"
+              echo "Fallback provider \`$IN_FALLBACK_PROVIDER\` disabled for this run: credential missing (see the Preflight step)." >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
           echo "fallback-ok=$fallback_ok" >> "$GITHUB_OUTPUT"
