@@ -1,4 +1,3 @@
-import { execa } from 'execa';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -22,8 +21,8 @@ import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
-import { createLogger, type VanguardLogger } from '../core/logger.js';
-import { assertSafeBaseBranch } from '../core/base-branch.js';
+import type { VanguardLogger } from '../core/logger.js';
+import { resolveRemoteBaseRef } from '../core/base-branch.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -88,34 +87,12 @@ function defaultSandboxFactory(
 }
 
 /**
- * Resolve the ref the spec's research worktree is cut from, fetching it from `origin` first so the
- * spec is written against the branch as it exists on the remote — not a stale, or entirely absent,
- * local copy (the very reason a spec diverges from a branch someone else is actively pushing to).
- * Best-effort: with no `origin`, offline, or a branch the remote doesn't carry, it logs and returns
- * the local `base` so the spec pass still runs.
- *
- * @throws VanguardError when git would misread `base` (see assertSafeBaseBranch).
+ * Resolve the ref the spec's research worktree is cut from: origin's copy of `base` when it is
+ * ahead of the local one, so the spec is written against the branch as it exists on the remote.
+ * See resolveRemoteBaseRef.
  */
-export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
-  assertSafeBaseBranch(base);
-  // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
-  // you which ref the spec was actually written against (vs a silent fallback to a stale local copy).
-  const log = logger ?? createLogger();
-  try {
-    await execa('git', ['fetch', 'origin', base], { cwd: repoPath });
-  } catch (err) {
-    log.warn({ err, base }, `spec: git fetch origin ${base} failed — researching against local ${base} (may be stale)`);
-    return base;
-  }
-  try {
-    // Cut from the freshly-fetched remote-tracking ref so the worktree reflects origin, not local.
-    const { stdout: sha } = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath });
-    log.info({ base, sha }, `spec: researching against origin/${base} @ ${sha.slice(0, 7)}`);
-    return `origin/${base}`;
-  } catch {
-    log.warn({ base }, `spec: origin has no ${base} — researching against local ${base}`);
-    return base;
-  }
+export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger, keepLocalIfAhead?: boolean): Promise<string> {
+  return resolveRemoteBaseRef(repoPath, base, { label: 'spec', ...(logger !== undefined ? { logger } : {}), ...(keepLocalIfAhead !== undefined ? { keepLocalIfAhead } : {}) });
 }
 
 /**
@@ -163,7 +140,9 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
 
     // Fetch the base up front so the spec is researched against origin's view of the branch, not a
     // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.
-    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger);
+    // The spec is written against the branch as it exists on the remote, never a local copy that is
+    // ahead of it (the very reason a spec diverges from a branch someone else is actively pushing to).
+    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger, false);
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
       {

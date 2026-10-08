@@ -11,6 +11,7 @@ import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
 import { SandboxError, WorkflowGuardError } from './errors.js';
+import { resolveRemoteBaseRef } from './base-branch.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
@@ -433,13 +434,18 @@ export async function disposeContext(ctx: RunContext, opts: { keep?: boolean } =
 
 /** Single-stage convenience: prepare -> one agent run -> dispose. */
 export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResult> {
+  // Cut from origin's copy of the base when it is ahead of the local one, so the sandbox, verification
+  // and review see the tree the PR will land on (#423). A reused branch keeps its own history.
+  const baseBranch = opts.reuse === true
+    ? opts.baseBranch
+    : await resolveRemoteBaseRef(opts.localRepoPath, opts.baseBranch ?? 'main', { ...(opts.logger !== undefined ? { logger: opts.logger } : {}) });
   const ctx = await prepareContext(
     {
       taskId: opts.taskId,
       localRepoPath: opts.localRepoPath,
       sandbox: opts.sandbox,
       agentName: opts.agent.name,
-      ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
+      ...(baseBranch !== undefined ? { baseBranch } : {}),
       ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
       ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
       ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
