@@ -5,9 +5,9 @@ name: Vanguard Implement
 #   "ready for agent" -> build directly
 #   too vague         -> "needs info" (human fills it in)
 #
-# A single `watch --once`: the spec pass advances a ticket to "ready for agent" and the agent pass
-# builds it in the same invocation (carries the just-advanced id in memory, so it no longer depends on
-# GitHub's eventually-consistent label index — see #143). No second sweep needed.
+# Thin caller of the reusable workflow (implement.yml), which holds the steps. The local `uses: ./`
+# form resolves at the run's ref: the default branch for issue/dispatch events, so a PR branch is only
+# exercised via `gh workflow run <caller>.yml --ref <branch>`.
 #
 # Requires repo setting: Settings > Actions > General > Workflow permissions >
 # "Allow GitHub Actions to create and approve pull requests" (otherwise the
@@ -35,49 +35,21 @@ jobs:
       contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm build
-
-      - name: Build sandbox image
-        run: docker build -t vanguard-sandbox:latest docker/
-
-      - name: Ensure routing labels
-        run: |
-          gh label create "ready for spec" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Vanguard Loop v1 spec pass" --force
-          gh label create "ready for agent" --repo "$GITHUB_REPOSITORY" --color 5319E7 --description "Vanguard Loop v1 agent pass" --force
-          gh label create "needs info" --repo "$GITHUB_REPOSITORY" --color D93F0B --description "Parked: ticket too vague for Vanguard" --force
-          gh label create "vanguard:speccing" --repo "$GITHUB_REPOSITORY" --color FEF2C0 --description "Vanguard is writing a tech spec" --force
-          gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
-          gh label create "vanguard:needs-human-review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR — awaiting human review" --force
-
+    uses: ./.github/workflows/implement.yml
+    with:
+      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
       # Cross-provider self-review: Opus plans the spec, Sonnet implements, Codex reviews.
-      # No --llm-proxy: Codex runs on a ChatGPT subscription (CODEX_AUTH_JSON), which talks to the
+      # No llm-proxy: Codex runs on a ChatGPT subscription (CODEX_AUTH_JSON), which talks to the
       # ChatGPT backend directly — the proxy allowlist only covers the api.openai.com (API-key) path.
-      - name: Run Vanguard loop (Opus spec / Sonnet impl / Codex review)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_AUTH_TOKEN: ${{ secrets.CLOUDFLARE_AUTH_TOKEN }}
-          VANGUARD_DECISION_PROBE: '1'
-        run: |
-          # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
-          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex --escalate-model claude-fable-5-1
-      - name: Persist run metrics
-        if: always()
-        run: node dist/cli/index.js metrics push --repo "$GITHUB_WORKSPACE"
+      provider: claude
+      provider-model: sonnet
+      spec-model: opus
+      review-provider: codex
+      escalate-model: claude-fable-5-1
+      decision-probe: true
+      persist-metrics: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_AUTH_TOKEN: ${{ secrets.CLOUDFLARE_AUTH_TOKEN }}

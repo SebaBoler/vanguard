@@ -1,0 +1,146 @@
+name: Vanguard Revise (reusable)
+
+# Reusable body of the PR revision workflow: Vanguard revises its OWN draft PR from review comments.
+# A caller owns the triggers (`pull_request_target` labeled "needs revision" + `workflow_dispatch`),
+# `permissions` (contents: write, pull-requests: write, issues: write), `concurrency` and its own `if:`.
+# See docs/onboarding-another-repo.md.
+
+on:
+  workflow_call:
+    inputs:
+      allowed-actors:
+        description: 'JSON array of GitHub logins allowed to trigger this workflow, e.g. ["octocat"]. Enforced here as a backstop to the caller if:.'
+        type: string
+        required: true
+      number:
+        description: 'Pull request number to revise.'
+        type: string
+        required: true
+      provider:
+        description: 'Revision provider (--provider). Empty = CLI default.'
+        type: string
+        default: ''
+      llm-proxy:
+        description: 'Keep the model credential in a sidecar proxy, out of the sandbox (--llm-proxy).'
+        type: boolean
+        default: false
+      vanguard-ref:
+        description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
+        type: string
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout in minutes.'
+        type: number
+        default: 90
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      CODEX_AUTH_JSON:
+        required: false
+      VANGUARD_PUSH_TOKEN:
+        description: 'PAT for revision pushes. GITHUB_TOKEN pushes fire no workflows (recursion guard), so a revised PR would get no CI and sit BLOCKED under branch protection (#256). Falls back to the workflow token.'
+        required: false
+
+jobs:
+  revise:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # A caller repo with its own `packageManager` (e.g. pnpm@9) would make `pnpm store path` (setup-node's
+      # cache key) run under that version while the install in .vanguard-src uses Vanguard's; the paths then
+      # differ and the cache post-step fails. Keep the action-provided pnpm everywhere.
+      npm_config_manage_package_manager_versions: "false"
+    steps:
+      # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
+      - name: Check allowed-actors shape
+        if: ${{ !startsWith(inputs.allowed-actors, '[') }}
+        run: echo "::error::allowed-actors must be a JSON array, e.g. '[\"octocat\"]'" && exit 1
+
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
+      - name: Enforce allowed-actors
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
+        env:
+          ACTOR: ${{ github.event.sender.login || github.actor }}
+        run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
+
+      # Check out the DEFAULT branch (trusted) so the revise tool is never the PR-under-revision's code,
+      # which may lack the command or be untrusted (pull_request_target). revise-pr does its own
+      # `git fetch origin <head>` + a worktree, so it operates on the PR branch.
+      # persist-credentials:false leaves no persisted http.extraheader in .git/config, so the engine's own
+      # `-c http.extraheader` push does not duplicate the Authorization header ("Duplicate header", 400).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0          # the runner fetches the PR branch and pushes back to it
+          persist-credentials: false
+
+      # Fail loudly rather than let actions/checkout silently build the default branch.
+      - name: Resolve vanguard source ref
+        if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
+        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha / job.workflow_repository did not resolve" && exit 1
+
+      # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
+      # the CLI at the same revision as the YAML.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
+          ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
+          path: .vanguard-src
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .vanguard-src/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: .vanguard-src/pnpm-lock.yaml
+
+      # --ignore-scripts skips esbuild's postinstall (pnpm.onlyBuiltDependencies); fine because only `pnpm build`
+      # (tsc + cp) and `node dist/` run here. Anything invoking tsx/vitest from .vanguard-src would need it.
+      - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+        working-directory: .vanguard-src
+
+      - run: pnpm build
+        working-directory: .vanguard-src
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "needs revision" --repo "$GITHUB_REPOSITORY" --color E99695 --force
+          gh label create "vanguard:revising" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --force
+
+      # Fetch credentials for the engine: persist-credentials:false removed the persisted ones, and the
+      # engine runs `git fetch origin <pr-branch>`, which needs auth on a private repo. A credential.helper
+      # supplies the token on 401; the push carries its own `-c http.extraheader`, so the helper is not
+      # consulted there and only one Authorization header is sent. Same token as the push (consistent CI).
+      - name: Configure git credentials for Vanguard fetch
+        env:
+          VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
+        run: |
+          git config --global "credential.https://github.com/$GITHUB_REPOSITORY.helper" "store --file=$RUNNER_TEMP/git-credentials"
+          umask 077
+          printf 'https://x-access-token:%s@github.com/%s\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/git-credentials"
+
+      - name: Revise the PR from review comments
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
+          IN_NUMBER: ${{ inputs.number }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_LLM_PROXY: ${{ inputs.llm-proxy }}
+        run: |
+          [[ "$IN_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::number must be a positive integer, got '$IN_NUMBER'"; exit 1; }
+          args=(revise-pr "$IN_NUMBER" --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --max-rounds 2)
+          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
+          [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
+          node .vanguard-src/dist/cli/index.js "${args[@]}"
+
+      - name: Remove git credentials
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/git-credentials"

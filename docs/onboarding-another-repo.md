@@ -1,8 +1,8 @@
 # Run Vanguard on your own repo (GitHub Actions)
 
-Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed: the workflow checks Vanguard out beside your code and builds it in the job. Everything runs in a Docker sandbox on the GitHub runner.
+Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `SebaBoler/vanguard`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
 
-You drop in **two workflow files** (required), set **two secrets** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
+You drop in **one or two thin callers** (implement, plus the optional doctor), set **one secret** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
 
 > **Cost:** each run uses ~15-20 GitHub Actions minutes — **unlimited on public repos**, 2000/month free on private. To avoid Actions minutes entirely, run an always-on `vanguard watch` on your own host (see [Cost & limits](../README.md#cost--limits) and [docs/deploy.md](deploy.md)).
 
@@ -10,9 +10,40 @@ You drop in **two workflow files** (required), set **two secrets** and **one rep
 
 ## 1. The files
 
-The two workflows are required. The issue template is optional but recommended.
+### How it fits together
+
+| You own (in your repo) | Vanguard owns (`SebaBoler/vanguard/.github/workflows/`) |
+|---|---|
+| `on:` triggers, `permissions`, `concurrency` | the steps: checkout, build, label bootstrap, the CLI call |
+| the `if:` actor gate, the `allowed-actors` list | timeouts, runner, flag assembly |
+| model choices, secret mapping | defaults, label colours, the sandbox image build |
+
+When Vanguard changes a default or a step, you get it on your next run (or when you move your pin) without touching your callers. Reusable workflows exist for `implement.yml`, `pr-review.yml`, `research.yml`, `revise.yml` and `doctor.yml`.
+
+Things to know before copying:
+
+- **Pin the ref.** `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
+- **`vanguard-ref` follows the workflow ref.** Leave the `vanguard-ref` input empty and the CLI is built at the same revision as the YAML, so a caller pinned `@v1` builds Vanguard at `v1` too. Set it only to build a different revision (for example to test a branch). On GitHub Enterprise Server `job.workflow_sha` / `job.workflow_repository` are not available, so set `vanguard-ref` explicitly there or the run fails at the "Resolve vanguard source ref" guard.
+- **No `secrets: inherit`.** Each secret is mapped explicitly in the caller, so you can see exactly which credentials reach the run. Every secret is optional on the reusable side; map only what your setup needs.
+- **`allowed-actors` is mandatory.** It is a JSON array of GitHub logins, passed as a string. The reusable workflow checks `github.event.sender.login` against it as a backstop to your own `if:`; a caller that omits it fails at startup, and a sender not in the list fails the run loudly (red, with an error) rather than skipping it, so a typo in the list cannot hide as a green no-op. Keep your caller's `if:` as well — it also gates on the issue or PR author, which the backstop does not.
+- **Inputs never reach a shell as text.** The reusable workflows pass every input through `env:` and build the CLI arguments as a bash array, so a hostile value cannot inject a command.
+
+### Permissions the caller must grant
+
+The reusable workflows declare no `permissions:` of their own — they run with whatever the caller grants. A caller that omits the block on a repo whose default `GITHUB_TOKEN` is read-only fails mid-run (at `gh label create`, `gh pr create` or the comment post), not at startup. What each one needs:
+
+| Reusable workflow | `contents` | `pull-requests` | `issues` |
+|---|---|---|---|
+| `implement.yml` | write | write | write |
+| `doctor.yml` | read | read | write |
+| `pr-review.yml` | read | write | write |
+| `research.yml` | read | — | write |
+| `revise.yml` | write (pushes the revision commit) | write | write |
+
 
 ### `.github/workflows/vanguard-implement.yml` — does the work
+
+The **minimal** form: Claude does plan/implement/review/simplify, and the model credential stays in a sidecar (`llm-proxy`). Replace every `YOUR_LOGIN`.
 
 ```yaml
 name: Vanguard Implement
@@ -35,39 +66,49 @@ jobs:
       contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with: { repository: SebaBoler/vanguard, path: .vanguard-src }
-      - uses: pnpm/action-setup@v6
-        with: { package_json_file: .vanguard-src/package.json }
-      - uses: actions/setup-node@v6
-        with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile --ignore-workspace
-        working-directory: .vanguard-src
-      - run: pnpm build
-        working-directory: .vanguard-src
-      - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Ensure routing labels
-        run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" "needs research:1D76DB" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16" "vanguard:researching:BFDADC"; do
-            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
-          done
-      - name: Run Vanguard loop (spec then implement)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
+    uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+      llm-proxy: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-That is the **minimal** form: Claude does plan/implement/review/simplify, the model credential stays in a sidecar (`--llm-proxy`). To run Opus-spec / Sonnet-impl / Codex-review on a ChatGPT subscription instead, see [Full: cross-provider](#full-cross-provider-on-a-codex-subscription) below.
+To run Opus-spec / Sonnet-impl / Codex-review on a ChatGPT subscription instead, see [Full: cross-provider](#full-cross-provider-on-a-codex-subscription) below.
 
-`--ignore-workspace` on the install is what lets this work when **your repo is a pnpm workspace (monorepo)**: otherwise `pnpm install` inside `.vanguard-src` is captured by your root `pnpm-workspace.yaml`, leaves `.vanguard-src/node_modules` empty, and the Vanguard build fails. It is harmless for non-workspace repos — keep it.
+The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, which is what keeps this working when **your repo is a pnpm workspace (monorepo)**: otherwise `pnpm install` inside `.vanguard-src` would be captured by your root `pnpm-workspace.yaml`, leave `.vanguard-src/node_modules` empty, and the Vanguard build would fail. You do not need to do anything for this.
+
+#### Inputs of `implement.yml`
+
+| Input | Type | Default | Meaning |
+|---|---|---|---|
+| `allowed-actors` | string, **required** | — | JSON array of logins allowed to trigger the run |
+| `provider` | string | `''` (CLI default) | implementation provider (`--provider`) |
+| `provider-model` | string | `''` | implementation model (`--provider-model`) |
+| `spec-model` | string | `''` | model for the spec pass (`--spec-model`) |
+| `review-provider` | string | `''` | cross-provider reviewer, e.g. `codex` (`--review-provider`) |
+| `review-model` | string | `''` | reviewer model (`--review-model`) |
+| `escalate-model` | string | `''` (off) | model escalated to on the 2nd+ gate repair (`--escalate-model`); must be a model of the implementation provider |
+| `conformance` | boolean | `false` | opt-in conformance review pass (`--conformance`) |
+| `conformance-model` | string | `''` | model for the conformance pass |
+| `llm-proxy` | boolean | `false` | keep the model credential in a sidecar (`--llm-proxy`) |
+| `decision-probe` | boolean | `false` | opt in to the decision-model probe (see below) |
+| `persist-metrics` | boolean | `false` | push run metrics to an orphan branch (see below) |
+| `metrics-branch` | string | `''` (`vanguard-metrics`) | branch used by `persist-metrics` |
+| `skills` | string | `.vanguard-src/skills` | skills directory |
+| `max-tasks` | string | `''` (no cap) | `--max-tasks`: cap ready issues claimed per phase in one run |
+| `vanguard-ref` | string | `''` (the workflow's own ref) | Vanguard source ref to build |
+
+Secrets: `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AUTH_TOKEN` (all optional).
+
+Empty model inputs mean "use the CLI default", so the defaults live in one place (the CLI), not duplicated in YAML.
+
+#### `decision-probe` and `persist-metrics` are off by default — on purpose
+
+- **`decision-probe`** is the experimental, log-only [difficulty probe](../README.md#models): it asks a decision model how hard the task is and whether the first attempt will pass, logs the answer, and changes nothing about routing. It **sends the issue title, labels, description and comments to Cloudflare Workers AI** from the host, outside the sandbox, `--egress` and `--llm-proxy`. With it off (the default) the Cloudflare secrets are not even exposed to the run, even if you map them. Turn it on only if you accept that, and map `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AUTH_TOKEN`.
+- **`persist-metrics`** pushes the run's `metrics.jsonl` lines to an orphan `vanguard-metrics` branch **in your repo** (`vanguard stats --branch vanguard-metrics` reads it back). That writes a branch into your repository and leaves a trace, which conflicts with white-label or zero-trace setups. Without it, metrics die with the job. It runs after the loop step finished, pass or fail (`always()` plus the step conclusion), but not after a blocked gate or a failed build, and needs the `contents: write` your caller already grants.
+
+Vanguard's own callers turn both on; client repos should decide deliberately.
 
 ### `.github/workflows/vanguard-doctor.yml` — validate before your first issue
 
@@ -85,36 +126,104 @@ concurrency:
 jobs:
   doctor:
     if: github.actor == 'YOUR_LOGIN'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with: { repository: SebaBoler/vanguard, path: .vanguard-src }
-      - uses: pnpm/action-setup@v6
-        with: { package_json_file: .vanguard-src/package.json }
-      - uses: actions/setup-node@v6
-        with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile --ignore-workspace
-        working-directory: .vanguard-src
-      - run: pnpm build
-        working-directory: .vanguard-src
-      - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Ensure routing labels
-        run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" "needs research:1D76DB" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16" "vanguard:researching:BFDADC"; do
-            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
-          done
-      - name: Doctor (preflight only — no issues processed)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: node .vanguard-src/dist/cli/index.js doctor --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE"
+    uses: SebaBoler/vanguard/.github/workflows/doctor.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
+Inputs: `allowed-actors` (required), `provider`, `review-provider`, `vanguard-ref`. Pass the same `provider` / `review-provider` as your implement caller (and map `CODEX_AUTH_JSON` if you review with Codex) so it validates the credentials the real run will use.
+
 Run it from **Actions → Vanguard Doctor → Run workflow** (clickable from the GitHub mobile app). It processes no issues; it just checks Node, auth, labels, Docker, the sandbox image, and the repo remote, then goes green or red. Run it once on a fresh repo before you label anything.
+
+### `.github/workflows/vanguard-pr-review.yml` — review a PR (optional)
+
+Adds a visible, adversarial `gh pr review` when you put `ready for vanguard review` on your own PR. This example reviews with Codex and falls back to Claude if Codex fails (a usage limit, a bad model name). `watch-prs` has no provider fallback of its own, so `pr-review.yml` retries with `fallback-provider` / `fallback-model` when you set them.
+
+```yaml
+name: Vanguard PR Review
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+concurrency:
+  group: vanguard-pr-review-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
+      (github.event_name == 'pull_request_target' &&
+      github.event.label.name == 'ready for vanguard review' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login == 'YOUR_LOGIN' &&
+      github.event.sender.login == 'YOUR_LOGIN')
+    uses: SebaBoler/vanguard/.github/workflows/pr-review.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+      author: YOUR_LOGIN
+      provider: codex
+      review-model: gpt-5.6-sol
+      fallback-provider: claude
+      fallback-model: opus
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+```
+
+Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provider`, `fallback-model`, `author` (`--author`), `llm-proxy`, `vanguard-ref`. Leave the fallback inputs empty for no fallback. The fallback fires whenever the first attempt exits non-zero. It runs without the event hint, so a head the first attempt already reviewed (e.g. the review posted, then the label update failed) is skipped rather than reviewed twice; the one gap is a deliberately re-labeled head whose first attempt failed before posting — re-add the label to get its fallback review. Do not combine `llm-proxy` with a Codex subscription (see the Full tier below).
+
+### `vanguard-research.yml` and `vanguard-revise.yml` (optional)
+
+Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, plus `uses: SebaBoler/vanguard/.github/workflows/research.yml@v1` or `.../revise.yml@v1`.
+
+| Workflow | Inputs | Secrets |
+|---|---|---|
+| `research.yml` | `allowed-actors`, `number` (issue number, required), `provider`, `research-model`, `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON` |
+| `revise.yml` | `allowed-actors`, `number` (PR number, required), `provider`, `llm-proxy`, `timeout-minutes` (default 90), `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `VANGUARD_PUSH_TOKEN` |
+
+Inside a called workflow the `inputs` context means the `workflow_call` inputs, not your `workflow_dispatch` ones, so the caller passes the number in: `number: ${{ github.event.issue.number || inputs.issue }}` for research, `number: ${{ github.event.pull_request.number || inputs.pr }}` for revise. Revise runs at most 2 rounds.
+
+The revise gate differs from the PR-review one: Vanguard's own PRs are authored by `github-actions[bot]`, so the **author** list must include it while the **sender** list stays human. A caller that copies the PR-review gate (`pull_request.user.login == 'YOUR_LOGIN'`) can never run:
+
+```yaml
+name: Vanguard Revise
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr: { description: "PR number", required: true }
+permissions:
+  contents: write          # pushes the revision commit to the PR branch
+  pull-requests: write
+  issues: write
+concurrency:
+  group: vanguard-revise-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  revise:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
+      (github.event.label.name == 'needs revision' &&
+       contains(fromJSON('["YOUR_LOGIN","github-actions[bot]"]'), github.event.pull_request.user.login) &&
+       github.event.sender.login == 'YOUR_LOGIN')
+    uses: SebaBoler/vanguard/.github/workflows/revise.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+      number: ${{ github.event.pull_request.number || inputs.pr }}
+      llm-proxy: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
+```
+
+`revise.yml` checks your default branch out with `persist-credentials: false` and feeds git a credential helper from `VANGUARD_PUSH_TOKEN` (falling back to the workflow token), so it also works on **private repos** where the engine's own `git fetch` of the PR branch needs auth.
 
 ### `.github/ISSUE_TEMPLATE/vanguard-task.md` — optional, the issue shape triage accepts
 
@@ -157,7 +266,7 @@ assignees: ''
 3. (Full tier only) **Secret `CODEX_AUTH_JSON`** — see below.
 4. (Recommended) **Secret `VANGUARD_PUSH_TOKEN`** — see [CI on revision pushes](#optional-vanguard_push_token--ci-on-revision-pushes).
 
-Replace `YOUR_LOGIN` in both workflows with your GitHub login. The `if:` gate restricts runs to your own issues, so a stranger labelling an issue cannot start a run.
+Replace `YOUR_LOGIN` in the callers with your GitHub login, and set `allowed-actors` to the logins that may trigger runs. The `if:` gate restricts runs to your own issues, so a stranger labelling an issue cannot start a run; `allowed-actors` is the second lock behind it.
 
 ### Optional: `VANGUARD_PUSH_TOKEN` — CI on revision pushes
 
@@ -167,13 +276,12 @@ Replace `YOUR_LOGIN` in both workflows with your GitHub login. The `if:` gate re
 
 **The fix.** A fine-grained Personal Access Token: pushes made with a PAT count as user events, so `pull_request: synchronize` fires and CI runs normally. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
 
-1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** — nothing else (Metadata: Read is added automatically). Set an expiration (e.g. 90 days).
+1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** — nothing else (Metadata: Read is added automatically). Do **not** grant Workflows: that would let the autonomous reviser rewrite the very workflows that carry its actor gates and secrets. A revision that touches `.github/workflows/` is rejected by GitHub by design; apply such edits by hand. Set an expiration (e.g. 90 days).
 2. Store it: `gh secret set VANGUARD_PUSH_TOKEN --repo OWNER/REPO` (repeat per repo — Actions secrets are per-repo, even when the PAT itself covers several).
-3. Expose it to the revise workflow — add one line to `vanguard-revise.yml`'s job `env:` block:
+3. Map it in your revise caller's `secrets:` block:
 
    ```yaml
-   env:
-     GH_TOKEN: ${{ github.token }}
+   secrets:
      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
      VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
    ```
@@ -199,15 +307,16 @@ The revise CLI picks it up automatically when present and falls back to `GITHUB_
 
 ## Choosing the models
 
-Models are set once, in the `run:` line of the implement workflow — globally for the repo, not per issue. Defaults to all-Claude. Override with flags:
+Models are set once, in the `with:` block of your implement caller — globally for the repo, not per issue. Empty means the CLI default (all-Claude). Override with inputs:
 
-| Stage | Flag | Example |
+| Stage | Input | Example |
 |---|---|---|
-| Plan (spec) | `--spec-model` | `opus` |
-| Implement + simplify | `--provider` / `--provider-model` | `claude` / `sonnet` |
-| Review | `--review-provider` (+ `--review-model`) | `codex` / `gpt-5.6-sol` |
+| Plan (spec) | `spec-model` | `opus` |
+| Implement + simplify | `provider` / `provider-model` | `claude` / `sonnet` |
+| Review | `review-provider` (+ `review-model`) | `codex` / `gpt-5.6-sol` |
+| Escalation | `escalate-model` | `claude-fable-5-1` (example; off unless set) |
 
-To change which models run, edit the workflow's `run:` line. A cross-provider reviewer (e.g. Codex) takes its own model names — never pass it an Anthropic model name. On a ChatGPT subscription only Codex-flavoured names work (e.g. `gpt-5.6-sol`); a bare `gpt-5.6` is rejected with a 400.
+To change which models run, edit the caller's `with:` block. A cross-provider reviewer (e.g. Codex) takes its own model names — never pass it an Anthropic model name. On a ChatGPT subscription only Codex-flavoured names work (e.g. `gpt-5.6-sol`); a bare `gpt-5.6` is rejected with a 400.
 
 ### Full: cross-provider on a Codex subscription
 
@@ -217,13 +326,19 @@ To run **Opus** spec / **Sonnet** impl / **Codex** review with Codex on a ChatGP
    ```bash
    gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
    ```
-2. In the implement workflow's run step, forward the secret and set the flags, and **drop `--llm-proxy`** (a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover):
+2. In the implement caller, set the model inputs, map the secret, and **drop `llm-proxy`** (a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover):
    ```yaml
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex --review-model gpt-5.6-sol
+       uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+       with:
+         allowed-actors: '["YOUR_LOGIN"]'
+         provider: claude
+         provider-model: sonnet
+         spec-model: opus
+         review-provider: codex
+         review-model: gpt-5.6-sol
+       secrets:
+         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+         CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
    ```
 
 The stored `CODEX_AUTH_JSON` is a snapshot; Codex refreshes the access token from the embedded refresh token each run, so the secret must carry a live refresh token. Re-run `gh secret set` if a run ever fails to authenticate.
@@ -254,7 +369,7 @@ So: do whatever you like for issue authoring (template, your own, freehand) — 
 | `needs info` | **Vanguard triage** (`assessTaskReadiness`) | — | Ticket is too vague to proceed — **rejected/parked** | Post clarification comment, stop | No — human must add content |
 | `needs research` | **Human** (manually) | `vanguard:researching` | Ticket is a valid idea needing **external context** before speccing | Run external research, post findings comment, **REST** | No — human sets `ready for spec` or `ready for agent` next |
 
-The labels above go on **issues**. Two more go on a **pull request** and fire the `pull_request_target: labeled` workflows — these need `vanguard-pr-review.yml` and `vanguard-revise.yml` added alongside the implement/doctor pair.
+The labels above go on **issues**. Two more go on a **pull request** and fire the `pull_request_target: labeled` workflows — these need the `vanguard-pr-review.yml` and `vanguard-revise.yml` callers added alongside the implement/doctor pair.
 
 | Label | On | Set by | Bot state | Bot action |
 |---|---|---|---|---|
@@ -280,4 +395,4 @@ The research sandbox runs under the same egress allowlist as the spec and agent 
 - Standards bodies: `datatracker.ietf.org`, `www.w3.org`, `tc39.es`
 - General search/fetch: your preferred search API endpoint
 
-The `vanguard-research.yml` workflow (not yet applied — see below) must pass `--web` if egress has been widened.
+`research.yml` does not offer `--web` as an input: widening egress is a deliberate, per-host decision, not a toggle.

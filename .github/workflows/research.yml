@@ -1,0 +1,114 @@
+name: Vanguard Research (reusable)
+
+# Reusable body of the issue research workflow. A caller owns the triggers (`issues` labeled
+# "needs research" + `workflow_dispatch`), `permissions` (contents: read, issues: write),
+# `concurrency` and its own `if:`. See docs/onboarding-another-repo.md.
+
+on:
+  workflow_call:
+    inputs:
+      allowed-actors:
+        description: 'JSON array of GitHub logins allowed to trigger this workflow, e.g. ["octocat"]. Enforced here as a backstop to the caller if:.'
+        type: string
+        required: true
+      number:
+        description: 'Issue number to research.'
+        type: string
+        required: true
+      provider:
+        description: 'Research provider (--provider). Empty = CLI default.'
+        type: string
+        default: ''
+      research-model:
+        description: 'Model for the research pass (--research-model). Empty = CLI default.'
+        type: string
+        default: ''
+      vanguard-ref:
+        description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
+        type: string
+        default: ''
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      CODEX_AUTH_JSON:
+        required: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # A caller repo with its own `packageManager` (e.g. pnpm@9) would make `pnpm store path` (setup-node's
+      # cache key) run under that version while the install in .vanguard-src uses Vanguard's; the paths then
+      # differ and the cache post-step fails. Keep the action-provided pnpm everywhere.
+      npm_config_manage_package_manager_versions: "false"
+    steps:
+      # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
+      - name: Check allowed-actors shape
+        if: ${{ !startsWith(inputs.allowed-actors, '[') }}
+        run: echo "::error::allowed-actors must be a JSON array, e.g. '[\"octocat\"]'" && exit 1
+
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
+      - name: Enforce allowed-actors
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
+        env:
+          ACTOR: ${{ github.event.sender.login || github.actor }}
+        run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Fail loudly rather than let actions/checkout silently build the default branch.
+      - name: Resolve vanguard source ref
+        if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
+        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha / job.workflow_repository did not resolve" && exit 1
+
+      # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
+      # the CLI at the same revision as the YAML.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
+          ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
+          path: .vanguard-src
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .vanguard-src/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: .vanguard-src/pnpm-lock.yaml
+
+      # --ignore-scripts skips esbuild's postinstall (pnpm.onlyBuiltDependencies); fine because only `pnpm build`
+      # (tsc + cp) and `node dist/` run here. Anything invoking tsx/vitest from .vanguard-src would need it.
+      - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+        working-directory: .vanguard-src
+
+      - run: pnpm build
+        working-directory: .vanguard-src
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "needs research" --repo "$GITHUB_REPOSITORY" --color 1D76DB --force
+          gh label create "vanguard:researching" --repo "$GITHUB_REPOSITORY" --color BFDADC --force
+
+      # `--web` is deliberately not offered: it needs widened sandbox egress (see the egress note in the docs).
+      - name: Research the issue
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          IN_NUMBER: ${{ inputs.number }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_RESEARCH_MODEL: ${{ inputs.research-model }}
+        run: |
+          [[ "$IN_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::number must be a positive integer, got '$IN_NUMBER'"; exit 1; }
+          args=(research "$IN_NUMBER" --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE")
+          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
+          [ -n "$IN_RESEARCH_MODEL" ] && args+=(--research-model "$IN_RESEARCH_MODEL")
+          node .vanguard-src/dist/cli/index.js "${args[@]}"
