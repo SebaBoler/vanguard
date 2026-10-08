@@ -213,6 +213,22 @@ describe('runSourcedIssue', () => {
     scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
 
+  it('passes the pushed (possibly rebased) head to publishVerdict, not the SHA commitStage returned (#423)', async () => {
+    publishForReview.mockResolvedValueOnce({ branch: 'b', prUrl: MR_URL, headSha: 'rebased99' });
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+    expect(adapter.publishVerdict).toHaveBeenCalledWith(expect.objectContaining({ headSha: 'rebased99' }));
+  });
+
+  it('threads the white-label commit author into publishForReview for the pre-push rebase (#423)', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    const deps: RunIssueDeps = { repoPath: '/repo', commitAuthor: { name: 'Acme Bot', email: 'bot@acme.test' } };
+    await runSourcedIssue('group/project#1', deps, adapter);
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ authorName: 'Acme Bot', authorEmail: 'bot@acme.test' }),
+    );
+  });
+
   it('fires publishVerdict → addFailureLabel → linkPr in order and reaches the conformance stage', async () => {
     // A failing verification triggers exactly one addFailureLabel('verify') between publish and link.
     vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
@@ -225,6 +241,8 @@ describe('runSourcedIssue', () => {
 
     expect(result.prUrl).toBe(MR_URL);
     expect(order).toEqual(['publishVerdict', 'addFailureLabel', 'linkPr']);
+    // publishForReview returned no headSha: the commit's SHA is the review marker.
+    expect(adapter.publishVerdict).toHaveBeenCalledWith(expect.objectContaining({ headSha: 'abc1234' }));
     expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'verify');
     // assembleReviewPipeline appends the conformance stage when deps.conformance is true.
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];

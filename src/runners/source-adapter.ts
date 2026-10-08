@@ -644,6 +644,10 @@ export async function runSourcedIssue(
         draft: true,
         ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
         ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
+        // Same identity as commitStage: the pre-push rebase replays the commits (white-label keeps its name).
+        ...(deps.commitAuthor !== undefined
+          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
+          : {}),
       });
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
@@ -657,7 +661,8 @@ export async function runSourcedIssue(
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({
           prUrl: pr.prUrl,
-          headSha: commit.sha!,
+          // The pre-push rebase may have rewritten the commit; the marker must name the pushed head.
+          headSha: pr.headSha ?? commit.sha!,
           reviewerOutcome,
           conformanceOutcome,
           attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),
