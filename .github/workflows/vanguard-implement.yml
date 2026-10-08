@@ -77,4 +77,4 @@ jobs:
           VANGUARD_DECISION_PROBE: '1'
         run: |
           # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
-          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model claude-sonnet-5 --review-provider codex --escalate-model claude-fable-5
+          node dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills ./skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex --escalate-model claude-fable-5-1
