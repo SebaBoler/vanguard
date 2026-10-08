@@ -11,13 +11,12 @@ import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECIS
 import { VanguardError } from '../core/errors.js';
 import { decisionDiffScorer } from '../evals/decision-judge.js';
 import { literalPrompt } from '../context/prompt-engine.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
-import { scanForSecrets } from '../core/secret-scan.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
@@ -26,11 +25,11 @@ import { resolveVerifyCommand, runVerification, renderVerificationFeedback, proo
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
+import { deliverChange } from './deliver-change.js';
 import {
   parseSpecManifest,
   checkConformance,
   renderConformanceFeedback,
-  scanCommitClosingKeywords,
   commitLeakWarningBlock,
   PASSING_RESULT,
 } from '../pipeline/conformance-gate.js';
@@ -577,48 +576,6 @@ export async function runSourcedIssue(
       if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
       if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
 
-      // Gate before commitStage/publishForReview: publishForReview pushes the branch before any
-      // label can be attached, so the raw secret must never reach a commit in the first place.
-      const outgoing = await ctx.wm.diff(ctx.worktreePath);
-      let block: SecretBlock | undefined;
-      try {
-        const findings = scanForSecrets(outgoing);
-        if (findings.length > 0) {
-          console.error(
-            `vanguard: secret scan blocked publish for ${task.id}:`,
-            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
-          );
-          block = { reason: 'findings', findings };
-        }
-      } catch (err) {
-        console.error(`vanguard: secret scan failed for ${task.id}, blocking publish as a precaution:`, err);
-        block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
-      }
-      if (block !== undefined) {
-        await persistStageOutcomes(deps.repoPath, outcomes);
-        // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
-        // no branded comment. The operator still gets the masked findings on stderr (above) + run record.
-        if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, block);
-        deps.onEvent?.({ type: 'run-end', secretBlocked: true });
-        return { task, secretBlocked: true };
-      }
-
-      const commit = await commitStage(ctx, {
-        // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
-        // (≤100-char header, lower-case subject, trailing #issue). Default keeps the readable form.
-        message: whiteLabel
-          ? conventionalCommitMessage(task.title, adapter.taskId(task))
-          : `feat: ${task.title} (${task.id})`,
-        ...(deps.commitAuthor !== undefined
-          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
-          : {}),
-      });
-      if (!commit.committed) {
-        await persistStageOutcomes(deps.repoPath, outcomes);
-        deps.onEvent?.({ type: 'run-end' });
-        return { task };
-      }
-
       // Verification participates in the Closes/Part-of decision alongside conformance: a red result
       // forces the declared-partial path even when conformance itself passed.
       const verificationFailed = verification !== undefined && !verification.passed;
@@ -630,34 +587,49 @@ export async function runSourcedIssue(
         ...(!implementerDone ? { implementerIncomplete: true } : {}),
         ...(whiteLabel ? { hideAttribution: true } : {}),
       });
-      // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
-      // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
-      // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
-      const commitLeaks = partial
-        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, baseRef), task.id)
-        : [];
-      // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
-      // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the
-      // Closes-vs-Part-of decision baked into baseBody.
-      const body = whiteLabel
-        ? baseBody
-        : [
-            baseBody,
-            commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
-            verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
-            visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
-          ].filter((s): s is string => s !== undefined).join('\n\n');
-      const pr = await publishForReview(ctx, {
-        title: `${task.title} (${task.id})`,
-        body,
-        draft: true,
-        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
-        ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
-        // Same identity as commitStage: the pre-push rebase replays the commits (white-label keeps its name).
-        ...(deps.commitAuthor !== undefined
-          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
-          : {}),
+      // deliverChange owns the order: secret scan → commit → closing-keyword scan → rebase/push → PR.
+      // The body is built after the commit so a partial result can carry commit-level `Closes #N`
+      // leaks as a blocking warning. White-label mode keeps the body to just the Closes/Part-of line —
+      // no automated proof-of-work blocks — so the PR reads like a plain human PR.
+      const delivery = await deliverChange(ctx, {
+        taskId: task.id,
+        // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
+        // (≤100-char header, lower-case subject, trailing #issue). Default keeps the readable form.
+        commitMessage: whiteLabel
+          ? conventionalCommitMessage(task.title, adapter.taskId(task))
+          : `feat: ${task.title} (${task.id})`,
+        ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
+        ...(partial ? { closingKeywordBase: baseRef } : {}),
+        target: {
+          kind: 'new-pr',
+          title: `${task.title} (${task.id})`,
+          draft: true,
+          ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+          ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
+          body: ({ commitLeaks }) => whiteLabel
+            ? baseBody
+            : [
+                baseBody,
+                commitLeaks.length > 0 ? commitLeakWarningBlock(commitLeaks) : undefined,
+                verification !== undefined ? proofBlock(verification) : verifySkippedBlock(),
+                visualProof !== undefined ? visualProofBlock(visualProof) : undefined,
+              ].filter((s): s is string => s !== undefined).join('\n\n'),
+        },
       });
+      if (delivery.kind === 'secret-blocked') {
+        await persistStageOutcomes(deps.repoPath, outcomes);
+        // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
+        // no branded comment. The operator still gets the masked findings on stderr + run record.
+        if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, delivery.block);
+        deps.onEvent?.({ type: 'run-end', secretBlocked: true });
+        return { task, secretBlocked: true };
+      }
+      if (delivery.kind === 'no-changes') {
+        await persistStageOutcomes(deps.repoPath, outcomes);
+        deps.onEvent?.({ type: 'run-end' });
+        return { task };
+      }
+      const pr = { prUrl: delivery.prUrl!, headSha: delivery.headSha };
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
       // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
       // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
@@ -670,8 +642,8 @@ export async function runSourcedIssue(
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({
           prUrl: pr.prUrl,
-          // The pre-push rebase may have rewritten the commit; the marker must name the pushed head.
-          headSha: pr.headSha ?? commit.sha!,
+          // The pre-push rebase may have rewritten the commit; the marker names the pushed head.
+          headSha: pr.headSha,
           reviewerOutcome,
           conformanceOutcome,
           attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),

@@ -23,15 +23,13 @@ import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
 import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
-import { scanForSecrets, renderSecretBlockComment } from '../core/secret-scan.js';
-import type { SecretBlock } from '../core/secret-scan.js';
+import { renderSecretBlockComment } from '../core/secret-scan.js';
+import { deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import {
   implementReviewSimplifyStages,
   runStages,
-  commitStage,
-  pushToExistingBranch,
   droppedCiPathsNote,
   withStageProvider,
   withStageModel,
@@ -313,20 +311,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
       // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
       // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
-      let block: SecretBlock | undefined;
-      try {
-        const findings = scanForSecrets(revisionDiff);
-        if (findings.length > 0) {
-          console.error(
-            `vanguard: secret scan blocked revise push for ${target.repoSlug}#${target.number}:`,
-            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
-          );
-          block = { reason: 'findings', findings };
-        }
-      } catch (err) {
-        console.error(`vanguard: secret scan failed for ${target.repoSlug}#${target.number}, blocking push as a precaution:`, err);
-        block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
-      }
+      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`);
       if (block !== undefined) {
         // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
         // write no preview (it would carry the raw secret), and leave the labels alone.
@@ -377,27 +362,31 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
-      const commit = await commitStage(ctx, {
-        message: `fix: address review feedback (${target.repoSlug}#${target.number})`,
-        ...(deps.commitAuthor !== undefined
-          ? { authorName: deps.commitAuthor.name, authorEmail: deps.commitAuthor.email }
-          : {}),
+      const pushToken = process.env.VANGUARD_PUSH_TOKEN;
+      // deliverChange owns the order: secret scan on the revision diff → commit → push onto the PR branch.
+      const delivery = await deliverChange(ctx, {
+        taskId: `${target.repoSlug}#${target.number}`,
+        commitMessage: `fix: address review feedback (${target.repoSlug}#${target.number})`,
+        ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
+        outgoingDiff: revisionDiff,
+        target: {
+          kind: 'existing-branch',
+          prHeadRef: pr.headRefName,
+          ...(pushToken ? { pushToken, host: 'github.com' } : {}),
+          ...(deps._pushRunner !== undefined ? { runner: deps._pushRunner } : {}),
+        },
       });
-
-      if (!commit.committed) {
+      if (delivery.kind === 'secret-blocked') {
+        // Unreachable in practice: the gate above already scanned this very diff before the --out branch.
+        // Kept so deliverChange's contract holds even if the early gate moves.
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+      }
+      if (delivery.kind === 'no-changes') {
         log(`revise-pr ${target.repoSlug}#${target.number}: no changes — skipping push`);
         return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
-
-      const pushToken = process.env.VANGUARD_PUSH_TOKEN;
-      log(`revise-pr ${target.repoSlug}#${target.number}: push -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
-      await pushToExistingBranch(ctx, {
-        prHeadRef: pr.headRefName,
-        ...(pushToken ? { pushToken, host: 'github.com' } : {}),
-        ...(deps._pushRunner !== undefined ? { runner: deps._pushRunner } : {}),
-      });
-
-      const sha = commit.sha ?? 'unknown';
+      log(`revise-pr ${target.repoSlug}#${target.number}: pushed -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
+      const sha = delivery.sha;
 
       // Re-derive the PR body from the CURRENT diff on every cycle so a stale `Closes #N` can never
       // survive a revision that regressed (alpha-window#901 kept a stale Closes through two review
