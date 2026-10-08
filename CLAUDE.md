@@ -4,10 +4,15 @@ Vanguard is a standalone TypeScript framework — an autonomous software factory
 
 ## Hard constraints
 
-- **The factory agent never modifies files under `.github/workflows/`.** The CI `GITHUB_TOKEN` cannot push changes to workflow files — GitHub rejects the push without a `workflow`-scoped token, which fails the run and loses all the work. If a task seems to need a workflow change, make the code/doc change instead and describe the needed workflow edit in the PR body for a human to apply by hand. This binds the autonomous run (implement, revise); a maintainer editing workflows from a local session with a `workflow`-scoped token is the sanctioned path, and reviewers should not flag such a PR for the rule itself. Those PRs must not be labelled `needs revision` (the reviser's push would be rejected).
+- **Never modify files under `.github/workflows/`.** The CI `GITHUB_TOKEN` cannot push changes to workflow files — GitHub rejects the push without a `workflow`-scoped token, which fails the run and loses all the work. If a task seems to need a workflow change, make the code/doc change instead and describe the needed workflow edit in the PR body for a human to apply by hand.
 - Run `pnpm typecheck` and `pnpm test` before signalling completion.
 
 ## Style
 
 - Match the surrounding code: comment density, naming, idiom. Keep diffs minimal.
 - Explicit return types; prefer `const`; early returns; functional where it fits.
+
+## Review guidance
+
+- The workflow-file constraint above binds the autonomous run (implement, revise). A maintainer editing `.github/workflows/` from a local session with a `workflow`-scoped token is the sanctioned path it points to: do not flag such a PR for the rule itself, but review the workflow content as the highest-risk part of the diff — trigger type (`pull_request_target`), `permissions:`, actor gates, secret exposure, no `${{ }}` interpolation inside `run:`.
+- Do not label a PR that touches workflow files `needs revision`: the reviser's workflow-file edits are silently dropped by copy-back, so it cannot address that feedback and ends in "no changes — skipping push".
