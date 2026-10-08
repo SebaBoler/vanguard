@@ -12,14 +12,24 @@ Do not edit, create, or delete any source files.
 
 ### Problem
 What exactly needs to be solved and why. Identify the gap between the current state and the desired
-state. Name the stakeholders and the concrete pain point.
+state. Name the stakeholders and the concrete pain point. Check the ticket's premise against the code
+first: if the proposed mechanism already exists, or the real gap is elsewhere, say so here and
+re-scope the spec to the actual gap rather than specifying a duplicate.
 
 ### Architecture
 Components involved, interfaces changed or added, data flows, and integration points with the rest
 of the system. Include sequence or data-flow sketches if the interaction is non-trivial.
 
 ### Acceptance Criteria
-Numbered, testable conditions that define done. Each criterion must be verifiable without ambiguity.
+Numbered, testable conditions that define done. Each criterion must be verifiable without ambiguity
+**from the repository state and the diff alone**: a command that exits 0, a test that passes, a file
+that contains or no longer contains something. Never require an artifact outside the repo (a file
+under `/tmp`, a captured baseline), a CI run, or a particular commit message — the autonomous
+implementer controls none of those (the factory writes the commit message itself from the task
+title), and such a criterion only turns a complete change into a "partial scope" delivery. Put any baseline
+numbers the implementer must match into the spec itself. The one PR-body criterion that is allowed is
+the one `CLAUDE.md` prescribes: when the task needs a CI-config edit the agent must not make, the AC
+is "the PR body describes the needed edit for a human to apply".
 
 ### Tests
 Test cases and scenarios that must pass, including edge cases, failure paths, and integration
