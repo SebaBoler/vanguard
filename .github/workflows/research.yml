@@ -30,6 +30,8 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
+      CODEX_AUTH_JSON:
+        required: false
 
 jobs:
   research:
@@ -89,6 +91,7 @@ jobs:
       - name: Research the issue
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
           IN_NUMBER: ${{ inputs.number }}
           IN_PROVIDER: ${{ inputs.provider }}
           IN_RESEARCH_MODEL: ${{ inputs.research-model }}

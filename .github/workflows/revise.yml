@@ -35,6 +35,8 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
+      CODEX_AUTH_JSON:
+        required: false
       VANGUARD_PUSH_TOKEN:
         description: 'PAT for revision pushes. GITHUB_TOKEN pushes fire no workflows (recursion guard), so a revised PR would get no CI and sit BLOCKED under branch protection (#256). Falls back to the workflow token.'
         required: false
@@ -109,13 +111,14 @@ jobs:
         env:
           VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
         run: |
-          git config --global credential.helper store
+          git config --global "credential.https://github.com/$GITHUB_REPOSITORY.helper" store
           umask 077
-          printf 'https://x-access-token:%s@github.com\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" > "$HOME/.git-credentials"
+          printf 'https://x-access-token:%s@github.com/%s\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" "$GITHUB_REPOSITORY" > "$HOME/.git-credentials"
 
       - name: Revise the PR from review comments
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
           VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
           IN_NUMBER: ${{ inputs.number }}
           IN_PROVIDER: ${{ inputs.provider }}
@@ -125,3 +128,7 @@ jobs:
           [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
           [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
           node .vanguard-src/dist/cli/index.js "${args[@]}"
+
+      - name: Remove git credentials
+        if: ${{ always() }}
+        run: rm -f "$HOME/.git-credentials"

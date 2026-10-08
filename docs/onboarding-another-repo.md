@@ -170,8 +170,8 @@ Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, pl
 
 | Workflow | Inputs | Secrets |
 |---|---|---|
-| `research.yml` | `allowed-actors`, `number` (issue number, required), `provider`, `research-model`, `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN` |
-| `revise.yml` | `allowed-actors`, `number` (PR number, required), `provider`, `llm-proxy`, `timeout-minutes` (default 90), `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `VANGUARD_PUSH_TOKEN` |
+| `research.yml` | `allowed-actors`, `number` (issue number, required), `provider`, `research-model`, `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON` |
+| `revise.yml` | `allowed-actors`, `number` (PR number, required), `provider`, `llm-proxy`, `timeout-minutes` (default 90), `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `VANGUARD_PUSH_TOKEN` |
 
 Inside a called workflow the `inputs` context means the `workflow_call` inputs, not your `workflow_dispatch` ones, so the caller passes the number in: `number: ${{ github.event.issue.number || inputs.issue }}` for research, `number: ${{ github.event.pull_request.number || inputs.pr }}` for revise. Revise runs at most 2 rounds.
 
@@ -262,7 +262,7 @@ Replace `YOUR_LOGIN` in the callers with your GitHub login, and set `allowed-act
 
 **The fix.** A fine-grained Personal Access Token: pushes made with a PAT count as user events, so `pull_request: synchronize` fires and CI runs normally. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
 
-1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write**; add **Workflows → Read and write** only if you want revisions that touch `.github/workflows/` to push (GitHub rejects such pushes without it, and the run is lost). Nothing else (Metadata: Read is added automatically). Set an expiration (e.g. 90 days).
+1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** — nothing else (Metadata: Read is added automatically). Do **not** grant Workflows: that would let the autonomous reviser rewrite the very workflows that carry its actor gates and secrets. A revision that touches `.github/workflows/` is rejected by GitHub by design; apply such edits by hand. Set an expiration (e.g. 90 days).
 2. Store it: `gh secret set VANGUARD_PUSH_TOKEN --repo OWNER/REPO` (repeat per repo — Actions secrets are per-repo, even when the PAT itself covers several).
 3. Map it in your revise caller's `secrets:` block:
 

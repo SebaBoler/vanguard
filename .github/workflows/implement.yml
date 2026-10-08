@@ -148,6 +148,7 @@ jobs:
       # Codex on a ChatGPT subscription (CODEX_AUTH_JSON) talks to the ChatGPT backend directly, which the
       # --llm-proxy allowlist does not cover — so llm-proxy is a caller opt-in, off by default.
       - name: Run Vanguard loop
+        id: loop
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
@@ -181,7 +182,8 @@ jobs:
           node .vanguard-src/dist/cli/index.js "${args[@]}"
 
       - name: Persist run metrics
-        if: ${{ always() && inputs.persist-metrics }}
+        # Only once the loop ran (success or failure); not after a blocked gate or a failed build.
+        if: ${{ inputs.persist-metrics && contains(fromJSON('["success","failure"]'), steps.loop.conclusion) }}
         env:
           IN_METRICS_BRANCH: ${{ inputs.metrics-branch }}
         run: |
