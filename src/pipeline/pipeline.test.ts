@@ -380,10 +380,10 @@ describe('publishForReview', () => {
     };
     const out = await publishForReview(ctx, { title: 'PR', runner, authorName: 'Bot', authorEmail: 'bot@x' });
     expect(calls).toEqual([
-      ['fetch', 'origin', 'main'],
+      ['fetch', '--end-of-options', 'origin', 'main'],
       ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
-      ['rev-parse', 'HEAD'],
+      ['rev-parse', 'refs/heads/chore/vanguard-pub2-r2'],
       ['push', '--no-verify', '-u', 'origin', 'chore/vanguard-pub2-r2'],
     ]);
     // The review marker must point at the rewritten head, not the SHA commitStage returned.
@@ -1472,7 +1472,7 @@ describe('rebaseOntoRemoteBase', () => {
     };
     expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
     expect(calls.at(-1)).toEqual(['rebase', '--abort']);
-    expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\)/);
+    expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\): Merge conflict in a.ts \| more/);
   });
 
   it('treats a failed comparison as not behind and logs it (single-branch clone, remote given as URL)', async () => {
@@ -1494,7 +1494,7 @@ describe('rebaseOntoRemoteBase', () => {
     await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) });
     expect(lines[0]).toContain('https://***@github.com/o/r/');
     expect(lines[0]).not.toContain('ghs_secret');
-    expect(lines[0]).not.toContain('more');
+    expect(lines[0]).toContain('403 | more');
   });
 
   it('logs a failed fetch instead of hiding it', async () => {

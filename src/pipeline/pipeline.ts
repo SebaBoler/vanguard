@@ -1132,7 +1132,7 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   const log = opts.log ?? ((line: string): void => console.log(line));
   const target = `${opts.remote}/${opts.base}`;
   try {
-    await run('git', ['fetch', opts.remote, opts.base], cwd);
+    await run('git', ['fetch', '--end-of-options', opts.remote, opts.base], cwd);
   } catch (cause) {
     log(`publish: could not fetch ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
@@ -1159,10 +1159,10 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   return true;
 }
 
-/** First line of a git error, with any URL userinfo (`https://user:token@host`) masked. */
+/** First lines of a git error (enough for a conflict's file list), URL userinfo (`https://user:token@host`) masked. */
 function errorMessage(cause: unknown): string {
-  const first = cause instanceof Error ? cause.message.split('\n')[0] ?? '' : String(cause);
-  return first.replace(/\/\/[^/@\s]+@/g, '//***@');
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return text.split('\n').slice(0, 3).join(' | ').replace(/\/\/[^/@\s]+@/g, '//***@');
 }
 
 /**
@@ -1184,8 +1184,9 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
     ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),
   });
   // A rebase rewrites the commit: callers must use this SHA (review marker, verdict header), not the
-  // one commitStage returned.
-  const headSha = (await run('git', ['rev-parse', 'HEAD'], ctx.worktreePath).catch(() => '')).trim();
+  // one commitStage returned. The branch ref, not HEAD: after a failed `rebase --abort` HEAD may be
+  // detached mid-rebase while the push still sends the branch.
+  const headSha = (await run('git', ['rev-parse', `refs/heads/${ctx.branch}`], ctx.worktreePath).catch(() => '')).trim();
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
   const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
