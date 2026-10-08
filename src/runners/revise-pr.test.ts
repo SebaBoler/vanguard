@@ -64,7 +64,7 @@ afterEach(async () => {
   await rm(repo, { recursive: true, force: true });
 });
 
-function makeSandbox(): IsolatedSandboxProvider {
+function makeSandbox(fixContent = 'fix applied'): IsolatedSandboxProvider {
   return {
     id: 'fake',
     start: async (): Promise<void> => {},
@@ -79,7 +79,7 @@ function makeSandbox(): IsolatedSandboxProvider {
       if (sandboxPath === '/workspace') {
         await mkdir(hostPath, { recursive: true });
         // Agent writes a file in the sandbox → synced to worktree
-        await writeFile(join(hostPath, 'fix.txt'), 'fix applied');
+        await writeFile(join(hostPath, 'fix.txt'), fixContent);
       }
     },
     exists: async (): Promise<boolean> => true,
@@ -197,6 +197,49 @@ function makeFeedbackJsonWithNonThreadItems(): string {
 // ---------------------------------------------------------------------------
 // Happy path
 // ---------------------------------------------------------------------------
+
+describe('runRevisePullRequest secret gate', () => {
+  it('blocks the push when the revision diff carries a secret — nothing committed, no comment, no undraft', async () => {
+    const ghCalls: string[][] = [];
+    const pushCalls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    try {
+      const result = await runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox('token = "ghp_' + 'A'.repeat(40) + '"\n'),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async (_f, a) => { pushCalls.push(a); return ''; },
+        _baseBranch: 'feature-branch',
+        provider: 'claude',
+      });
+      expect(result.secretBlocked).toBe(true);
+      expect(result.committed).toBe(false);
+      expect(result.pushed).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(pushCalls).toEqual([]);
+    expect(ghCalls.some((a) => a[0] === 'pr' && (a[1] === 'comment' || a[1] === 'ready' || a[1] === 'edit'))).toBe(false);
+    // The operator sees the finding masked, never the raw token.
+    expect(errors.join('\n')).toMatch(/secret scan blocked revise push .*fix\.txt \[github-token\]/);
+    expect(errors.join('\n')).not.toContain('ghp_' + 'A'.repeat(40));
+  });
+});
 
 describe('runRevisePullRequest happy path', () => {
   it('applies fixes, pushes, replies+resolves threads, undrafts, and flips labels', async () => {

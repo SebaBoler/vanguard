@@ -22,6 +22,7 @@ import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
+import { scanForSecrets } from '../core/secret-scan.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import {
@@ -116,6 +117,8 @@ export interface ReviseGithubPrResult {
   undrafted: boolean;
   /** Absolute path of the dry-run preview file, when --out was given (push/comment were skipped). */
   dryRunOut?: string;
+  /** The revision diff carried a secret (or the scan failed): nothing was committed or pushed. */
+  secretBlocked?: boolean;
 }
 
 function editPrLabels(
@@ -324,6 +327,22 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         await writeFile(deps.out, preview, 'utf8');
         log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
+      }
+
+      // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
+      // a commit, let alone the PR branch. Scan-error blocks too, as a precaution.
+      try {
+        const findings = scanForSecrets(revisionDiff);
+        if (findings.length > 0) {
+          console.error(
+            `vanguard: secret scan blocked revise push for ${target.repoSlug}#${target.number}:`,
+            findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+          );
+          return { pr, addressed: 0, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+        }
+      } catch (err) {
+        console.error(`vanguard: secret scan failed for ${target.repoSlug}#${target.number}, blocking push as a precaution:`, err);
+        return { pr, addressed: 0, committed: false, pushed: false, undrafted: false, secretBlocked: true };
       }
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
