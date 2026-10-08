@@ -69,6 +69,10 @@ on:
         description: 'Orphan branch for persisted metrics (--branch). Empty = CLI default (vanguard-metrics).'
         type: string
         default: ''
+      max-tasks:
+        description: 'Cap how many ready issues one run claims per phase (--max-tasks), so a mislabelled batch cannot flood the runner. Empty = no cap.'
+        type: string
+        default: ''
       skills:
         description: 'Skills directory (--skills), relative to the workspace.'
         type: string
@@ -96,6 +100,11 @@ jobs:
     steps:
       # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
       # the run loudly instead of skipping the job and reporting the caller green.
+      # A JSON string ('"octocat"') would turn contains() into a substring match; only an array is accepted.
+      - name: Check allowed-actors shape
+        if: ${{ !startsWith(inputs.allowed-actors, '[') }}
+        run: echo "::error::allowed-actors must be a JSON array, e.g. '[\"octocat\"]'" && exit 1
+
       - name: Enforce allowed-actors
         if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
         env:
@@ -106,14 +115,14 @@ jobs:
 
       # Fail loudly rather than let actions/checkout silently build the default branch.
       - name: Resolve vanguard source ref
-        if: ${{ inputs.vanguard-ref == '' && (job.workflow_sha == '' || job.workflow_repository == '') }}
-        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha / job.workflow_repository did not resolve" && exit 1
+        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
+        run: echo "::error::inputs.vanguard-ref is empty and job.workflow_sha did not resolve" && exit 1
 
       # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
       # the CLI at the same revision as the YAML.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}
+          repository: SebaBoler/vanguard   # fixed: a caller never wants its own repo as the Vanguard source
           ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
           path: .vanguard-src
 
@@ -127,6 +136,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: .vanguard-src/pnpm-lock.yaml
 
+      # --ignore-scripts skips esbuild's postinstall (pnpm.onlyBuiltDependencies); fine because only `pnpm build`
+      # (tsc + cp) and `node dist/` run here. Anything invoking tsx/vitest from .vanguard-src would need it.
       - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
         working-directory: .vanguard-src
 
@@ -164,6 +175,7 @@ jobs:
           IN_ESCALATE_MODEL: ${{ inputs.escalate-model }}
           IN_CONFORMANCE: ${{ inputs.conformance }}
           IN_CONFORMANCE_MODEL: ${{ inputs.conformance-model }}
+          IN_MAX_TASKS: ${{ inputs.max-tasks }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
           IN_SKILLS: ${{ inputs.skills }}
         run: |
@@ -178,6 +190,7 @@ jobs:
           [ -n "$IN_ESCALATE_MODEL" ] && args+=(--escalate-model "$IN_ESCALATE_MODEL")
           [ "$IN_CONFORMANCE" = "true" ] && args+=(--conformance)
           [ -n "$IN_CONFORMANCE_MODEL" ] && args+=(--conformance-model "$IN_CONFORMANCE_MODEL")
+          [ -n "$IN_MAX_TASKS" ] && args+=(--max-tasks "$IN_MAX_TASKS")
           [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
           node .vanguard-src/dist/cli/index.js "${args[@]}"
 
