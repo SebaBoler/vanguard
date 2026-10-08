@@ -61,7 +61,9 @@ import type { AgentProvider } from '../agents/provider.js';
 const NEEDS_REVISION_LABEL = 'needs revision';
 const VANGUARD_REVISING_LABEL = 'vanguard:revising';
 const DEFAULT_MAX_ROUNDS = 2;
-const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL], add: [GITHUB_REVIEW_LABEL] };
+// secret-blocked is removed too: a round that pushes cleanly after the human stripped the secret must
+// not leave the PR mapped to verify-failed on the board.
+const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABEL, GITHUB_SECRET_BLOCKED_LABEL], add: [GITHUB_REVIEW_LABEL] };
 
 /** Cap on implement-session resumes triggered by a red verification in the revise pass — one bounded repair. */
 const MAX_VERIFY_REPAIRS = 1;
@@ -329,18 +331,21 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
         // write no preview (it would carry the raw secret), and leave the labels alone.
         if (deps.out === undefined) {
+          await handBackPrLabels(gh, target.repoSlug, target.number, log);
+          // White-label runs keep the automation invisible in the client repo: no branded comment and no
+          // secret-blocked label (same rule as the first delivery); the hand-back label is the one the
+          // revise loop already relies on.
           if (!whiteLabel) {
             const notice = [
-              renderSecretBlockComment(block),
-              'Nothing was pushed to this branch; the requested changes remain unaddressed. Remove the secret from the revision and re-label `needs revision`.',
+              renderSecretBlockComment(block, 'revision'),
+              'Remove the secret from the revision and re-label `needs revision`.',
               droppedCiPathsNote(ctx.droppedCiPaths),
             ].filter((part) => part !== '').join('\n\n');
             await commentPullRequest(target, notice, gh).catch(() => undefined);
+            // Same marker as the first delivery, so the board maps it to verify-failed, not to a clean hand-back.
+            await gh(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', target.repoSlug, '--force']).catch(() => undefined);
+            await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--add-label', GITHUB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
           }
-          await handBackPrLabels(gh, target.repoSlug, target.number, log);
-          // Same marker as the first delivery, so the board maps it to verify-failed, not to a clean hand-back.
-          await gh(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', target.repoSlug, '--force']).catch(() => undefined);
-          await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--add-label', GITHUB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
         }
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
       }

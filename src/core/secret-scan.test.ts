@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactTokens, scanForSecrets } from './secret-scan.js';
+import { redactTokens, scanForSecrets, renderSecretBlockComment } from './secret-scan.js';
 
 const FAKE_JWT = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
 const FAKE_SK_KEY = 'sk-FAKEtestkeyABCDEFGHIJ1234567890';
@@ -309,5 +309,15 @@ describe('allowlist marker (global suppression)', () => {
       { path: 'src/config.ts', lines: [`+const token = "${FAKE_JWT}"; // Pragma: Allowlist Secret`] },
     ]);
     expect(scanForSecrets(diff2).some((f) => f.patternName === 'jwt')).toBe(false);
+  });
+});
+
+describe('renderSecretBlockComment stage wording', () => {
+  it('names the outcome per stage: first delivery opened no PR, a revision pushed nothing', () => {
+    const block = { reason: 'findings' as const, findings: [{ file: 'a.ts', patternName: 'github-token', masked: '[REDACTED-GH]' }] };
+    expect(renderSecretBlockComment(block)).toContain('No PR was opened.');
+    expect(renderSecretBlockComment(block, 'revision')).toContain('Nothing was pushed to this branch');
+    expect(renderSecretBlockComment(block, 'revision')).not.toContain('No PR was opened');
+    expect(renderSecretBlockComment({ reason: 'scan-error', message: 'boom' }, 'revision')).toContain('Nothing was pushed to this branch');
   });
 });

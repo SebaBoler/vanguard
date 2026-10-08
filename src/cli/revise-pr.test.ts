@@ -67,6 +67,7 @@ describe('revisePrCommand', () => {
   });
 
   it('logs a BLOCKED line (not the done/no-changes/dry-run lines) when the revision carried a secret', async () => {
+    // The runner never returns secretBlocked together with dryRunOut; both are set here only to pin that BLOCKED wins.
     const logs: string[] = [];
     const revisePullRequest = vi.fn(async (): Promise<ReviseGithubPrResult> => ({ ...makeResult(false), addressed: 2, secretBlocked: true, dryRunOut: '/tmp/x.md' }));
     await revisePrCommand(makeCmd(), { revisePullRequest, log: (line) => logs.push(line) });

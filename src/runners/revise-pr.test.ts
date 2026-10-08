@@ -250,6 +250,7 @@ describe('runRevisePullRequest secret gate', () => {
     expect(errors.join('\n')).toMatch(/secret scan blocked revise push .*fix\.txt \[github-token\]/);
     expect(errors.join('\n')).not.toContain('ghp_' + 'A'.repeat(40));
     expect(comment?.join(' ')).toMatch(/Nothing was pushed to this branch/);
+    expect(comment?.join(' ')).not.toContain('No PR was opened');
     expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--add-label') && a.includes('vanguard:secret-blocked'))).toBe(true);
   });
 
@@ -271,7 +272,7 @@ describe('runRevisePullRequest secret gate', () => {
     try {
       const result = await runRevisePullRequest('7', {
         repoPath: repo, repoSlug: 'o/r', gh, out,
-        _sandbox: makeSandbox('token = "ghp_' + 'A'.repeat(40) + '"\\n'),
+        _sandbox: makeSandbox('token = "ghp_' + 'A'.repeat(40) + '"\n'),
         _agent: agentThatCompletes([]), _worktrees: new WorktreeManager(repo), _pushRunner: async () => '', _baseBranch: 'feature-branch', provider: 'claude',
       });
       expect(result.secretBlocked).toBe(true);
