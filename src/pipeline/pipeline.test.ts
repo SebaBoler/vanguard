@@ -358,8 +358,9 @@ describe('publishForReview', () => {
     expect(out.branch).toBe('chore/vanguard-pub-r1');
     const push = calls.findIndex((c) => c.file === 'git' && c.args[0] === 'push');
     expect(push).toBeGreaterThan(-1);
-    // The base is fetched and compared before the push; the runner stub reports "not behind", so no rebase.
-    expect(calls.slice(0, push).map((c) => c.args[0])).toEqual(['fetch', 'rev-list', 'rev-parse']);
+    // The stub answers ls-remote with exit 0: the branch already exists on the remote (a --reuse
+    // re-run), so no fetch/rebase; only the head is resolved before the push.
+    expect(calls.slice(0, push).map((c) => c.args[0])).toEqual(['ls-remote', 'rev-parse']);
     expect(calls[push + 1]?.file).toBe('gh');
     expect(calls[push + 1]?.args).toEqual(
       expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
@@ -371,15 +372,19 @@ describe('publishForReview', () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r2');
     const ctx = await prepareContext({ taskId: 'pub2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
+    let ghArgs: string[] = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
-      if (file === 'gh') return 'https://github.com/o/r/pull/43';
+      if (file === 'gh') { ghArgs = args; return 'https://github.com/o/r/pull/43'; }
       calls.push(args);
+      if (args[0] === 'ls-remote') throw new Error('exit 2');   // no such remote branch yet
       if (args[0] === 'rev-list') return '2\n';
       if (args[0] === 'rev-parse') return 'abc123rebased\n';
       return '';
     };
-    const out = await publishForReview(ctx, { title: 'PR', runner, authorName: 'Bot', authorEmail: 'bot@x' });
+    const out = await publishForReview(ctx, { title: 'PR', body: 'proof', runner, authorName: 'Bot', authorEmail: 'bot@x' });
+    expect(ghArgs[ghArgs.indexOf('--body') + 1]).toMatch(/^proof\n\n\*\*Rebased\*\* onto `origin\/main` before publishing/);
     expect(calls).toEqual([
+      ['ls-remote', '--exit-code', '--heads', 'origin', 'chore/vanguard-pub2-r2'],
       ['fetch', '--end-of-options', 'origin', 'main'],
       ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
@@ -398,12 +403,12 @@ describe('publishForReview', () => {
     const runner = async (file: string, args: string[]): Promise<string> => {
       if (file === 'gh') return 'https://github.com/o/r/pull/44';
       calls.push(args);
-      if (args[0] === 'fetch') throw new Error('fatal: no such remote');
+      if (args[0] === 'ls-remote' || args[0] === 'fetch') throw new Error('fatal: no such remote');
       return '';
     };
     const out = await publishForReview(ctx, { title: 'PR', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/44');
-    expect(calls.map((c) => c[0])).toEqual(['fetch', 'rev-parse', 'push']);
+    expect(calls.map((c) => c[0])).toEqual(['ls-remote', 'fetch', 'rev-parse', 'push']);
     expect(out.headSha).toBeUndefined();
     await disposeContext(ctx);
   });
@@ -1437,73 +1442,82 @@ describe('planImplementReviewStages defaults', () => {
 
 describe('rebaseOntoRemoteBase', () => {
   const identity = ['-c', 'user.name=Vanguard', '-c', 'user.email=vanguard@local'];
+  const opts = { remote: 'origin', base: 'main', branch: 'b' };
+  /** Runner stub for a branch that does not exist on the remote yet (ls-remote exits 2). */
+  const stub = (calls: string[][], answer: (args: string[]) => string | Error = () => ''): ((f: string, a: string[]) => Promise<string>) =>
+    async (_file, args) => {
+      calls.push(args);
+      if (args[0] === 'ls-remote') throw new Error('exit 2');
+      const out = answer(args);
+      if (out instanceof Error) throw out;
+      return out;
+    };
+
+  it('skips the rebase when the branch already exists on the remote (--reuse re-run)', async () => {
+    const calls: string[][] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => { calls.push(args); return ''; };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', opts)).toBe(false);
+    expect(calls).toEqual([['ls-remote', '--exit-code', '--heads', 'origin', 'b']]);
+  });
 
   it('does nothing when the branch is not behind (rev-list prints 0)', async () => {
     const calls: string[][] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      calls.push(args);
-      return args[0] === 'rev-list' ? '0\n' : '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main' })).toBe(false);
-    expect(calls.map((c) => c[0])).toEqual(['fetch', 'rev-list']);
+    expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? '0\n' : '')), '/wt', opts)).toBe(false);
+    expect(calls.map((c) => c[0])).toEqual(['ls-remote', 'fetch', 'rev-list']);
+  });
+
+  it('treats a non-numeric rev-list answer as not behind', async () => {
+    const calls: string[][] = [];
+    expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? 'warning: something' : '')), '/wt', opts)).toBe(false);
+    expect(calls.map((c) => c[0])).toEqual(['ls-remote', 'fetch', 'rev-list']);
   });
 
   it('rebases with the default identity and --no-verify when behind', async () => {
     const calls: string[][] = [];
     const lines: string[] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      calls.push(args);
-      return args[0] === 'rev-list' ? '1' : '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(true);
-    expect(calls[1]).toEqual(['rev-list', '--count', 'HEAD..FETCH_HEAD']);
-    expect(calls[2]).toEqual([...identity, 'rebase', '--no-verify', 'FETCH_HEAD']);
+    expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? '1' : '')), '/wt', { ...opts, log: (l) => lines.push(l) })).toBe(true);
+    expect(calls[2]).toEqual(['rev-list', '--count', 'HEAD..FETCH_HEAD']);
+    expect(calls[3]).toEqual([...identity, 'rebase', '--no-verify', 'FETCH_HEAD']);
     expect(lines[0]).toMatch(/rebased onto origin\/main \(1 new commit/);
   });
 
   it('aborts a failed rebase, logs the real cause and reports no rebase (push proceeds as-is)', async () => {
     const calls: string[][] = [];
     const lines: string[] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      calls.push(args);
-      if (args[0] === 'rev-list') return '1';
-      if (args.includes('rebase') && !args.includes('--abort')) throw new Error('CONFLICT (content): Merge conflict in a.ts\nmore');
+    const runner = stub(calls, (a) => {
+      if (a[0] === 'rev-list') return '1';
+      if (a.includes('rebase') && !a.includes('--abort')) return new Error('CONFLICT (content): Merge conflict in a.ts\nmore');
       return '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
+    });
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { ...opts, log: (l) => lines.push(l) })).toBe(false);
     expect(calls.at(-1)).toEqual(['rebase', '--abort']);
     expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\): Merge conflict in a.ts \| more/);
   });
 
   it('treats a failed comparison as not behind and logs it (single-branch clone, remote given as URL)', async () => {
     const lines: string[] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      if (args[0] === 'rev-list') throw new Error("fatal: bad revision 'HEAD..FETCH_HEAD'");
-      return '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'develop', log: (l) => lines.push(l) })).toBe(false);
+    const runner = stub([], (a) => (a[0] === 'rev-list' ? new Error("fatal: bad revision 'HEAD..FETCH_HEAD'") : ''));
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { ...opts, base: 'develop', log: (l) => lines.push(l) })).toBe(false);
     expect(lines[0]).toMatch(/could not compare the branch with origin\/develop, pushing as-is \(fatal: bad revision/);
   });
 
-  it('masks URL userinfo in logged git errors', async () => {
+  it('masks URL userinfo and known token shapes in logged git errors', async () => {
     const lines: string[] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      if (args[0] === 'fetch') throw new Error("fatal: unable to access 'https://x-access-token:ghs_secret@github.com/o/r/': 403\nmore");
-      return '';
-    };
-    await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) });
+    const runner = stub([], (a) => (a[0] === 'fetch'
+      ? new Error("fatal: unable to access 'https://x-access-token:ghs_secret@github.com/o/r/': 403\nremote: token ghp_abcdefghijklmnopqrstuvwxyz0123456789 rejected\nmore\nfourth")
+      : ''));
+    await rebaseOntoRemoteBase(runner, '/wt', { ...opts, log: (l) => lines.push(l) });
     expect(lines[0]).toContain('https://***@github.com/o/r/');
     expect(lines[0]).not.toContain('ghs_secret');
-    expect(lines[0]).toContain('403 | more');
+    expect(lines[0]).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+    expect(lines[0]).toContain('403 | remote:');
+    expect(lines[0]).not.toContain('fourth');
   });
 
   it('logs a failed fetch instead of hiding it', async () => {
     const lines: string[] = [];
-    const runner = async (_file: string, args: string[]): Promise<string> => {
-      if (args[0] === 'fetch') throw new Error('fatal: could not read Username');
-      return '';
-    };
-    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
+    const runner = stub([], (a) => (a[0] === 'fetch' ? new Error('fatal: could not read Username') : ''));
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { ...opts, log: (l) => lines.push(l) })).toBe(false);
     expect(lines[0]).toMatch(/could not fetch origin\/main, pushing as-is \(fatal: could not read Username\)/);
   });
 });

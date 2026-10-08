@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { redactTokens } from '../core/secret-scan.js';
 import { runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
@@ -1112,6 +1113,8 @@ export function droppedCiPathsNote(paths: Iterable<string> = []): string {
 export interface RebaseOntoRemoteBaseOptions {
   remote: string;
   base: string;
+  /** The task branch; the rebase is skipped when it already exists on the remote. */
+  branch: string;
   authorName?: string;
   authorEmail?: string;
   log?: (line: string) => void;
@@ -1131,6 +1134,14 @@ export interface RebaseOntoRemoteBaseOptions {
 export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts: RebaseOntoRemoteBaseOptions): Promise<boolean> {
   const log = opts.log ?? ((line: string): void => console.log(line));
   const target = `${opts.remote}/${opts.base}`;
+  // GitHub compares workflow files with the default branch only for a NEW branch. An existing remote
+  // branch (a --reuse re-run) was already pushed: rebasing it would make the plain push non-fast-forward.
+  try {
+    await run('git', ['ls-remote', '--exit-code', '--heads', opts.remote, opts.branch], cwd);
+    return false;
+  } catch {
+    // exit 2: no such remote branch — proceed; any other failure surfaces at the fetch below.
+  }
   try {
     await run('git', ['fetch', '--end-of-options', opts.remote, opts.base], cwd);
   } catch (cause) {
@@ -1144,7 +1155,8 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
     log(`publish: could not compare the branch with ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
   }
-  if (behind === '' || behind === '0') return false;
+  const behindCount = Number.parseInt(behind, 10);
+  if (Number.isNaN(behindCount) || behindCount <= 0) return false;
   // The host worktree has no git identity; rebase replays commits and needs one (same as commitStage).
   const name = opts.authorName ?? 'Vanguard';
   const email = opts.authorEmail ?? 'vanguard@local';
@@ -1162,7 +1174,12 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
 /** First lines of a git error (enough for a conflict's file list), URL userinfo (`https://user:token@host`) masked. */
 function errorMessage(cause: unknown): string {
   const text = cause instanceof Error ? cause.message : String(cause);
-  return text.split('\n').slice(0, 3).join(' | ').replace(/\/\/[^/@\s]+@/g, '//***@');
+  return redactTokens(text).split('\n').slice(0, 3).join(' | ').replace(/\/\/[^/@\s]+@/g, '//***@');
+}
+
+/** PR body note when the branch was rebased after verification ran. */
+export function rebasedNote(remote: string, base: string): string {
+  return `**Rebased** onto \`${remote}/${base}\` before publishing: the base moved during the run, so the verification above was produced on the pre-rebase tree.`;
 }
 
 /**
@@ -1176,9 +1193,12 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // --no-verify skips the target repo's pre-push hook (e.g. a Conventional-Branch name check that
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
-  await rebaseOntoRemoteBase(run, ctx.worktreePath, {
-    remote: opts.remote ?? 'origin',
-    base: opts.baseBranch ?? 'main',
+  const remote = opts.remote ?? 'origin';
+  const base = opts.baseBranch ?? 'main';
+  const rebased = await rebaseOntoRemoteBase(run, ctx.worktreePath, {
+    remote,
+    base,
+    branch: ctx.branch,
     log: (line) => ctx.log.info({ branch: ctx.branch }, line),
     ...(opts.authorName !== undefined ? { authorName: opts.authorName } : {}),
     ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),
@@ -1187,8 +1207,12 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // one commitStage returned. The branch ref, not HEAD: after a failed `rebase --abort` HEAD may be
   // detached mid-rebase while the push still sends the branch.
   const headSha = (await run('git', ['rev-parse', `refs/heads/${ctx.branch}`], ctx.worktreePath).catch(() => '')).trim();
-  await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
-  const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
+  if (rebased && headSha === '') {
+    ctx.log.warn({ branch: ctx.branch }, 'publish: rebased but could not resolve the branch head; the review marker will name the pre-rebase commit');
+  }
+  await run('git', ['push', '--no-verify', '-u', remote, ctx.branch], ctx.worktreePath);
+  const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths), rebased ? rebasedNote(remote, base) : undefined]
+    .filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
   if (tool === 'glab') {
     args = [
