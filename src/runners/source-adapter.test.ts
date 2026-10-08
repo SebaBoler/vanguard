@@ -119,6 +119,11 @@ const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
 }));
 const { runAgent } = vi.hoisted(() => ({ runAgent: vi.fn() }));
 
+// The agent pass resolves the base against origin before cutting the worktree; keep it a pure pass-through here.
+vi.mock('../core/base-branch.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/base-branch.js')>()),
+  resolveRemoteBaseRef: vi.fn(async (_repo: string, base: string) => base),
+}));
 vi.mock('../core/vanguard.js', () => ({
   prepareContext: vi.fn(async () => ({
     taskId: 'gl-1',

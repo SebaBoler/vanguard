@@ -3,6 +3,7 @@ import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
+import { resolveRemoteBaseRef } from '../core/base-branch.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
@@ -374,6 +375,12 @@ export async function runSourcedIssue(
       config: decisionProbeConfig(process.env, { whiteLabel }),
       ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     });
+    // Cut from origin's copy of the base when it is ahead of the local one (on Actions the checkout is
+    // the event SHA and main may already have moved), so the sandbox, verification and review see the
+    // tree the PR will land on (#423). A reused branch keeps its own history.
+    const baseRef = deps.reuse === true
+      ? (deps.baseBranch ?? 'main')
+      : await resolveRemoteBaseRef(deps.repoPath, deps.baseBranch ?? 'main');
     const ctx = await prepareContext(
       {
         taskId: adapter.taskId(task),
@@ -382,7 +389,7 @@ export async function runSourcedIssue(
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
         ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
-        ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
+        baseBranch: baseRef,
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
       },
       skills !== undefined ? { skills } : {},
@@ -625,7 +632,7 @@ export async function runSourcedIssue(
       // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
       // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
       const commitLeaks = partial
-        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, deps.baseBranch ?? 'main'), task.id)
+        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, baseRef), task.id)
         : [];
       // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
       // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the
