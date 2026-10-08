@@ -67,7 +67,14 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
   }
   const remoteRef = `refs/remotes/origin/${base}`;
   const fetch = await fetchWithLockRetry(repoPath, `+${localRef}:${remoteRef}`, remoteRef, log, label);
-  if (fetch.exitCode !== 0) {
+  if (fetch.exitCode !== 0 && fetch.lockLost) {
+    // Every attempt lost the lock: whoever held it has written the current value into the tracking
+    // ref, so reading that beats falling back to the stale local base (#434).
+    const held = (await execa('git', ['rev-parse', '--verify', '--quiet', remoteRef], { cwd: repoPath, reject: false })).stdout.trim();
+    if (held !== '') log.warn({ base, sha: held }, `${label}: ${remoteRef} stayed locked by concurrent fetches — using the value they wrote`);
+    else log.warn({ base }, `${label}: ${remoteRef} stayed locked by concurrent fetches and is empty — using local ${base}`);
+    if (held === '') return local;
+  } else if (fetch.exitCode !== 0) {
     if (/couldn't find remote ref|remote ref does not exist/i.test(fetch.stderr)) {
       log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
     } else {
@@ -94,8 +101,12 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
   return sha;
 }
 
-/** git could not take the ref lock: another fetch in the same repository holds it (fan-out). */
-const REF_LOCK_RE = /cannot lock ref|unable to create '.*\.lock'/i;
+/**
+ * git could not take the ref lock: another fetch in the same repository holds it (fan-out). Only the
+ * `.lock` file message — the bare "cannot lock ref" also covers the permanent directory/file ref
+ * conflict (`refs/remotes/origin/dev` vs `dev/sub`), which no retry can fix.
+ */
+const REF_LOCK_RE = /unable to create '.*\.lock'/i;
 const LOCK_RETRIES = 3;
 const LOCK_BACKOFF_MS = 250;
 
@@ -105,19 +116,24 @@ const LOCK_BACKOFF_MS = 250;
  * back to the stale local base — the #429 mismatch again (#434). Retry only the lock failure, with a
  * short backoff; every other failure is returned unchanged.
  */
-async function fetchWithLockRetry(repoPath: string, refspec: string, remoteRef: string, log: VanguardLogger, label: string): Promise<{ exitCode: number | undefined; stderr: string }> {
+interface FetchResult { exitCode: number | undefined; stderr: string; timedOut: boolean; lockLost: boolean }
+
+async function fetchWithLockRetry(repoPath: string, refspec: string, remoteRef: string, log: VanguardLogger, label: string): Promise<FetchResult> {
   let last = await runFetch(repoPath, refspec);
-  for (let attempt = 1; attempt <= LOCK_RETRIES && last.exitCode !== 0 && REF_LOCK_RE.test(last.stderr); attempt += 1) {
+  // A timed-out fetch is never retried: it already spent the full budget, and its partial stderr may
+  // happen to contain a lock line.
+  for (let attempt = 1; attempt <= LOCK_RETRIES && last.lockLost; attempt += 1) {
     log.warn({ remoteRef, attempt }, `${label}: ${remoteRef} is locked by a concurrent fetch — retrying`);
-    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS * attempt));
+    // Jitter so N losers of the same ref do not retry on the same grid.
+    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS * attempt + Math.random() * 100));
     last = await runFetch(repoPath, refspec);
   }
   return last;
 }
 
-async function runFetch(repoPath: string, refspec: string): Promise<{ exitCode: number | undefined; stderr: string }> {
+async function runFetch(repoPath: string, refspec: string): Promise<FetchResult> {
   const r = await execa('git', ['fetch', '--end-of-options', 'origin', refspec], { cwd: repoPath, reject: false, env: FETCH_ENV, timeout: FETCH_TIMEOUT_MS });
-  return { exitCode: r.exitCode, stderr: r.stderr };
+  return { exitCode: r.exitCode, stderr: r.stderr, timedOut: r.timedOut, lockLost: r.exitCode !== 0 && !r.timedOut && REF_LOCK_RE.test(r.stderr) };
 }
 
 /** GitHub Actions and most CI set CI=true; unset, empty, "false" or "0" is not CI. */

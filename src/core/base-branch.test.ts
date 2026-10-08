@@ -125,15 +125,23 @@ describe('resolveRemoteBaseRef', () => {
     // Hold the lock the way a concurrent `git fetch` would, release it after the first attempt failed.
     const lock = join(clone, '.git', 'refs', 'remotes', 'origin', 'main.lock');
     await writeFile(lock, '');
-    // git itself retries the lock for core.filesRefLockTimeout (100 ms); hold it longer than that so the
-    // first attempt really fails and only our retry (250 ms, then 500 ms backoff) can succeed.
-    const release = setTimeout(() => { void rm(lock, { force: true }); }, 700);
+    // Hold the lock until the resolver reports its first retry (git's own 100 ms lock timeout has then
+    // expired and our attempt genuinely failed), then release it so the retry can succeed. A safety
+    // timer releases it regardless so a regression cannot hang the suite.
     const lines: string[] = [];
+    const safety = setTimeout(() => { void rm(lock, { force: true }); }, 5000);
+    const logger = {
+      warn: (_o: unknown, m: string) => {
+        lines.push(m);
+        if (/retrying/.test(m)) void rm(lock, { force: true });
+      },
+      info: () => {},
+    } as never;
     try {
-      const got = await resolveRemoteBaseRef(clone, 'main', { logger: { warn: (_o: unknown, m: string) => { lines.push(m); }, info: () => {} } as never });
+      const got = await resolveRemoteBaseRef(clone, 'main', { logger });
       expect(got).toBe((await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout);
     } finally {
-      clearTimeout(release);
+      clearTimeout(safety);
       await rm(lock, { force: true });
     }
     expect(lines.some((l) => /locked by a concurrent fetch — retrying/.test(l))).toBe(true);
