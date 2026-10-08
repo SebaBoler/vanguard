@@ -22,6 +22,7 @@ import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
+import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import { scanForSecrets, renderSecretBlockComment } from '../core/secret-scan.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { extractTaskIdFromPrBody, scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
@@ -325,8 +326,22 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         block = { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };
       }
       if (block !== undefined) {
-        if (!whiteLabel) await commentPullRequest(target, renderSecretBlockComment(block), gh).catch(() => undefined);
-        await handBackPrLabels(gh, target.repoSlug, target.number, log);
+        // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
+        // write no preview (it would carry the raw secret), and leave the labels alone.
+        if (deps.out === undefined) {
+          if (!whiteLabel) {
+            const notice = [
+              renderSecretBlockComment(block),
+              'Nothing was pushed to this branch; the requested changes remain unaddressed. Remove the secret from the revision and re-label `needs revision`.',
+              droppedCiPathsNote(ctx.droppedCiPaths),
+            ].filter((part) => part !== '').join('\n\n');
+            await commentPullRequest(target, notice, gh).catch(() => undefined);
+          }
+          await handBackPrLabels(gh, target.repoSlug, target.number, log);
+          // Same marker as the first delivery, so the board maps it to verify-failed, not to a clean hand-back.
+          await gh(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', target.repoSlug, '--force']).catch(() => undefined);
+          await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--add-label', GITHUB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
+        }
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
       }
 
