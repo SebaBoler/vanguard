@@ -25,10 +25,12 @@ code, then judge it adversarially.
 Label every finding with the repository's own vocabulary — severity `low | medium | high | critical`,
 kind `security | perf | correctness | style`. The merge gate reads the structured block, not the
 verdict line: emit `<findings>{"findings":[{"severity":…,"kind":…,"title":…,"evidence":…}]}</findings>`
-whenever you have any finding. A `high` or `critical` entry there is **blocking** (request-changes
-when the gate is on). Without a parseable block the whole reply is scanned for the bare words
-`critical` / `high-severity` and for `[high]` / `[critical]` opening a line, so do not use them loosely
-in prose. Do not invent another scale, and do not call a style or maintainability point blocking.
+whenever you have any finding, and make it complete: once a block parses, only its entries count and
+the prose is no longer scanned, so a finding left out of the block cannot block. Without a parseable
+block the whole reply is scanned for the bare words `critical`, `high-severity` / `high severity` and
+for `[high]` / `[critical]` opening a line, so do not use them loosely in prose. A `high` or `critical`
+entry is **blocking** (request-changes when the gate is on). Do not invent another scale, and do not
+call a style or maintainability point blocking.
 
 ## Verify before you block
 

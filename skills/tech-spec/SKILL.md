@@ -23,10 +23,10 @@ of the system. Include sequence or data-flow sketches if the interaction is non-
 ### Acceptance Criteria
 Numbered, testable conditions that define done. Each criterion must be verifiable without ambiguity
 **from the repository state and the diff alone**: a command that exits 0, a test that passes, a file
-that contains or no longer contains something, a commit message in `git log` where tooling gates on
-its form (release-please reads the `feat:`/`fix:` prefix). Never require an artifact outside the repo
-(a file under `/tmp`, a captured baseline) or a CI run — the implementer does not control those, and
-such a criterion only turns a complete change into a "partial scope" delivery. Put any baseline
+that contains or no longer contains something. Never require an artifact outside the repo (a file
+under `/tmp`, a captured baseline), a CI run, or a particular commit message — the autonomous
+implementer controls none of those (the factory writes the commit message itself from the task
+title), and such a criterion only turns a complete change into a "partial scope" delivery. Put any baseline
 numbers the implementer must match into the spec itself. The one PR-body criterion that is allowed is
 the one `CLAUDE.md` prescribes: when the task needs a CI-config edit the agent must not make, the AC
 is "the PR body describes the needed edit for a human to apply".
