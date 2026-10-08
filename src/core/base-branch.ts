@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { VanguardError } from './errors.js';
 import { createLogger } from './logger.js';
+import { redactTokens } from './secret-scan.js';
 import type { VanguardLogger } from './logger.js';
 
 /**
@@ -46,29 +47,36 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
   try {
     await execa('git', ['fetch', '--end-of-options', 'origin', base], { cwd: repoPath });
   } catch (err) {
-    const reason = err instanceof Error ? (err.message.split('\n').find((l) => l.startsWith('fatal:')) ?? err.message.split('\n')[0]) : String(err);
-    log.warn({ base, reason }, `${label}: git fetch origin ${base} failed — using local ${base} (may be stale)`);
+    log.warn({ base, reason: redactGitError(err) }, `${label}: git fetch origin ${base} failed — using local ${base} (may be stale)`);
     return base;
   }
-  let sha: string;
-  try {
-    // Cut from the freshly-fetched remote-tracking ref so the worktree reflects origin, not local.
-    ({ stdout: sha } = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath }));
-  } catch {
+  // Prefer the remote-tracking ref; a single-branch clone (actions/checkout) only tracks its own branch,
+  // so for another base fall back to FETCH_HEAD, which the fetch above always writes.
+  const tracking = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath, reject: false });
+  const remoteRef = tracking.exitCode === 0 ? `origin/${base}` : 'FETCH_HEAD';
+  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', remoteRef], { cwd: repoPath, reject: false })).stdout.trim();
+  if (sha === '') {
     log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
     return base;
   }
-  try {
-    await execa('git', ['merge-base', '--is-ancestor', base, `refs/remotes/origin/${base}`], { cwd: repoPath });
-  } catch {
-    // Local base missing (fresh single-branch clone) or ahead/diverged: keep whatever is local when it
-    // exists, since it may carry unpushed commits.
-    const local = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoPath }).then(() => true, () => false);
-    if (local) {
+  const local = (await execa('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoPath, reject: false })).exitCode === 0;
+  if (local) {
+    // Exit 1 = local is ahead of or diverged from origin: keep it, it may carry unpushed commits.
+    // Any other failure is a git error, reported as such; the remote copy is still the better cut.
+    const ancestor = await execa('git', ['merge-base', '--is-ancestor', base, remoteRef], { cwd: repoPath, reject: false });
+    if (ancestor.exitCode === 1) {
       log.warn({ base, sha }, `${label}: local ${base} is ahead of or diverged from origin/${base} — using local ${base}`);
       return base;
     }
+    if (ancestor.exitCode !== 0) log.warn({ base, reason: redactGitError(ancestor) }, `${label}: git merge-base failed — assuming origin/${base} is current`);
   }
-  log.info({ base, sha }, `${label}: using origin/${base} @ ${sha.slice(0, 7)}`);
-  return `origin/${base}`;
+  log.info({ base, sha, ref: remoteRef }, `${label}: using origin/${base} @ ${sha.slice(0, 7)}`);
+  return remoteRef;
+}
+
+/** First `fatal:` line (or first line) of a git error, tokens and URL userinfo masked. */
+export function redactGitError(err: unknown): string {
+  const text = err instanceof Error ? err.message : typeof err === 'object' && err !== null && 'stderr' in err ? String((err as { stderr: unknown }).stderr) : String(err);
+  const line = text.split('\n').find((l) => l.startsWith('fatal:')) ?? text.split('\n')[0] ?? '';
+  return redactTokens(line).replace(/\/\/[^/@\s]+@/g, '//***@');
 }

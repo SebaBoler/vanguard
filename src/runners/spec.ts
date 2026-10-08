@@ -1,4 +1,3 @@
-import { execa } from 'execa';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -22,7 +21,7 @@ import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
-import { createLogger, type VanguardLogger } from '../core/logger.js';
+import type { VanguardLogger } from '../core/logger.js';
 import { resolveRemoteBaseRef } from '../core/base-branch.js';
 
 /**

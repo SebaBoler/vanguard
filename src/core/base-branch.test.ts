@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, it, expect } from 'vitest';
-import { assertSafeBaseBranch, resolveRemoteBaseRef } from './base-branch.js';
+import { assertSafeBaseBranch, redactGitError, resolveRemoteBaseRef } from './base-branch.js';
 
 describe('assertSafeBaseBranch', () => {
   it.each(['', '   ', '-dev', '--upload-pack=false', '+main', 'feature:main', '+refs/heads/x:refs/heads/main'])('rejects %s', (base) => {
@@ -76,6 +76,20 @@ describe('resolveRemoteBaseRef', () => {
     await execa('git', ['init', '-b', 'main'], { cwd: repo });
     await commit(repo, 'v1');
     expect(await resolveRemoteBaseRef(repo, 'main')).toBe('main');
+  });
+
+  it('falls back to FETCH_HEAD for a base a single-branch clone does not track', async () => {
+    const { origin, clone } = await originAndClone();
+    await execa('git', ['branch', 'dev'], { cwd: origin });
+    await execa('git', ['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], { cwd: clone });
+    expect(await resolveRemoteBaseRef(clone, 'dev')).toBe('FETCH_HEAD');
+    expect((await execa('git', ['rev-parse', 'FETCH_HEAD'], { cwd: clone })).stdout)
+      .toBe((await execa('git', ['rev-parse', 'dev'], { cwd: origin })).stdout);
+  });
+
+  it('redacts URL userinfo and tokens from a git fetch error', () => {
+    const err = new Error("warning: x\nfatal: unable to access 'https://x-access-token:ghs_abc@github.com/o/r/': 403\nmore");
+    expect(redactGitError(err)).toBe("fatal: unable to access 'https://***@github.com/o/r/': 403");
   });
 
   it('rejects an unsafe base before touching git', async () => {
