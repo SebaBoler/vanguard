@@ -51,9 +51,9 @@ jobs:
       # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
       # the run loudly instead of skipping the job and reporting the caller green.
       - name: Enforce allowed-actors
-        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
         env:
-          ACTOR: ${{ github.event.sender.login }}
+          ACTOR: ${{ github.event.sender.login || github.actor }}
         run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
 
       # Check out the DEFAULT branch (trusted) so the revise tool is never the PR-under-revision's code,
@@ -111,9 +111,9 @@ jobs:
         env:
           VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
         run: |
-          git config --global "credential.https://github.com/$GITHUB_REPOSITORY.helper" store
+          git config --global "credential.https://github.com/$GITHUB_REPOSITORY.helper" "store --file=$RUNNER_TEMP/git-credentials"
           umask 077
-          printf 'https://x-access-token:%s@github.com/%s\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" "$GITHUB_REPOSITORY" > "$HOME/.git-credentials"
+          printf 'https://x-access-token:%s@github.com/%s\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/git-credentials"
 
       - name: Revise the PR from review comments
         env:
@@ -132,4 +132,4 @@ jobs:
 
       - name: Remove git credentials
         if: ${{ always() }}
-        run: rm -f "$HOME/.git-credentials"
+        run: rm -f "$RUNNER_TEMP/git-credentials"

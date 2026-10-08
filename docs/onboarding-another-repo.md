@@ -23,7 +23,7 @@ When Vanguard changes a default or a step, you get it on your next run (or when 
 Things to know before copying:
 
 - **Pin the ref.** `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
-- **`vanguard-ref` follows the workflow ref.** Leave the `vanguard-ref` input empty and the CLI is built at the same revision as the YAML, so a caller pinned `@v1` builds Vanguard at `v1` too. Set it only to build a different revision (for example to test a branch).
+- **`vanguard-ref` follows the workflow ref.** Leave the `vanguard-ref` input empty and the CLI is built at the same revision as the YAML, so a caller pinned `@v1` builds Vanguard at `v1` too. Set it only to build a different revision (for example to test a branch). On GitHub Enterprise Server `job.workflow_sha` / `job.workflow_repository` are not available, so set `vanguard-ref` explicitly there or the run fails at the "Resolve vanguard source ref" guard.
 - **No `secrets: inherit`.** Each secret is mapped explicitly in the caller, so you can see exactly which credentials reach the run. Every secret is optional on the reusable side; map only what your setup needs.
 - **`allowed-actors` is mandatory.** It is a JSON array of GitHub logins, passed as a string. The reusable workflow checks `github.event.sender.login` against it as a backstop to your own `if:`; a caller that omits it fails at startup, and a sender not in the list fails the run loudly (red, with an error) rather than skipping it, so a typo in the list cannot hide as a green no-op. Keep your caller's `if:` as well — it also gates on the issue or PR author, which the backstop does not.
 - **Inputs never reach a shell as text.** The reusable workflows pass every input through `env:` and build the CLI arguments as a bash array, so a hostile value cannot inject a command.
@@ -313,7 +313,7 @@ Models are set once, in the `with:` block of your implement caller — globally 
 | Plan (spec) | `spec-model` | `opus` |
 | Implement + simplify | `provider` / `provider-model` | `claude` / `sonnet` |
 | Review | `review-provider` (+ `review-model`) | `codex` / `gpt-5.6-sol` |
-| Escalation | `escalate-model` | `claude-fable-5-1` (default) |
+| Escalation | `escalate-model` | `claude-fable-5-1` (example; off unless set) |
 
 To change which models run, edit the caller's `with:` block. A cross-provider reviewer (e.g. Codex) takes its own model names — never pass it an Anthropic model name. On a ChatGPT subscription only Codex-flavoured names work (e.g. `gpt-5.6-sol`); a bare `gpt-5.6` is rejected with a 400.
 

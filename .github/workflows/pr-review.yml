@@ -56,9 +56,9 @@ jobs:
       # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
       # the run loudly instead of skipping the job and reporting the caller green.
       - name: Enforce allowed-actors
-        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
         env:
-          ACTOR: ${{ github.event.sender.login }}
+          ACTOR: ${{ github.event.sender.login || github.actor }}
         run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -106,12 +106,18 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
           IN_PROVIDER: ${{ inputs.provider }}
+          IN_FALLBACK_PROVIDER: ${{ inputs.fallback-provider }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
         run: |
-          args=(doctor-prs --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --repo "$GITHUB_WORKSPACE")
-          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
-          [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
-          node .vanguard-src/dist/cli/index.js "${args[@]}"
+          preflight() {
+            local args=(doctor-prs --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --repo "$GITHUB_WORKSPACE")
+            [ -n "$1" ] && args+=(--provider "$1")
+            [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
+            node .vanguard-src/dist/cli/index.js "${args[@]}"
+          }
+          preflight "$IN_PROVIDER"
+          # The fallback is only useful if its credential is in place before the first attempt fails.
+          if [ -n "$IN_FALLBACK_PROVIDER" ]; then preflight "$IN_FALLBACK_PROVIDER"; fi
 
       # `watch-prs` has no provider fallback of its own (only the implement pipeline's review stage does),
       # so when a fallback is configured the review is retried here with the fallback provider and model.

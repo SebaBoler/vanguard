@@ -97,9 +97,9 @@ jobs:
       # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
       # the run loudly instead of skipping the job and reporting the caller green.
       - name: Enforce allowed-actors
-        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login || github.actor) }}
         env:
-          ACTOR: ${{ github.event.sender.login }}
+          ACTOR: ${{ github.event.sender.login || github.actor }}
         run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
