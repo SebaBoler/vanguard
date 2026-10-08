@@ -657,7 +657,7 @@ export async function runSourcedIssue(
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({
           prUrl: pr.prUrl,
-          headSha: commit.sha!,
+          headSha: pr.headSha ?? commit.sha!,   // the pre-push rebase may have rewritten the commit
           reviewerOutcome,
           conformanceOutcome,
           attribution: buildReviewerAttribution(reviewerOutcome, agents.agent.name),

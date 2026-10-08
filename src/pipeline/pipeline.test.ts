@@ -359,7 +359,7 @@ describe('publishForReview', () => {
     const push = calls.findIndex((c) => c.file === 'git' && c.args[0] === 'push');
     expect(push).toBeGreaterThan(-1);
     // The base is fetched and compared before the push; the runner stub reports "not behind", so no rebase.
-    expect(calls.slice(0, push).map((c) => c.args[0])).toEqual(['fetch', 'rev-list']);
+    expect(calls.slice(0, push).map((c) => c.args[0])).toEqual(['fetch', 'rev-list', 'rev-parse']);
     expect(calls[push + 1]?.file).toBe('gh');
     expect(calls[push + 1]?.args).toEqual(
       expect.arrayContaining(['pr', 'create', '--head', 'chore/vanguard-pub-r1', '--base', 'main', '--title', 'PR']),
@@ -374,15 +374,20 @@ describe('publishForReview', () => {
     const runner = async (file: string, args: string[]): Promise<string> => {
       if (file === 'gh') return 'https://github.com/o/r/pull/43';
       calls.push(args);
-      return args[0] === 'rev-list' ? '2\n' : '';
+      if (args[0] === 'rev-list') return '2\n';
+      if (args[0] === 'rev-parse') return 'abc123rebased\n';
+      return '';
     };
-    await publishForReview(ctx, { title: 'PR', runner, authorName: 'Bot', authorEmail: 'bot@x' });
+    const out = await publishForReview(ctx, { title: 'PR', runner, authorName: 'Bot', authorEmail: 'bot@x' });
     expect(calls).toEqual([
       ['fetch', 'origin', 'main'],
-      ['rev-list', '--count', 'HEAD..origin/main'],
-      ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'origin/main'],
+      ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
+      ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
+      ['rev-parse', 'HEAD'],
       ['push', '--no-verify', '-u', 'origin', 'chore/vanguard-pub2-r2'],
     ]);
+    // The review marker must point at the rewritten head, not the SHA commitStage returned.
+    expect(out.headSha).toBe('abc123rebased');
     await disposeContext(ctx);
   });
 
@@ -398,7 +403,8 @@ describe('publishForReview', () => {
     };
     const out = await publishForReview(ctx, { title: 'PR', runner });
     expect(out.prUrl).toBe('https://github.com/o/r/pull/44');
-    expect(calls.map((c) => c[0])).toEqual(['fetch', 'push']);
+    expect(calls.map((c) => c[0])).toEqual(['fetch', 'rev-parse', 'push']);
+    expect(out.headSha).toBeUndefined();
     await disposeContext(ctx);
   });
 
@@ -1450,7 +1456,8 @@ describe('rebaseOntoRemoteBase', () => {
       return args[0] === 'rev-list' ? '1' : '';
     };
     expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(true);
-    expect(calls[2]).toEqual([...identity, 'rebase', '--no-verify', 'origin/main']);
+    expect(calls[1]).toEqual(['rev-list', '--count', 'HEAD..FETCH_HEAD']);
+    expect(calls[2]).toEqual([...identity, 'rebase', '--no-verify', 'FETCH_HEAD']);
     expect(lines[0]).toMatch(/rebased onto origin\/main \(1 new commit/);
   });
 
@@ -1466,6 +1473,28 @@ describe('rebaseOntoRemoteBase', () => {
     expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) })).toBe(false);
     expect(calls.at(-1)).toEqual(['rebase', '--abort']);
     expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\)/);
+  });
+
+  it('treats a failed comparison as not behind and logs it (single-branch clone, remote given as URL)', async () => {
+    const lines: string[] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      if (args[0] === 'rev-list') throw new Error("fatal: bad revision 'HEAD..FETCH_HEAD'");
+      return '';
+    };
+    expect(await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'develop', log: (l) => lines.push(l) })).toBe(false);
+    expect(lines[0]).toMatch(/could not compare the branch with origin\/develop, pushing as-is \(fatal: bad revision/);
+  });
+
+  it('masks URL userinfo in logged git errors', async () => {
+    const lines: string[] = [];
+    const runner = async (_file: string, args: string[]): Promise<string> => {
+      if (args[0] === 'fetch') throw new Error("fatal: unable to access 'https://x-access-token:ghs_secret@github.com/o/r/': 403\nmore");
+      return '';
+    };
+    await rebaseOntoRemoteBase(runner, '/wt', { remote: 'origin', base: 'main', log: (l) => lines.push(l) });
+    expect(lines[0]).toContain('https://***@github.com/o/r/');
+    expect(lines[0]).not.toContain('ghs_secret');
+    expect(lines[0]).not.toContain('more');
   });
 
   it('logs a failed fetch instead of hiding it', async () => {

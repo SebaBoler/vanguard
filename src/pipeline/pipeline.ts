@@ -1040,6 +1040,8 @@ export interface PublishOptions {
 export interface PublishOutcome {
   branch: string;
   prUrl: string;
+  /** The pushed head (after the pre-push rebase, if any); undefined when rev-parse was unavailable. */
+  headSha?: string;
 }
 
 export interface PushToExistingBranchOptions {
@@ -1121,9 +1123,10 @@ export interface RebaseOntoRemoteBaseOptions {
  * typically a Dependabot workflow bump — leaves the branch behind. GitHub compares a NEW branch's
  * workflow files against the default branch, so a stale `.github/workflows/*` is then rejected as a
  * workflow update the token may not make (#423), even though the agent never touched those files.
- * Never worse than pushing as-is: a failed fetch or rebase is logged and the push proceeds unchanged
- * (only the stale-workflow case is then still rejected by GitHub, exactly as before).
- * Returns true when the branch was rebased.
+ * Never worse than pushing as-is: every git failure here is logged and the push proceeds unchanged
+ * (only the stale-workflow case is then still rejected by GitHub, exactly as before). Compares against
+ * FETCH_HEAD, which `git fetch <remote> <base>` always writes (a single-branch clone creates no
+ * `refs/remotes/<remote>/<base>` for another base). Returns true when the branch was rebased.
  */
 export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts: RebaseOntoRemoteBaseOptions): Promise<boolean> {
   const log = opts.log ?? ((line: string): void => console.log(line));
@@ -1134,13 +1137,19 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
     log(`publish: could not fetch ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
   }
-  const behind = (await run('git', ['rev-list', '--count', `HEAD..${target}`], cwd)).trim();
+  let behind: string;
+  try {
+    behind = (await run('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD'], cwd)).trim();
+  } catch (cause) {
+    log(`publish: could not compare the branch with ${target}, pushing as-is (${errorMessage(cause)})`);
+    return false;
+  }
   if (behind === '' || behind === '0') return false;
   // The host worktree has no git identity; rebase replays commits and needs one (same as commitStage).
   const name = opts.authorName ?? 'Vanguard';
   const email = opts.authorEmail ?? 'vanguard@local';
   try {
-    await run('git', ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'rebase', '--no-verify', target], cwd);
+    await run('git', ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'rebase', '--no-verify', 'FETCH_HEAD'], cwd);
   } catch (cause) {
     await run('git', ['rebase', '--abort'], cwd).catch(() => undefined);
     log(`publish: ${opts.base} moved during the run (${behind} new commit(s) on ${target}) but the branch does not rebase onto it, pushing as-is: ${errorMessage(cause)}`);
@@ -1150,8 +1159,10 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   return true;
 }
 
+/** First line of a git error, with any URL userinfo (`https://user:token@host`) masked. */
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message.split('\n')[0] ?? '' : String(cause);
+  const first = cause instanceof Error ? cause.message.split('\n')[0] ?? '' : String(cause);
+  return first.replace(/\/\/[^/@\s]+@/g, '//***@');
 }
 
 /**
@@ -1168,9 +1179,13 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   await rebaseOntoRemoteBase(run, ctx.worktreePath, {
     remote: opts.remote ?? 'origin',
     base: opts.baseBranch ?? 'main',
+    log: (line) => ctx.log.info({ branch: ctx.branch }, line),
     ...(opts.authorName !== undefined ? { authorName: opts.authorName } : {}),
     ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),
   });
+  // A rebase rewrites the commit: callers must use this SHA (review marker, verdict header), not the
+  // one commitStage returned.
+  const headSha = (await run('git', ['rev-parse', 'HEAD'], ctx.worktreePath).catch(() => '')).trim();
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
   const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
@@ -1200,5 +1215,5 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       .map((line) => line.trim())
       .filter((line) => line.startsWith('http'))
       .pop() ?? out.trim();
-  return { branch: ctx.branch, prUrl };
+  return { branch: ctx.branch, prUrl, ...(headSha !== '' ? { headSha } : {}) };
 }
