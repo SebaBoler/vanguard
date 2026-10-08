@@ -1,4 +1,5 @@
 import { fanOut } from '../pipeline/fan-out.js';
+import { failureReason } from '../core/errors.js';
 import { hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -277,10 +278,9 @@ export async function watchPullRequestsOnce(
         try {
           await primitives.onFailure(item, error);
         } catch (restoreError) {
-          const msg = restoreError instanceof Error ? restoreError.message : String(restoreError);
-          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${msg})`);
+          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${failureReason(restoreError)})`);
         }
-        opts.log?.(`${phase} ${id}: failed -> retry later`);
+        opts.log?.(`${phase} ${id}: failed -> retry later (${failureReason(error)})`);
         return { id, kind: 'failed' };
       }
     },

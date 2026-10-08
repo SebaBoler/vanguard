@@ -7,7 +7,7 @@ import { runGitlabIssue } from './gitlab.js';
 import { runSpecGenerator } from './spec.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
-import { formatFailureComment } from '../core/errors.js';
+import { failureReason, formatFailureComment } from '../core/errors.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
@@ -237,7 +237,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: SpecOnceOp
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
       } catch (error) {
         await primitives.onFailure(item.id, error);
-        operatorLog(opts, `${phase} ${item.id}: failed -> retry later`);
+        operatorLog(opts, `${phase} ${item.id}: failed -> retry later (${failureReason(error)})`);
         return { id: item.id, kind: 'failed' };
       }
     },

@@ -53,12 +53,20 @@ export interface SandboxContextOptions {
  * OpenRouter for `--provider openrouter`. With neither flag, no enclave or env is created and
  * `destroy()` is a no-op.
  */
+const LLM_PROXY_CREDENTIAL_MESSAGE =
+  'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, ZAI_API_KEY, or OPENROUTER_API_KEY).';
+
 export async function startSandboxContext(opts: SandboxContextOptions): Promise<SandboxContext> {
   // --llm-proxy implies the egress enclave; in that mode the sandbox loses its direct route to the
   // sidecar-owned upstream providers.
   if (!opts.egress && !opts.llmProxy) {
     return { destroy: async (): Promise<void> => {} };
   }
+
+  // The primary sidecar's upstream follows the provider; the credential comes uniformly from `auth`.
+  // Checked before the enclave exists: a throw after startEgressEnclave would leave the network and
+  // proxy container behind until `vanguard gc` (a codex/cursor-only run under --llm-proxy hits this).
+  if (opts.llmProxy && opts.auth === undefined) throw new Error(LLM_PROXY_CREDENTIAL_MESSAGE);
 
   // Custom-provider hosts (S6) extend the allowlist here, at enclave creation — the list is baked
   // into the proxy container's env at start, so it cannot be widened later in the run.
@@ -73,12 +81,7 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { proxyUrl: enclave.proxyUrl, network: enclave.network, destroy: enclave.destroy };
   }
 
-  // The primary sidecar's upstream follows the provider; the credential comes uniformly from `auth`.
-  if (opts.auth === undefined) {
-    throw new Error(
-      'llm-proxy needs a primary-sidecar credential (set CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY, ZAI_API_KEY, or OPENROUTER_API_KEY).',
-    );
-  }
+  if (opts.auth === undefined) throw new Error(LLM_PROXY_CREDENTIAL_MESSAGE); // narrowing; checked above
   const upstream: Upstream = opts.provider === 'zai' || opts.provider === 'openrouter' ? opts.provider : 'anthropic';
   const auth = llmProxyAuth(opts.auth);
   const llmProxy = await startLlmProxy({ network: enclave.network, auth, ...(upstream === 'anthropic' ? {} : { upstream }) });

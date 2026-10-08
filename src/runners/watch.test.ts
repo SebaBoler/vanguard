@@ -216,7 +216,7 @@ describe('specOnce', () => {
       'spec B: claim -> triage',
       'spec B: needs info -> waiting human',
       'spec C: claim -> triage',
-      'spec C: failed -> retry later',
+      'spec C: failed -> retry later (boom)',
       'spec D: skipped -> already claimed',
     ]);
   });

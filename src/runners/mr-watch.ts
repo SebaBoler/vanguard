@@ -1,4 +1,5 @@
 import { fanOut } from '../pipeline/fan-out.js';
+import { failureReason } from '../core/errors.js';
 import { defaultGlabRunner, neutralizeQuickActions } from '../tasks/gitlab.js';
 import { MergeRequestReviewIncompleteError, hasMergeRequestReviewForHead } from './mr-review.js';
 import { stripReviewMarkers } from './review-prompt.js';
@@ -233,10 +234,9 @@ export async function watchMergeRequestsOnce(
         try {
           await primitives.onFailure(item, error);
         } catch (restoreError) {
-          const msg = restoreError instanceof Error ? restoreError.message : String(restoreError);
-          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${msg})`);
+          opts.log?.(`${phase} ${id}: restore failed -> manual label check (${failureReason(restoreError)})`);
         }
-        opts.log?.(`${phase} ${id}: failed -> retry later`);
+        opts.log?.(`${phase} ${id}: failed -> retry later (${failureReason(error)})`);
         return { id, kind: 'failed' };
       }
     },

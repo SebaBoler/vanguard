@@ -67,7 +67,7 @@ describe('watchPullRequestsOnce', () => {
     expect(tick).toEqual({ reviewed: [], failed: ['o/r#13'], skipped: ['o/r#12'] });
     expect(restored).toEqual([13]);
     expect(logs).toContain('watch-prs o/r#12: skipped -> already claimed');
-    expect(logs).toContain('watch-prs o/r#13: failed -> retry later');
+    expect(logs).toContain('watch-prs o/r#13: failed -> retry later (review failed)');
   });
 
   it('reports PR as failed even when onFailure (label restore) also throws', async () => {
@@ -92,7 +92,7 @@ describe('watchPullRequestsOnce', () => {
     expect(logs).toEqual(
       expect.arrayContaining([
         expect.stringContaining('watch-prs o/r#13: restore failed -> manual label check'),
-        'watch-prs o/r#13: failed -> retry later',
+        'watch-prs o/r#13: failed -> retry later (review boom)',
       ]),
     );
   });

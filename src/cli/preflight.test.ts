@@ -392,6 +392,37 @@ describe('runPreflight', () => {
     expect(providerCheck?.ok).toBe(false);
   });
 
+  it('passes llm auth for a codex-only review with no Anthropic token in direct mode (#391)', async () => {
+    const report = await runPreflight(doctorPrs({ provider: 'codex' }), {
+      env: { GH_TOKEN: 'gh', CODEX_API_KEY: 'sk-test' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(['ready for vanguard review', 'vanguard:reviewing', 'vanguard:reviewed']),
+    });
+
+    expect(report.checks.find((c) => c.name === 'llm auth')?.ok).toBe(true);
+    expect(report.ok).toBe(true);
+  });
+
+  it('fails llm auth for a codex-only review under llmProxy with no Anthropic token (primary sidecar)', async () => {
+    const report = await runPreflight(doctorPrs({ provider: 'codex', llmProxy: true }), {
+      env: { GH_TOKEN: 'gh', OPENAI_API_KEY: 'sk-test' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(['ready for vanguard review', 'vanguard:reviewing', 'vanguard:reviewed']),
+    });
+
+    expect(formatPreflightReport(report)).toContain('preflight: llm auth missing -> stop before claim');
+  });
+
+  it('still requires an Anthropic token when codex implements and claude reviews', async () => {
+    const report = await runPreflight(githubDoctor({ provider: 'codex', reviewProvider: 'claude' }), {
+      env: { GH_TOKEN: 'gh', CODEX_API_KEY: 'sk-test' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+
+    expect(formatPreflightReport(report)).toContain('preflight: llm auth missing -> stop before claim');
+  });
+
   it('regression: no-provider doctor report contains no provider auth check', async () => {
     const report = await runPreflight(githubDoctor(), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },

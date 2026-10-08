@@ -342,12 +342,18 @@ export interface ProviderChoice {
   customProviders?: readonly CustomProviderEntry[];
 }
 
-/** True when the run needs an Anthropic-family credential (subscription token / API key). A used
- *  provider that owns the Anthropic transport with its own creds (zai, customs) suppresses the need. */
+/** True when the run needs an Anthropic-family credential (subscription token / API key): some used
+ *  provider has no key wiring of its own (Claude). Codex/Cursor-only, or Zai/OpenRouter/customs with
+ *  their own keys, need none. */
 export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   const provider = choice.provider ?? 'claude';
   const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
-  return !used.some((n) => resolveSpec(n, choice.customProviders).ownsAnthropicTransport === true);
+  // Only a provider with no key wiring of its own (Claude) consumes authSecrets. Codex/Cursor bring their
+  // own key; Zai/OpenRouter/customs own the Anthropic transport with theirs. So a Codex-only review needs
+  // no Anthropic credential at all (#391) — before, every non-transport-owner demanded one.
+  // Sibling of selectAgents' injectAnthropicAuth: that one answers "may the Anthropic auth be layered in"
+  // (false only for transport owners), this one "is it required at all".
+  return used.some((n) => !requiresApiKey(n, choice.customProviders));
 }
 
 /** A resolved choice: the agents to run plus the secrets split into sandbox-safe and proxy-held buckets. */

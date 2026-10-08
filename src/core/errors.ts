@@ -1,3 +1,5 @@
+import { redactTokens } from './secret-scan.js';
+
 export class VanguardError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -26,6 +28,20 @@ export function formatFailureComment(prefix: string, error: unknown): string {
   if (stack === undefined || stack.trim() === '') return headline;
   const trimmed = stack.split('\n').slice(0, FAILURE_STACK_LINES).join('\n');
   return `${headline}\n\n<details><summary>stack</summary>\n\n\`\`\`\n${trimmed}\n\`\`\`\n\n</details>`;
+}
+
+/** Cap on the error excerpt carried in a one-line operator log entry. */
+const FAILURE_REASON_MAX_CHARS = 200;
+
+/**
+ * One-line, redacted excerpt of an error for operator logs — those land in CI job output, which is
+ * world-readable on a public repo, and agent errors embed raw provider stdout/stderr (codex, cursor)
+ * where a key could ride along. Same masking as the codex runner, then whitespace collapsed and capped.
+ */
+export function failureReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const line = redactTokens(raw).replace(/\s+/g, ' ').trim();
+  return line.length > FAILURE_REASON_MAX_CHARS ? `${line.slice(0, FAILURE_REASON_MAX_CHARS)}…` : line;
 }
 
 /**
