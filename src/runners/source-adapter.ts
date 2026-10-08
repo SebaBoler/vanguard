@@ -133,6 +133,8 @@ export interface RunIssueDeps extends RunOptions {
   network?: string;
   llmProxy?: LlmProxyDep;
   reuse?: boolean;
+  /** Keep a local base that is ahead of/diverged from origin (default: outside CI only). See resolveRemoteBaseRef. */
+  keepLocalIfAhead?: boolean;
   forkN?: number;
   reviewGate?: boolean;
   /** When set, receives structured run events. Absent ⇒ no events (CLI path). Threaded to runStages + run-start/run-end. */
@@ -380,7 +382,7 @@ export async function runSourcedIssue(
     // tree the PR will land on (#423). A reused branch keeps its own history.
     const baseRef = deps.reuse === true
       ? (deps.baseBranch ?? 'main')
-      : await resolveRemoteBaseRef(deps.repoPath, deps.baseBranch ?? 'main');
+      : await resolveRemoteBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: deps.keepLocalIfAhead } : {});
     const ctx = await prepareContext(
       {
         taskId: adapter.taskId(task),

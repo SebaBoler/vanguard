@@ -119,6 +119,35 @@ describe('resolveRemoteBaseRef', () => {
     expect(redactGitError(err)).toBe("fatal: unable to access 'https://***@github.com/o/r/': 403");
   });
 
+  it('retries a fetch that lost the ref lock to a concurrent fetch (#434)', async () => {
+    const { origin, clone } = await originAndClone();
+    await commit(origin, 'v2');
+    // Hold the lock the way a concurrent `git fetch` would, release it after the first attempt failed.
+    const lock = join(clone, '.git', 'refs', 'remotes', 'origin', 'main.lock');
+    await writeFile(lock, '');
+    // git itself retries the lock for core.filesRefLockTimeout (100 ms); hold it longer than that so the
+    // first attempt really fails and only our retry (250 ms, then 500 ms backoff) can succeed.
+    const release = setTimeout(() => { void rm(lock, { force: true }); }, 700);
+    const lines: string[] = [];
+    try {
+      const got = await resolveRemoteBaseRef(clone, 'main', { logger: { warn: (_o: unknown, m: string) => { lines.push(m); }, info: () => {} } as never });
+      expect(got).toBe((await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout);
+    } finally {
+      clearTimeout(release);
+      await rm(lock, { force: true });
+    }
+    expect(lines.some((l) => /locked by a concurrent fetch — retrying/.test(l))).toBe(true);
+  });
+
+  it('logs a fetch failure that is not a missing ref and keeps the local base', async () => {
+    const { clone } = await originAndClone();
+    await execa('git', ['remote', 'set-url', 'origin', join(clone, 'no-such-remote')], { cwd: clone });
+    const lines: string[] = [];
+    const got = await resolveRemoteBaseRef(clone, 'main', { logger: { warn: (_o: unknown, m: string) => { lines.push(m); }, info: () => {} } as never });
+    expect(got).toBe('refs/heads/main');
+    expect(lines[0]).toMatch(/git fetch origin main failed — using local main/);
+  });
+
   it('rejects an unsafe base before touching git', async () => {
     await expect(resolveRemoteBaseRef('/nowhere', '-x')).rejects.toThrow(/Invalid base branch/);
     // `*` would make the explicit refspec a wildcard fetch of every branch.

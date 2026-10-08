@@ -66,7 +66,7 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
     return local;
   }
   const remoteRef = `refs/remotes/origin/${base}`;
-  const fetch = await execa('git', ['fetch', '--end-of-options', 'origin', `+${localRef}:${remoteRef}`], { cwd: repoPath, reject: false, env: FETCH_ENV, timeout: FETCH_TIMEOUT_MS });
+  const fetch = await fetchWithLockRetry(repoPath, `+${localRef}:${remoteRef}`, remoteRef, log, label);
   if (fetch.exitCode !== 0) {
     if (/couldn't find remote ref|remote ref does not exist/i.test(fetch.stderr)) {
       log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
@@ -92,6 +92,32 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
   }
   log.info({ base, sha }, `${label}: using origin/${base} @ ${sha.slice(0, 7)}`);
   return sha;
+}
+
+/** git could not take the ref lock: another fetch in the same repository holds it (fan-out). */
+const REF_LOCK_RE = /cannot lock ref|unable to create '.*\.lock'/i;
+const LOCK_RETRIES = 3;
+const LOCK_BACKOFF_MS = 250;
+
+/**
+ * `watch --concurrency` runs several tasks against one repoPath, and each resolves its base with a
+ * fetch into the same `refs/remotes/origin/<base>`; the loser of that ref lock would otherwise fall
+ * back to the stale local base — the #429 mismatch again (#434). Retry only the lock failure, with a
+ * short backoff; every other failure is returned unchanged.
+ */
+async function fetchWithLockRetry(repoPath: string, refspec: string, remoteRef: string, log: VanguardLogger, label: string): Promise<{ exitCode: number | undefined; stderr: string }> {
+  let last = await runFetch(repoPath, refspec);
+  for (let attempt = 1; attempt <= LOCK_RETRIES && last.exitCode !== 0 && REF_LOCK_RE.test(last.stderr); attempt += 1) {
+    log.warn({ remoteRef, attempt }, `${label}: ${remoteRef} is locked by a concurrent fetch — retrying`);
+    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS * attempt));
+    last = await runFetch(repoPath, refspec);
+  }
+  return last;
+}
+
+async function runFetch(repoPath: string, refspec: string): Promise<{ exitCode: number | undefined; stderr: string }> {
+  const r = await execa('git', ['fetch', '--end-of-options', 'origin', refspec], { cwd: repoPath, reject: false, env: FETCH_ENV, timeout: FETCH_TIMEOUT_MS });
+  return { exitCode: r.exitCode, stderr: r.stderr };
 }
 
 /** GitHub Actions and most CI set CI=true; unset, empty, "false" or "0" is not CI. */

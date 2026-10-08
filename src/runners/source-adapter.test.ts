@@ -224,7 +224,7 @@ describe('runSourcedIssue', () => {
   it('cuts the worktree from the resolved remote base (#429) and skips resolution on --reuse', async () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'develop' }, adapter);
-    expect(vi.mocked(resolveRemoteBaseRef)).toHaveBeenCalledWith('/repo', 'develop');
+    expect(vi.mocked(resolveRemoteBaseRef)).toHaveBeenCalledWith('/repo', 'develop', {});
     expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ baseBranch: '0000sha-develop' }));
 
     vi.mocked(resolveRemoteBaseRef).mockClear();
