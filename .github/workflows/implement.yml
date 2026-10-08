@@ -42,9 +42,9 @@ on:
         type: string
         default: ''
       escalate-model:
-        description: 'Model the run escalates to after repeated failures (--escalate-model).'
+        description: 'Model the run escalates to after repeated failures (--escalate-model). Empty = off (the CLI default); pass a model of the implementation provider.'
         type: string
-        default: claude-fable-5-1
+        default: ''
       conformance:
         description: 'Run the opt-in conformance review pass (--conformance).'
         type: boolean

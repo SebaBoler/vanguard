@@ -2,7 +2,7 @@
 
 Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `SebaBoler/vanguard`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
 
-You drop in **one or two thin callers** (implement, plus the optional doctor), set **two secrets** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
+You drop in **one or two thin callers** (implement, plus the optional doctor), set **one secret** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
 
 > **Cost:** each run uses ~15-20 GitHub Actions minutes — **unlimited on public repos**, 2000/month free on private. To avoid Actions minutes entirely, run an always-on `vanguard watch` on your own host (see [Cost & limits](../README.md#cost--limits) and [docs/deploy.md](deploy.md)).
 
@@ -28,9 +28,22 @@ Things to know before copying:
 - **`allowed-actors` is mandatory.** It is a JSON array of GitHub logins, passed as a string. The reusable workflow checks `github.event.sender.login` against it as a backstop to your own `if:`; a caller that omits it fails at startup, and a sender not in the list fails the run loudly (red, with an error) rather than skipping it, so a typo in the list cannot hide as a green no-op. Keep your caller's `if:` as well — it also gates on the issue or PR author, which the backstop does not.
 - **Inputs never reach a shell as text.** The reusable workflows pass every input through `env:` and build the CLI arguments as a bash array, so a hostile value cannot inject a command.
 
+### Permissions the caller must grant
+
+The reusable workflows declare no `permissions:` of their own — they run with whatever the caller grants. A caller that omits the block on a repo whose default `GITHUB_TOKEN` is read-only fails mid-run (at `gh label create`, `gh pr create` or the comment post), not at startup. What each one needs:
+
+| Reusable workflow | `contents` | `pull-requests` | `issues` |
+|---|---|---|---|
+| `implement.yml` | write | write | write |
+| `doctor.yml` | read | read | write |
+| `pr-review.yml` | read | write | write |
+| `research.yml` | read | — | write |
+| `revise.yml` | write (pushes the revision commit) | write | write |
+
+
 ### `.github/workflows/vanguard-implement.yml` — does the work
 
-The **minimal** form: Claude does plan/implement/review/simplify, and the model credential stays in a sidecar (`llm-proxy`). Replace `YOUR_LOGIN` (three places).
+The **minimal** form: Claude does plan/implement/review/simplify, and the model credential stays in a sidecar (`llm-proxy`). Replace every `YOUR_LOGIN`.
 
 ```yaml
 name: Vanguard Implement
@@ -75,7 +88,7 @@ The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, 
 | `spec-model` | string | `''` | model for the spec pass (`--spec-model`) |
 | `review-provider` | string | `''` | cross-provider reviewer, e.g. `codex` (`--review-provider`) |
 | `review-model` | string | `''` | reviewer model (`--review-model`) |
-| `escalate-model` | string | `claude-fable-5-1` | model escalated to after repeated failures (`--escalate-model`) |
+| `escalate-model` | string | `''` (off) | model escalated to on the 2nd+ gate repair (`--escalate-model`); must be a model of the implementation provider |
 | `conformance` | boolean | `false` | opt-in conformance review pass (`--conformance`) |
 | `conformance-model` | string | `''` | model for the conformance pass |
 | `llm-proxy` | boolean | `false` | keep the model credential in a sidecar (`--llm-proxy`) |
@@ -162,7 +175,7 @@ jobs:
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
 ```
 
-Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provider`, `fallback-model`, `author` (`--author`), `llm-proxy`, `vanguard-ref`. Leave the fallback inputs empty for no fallback. Do not combine `llm-proxy` with a Codex subscription (see the Full tier below).
+Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provider`, `fallback-model`, `author` (`--author`), `llm-proxy`, `vanguard-ref`. Leave the fallback inputs empty for no fallback. The fallback fires whenever the first attempt exits non-zero — including a failure *after* the review was posted (e.g. the label update) — so in that rare case it posts a second review. Do not combine `llm-proxy` with a Codex subscription (see the Full tier below).
 
 ### `vanguard-research.yml` and `vanguard-revise.yml` (optional)
 

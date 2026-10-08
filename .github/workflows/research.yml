@@ -96,6 +96,7 @@ jobs:
           IN_PROVIDER: ${{ inputs.provider }}
           IN_RESEARCH_MODEL: ${{ inputs.research-model }}
         run: |
+          [[ "$IN_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::number must be a positive integer, got '$IN_NUMBER'"; exit 1; }
           args=(research "$IN_NUMBER" --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE")
           [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
           [ -n "$IN_RESEARCH_MODEL" ] && args+=(--research-model "$IN_RESEARCH_MODEL")

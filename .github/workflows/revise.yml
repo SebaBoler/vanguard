@@ -124,6 +124,7 @@ jobs:
           IN_PROVIDER: ${{ inputs.provider }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
         run: |
+          [[ "$IN_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::number must be a positive integer, got '$IN_NUMBER'"; exit 1; }
           args=(revise-pr "$IN_NUMBER" --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --max-rounds 2)
           [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
           [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
