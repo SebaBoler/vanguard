@@ -247,7 +247,7 @@ describe('runRevisePullRequest secret gate', () => {
     expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'edit' && a.includes('--remove-label'))).toBe(true);
     expect(ghCalls.some((a) => a[0] === 'pr' && a[1] === 'ready')).toBe(false);
     // The operator sees the finding masked, never the raw token.
-    expect(errors.join('\n')).toMatch(/secret scan blocked revise push .*fix\.txt \[github-token\]/);
+    expect(errors.join('\n')).toMatch(/secret scan blocked publish for o\/r#7:.*fix\.txt \[github-token\]/);
     expect(errors.join('\n')).not.toContain('ghp_' + 'A'.repeat(40));
     expect(comment?.join(' ')).toMatch(/Nothing was pushed to this branch/);
     expect(comment?.join(' ')).not.toContain('No PR was opened');
