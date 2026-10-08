@@ -5,6 +5,7 @@ import { runCommand } from './run.js';
 import { resolveForkScorerConfig } from '../runners/source-adapter.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
+import { metricsCommand } from './metrics.js';
 import { memoryCommand } from './memory.js';
 import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
@@ -82,6 +83,10 @@ async function main(): Promise<void> {
   }
   if (command.kind === 'eval') {
     await evalCommand(command);
+    return;
+  }
+  if (command.kind === 'metrics') {
+    await metricsCommand(command);
     return;
   }
   if (command.kind === 'stats') {
