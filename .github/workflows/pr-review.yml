@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Note: a failure after the review was posted (e.g. the label update) also retries and can post a second review.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
         type: string
         default: ''
       fallback-model:
@@ -140,7 +140,12 @@ jobs:
             node .vanguard-src/dist/cli/index.js "${args[@]}"
           }
           if [ -n "$IN_FALLBACK_PROVIDER" ]; then
-            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL" || run_review "$IN_FALLBACK_PROVIDER" "$IN_FALLBACK_MODEL"
+            # The fallback runs with no event hint: the hinted (just-labeled) PR bypasses the "head already
+            # reviewed" check, so a retry after the first attempt had already posted its review would post a
+            # second one. Scanned by label only, the fallback skips a head that has a verdict. Residual gap:
+            # a deliberately re-labeled head whose first attempt failed before posting gets no fallback review
+            # — re-add the label.
+            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL" || GITHUB_EVENT_PATH='' run_review "$IN_FALLBACK_PROVIDER" "$IN_FALLBACK_MODEL"
           else
             run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL"
           fi
