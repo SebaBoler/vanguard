@@ -140,7 +140,9 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
 
     // Fetch the base up front so the spec is researched against origin's view of the branch, not a
     // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.
-    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger);
+    // The spec is written against the branch as it exists on the remote, never a local copy that is
+    // ahead of it (the very reason a spec diverges from a branch someone else is actively pushing to).
+    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger, false);
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
       {

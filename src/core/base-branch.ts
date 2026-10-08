@@ -94,10 +94,10 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
   return sha;
 }
 
-/** GitHub Actions and most CI set CI=true; a set-but-empty CI is not CI. */
+/** GitHub Actions and most CI set CI=true; unset, empty, "false" or "0" is not CI. */
 function isCI(): boolean {
   const ci = process.env.CI;
-  return ci !== undefined && ci !== '' && ci !== 'false';
+  return ci !== undefined && ci !== '' && ci !== 'false' && ci !== '0';
 }
 
 /** First `fatal:` line (or first line) of a git error, tokens and URL userinfo masked. */
