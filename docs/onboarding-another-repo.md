@@ -96,6 +96,7 @@ The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, 
 | `persist-metrics` | boolean | `false` | push run metrics to an orphan branch (see below) |
 | `metrics-branch` | string | `''` (`vanguard-metrics`) | branch used by `persist-metrics` |
 | `skills` | string | `.vanguard-src/skills` | skills directory |
+| `max-tasks` | string | `''` (no cap) | `--max-tasks`: cap ready issues claimed per phase in one run |
 | `vanguard-ref` | string | `''` (the workflow's own ref) | Vanguard source ref to build |
 
 Secrets: `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_AUTH_TOKEN` (all optional).
