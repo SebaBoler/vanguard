@@ -89,4 +89,13 @@ describe('WorktreeManager', () => {
     await wm.remove(wt.path);
     expect(await wm.isDirty(wt.path).catch(() => 'gone')).toBe('gone');
   });
+
+  it('changedPaths lists untracked files (NUL-separated git output through execa)', async () => {
+    const wt = await wm.create('task-5', 'main');
+    await writeFile(join(wt.path, 'one.txt'), '1');
+    await writeFile(join(wt.path, 'two.txt'), '2');
+    const paths = await wm.changedPaths(wt.path);
+    expect(paths).toContain('one.txt');
+    expect(paths).toContain('two.txt');
+  });
 });

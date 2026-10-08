@@ -48,4 +48,13 @@ describe('__sidecar entrypoint (integration)', () => {
     // process was merely slow — a false failure that trained us to ignore a red test. The timeout is
     // here to catch a HANG, and 120s still does that; it is not a performance budget.
   }, 120_000);
+
+  it('exits 0 with no output when stdin carries only blank lines (execa `input` with default stdin)', async () => {
+    const { stdout, exitCode } = await execa('tsx', ['src/cli/index.ts', '__sidecar'], {
+      input: '\n\n',
+      preferLocal: true,
+    });
+    expect(stdout.trim()).toBe('');
+    expect(exitCode).toBe(0);
+  }, 120_000);
 });
