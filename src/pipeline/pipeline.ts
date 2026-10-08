@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { redactTokens } from '../core/secret-scan.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { runAgent } from '../core/vanguard.js';
 import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
@@ -1132,12 +1133,13 @@ export interface RebaseOntoRemoteBaseOptions {
  * `refs/remotes/<remote>/<base>` for another base). Returns true when the branch was rebased.
  */
 export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts: RebaseOntoRemoteBaseOptions): Promise<boolean> {
+  assertSafeBaseBranch(opts.base);   // `main:refs/heads/x` or `+main` would make the fetch a writing refspec
   const log = opts.log ?? ((line: string): void => console.log(line));
   const target = `${opts.remote}/${opts.base}`;
   // GitHub compares workflow files with the default branch only for a NEW branch. An existing remote
   // branch (a --reuse re-run) was already pushed: rebasing it would make the plain push non-fast-forward.
   try {
-    await run('git', ['ls-remote', '--exit-code', '--heads', opts.remote, opts.branch], cwd);
+    await run('git', ['ls-remote', '--exit-code', '--heads', '--end-of-options', opts.remote, opts.branch], cwd);
     return false;
   } catch {
     // exit 2: no such remote branch — proceed; any other failure surfaces at the fetch below.
@@ -1150,7 +1152,8 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   }
   let behind: string;
   try {
-    behind = (await run('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD'], cwd)).trim();
+    // Last non-empty line: a stray warning ahead of the count must not disable the fix.
+    behind = (await run('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD'], cwd)).trim().split('\n').at(-1) ?? '';
   } catch (cause) {
     log(`publish: could not compare the branch with ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
@@ -1177,9 +1180,9 @@ function errorMessage(cause: unknown): string {
   return redactTokens(text).split('\n').slice(0, 3).join(' | ').replace(/\/\/[^/@\s]+@/g, '//***@');
 }
 
-/** PR body note when the branch was rebased after verification ran. */
+/** PR body note when the branch was rebased before the push. Brand-neutral: white-label bodies carry it too. */
 export function rebasedNote(remote: string, base: string): string {
-  return `**Rebased** onto \`${remote}/${base}\` before publishing: the base moved during the run, so the verification above was produced on the pre-rebase tree.`;
+  return `Rebased onto \`${remote}/${base}\` before publishing: the base moved while this change was being prepared.`;
 }
 
 /**

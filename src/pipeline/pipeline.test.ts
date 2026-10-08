@@ -382,9 +382,9 @@ describe('publishForReview', () => {
       return '';
     };
     const out = await publishForReview(ctx, { title: 'PR', body: 'proof', runner, authorName: 'Bot', authorEmail: 'bot@x' });
-    expect(ghArgs[ghArgs.indexOf('--body') + 1]).toMatch(/^proof\n\n\*\*Rebased\*\* onto `origin\/main` before publishing/);
+    expect(ghArgs[ghArgs.indexOf('--body') + 1]).toBe('proof\n\nRebased onto `origin/main` before publishing: the base moved while this change was being prepared.');
     expect(calls).toEqual([
-      ['ls-remote', '--exit-code', '--heads', 'origin', 'chore/vanguard-pub2-r2'],
+      ['ls-remote', '--exit-code', '--heads', '--end-of-options', 'origin', 'chore/vanguard-pub2-r2'],
       ['fetch', '--end-of-options', 'origin', 'main'],
       ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
@@ -1457,7 +1457,7 @@ describe('rebaseOntoRemoteBase', () => {
     const calls: string[][] = [];
     const runner = async (_file: string, args: string[]): Promise<string> => { calls.push(args); return ''; };
     expect(await rebaseOntoRemoteBase(runner, '/wt', opts)).toBe(false);
-    expect(calls).toEqual([['ls-remote', '--exit-code', '--heads', 'origin', 'b']]);
+    expect(calls).toEqual([['ls-remote', '--exit-code', '--heads', '--end-of-options', 'origin', 'b']]);
   });
 
   it('does nothing when the branch is not behind (rev-list prints 0)', async () => {
@@ -1470,6 +1470,16 @@ describe('rebaseOntoRemoteBase', () => {
     const calls: string[][] = [];
     expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? 'warning: something' : '')), '/wt', opts)).toBe(false);
     expect(calls.map((c) => c[0])).toEqual(['ls-remote', 'fetch', 'rev-list']);
+  });
+
+  it('reads the count from the last line when git prints a warning first', async () => {
+    const calls: string[][] = [];
+    expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? 'warning: something\n3\n' : '')), '/wt', opts)).toBe(true);
+    expect(calls.map((c) => c[0])).toEqual(['ls-remote', 'fetch', 'rev-list', '-c']);
+  });
+
+  it('rejects a base that would turn the fetch into a writing refspec', async () => {
+    await expect(rebaseOntoRemoteBase(async () => '', '/wt', { ...opts, base: 'main:refs/heads/main' })).rejects.toThrow();
   });
 
   it('rebases with the default identity and --no-verify when behind', async () => {
@@ -1494,7 +1504,7 @@ describe('rebaseOntoRemoteBase', () => {
     expect(lines[0]).toMatch(/does not rebase onto it, pushing as-is: CONFLICT \(content\): Merge conflict in a.ts \| more/);
   });
 
-  it('treats a failed comparison as not behind and logs it (single-branch clone, remote given as URL)', async () => {
+  it('treats a failed comparison as not behind and logs it (e.g. a single-branch clone)', async () => {
     const lines: string[] = [];
     const runner = stub([], (a) => (a[0] === 'rev-list' ? new Error("fatal: bad revision 'HEAD..FETCH_HEAD'") : ''));
     expect(await rebaseOntoRemoteBase(runner, '/wt', { ...opts, base: 'develop', log: (l) => lines.push(l) })).toBe(false);
