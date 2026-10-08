@@ -1,0 +1,183 @@
+name: Vanguard Implement (reusable)
+
+# Reusable body of the Loop v1 implement workflow. A caller owns the triggers, `permissions`,
+# `concurrency` and its own `if:`; this file owns the steps. See docs/onboarding-another-repo.md.
+#
+#   "ready for spec"  -> plan, then build it in the same run
+#   "ready for agent" -> build directly
+#   too vague         -> "needs info" (human fills it in)
+#
+# A single `watch --once`: the spec pass advances a ticket to "ready for agent" and the agent pass
+# builds it in the same invocation (carries the just-advanced id in memory, so it does not depend on
+# GitHub's eventually-consistent label index — see #143).
+#
+# The caller needs `permissions: contents: write, pull-requests: write, issues: write` and the repo
+# setting "Allow GitHub Actions to create and approve pull requests".
+
+on:
+  workflow_call:
+    inputs:
+      allowed-actors:
+        description: 'JSON array of GitHub logins allowed to trigger this workflow, e.g. ["octocat"]. Enforced here as a backstop to the caller if:.'
+        type: string
+        required: true
+      provider:
+        description: 'Implementation provider (--provider). Empty = CLI default.'
+        type: string
+        default: ''
+      provider-model:
+        description: 'Implementation model (--provider-model). Empty = CLI default.'
+        type: string
+        default: ''
+      spec-model:
+        description: 'Model for the spec pass (--spec-model). Empty = CLI default.'
+        type: string
+        default: ''
+      review-provider:
+        description: 'Cross-provider reviewer (--review-provider), e.g. codex. Empty = same as provider.'
+        type: string
+        default: ''
+      review-model:
+        description: 'Reviewer model (--review-model). Empty = CLI default.'
+        type: string
+        default: ''
+      escalate-model:
+        description: 'Model the run escalates to after repeated failures (--escalate-model).'
+        type: string
+        default: claude-fable-5-1
+      conformance:
+        description: 'Run the opt-in conformance review pass (--conformance).'
+        type: boolean
+        default: false
+      conformance-model:
+        description: 'Model for the conformance pass (--conformance-model). Empty = CLI default.'
+        type: string
+        default: ''
+      llm-proxy:
+        description: 'Keep the model credential in a sidecar proxy, out of the sandbox (--llm-proxy).'
+        type: boolean
+        default: false
+      decision-probe:
+        description: 'Opt in to the decision-model probe. It sends issue text to Cloudflare Workers AI, so it is off by default.'
+        type: boolean
+        default: false
+      persist-metrics:
+        description: 'Push run metrics to an orphan branch of the caller repo after the run. Off by default (writes a branch into the repo).'
+        type: boolean
+        default: false
+      metrics-branch:
+        description: 'Orphan branch for persisted metrics (--branch). Empty = CLI default (vanguard-metrics).'
+        type: string
+        default: ''
+      skills:
+        description: 'Skills directory (--skills), relative to the workspace.'
+        type: string
+        default: .vanguard-src/skills
+      vanguard-ref:
+        description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
+        type: string
+        default: ''
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      CODEX_AUTH_JSON:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      CLOUDFLARE_AUTH_TOKEN:
+        required: false
+
+jobs:
+  implement:
+    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Fail loudly rather than let actions/checkout silently build the default branch.
+      - name: Resolve vanguard source ref
+        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
+        run: echo "::error::neither inputs.vanguard-ref nor job.workflow_sha is set" && exit 1
+
+      # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
+      # the CLI at the same revision as the YAML.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}
+          ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
+          path: .vanguard-src
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .vanguard-src/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: .vanguard-src/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+        working-directory: .vanguard-src
+
+      - run: pnpm build
+        working-directory: .vanguard-src
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "ready for spec" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Vanguard Loop v1 spec pass" --force
+          gh label create "ready for agent" --repo "$GITHUB_REPOSITORY" --color 5319E7 --description "Vanguard Loop v1 agent pass" --force
+          gh label create "needs info" --repo "$GITHUB_REPOSITORY" --color D93F0B --description "Parked: ticket too vague for Vanguard" --force
+          gh label create "vanguard:speccing" --repo "$GITHUB_REPOSITORY" --color FEF2C0 --description "Vanguard is writing a tech spec" --force
+          gh label create "vanguard:running" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --description "Vanguard agent is implementing" --force
+          gh label create "vanguard:needs-human-review" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard opened a PR — awaiting human review" --force
+
+      # Codex on a ChatGPT subscription (CODEX_AUTH_JSON) talks to the ChatGPT backend directly, which the
+      # --llm-proxy allowlist does not cover — so llm-proxy is a caller opt-in, off by default.
+      - name: Run Vanguard loop
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          # The decision probe ships issue text off the host; its credentials only reach the run when opted in.
+          CLOUDFLARE_ACCOUNT_ID: ${{ inputs.decision-probe && secrets.CLOUDFLARE_ACCOUNT_ID || '' }}
+          CLOUDFLARE_AUTH_TOKEN: ${{ inputs.decision-probe && secrets.CLOUDFLARE_AUTH_TOKEN || '' }}
+          VANGUARD_DECISION_PROBE: ${{ inputs.decision-probe && '1' || '' }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_PROVIDER_MODEL: ${{ inputs.provider-model }}
+          IN_SPEC_MODEL: ${{ inputs.spec-model }}
+          IN_REVIEW_PROVIDER: ${{ inputs.review-provider }}
+          IN_REVIEW_MODEL: ${{ inputs.review-model }}
+          IN_ESCALATE_MODEL: ${{ inputs.escalate-model }}
+          IN_CONFORMANCE: ${{ inputs.conformance }}
+          IN_CONFORMANCE_MODEL: ${{ inputs.conformance-model }}
+          IN_LLM_PROXY: ${{ inputs.llm-proxy }}
+          IN_SKILLS: ${{ inputs.skills }}
+        run: |
+          # One sweep: spec pass advances "ready for spec" -> "ready for agent", agent pass builds it in the same run (#143).
+          args=(watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once)
+          [ -n "$IN_SKILLS" ] && args+=(--skills "$IN_SKILLS")
+          [ -n "$IN_SPEC_MODEL" ] && args+=(--spec-model "$IN_SPEC_MODEL")
+          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
+          [ -n "$IN_PROVIDER_MODEL" ] && args+=(--provider-model "$IN_PROVIDER_MODEL")
+          [ -n "$IN_REVIEW_PROVIDER" ] && args+=(--review-provider "$IN_REVIEW_PROVIDER")
+          [ -n "$IN_REVIEW_MODEL" ] && args+=(--review-model "$IN_REVIEW_MODEL")
+          [ -n "$IN_ESCALATE_MODEL" ] && args+=(--escalate-model "$IN_ESCALATE_MODEL")
+          [ "$IN_CONFORMANCE" = "true" ] && args+=(--conformance)
+          [ -n "$IN_CONFORMANCE_MODEL" ] && args+=(--conformance-model "$IN_CONFORMANCE_MODEL")
+          [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
+          node .vanguard-src/dist/cli/index.js "${args[@]}"
+
+      - name: Persist run metrics
+        if: ${{ always() && inputs.persist-metrics }}
+        env:
+          IN_METRICS_BRANCH: ${{ inputs.metrics-branch }}
+        run: |
+          args=(metrics push --repo "$GITHUB_WORKSPACE")
+          [ -n "$IN_METRICS_BRANCH" ] && args+=(--branch "$IN_METRICS_BRANCH")
+          node .vanguard-src/dist/cli/index.js "${args[@]}"

@@ -1,0 +1,139 @@
+name: Vanguard PR Review (reusable)
+
+# Reusable body of the external PR review: a visible, adversarial `gh pr review` on a labelled PR.
+# A caller owns the triggers (`pull_request_target` labeled + `workflow_dispatch`), `permissions`
+# (contents: read, pull-requests: write, issues: write), `concurrency` and its own `if:`.
+# See docs/onboarding-another-repo.md.
+
+on:
+  workflow_call:
+    inputs:
+      allowed-actors:
+        description: 'JSON array of GitHub logins allowed to trigger this workflow, e.g. ["octocat"]. Enforced here as a backstop to the caller if:.'
+        type: string
+        required: true
+      provider:
+        description: 'Review provider (--provider), e.g. codex or claude. Empty = CLI default.'
+        type: string
+        default: ''
+      review-model:
+        description: 'Review model (--review-model). Empty = CLI default.'
+        type: string
+        default: ''
+      fallback-provider:
+        description: 'Provider to retry the review with when the first attempt fails (e.g. Codex limit or bad model). Empty = no fallback.'
+        type: string
+        default: ''
+      fallback-model:
+        description: 'Review model for the fallback attempt.'
+        type: string
+        default: ''
+      author:
+        description: 'Only review PRs opened by this login (--author). Empty = any author the CLI accepts.'
+        type: string
+        default: ''
+      llm-proxy:
+        description: 'Keep the model credential in a sidecar proxy, out of the sandbox (--llm-proxy). Not usable with a Codex subscription.'
+        type: boolean
+        default: false
+      vanguard-ref:
+        description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
+        type: string
+        default: ''
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      CODEX_AUTH_JSON:
+        required: false
+
+jobs:
+  review:
+    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Fail loudly rather than let actions/checkout silently build the default branch.
+      - name: Resolve vanguard source ref
+        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
+        run: echo "::error::neither inputs.vanguard-ref nor job.workflow_sha is set" && exit 1
+
+      # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
+      # the CLI at the same revision as the YAML.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}
+          ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
+          path: .vanguard-src
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .vanguard-src/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: .vanguard-src/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+        working-directory: .vanguard-src
+
+      - run: pnpm build
+        working-directory: .vanguard-src
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "ready for vanguard review" --repo "$GITHUB_REPOSITORY" --color BFD4F2 --description "Trigger a Vanguard PR review" --force
+          gh label create "vanguard:reviewing" --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Vanguard PR review in progress" --force
+          gh label create "vanguard:reviewed" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard PR review posted" --force
+
+      - name: Preflight
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_LLM_PROXY: ${{ inputs.llm-proxy }}
+        run: |
+          args=(doctor-prs --github-repo "$GITHUB_REPOSITORY" --label "ready for vanguard review" --repo "$GITHUB_WORKSPACE")
+          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
+          [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
+          node .vanguard-src/dist/cli/index.js "${args[@]}"
+
+      # `watch-prs` has no provider fallback of its own (only the implement pipeline's review stage does),
+      # so when a fallback is configured the review is retried here with the fallback provider and model.
+      - name: Review labeled PRs
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_REVIEW_MODEL: ${{ inputs.review-model }}
+          IN_FALLBACK_PROVIDER: ${{ inputs.fallback-provider }}
+          IN_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+          IN_AUTHOR: ${{ inputs.author }}
+          IN_LLM_PROXY: ${{ inputs.llm-proxy }}
+        run: |
+          run_review() {
+            local provider="$1" model="$2"
+            local args=(watch-prs --once --github-repo "$GITHUB_REPOSITORY"
+              --label "ready for vanguard review"
+              --reviewing-label "vanguard:reviewing"
+              --reviewed-label "vanguard:reviewed"
+              --repo "$GITHUB_WORKSPACE")
+            [ -n "$IN_AUTHOR" ] && args+=(--author "$IN_AUTHOR")
+            [ -n "$provider" ] && args+=(--provider "$provider")
+            [ -n "$model" ] && args+=(--review-model "$model")
+            [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
+            node .vanguard-src/dist/cli/index.js "${args[@]}"
+          }
+          if [ -n "$IN_FALLBACK_PROVIDER" ]; then
+            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL" || run_review "$IN_FALLBACK_PROVIDER" "$IN_FALLBACK_MODEL"
+          else
+            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL"
+          fi

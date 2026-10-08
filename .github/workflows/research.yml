@@ -1,0 +1,92 @@
+name: Vanguard Research (reusable)
+
+# Reusable body of the issue research workflow. A caller owns the triggers (`issues` labeled
+# "needs research" + `workflow_dispatch`), `permissions` (contents: read, issues: write),
+# `concurrency` and its own `if:`. See docs/onboarding-another-repo.md.
+
+on:
+  workflow_call:
+    inputs:
+      allowed-actors:
+        description: 'JSON array of GitHub logins allowed to trigger this workflow, e.g. ["octocat"]. Enforced here as a backstop to the caller if:.'
+        type: string
+        required: true
+      number:
+        description: 'Issue number to research.'
+        type: string
+        required: true
+      provider:
+        description: 'Research provider (--provider). Empty = CLI default.'
+        type: string
+        default: ''
+      research-model:
+        description: 'Model for the research pass (--research-model). Empty = CLI default.'
+        type: string
+        default: ''
+      vanguard-ref:
+        description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
+        type: string
+        default: ''
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+
+jobs:
+  research:
+    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Fail loudly rather than let actions/checkout silently build the default branch.
+      - name: Resolve vanguard source ref
+        if: ${{ inputs.vanguard-ref == '' && job.workflow_sha == '' }}
+        run: echo "::error::neither inputs.vanguard-ref nor job.workflow_sha is set" && exit 1
+
+      # The vanguard source is checked out at the ref of this workflow, so a caller pinned @v1 builds
+      # the CLI at the same revision as the YAML.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}
+          ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
+          path: .vanguard-src
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: .vanguard-src/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: .vanguard-src/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
+        working-directory: .vanguard-src
+
+      - run: pnpm build
+        working-directory: .vanguard-src
+
+      - name: Build sandbox image
+        run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
+
+      - name: Ensure routing labels
+        run: |
+          gh label create "needs research" --repo "$GITHUB_REPOSITORY" --color 1D76DB --force
+          gh label create "vanguard:researching" --repo "$GITHUB_REPOSITORY" --color BFDADC --force
+
+      # `--web` is deliberately not offered: it needs widened sandbox egress (see the egress note in the docs).
+      - name: Research the issue
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          IN_NUMBER: ${{ inputs.number }}
+          IN_PROVIDER: ${{ inputs.provider }}
+          IN_RESEARCH_MODEL: ${{ inputs.research-model }}
+        run: |
+          args=(research "$IN_NUMBER" --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE")
+          [ -n "$IN_PROVIDER" ] && args+=(--provider "$IN_PROVIDER")
+          [ -n "$IN_RESEARCH_MODEL" ] && args+=(--research-model "$IN_RESEARCH_MODEL")
+          node .vanguard-src/dist/cli/index.js "${args[@]}"

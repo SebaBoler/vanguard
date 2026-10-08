@@ -328,7 +328,7 @@ What it does not give you: text. It cannot write code, a review, or explain its 
    export CLOUDFLARE_AUTH_TOKEN=…   # the token, shown once
    export VANGUARD_DECISION_PROBE=1
    ```
-   For the GitHub Actions factory, add the same two values as repository secrets and map them in the workflow's `env:` block next to `CLAUDE_CODE_OAUTH_TOKEN`.
+   For the GitHub Actions factory, add the same two values as repository secrets, pass them to the reusable workflow under `secrets:`, and set `decision-probe: true` on the caller (off by default, see [onboarding](docs/onboarding-another-repo.md)).
 3. Run anything. The probe logs one line per run and `vanguard stats` grows a `PROBE` table; `vanguard eval --judge-model clef-flash` and `run --fork 3 --fork-scorer decision` use the same credentials.
 
 What a live call looks like (recorded 2026-10-07, `clef-flash`, 485 input tokens, 518 ms):
@@ -654,13 +654,9 @@ Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue a
 - **`ready for agent`** — a written, ready ticket: Vanguard builds it directly.
 - **too vague** — triage parks it at `needs info` (no budget spent); you fill it in and re-label.
 
-Three tiers, each building on the last — for the full copy-paste setup (both workflow files, the one-click doctor validator, secrets, and the triage contract) see **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**:
+Your repo carries only a **thin caller** (triggers, permissions, an actor gate and a `uses:` line); the steps live in reusable workflows in this repo (`implement.yml`, `pr-review.yml`, `research.yml`, `revise.yml`, `doctor.yml`), so a change to a default or a step reaches every repo without touching its copy. For the copy-paste callers, secret mapping, `allowed-actors`, the `@v1` / `@main` pin, the inputs of each workflow, the Codex-subscription setup, and the triage contract see **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**. `decision-probe` and `persist-metrics` are off by default there: the probe ships issue text to Cloudflare, and persisting metrics writes a branch into your repo.
 
-- **Minimal** — same repo (this section), Claude only, label `ready for agent`. One secret, one setting.
-- **Intermediate** — [run it on another repo](#run-it-on-another-repo): cross-repo checkout + `ready for spec` (spec → build in one run) + custom skills.
-- **Full** — [cross-provider on a Codex subscription](#cross-provider-on-a-codex-subscription-no-openai-key): Opus plans, Sonnet implements, Codex reviews.
-
-The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)). Add `--max-tasks <n>` to cap how many ready issues a single poll claims and runs in each phase (spec, then agent), so a mislabelled batch can't flood one CI runner with sandboxed runs and PRs in one pass.
+The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. Vanguard's own [`vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) is a caller of [`implement.yml`](.github/workflows/implement.yml) (`uses: ./.github/workflows/implement.yml`). Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)). Add `--max-tasks <n>` to cap how many ready issues a single poll claims and runs in each phase (spec, then agent), so a mislabelled batch can't flood one CI runner with sandboxed runs and PRs in one pass.
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 
@@ -670,66 +666,15 @@ The job runs `vanguard watch --source github --once` **once**: a `ready for spec
 
 #### Run it on another repo
 
-The target repo does not need Vanguard installed — check it out alongside the workspace and build it in the job. Drop this in `.github/workflows/vanguard-implement.yml` in *that* repo, add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and label an issue `ready for spec` or `ready for agent`:
+The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
 
-```yaml
-name: Vanguard Implement
-on:
-  issues:
-    types: [labeled]
-  workflow_dispatch:
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-concurrency:
-  group: vanguard-implement-${{ github.repository }}
-  cancel-in-progress: false
-jobs:
-  implement:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
-      (github.event_name == 'issues' &&
-      contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
-      github.event.issue.user.login == 'YOUR_LOGIN' &&
-      github.event.sender.login == 'YOUR_LOGIN')
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v6                 # target repo -> workspace
-      - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
-        with: { repository: SebaBoler/vanguard, path: .vanguard-src }
-      - uses: pnpm/action-setup@v6
-        with: { package_json_file: .vanguard-src/package.json }
-      - uses: actions/setup-node@v6
-        with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile --ignore-workspace
-        working-directory: .vanguard-src
-      - run: pnpm build
-        working-directory: .vanguard-src
-      - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Ensure routing labels       # watch edits these; gh requires them to exist
-        run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
-            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
-          done
-      - name: Run Vanguard loop (spec then implement)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
-```
-
-Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). `--ignore-workspace` on the Vanguard install matters when the target repo is itself a **pnpm workspace** (monorepo): without it, `pnpm install` in `.vanguard-src` walks up to the target's `pnpm-workspace.yaml`, installs into the wrong place, and the Vanguard build fails. It is a no-op for non-workspace targets, so keep it always.
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
 
 **Backward compatibility — `vanguard:review` label (deprecated).** The post-build resting state was renamed from `vanguard:review` to `vanguard:needs-human-review`; the maintained repos (vanguard, temp-test, alpha-window) have had the old label deleted. A repo onboarded before the rename may still carry `vanguard:review` on in-flight items — Vanguard will not migrate it automatically. The new default and the old label coexist harmlessly (`gh label create --force` adds the new one without touching the old); delete the stale `vanguard:review` once nothing in flight uses it, or pass `--review-state vanguard:review` if you deliberately want to keep the old terminal label.
 
 #### Cross-provider on a Codex subscription (no OpenAI key)
 
-Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a ChatGPT Plus/Pro subscription instead of a paid OpenAI API key? Two changes to the job above.
+Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a ChatGPT Plus/Pro subscription instead of a paid OpenAI API key? Two changes to the caller.
 
 **1. Add the subscription credential as a secret.** Run `codex login` once on your machine (a ChatGPT account, `auth_mode: chatgpt`), then push the resulting `auth.json` verbatim — it holds OAuth tokens, not an API key:
 
@@ -737,22 +682,26 @@ Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a
 gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 ```
 
-**2. Set the providers and drop `--llm-proxy`.** Forward the secret and pick a provider per stage:
+**2. Set the providers and drop `llm-proxy`.** Map the secret in the caller's `secrets:` block and pick a provider per stage in `with:`:
 
 ```yaml
-      - name: Run Vanguard loop (Opus spec / Sonnet impl / Codex review)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+    uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+      spec-model: opus
+      provider: claude
+      provider-model: sonnet
+      review-provider: codex
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
 ```
 
-`--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
+`spec-model: opus` plans, `provider: claude` + `provider-model: sonnet` implements and simplifies, `review-provider: codex` reviews (these map to `--spec-model`, `--provider`, `--provider-model`, `--review-provider`). Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
 
-`--provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — pass `--review-model <model>` to pick a specific one.
+`provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — set `review-model` to pick a specific one.
 
-`--llm-proxy` is gone on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
+`llm-proxy` is left off on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
 
 One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the short-lived access token from the embedded `refresh_token` on each run, so the secret must carry a live refresh token; re-run `gh secret set` if a run ever fails to authenticate. For long-running hosts (a `vanguard watch` on a server or NAS) the local file refreshes itself and this does not come up.
 
