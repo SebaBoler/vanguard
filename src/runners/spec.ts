@@ -91,8 +91,8 @@ function defaultSandboxFactory(
  * ahead of the local one, so the spec is written against the branch as it exists on the remote.
  * See resolveRemoteBaseRef.
  */
-export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
-  return resolveRemoteBaseRef(repoPath, base, { label: 'spec', ...(logger !== undefined ? { logger } : {}) });
+export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger, keepLocalIfAhead?: boolean): Promise<string> {
+  return resolveRemoteBaseRef(repoPath, base, { label: 'spec', ...(logger !== undefined ? { logger } : {}), ...(keepLocalIfAhead !== undefined ? { keepLocalIfAhead } : {}) });
 }
 
 /**

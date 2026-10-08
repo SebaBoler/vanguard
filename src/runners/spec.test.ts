@@ -615,7 +615,8 @@ describe('resolveSpecBaseRef', () => {
     await commit(origin, 'v2');
 
     const staleLocal = (await execa('git', ['rev-parse', 'main'], { cwd: clone })).stdout;
-    expect(await resolveSpecBaseRef(clone, 'main')).toBe('refs/remotes/origin/main');
+    const originHeadNow = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
+    expect(await resolveSpecBaseRef(clone, 'main')).toBe(originHeadNow);
 
     const cut = (await execa('git', ['rev-parse', 'origin/main'], { cwd: clone })).stdout;
     const originHead = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
@@ -629,13 +630,28 @@ describe('resolveSpecBaseRef', () => {
     await writeFile(join(repo, 'f.txt'), 'x');
     await execa('git', ['add', '.'], { cwd: repo });
     await commit(repo, 'init');
-    expect(await resolveSpecBaseRef(repo, 'main')).toBe('main');
+    expect(await resolveSpecBaseRef(repo, 'main')).toBe('refs/heads/main');
   });
 
   it('rejects a base that git would parse as an option', async () => {
     const repo = await mk('vg-dash-');
     await execa('git', ['init', '-b', 'main'], { cwd: repo });
     await expect(resolveSpecBaseRef(repo, '--upload-pack=false')).rejects.toThrow('cannot start with "-"');
+  });
+
+  it('keeps a local base that is ahead of origin only when asked to (outside CI); on CI origin wins', async () => {
+    const origin = await mk('vg-origin-');
+    await execa('git', ['init', '-b', 'main'], { cwd: origin });
+    await writeFile(join(origin, 'f.txt'), 'v1');
+    await execa('git', ['add', '.'], { cwd: origin });
+    await commit(origin, 'v1');
+    const clone = await mk('vg-clone-');
+    await execa('git', ['clone', origin, clone]);
+    await writeFile(join(clone, 'f.txt'), 'local');
+    await execa('git', ['add', '.'], { cwd: clone });
+    await commit(clone, 'local-only');
+    expect(await resolveSpecBaseRef(clone, 'main', undefined, true)).toBe('refs/heads/main');
+    expect(await resolveSpecBaseRef(clone, 'main', undefined, false)).toBe((await execa('git', ['rev-parse', 'refs/remotes/origin/main'], { cwd: clone })).stdout);
   });
 });
 

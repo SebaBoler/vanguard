@@ -55,15 +55,16 @@ describe('resolveRemoteBaseRef', () => {
   it('prefers origin/<base> when the remote moved past the local base (#423)', async () => {
     const { origin, clone } = await originAndClone();
     await commit(origin, 'v2');
-    expect(await resolveRemoteBaseRef(clone, 'main')).toBe('refs/remotes/origin/main');
-    const cut = (await execa('git', ['rev-parse', 'refs/remotes/origin/main'], { cwd: clone })).stdout;
-    expect(cut).toBe((await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout);
+    const originTip = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
+    // The SHA itself: a concurrent run's fetch cannot move it, and no same-named tag can shadow it.
+    expect(await resolveRemoteBaseRef(clone, 'main')).toBe(originTip);
+    expect((await execa('git', ['rev-parse', 'refs/remotes/origin/main'], { cwd: clone })).stdout).toBe(originTip);
   });
 
   it('keeps the local base when it is ahead of origin (unpushed commits)', async () => {
     const { clone } = await originAndClone();
     await commit(clone, 'local-only');
-    expect(await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: true })).toBe('main');
+    expect(await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: true })).toBe('refs/heads/main');
   });
 
   it('compares the local BRANCH, not a same-named tag, when deciding ahead/diverged', async () => {
@@ -74,40 +75,43 @@ describe('resolveRemoteBaseRef', () => {
     // and the resolver would wrongly prefer origin over the branch's unpushed commit.
     await execa('git', ['fetch', 'origin', 'main'], { cwd: clone });
     await execa('git', ['tag', 'main', 'FETCH_HEAD'], { cwd: clone });
-    expect(await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: true })).toBe('main');
+    const ref = await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: true });
+    expect(ref).toBe('refs/heads/main');
+    // Unambiguous for worktree add / log: resolves to the branch tip, not the tag.
+    expect((await execa('git', ['rev-parse', ref], { cwd: clone })).stdout).toBe((await execa('git', ['rev-parse', 'refs/heads/main'], { cwd: clone })).stdout);
   });
 
   it('on CI (keepLocalIfAhead false) a diverged local base is ignored and origin wins', async () => {
     const { clone } = await originAndClone();
     await commit(clone, 'local-only');
-    expect(await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: false })).toBe('refs/remotes/origin/main');
+    expect(await resolveRemoteBaseRef(clone, 'main', { keepLocalIfAhead: false })).toBe((await execa('git', ['rev-parse', 'refs/remotes/origin/main'], { cwd: clone })).stdout);
   });
 
   it('uses origin/<base> when local and remote are equal (harmless either way)', async () => {
     const { clone } = await originAndClone();
-    expect(await resolveRemoteBaseRef(clone, 'main')).toBe('refs/remotes/origin/main');
+    expect(await resolveRemoteBaseRef(clone, 'main')).toBe((await execa('git', ['rev-parse', 'refs/heads/main'], { cwd: clone })).stdout);
   });
 
   it('falls back to the local base with no remote', async () => {
     const repo = await mk('vg-local-');
     await execa('git', ['init', '-b', 'main'], { cwd: repo });
     await commit(repo, 'v1');
-    expect(await resolveRemoteBaseRef(repo, 'main')).toBe('main');
+    expect(await resolveRemoteBaseRef(repo, 'main')).toBe('refs/heads/main');
   });
 
   it('tracks a base a single-branch clone did not fetch before (explicit refspec)', async () => {
     const { origin, clone } = await originAndClone();
     await execa('git', ['branch', 'dev'], { cwd: origin });
     await execa('git', ['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], { cwd: clone });
-    expect(await resolveRemoteBaseRef(clone, 'dev')).toBe('refs/remotes/origin/dev');
-    expect((await execa('git', ['rev-parse', 'refs/remotes/origin/dev'], { cwd: clone })).stdout)
-      .toBe((await execa('git', ['rev-parse', 'dev'], { cwd: origin })).stdout);
+    const devTip = (await execa('git', ['rev-parse', 'dev'], { cwd: origin })).stdout;
+    expect(await resolveRemoteBaseRef(clone, 'dev')).toBe(devTip);
+    expect((await execa('git', ['rev-parse', 'refs/remotes/origin/dev'], { cwd: clone })).stdout).toBe(devTip);
   });
 
   it('reports a base origin does not carry and keeps the local one', async () => {
     const { clone } = await originAndClone();
     await execa('git', ['branch', 'only-local'], { cwd: clone });
-    expect(await resolveRemoteBaseRef(clone, 'only-local')).toBe('only-local');
+    expect(await resolveRemoteBaseRef(clone, 'only-local')).toBe('refs/heads/only-local');
   });
 
   it('redacts URL userinfo and tokens from a git fetch error', () => {
@@ -117,5 +121,8 @@ describe('resolveRemoteBaseRef', () => {
 
   it('rejects an unsafe base before touching git', async () => {
     await expect(resolveRemoteBaseRef('/nowhere', '-x')).rejects.toThrow(/Invalid base branch/);
+    // `*` would make the explicit refspec a wildcard fetch of every branch.
+    await expect(resolveRemoteBaseRef('/nowhere', '*')).rejects.toThrow(/Invalid base branch/);
+    await expect(resolveRemoteBaseRef('/nowhere', 'rel[1]')).rejects.toThrow(/Invalid base branch/);
   });
 });
