@@ -66,6 +66,14 @@ describe('resolveRemoteBaseRef', () => {
     expect(await resolveRemoteBaseRef(clone, 'main')).toBe('main');
   });
 
+  it('compares the local BRANCH, not a same-named tag, when deciding ahead/diverged', async () => {
+    const { origin, clone } = await originAndClone();
+    await commit(origin, 'v2');
+    await execa('git', ['tag', 'main', 'HEAD~0'], { cwd: clone }).catch(() => undefined); // tag named like the branch, at the stale commit
+    await commit(clone, 'local-only');
+    expect(await resolveRemoteBaseRef(clone, 'main')).toBe('main');
+  });
+
   it('uses origin/<base> when local and remote are equal (harmless either way)', async () => {
     const { clone } = await originAndClone();
     expect(await resolveRemoteBaseRef(clone, 'main')).toBe('origin/main');
@@ -78,13 +86,12 @@ describe('resolveRemoteBaseRef', () => {
     expect(await resolveRemoteBaseRef(repo, 'main')).toBe('main');
   });
 
-  it('falls back to FETCH_HEAD for a base a single-branch clone does not track', async () => {
+  it('returns the fetched SHA for a base a single-branch clone does not track', async () => {
     const { origin, clone } = await originAndClone();
     await execa('git', ['branch', 'dev'], { cwd: origin });
     await execa('git', ['config', 'remote.origin.fetch', '+refs/heads/main:refs/remotes/origin/main'], { cwd: clone });
-    expect(await resolveRemoteBaseRef(clone, 'dev')).toBe('FETCH_HEAD');
-    expect((await execa('git', ['rev-parse', 'FETCH_HEAD'], { cwd: clone })).stdout)
-      .toBe((await execa('git', ['rev-parse', 'dev'], { cwd: origin })).stdout);
+    // The SHA, not 'FETCH_HEAD': FETCH_HEAD is invisible inside a linked worktree and rewritten by later fetches.
+    expect(await resolveRemoteBaseRef(clone, 'dev')).toBe((await execa('git', ['rev-parse', 'dev'], { cwd: origin })).stdout);
   });
 
   it('redacts URL userinfo and tokens from a git fetch error', () => {

@@ -51,19 +51,22 @@ export async function resolveRemoteBaseRef(repoPath: string, base: string, opts:
     return base;
   }
   // Prefer the remote-tracking ref; a single-branch clone (actions/checkout) only tracks its own branch,
-  // so for another base fall back to FETCH_HEAD, which the fetch above always writes.
+  // so for another base read FETCH_HEAD, which the fetch above always writes — but hand back its SHA:
+  // FETCH_HEAD is per-repository state, invisible inside the linked worktree and rewritten by any later
+  // fetch (spec pass, concurrent tasks).
   const tracking = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath, reject: false });
-  const remoteRef = tracking.exitCode === 0 ? `origin/${base}` : 'FETCH_HEAD';
-  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', remoteRef], { cwd: repoPath, reject: false })).stdout.trim();
+  const tracked = tracking.exitCode === 0;
+  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', tracked ? `refs/remotes/origin/${base}` : 'FETCH_HEAD'], { cwd: repoPath, reject: false })).stdout.trim();
   if (sha === '') {
     log.warn({ base }, `${label}: origin has no ${base} — using local ${base}`);
     return base;
   }
+  const remoteRef = tracked ? `origin/${base}` : sha;
   const local = (await execa('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`], { cwd: repoPath, reject: false })).exitCode === 0;
   if (local) {
     // Exit 1 = local is ahead of or diverged from origin: keep it, it may carry unpushed commits.
     // Any other failure is a git error, reported as such; the remote copy is still the better cut.
-    const ancestor = await execa('git', ['merge-base', '--is-ancestor', base, remoteRef], { cwd: repoPath, reject: false });
+    const ancestor = await execa('git', ['merge-base', '--is-ancestor', `refs/heads/${base}`, sha], { cwd: repoPath, reject: false });
     if (ancestor.exitCode === 1) {
       log.warn({ base, sha }, `${label}: local ${base} is ahead of or diverged from origin/${base} — using local ${base}`);
       return base;
