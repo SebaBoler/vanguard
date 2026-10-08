@@ -1,17 +1,23 @@
 name: Vanguard Revise
+
+# Thin caller of the reusable workflow (revise.yml), which holds the steps.
+
 on:
   pull_request_target:
     types: [labeled]
   workflow_dispatch:
     inputs:
       pr: { description: "PR number", required: true }
+
 permissions:
   contents: write          # pushes the revision commit to the PR branch
   pull-requests: write     # reply, resolve threads, gh pr ready
   issues: write
+
 concurrency:
   group: vanguard-revise-${{ github.repository }}
   cancel-in-progress: false
+
 jobs:
   revise:
     if: >-
@@ -19,35 +25,13 @@ jobs:
       (github.event.label.name == 'needs revision' &&
        contains(fromJSON('["SebaBoler","github-actions[bot]","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
        contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
+    uses: ./.github/workflows/revise.yml
+    with:
+      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
+      number: ${{ github.event.pull_request.number || inputs.pr }}
+      llm-proxy: true
+    secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       # PAT for revision pushes: GITHUB_TOKEN events fire no workflows (recursion guard), so
       # revised PRs would never get CI and stay BLOCKED under branch protection (#256).
       VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
-    steps:
-      # Check out the DEFAULT branch (trusted) so the revise tool is always main's version, not the
-      # PR-under-revision's code — which may lack the command or be untrusted (pull_request_target).
-      # revise-pr itself does `git fetch origin <head>` + a worktree, so it operates on the PR branch.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0          # the runner fetches the PR branch and pushes back to it
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
-        with: { node-version: 24, cache: pnpm }
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm build
-      - name: Build sandbox image
-        run: docker build -t vanguard-sandbox:latest docker/
-      - name: Ensure routing labels
-        run: |
-          gh label create "needs revision" --repo "$GITHUB_REPOSITORY" --color E99695 --force
-          gh label create "vanguard:revising" --repo "$GITHUB_REPOSITORY" --color C5DEF5 --force
-      - name: Revise the PR from review comments
-        env:
-          PR: ${{ github.event.pull_request.number || inputs.pr }}
-        run: |
-          node dist/cli/index.js revise-pr "$PR" \
-            --github-repo "$GITHUB_REPOSITORY" --max-rounds 2 --llm-proxy
