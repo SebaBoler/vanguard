@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted non-fatally: a fallback whose credential is missing is disabled with a warning, never a red job. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
         type: string
         default: ''
       fallback-model:
@@ -113,6 +113,7 @@ jobs:
           gh label create "vanguard:reviewed" --repo "$GITHUB_REPOSITORY" --color 0E8A16 --description "Vanguard PR review posted" --force
 
       - name: Preflight
+        id: preflight
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
@@ -127,8 +128,19 @@ jobs:
             node .vanguard-src/dist/cli/index.js "${args[@]}"
           }
           preflight "$IN_PROVIDER"
-          # The fallback is only useful if its credential is in place before the first attempt fails.
-          if [ -n "$IN_FALLBACK_PROVIDER" ]; then preflight "$IN_FALLBACK_PROVIDER"; fi
+          # The fallback is only useful if its credential is in place before the first attempt fails — but a
+          # fallback whose credential is missing must not take the primary down with it (a caller with a
+          # Codex primary and an unset Claude secret would otherwise go red before Codex ever ran). Warn and
+          # review without the fallback instead.
+          fallback_ok=false
+          if [ -n "$IN_FALLBACK_PROVIDER" ]; then
+            if preflight "$IN_FALLBACK_PROVIDER"; then
+              fallback_ok=true
+            else
+              echo "::warning::fallback provider '$IN_FALLBACK_PROVIDER' failed preflight (see above); reviewing without a fallback"
+            fi
+          fi
+          echo "fallback-ok=$fallback_ok" >> "$GITHUB_OUTPUT"
 
       # `watch-prs` has no provider fallback of its own (only the implement pipeline's review stage does),
       # so when a fallback is configured the review is retried here with the fallback provider and model.
@@ -140,6 +152,7 @@ jobs:
           IN_REVIEW_MODEL: ${{ inputs.review-model }}
           IN_FALLBACK_PROVIDER: ${{ inputs.fallback-provider }}
           IN_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+          IN_FALLBACK_OK: ${{ steps.preflight.outputs.fallback-ok }}
           IN_AUTHOR: ${{ inputs.author }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
         run: |
@@ -156,7 +169,7 @@ jobs:
             [ "$IN_LLM_PROXY" = "true" ] && args+=(--llm-proxy)
             node .vanguard-src/dist/cli/index.js "${args[@]}"
           }
-          if [ -n "$IN_FALLBACK_PROVIDER" ]; then
+          if [ -n "$IN_FALLBACK_PROVIDER" ] && [ "$IN_FALLBACK_OK" = "true" ]; then
             # The fallback runs with no event hint: the hinted (just-labeled) PR bypasses the "head already
             # reviewed" check, so a retry after the first attempt had already posted its review would post a
             # second one. Scanned by label only, the fallback skips a head that has a verdict. Residual gap:

@@ -176,7 +176,7 @@ jobs:
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
 ```
 
-Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provider`, `fallback-model`, `author` (`--author`), `llm-proxy`, `vanguard-ref`. Leave the fallback inputs empty for no fallback. The fallback fires whenever the first attempt exits non-zero. It runs without the event hint, so a head the first attempt already reviewed (e.g. the review posted, then the label update failed) is skipped rather than reviewed twice; the one gap is a deliberately re-labeled head whose first attempt failed before posting — re-add the label to get its fallback review. Do not combine `llm-proxy` with a Codex subscription (see the Full tier below).
+Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provider`, `fallback-model`, `author` (`--author`), `llm-proxy`, `vanguard-ref`. Leave the fallback inputs empty for no fallback. The fallback provider is preflighted too; if its credential is missing the job warns and reviews without a fallback rather than failing before the primary provider runs (so a Codex primary keeps working while the Claude secret is unset). The fallback fires whenever the first attempt exits non-zero. It runs without the event hint, so a head the first attempt already reviewed (e.g. the review posted, then the label update failed) is skipped rather than reviewed twice; the one gap is a deliberately re-labeled head whose first attempt failed before posting — re-add the label to get its fallback review. Do not combine `llm-proxy` with a Codex subscription (see the Full tier below).
 
 ### `vanguard-research.yml` and `vanguard-revise.yml` (optional)
 
