@@ -6,7 +6,8 @@ name: Vanguard Implement
 #   too vague         -> "needs info" (human fills it in)
 #
 # Thin caller of the reusable workflow (implement.yml), which holds the steps. The local `uses: ./`
-# form resolves at the run's ref, so a PR branch exercises its own copy.
+# form resolves at the run's ref: the default branch for issue/dispatch events, so a PR branch is only
+# exercised via `gh workflow run <caller>.yml --ref <branch>`.
 #
 # Requires repo setting: Settings > Actions > General > Workflow permissions >
 # "Allow GitHub Actions to create and approve pull requests" (otherwise the

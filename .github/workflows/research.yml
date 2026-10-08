@@ -33,12 +33,19 @@ on:
 
 jobs:
   research:
-    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
+      - name: Enforce allowed-actors
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+        run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Fail loudly rather than let actions/checkout silently build the default branch.

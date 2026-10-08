@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt fails (e.g. Codex limit or bad model). Empty = no fallback.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Note: a failure after the review was posted (e.g. the label update) also retries and can post a second review.'
         type: string
         default: ''
       fallback-model:
@@ -48,12 +48,19 @@ on:
 
 jobs:
   review:
-    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
+      - name: Enforce allowed-actors
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+        run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Fail loudly rather than let actions/checkout silently build the default branch.
@@ -79,7 +86,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: .vanguard-src/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile --ignore-workspace
+      - run: pnpm install --frozen-lockfile --ignore-workspace --ignore-scripts
         working-directory: .vanguard-src
 
       - run: pnpm build

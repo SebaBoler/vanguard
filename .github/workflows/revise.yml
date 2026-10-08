@@ -41,12 +41,19 @@ on:
 
 jobs:
   revise:
-    if: ${{ contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      # Backstop to the caller's if:. A step, not a job-level if:, so a wrong or stale login list fails
+      # the run loudly instead of skipping the job and reporting the caller green.
+      - name: Enforce allowed-actors
+        if: ${{ !contains(fromJSON(inputs.allowed-actors), github.event.sender.login) }}
+        env:
+          ACTOR: ${{ github.event.sender.login }}
+        run: echo "::error::actor '$ACTOR' is not in allowed-actors" && exit 1
+
       # Check out the DEFAULT branch (trusted) so the revise tool is never the PR-under-revision's code,
       # which may lack the command or be untrusted (pull_request_target). revise-pr does its own
       # `git fetch origin <head>` + a worktree, so it operates on the PR branch.
@@ -103,8 +110,8 @@ jobs:
           VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
         run: |
           git config --global credential.helper store
+          umask 077
           printf 'https://x-access-token:%s@github.com\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" > "$HOME/.git-credentials"
-          chmod 600 "$HOME/.git-credentials"
 
       - name: Revise the PR from review comments
         env:
