@@ -236,7 +236,8 @@ export async function watchMergeRequestsOnce(
           const msg = restoreError instanceof Error ? restoreError.message : String(restoreError);
           opts.log?.(`${phase} ${id}: restore failed -> manual label check (${msg})`);
         }
-        opts.log?.(`${phase} ${id}: failed -> retry later`);
+        const reason = error instanceof Error ? error.message : String(error);
+        opts.log?.(`${phase} ${id}: failed -> retry later (${reason})`);
         return { id, kind: 'failed' };
       }
     },

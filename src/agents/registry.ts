@@ -347,7 +347,13 @@ export interface ProviderChoice {
 export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   const provider = choice.provider ?? 'claude';
   const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
-  return !used.some((n) => resolveSpec(n, choice.customProviders).ownsAnthropicTransport === true);
+  // Only a provider with no key wiring of its own (Claude) consumes authSecrets. Codex/Cursor bring their
+  // own key; Zai/OpenRouter/customs own the Anthropic transport with theirs. So a Codex-only review needs
+  // no Anthropic credential at all (#391) — before, every non-transport-owner demanded one.
+  return used.some((n) => {
+    const spec = resolveSpec(n, choice.customProviders);
+    return spec.key === undefined && spec.ownsAnthropicTransport !== true;
+  });
 }
 
 /** A resolved choice: the agents to run plus the secrets split into sandbox-safe and proxy-held buckets. */

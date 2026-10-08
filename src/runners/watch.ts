@@ -237,7 +237,8 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: SpecOnceOp
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
       } catch (error) {
         await primitives.onFailure(item.id, error);
-        operatorLog(opts, `${phase} ${item.id}: failed -> retry later`);
+        const reason = error instanceof Error ? error.message : String(error);
+        operatorLog(opts, `${phase} ${item.id}: failed -> retry later (${reason})`);
         return { id: item.id, kind: 'failed' };
       }
     },

@@ -51,7 +51,7 @@ export function agentAuthFromEnv(
     }
     return { mode: 'api', apiKey: key };
   }
-  if (!needsAnthropicAuth(choice)) return undefined; // suppressed (e.g. codex/cursor + zai review): no Anthropic credential is consumed
+  if (!needsAnthropicAuth(choice)) return undefined; // no used provider consumes an Anthropic credential (codex/cursor alone, or + zai review)
   const auth = authFromEnv(env);
   if (auth === undefined) {
     throw new Error('Set CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API) before running.');

@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { anthropicTransportKeyEnv, assertProvidersResolvable, needsAnthropicAuth, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
 import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';
@@ -249,7 +249,21 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   let llmAuthPresent: boolean;
   try {
     const keyEnvs = cmd.provider !== undefined ? anthropicTransportKeyEnv(cmd.provider, customs) : undefined;
-    llmAuthPresent = keyEnvs !== undefined ? keyEnvs.some((name) => hasEnv(env, name)) : authFromEnv(env) !== undefined;
+    if (keyEnvs !== undefined) {
+      llmAuthPresent = keyEnvs.some((name) => hasEnv(env, name));
+    } else {
+      // Codex/Cursor-only consumes no Anthropic credential in direct mode (#391); --llm-proxy still needs
+      // one for the primary sidecar. Mirrors agentAuthFromEnv so preflight stops exactly when the run would.
+      const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
+      const anthropicNeeded =
+        cmd.llmProxy === true ||
+        needsAnthropicAuth({
+          ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+          ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+          customProviders: customs,
+        });
+      llmAuthPresent = !anthropicNeeded || authFromEnv(env) !== undefined;
+    }
   } catch {
     llmAuthPresent = false; // unknown/broken provider name — the 'provider combo' check reports the why
   }
