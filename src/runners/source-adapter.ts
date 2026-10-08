@@ -1,13 +1,21 @@
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
-import { selectAgents } from '../agents/registry.js';
+import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, planImplementReviewStages, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { mergeAttempts } from '../core/run-metric.js';
+import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
+import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
+import { VanguardError } from '../core/errors.js';
+import { decisionDiffScorer } from '../evals/decision-judge.js';
+import { literalPrompt } from '../context/prompt-engine.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, commitStage, publishForReview, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
+import { FLOWS } from '../api/capabilities.js';
+import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes, persistVerification, persistVisualProof } from '../core/run-record.js';
+import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
 import { scanForSecrets } from '../core/secret-scan.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
@@ -30,14 +38,19 @@ import type { ConformanceResult } from '../pipeline/conformance-gate.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderChoice } from '../agents/registry.js';
+import type { ProviderChoice, CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
+import type { RunEvent } from '../pipeline/events.js';
 import type { SkillRegistry } from '../context/skill-registry.js';
 
 /** Agent-pipeline options shared by the `run` and `watch` commands, threaded verbatim into the *Deps. */
 export interface RunOptions extends ProviderChoice {
   providerModel?: string;
   reviewModel?: string;
+  /** Model for gate repairs after the first failed one; undefined = keep the implementer model. */
+  escalateModel?: string;
+  /** How --fork variants are scored; 'decision' needs decision-model credentials (fails fast without). */
+  forkScorer?: 'llm' | 'decision';
   noSimplify?: boolean;
   verifyCmd?: string;
   visualProofCmd?: string;
@@ -52,6 +65,13 @@ export interface RunOptions extends ProviderChoice {
    * plan-implement-review pipeline — instead of the source's default implement-first stages. Set via --plan.
    */
   plan?: boolean;
+  /**
+   * Named flow key (a `FLOWS` registry entry, e.g. 'flow-b'). Set via `--flow`. `--plan` is the
+   * back-compat alias for `flow: 'plan'`. When set, `FLOWS[flow].build()` supplies the base stages
+   * instead of the adapter's — EXCEPT `'default'`, which means "the adapter's own stages" (an adapter
+   * may customize them; Linear does). Validated at the CLI/sidecar boundary.
+   */
+  flow?: string;
   /** Base branch to branch off and target the PR at (default: `main`). Set via --base. */
   baseBranch?: string;
   /**
@@ -83,8 +103,12 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    // Loaded repo customs must survive this copy or selectAgents sees a bare name (S6).
+    ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
+    ...(cmd.escalateModel !== undefined ? { escalateModel: cmd.escalateModel } : {}),
+    ...(cmd.forkScorer !== undefined ? { forkScorer: cmd.forkScorer } : {}),
     ...(cmd.noSimplify !== undefined ? { noSimplify: cmd.noSimplify } : {}),
     ...(cmd.verifyCmd !== undefined ? { verifyCmd: cmd.verifyCmd } : {}),
     ...(cmd.visualProofCmd !== undefined ? { visualProofCmd: cmd.visualProofCmd } : {}),
@@ -92,6 +116,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.conformanceModel !== undefined ? { conformanceModel: cmd.conformanceModel } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.plan !== undefined ? { plan: cmd.plan } : {}),
+    ...(cmd.flow !== undefined ? { flow: cmd.flow } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
@@ -109,6 +134,10 @@ export interface RunIssueDeps extends RunOptions {
   reuse?: boolean;
   forkN?: number;
   reviewGate?: boolean;
+  /** When set, receives structured run events. Absent ⇒ no events (CLI path). Threaded to runStages + run-start/run-end. */
+  onEvent?: (e: RunEvent) => void;
+  /** When set, aborts the run — the sandbox is torn down via the caller's finally. Threaded into runStages. */
+  signal?: AbortSignal;
 }
 
 /** Semantic kind of a proof failure; adapters map it to a platform label string. */
@@ -197,6 +226,37 @@ function branchIdFromTaskId(taskId: string): string {
  * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
  * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
  */
+/** Issue label that pins the implementer-tier model for ONE task: `vanguard:model=<model>`. */
+export const MODEL_LABEL_PREFIX = 'vanguard:model=';
+
+/**
+ * Model ids/aliases/slugs as every supported provider spells them (`opus`, `claude-sonnet-5`,
+ * `anthropic/claude-sonnet-4.6`, `gpt-5.6-sol`, `glm-5.2`). Labels are a lower-trust input than a CLI
+ * flag — anyone with triage permission can set one — so the value is allowlisted by shape before it
+ * becomes a `--model` argument, even though the arg is shell-quoted downstream.
+ */
+const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
+
+/**
+ * Per-task model override from the issue's labels. A human judging "this one is hard" beats any
+ * pre-run heuristic, so the label wins over the fleet-wide --provider-model. Last well-formed
+ * matching label wins; an empty or malformed value is ignored (and reported via `onInvalid`).
+ */
+export function modelFromLabels(labels: ReadonlyArray<string>, onInvalid?: (label: string) => void): string | undefined {
+  let model: string | undefined;
+  for (const label of labels) {
+    if (!label.startsWith(MODEL_LABEL_PREFIX)) continue;
+    const value = label.slice(MODEL_LABEL_PREFIX.length).trim();
+    if (value === '') continue;
+    if (!MODEL_NAME_RE.test(value)) {
+      onInvalid?.(label);
+      continue;
+    }
+    model = value;
+  }
+  return model;
+}
+
 export function conventionalCommitMessage(title: string, taskId: string): string {
   const prefix = 'feat: ';
   const suffix = ` (#${branchIdFromTaskId(taskId)})`;
@@ -206,12 +266,59 @@ export function conventionalCommitMessage(title: string, taskId: string): string
   return `${prefix}${clipped}${suffix}`;
 }
 
+/**
+ * Resolve a flow name to its base stage array. 'default' (and no flow at all) means "this
+ * adapter's own stages", NOT FLOWS.default.build. They are not the same: the Linear adapter's
+ * stages() swaps in an implementer that reads the issue via the linear-cli skill, while
+ * FLOWS.default.build is the generic implementReviewSimplifyStages. Selecting 'default' by name —
+ * the natural thing for a name-driven UI — must not silently downgrade a Linear run to an
+ * implementer that never reads the issue. Non-built-in names resolve from the repo's
+ * `.vanguard/flows/*.hcl` (S5); unknown names throw listing both sets.
+ */
+async function resolveBaseStages(
+  flow: string | undefined,
+  repoPath: string,
+  adapter: SourceAdapter,
+  customProviders?: readonly CustomProviderEntry[],
+): Promise<PipelineStage[]> {
+  if (flow === undefined || flow === 'default') return adapter.stages();
+  if (Object.hasOwn(FLOWS, flow)) return FLOWS[flow]!.build();
+  const stages = await resolveRepoFlow(flow, repoPath, customProviders);
+  if (stages === undefined) throw await unknownFlowError(flow, repoPath);
+  return stages;
+}
+
+/**
+ * Credentials and consent for `--fork-scorer decision`. Checked by the CLI before anything runs and
+ * again here as a backstop. A white-label run ships the CLIENT's diff to the decision model, so it
+ * needs the same explicit consent as the difficulty probe (VANGUARD_DECISION_PROBE=all).
+ */
+export function resolveForkScorerConfig(whiteLabel: boolean, env: NodeJS.ProcessEnv = process.env): DecisionModelConfig {
+  if (!decisionEgressAllowed(whiteLabel, env)) {
+    throw new VanguardError(
+      '--fork-scorer decision on a white-label run (--commit-author) sends the client diff to the decision model; set VANGUARD_DECISION_PROBE=all to allow that.',
+    );
+  }
+  const config = decisionModelConfig(env);
+  if (config === undefined) {
+    throw new VanguardError(`--fork-scorer decision: ${decisionModelMissing(env['VANGUARD_DECISION_MODEL'] ?? DECISION_MODEL_DEFAULT, env)}`);
+  }
+  return config;
+}
+
 /** Shared pipeline body for GitHub and Linear issue runners, parameterised by a SourceAdapter. */
 export async function runSourcedIssue(
   issueRef: string,
   deps: RunIssueDeps,
   adapter: SourceAdapter,
 ): Promise<RunIssueResult> {
+  // Named-flow dispatch, resolved FIRST: a flow typo must fail before the tracker fetch, the
+  // provider proxies, and the sandbox spin-up (the CLI mirror of the sidecar fail-fast, S5 D6).
+  // `--flow <name>` selects a FLOWS builder or a repo `.vanguard/flows/*.hcl` flow; `--plan` is
+  // the back-compat alias for flow 'plan'.
+  const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
+  const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter, deps.customProviders);
+
   const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
   // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer
   // prompt ({{COMMENTS}}), triage, and the conformance manifest read it exactly like a posted spec,
@@ -240,7 +347,7 @@ export async function runSourcedIssue(
   try {
     const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
         ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
@@ -252,7 +359,21 @@ export async function runSourcedIssue(
       ...(deps.network !== undefined ? { network: deps.network } : {}),
     });
 
+    // A decision-model fork scorer needs credentials; resolve them BEFORE the sandbox is built so a
+    // missing key fails in a second, not after a full implementer run.
+    const forkScore =
+      deps.forkN !== undefined && deps.forkScorer === 'decision' ? decisionDiffScorer(resolveForkScorerConfig(whiteLabel), deps.signal !== undefined ? { signal: deps.signal } : {}) : undefined;
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    // Log-only difficulty probe (decision model, opt-in via env): kicked off here so its round trip
+    // hides under sandbox + worktree provisioning; awaited once the pipeline is assembled. Recorded
+    // next to the run so stats can later tell whether it predicts repairs/escalation. Never routes.
+    const labelModel = modelFromLabels(task.labels, (label) =>
+      console.warn(`vanguard: ${task.id} ignoring malformed model label ${JSON.stringify(label)}`),
+    );
+    const probePromise = probeTaskDifficulty(task, labelModel ?? deps.providerModel, {
+      config: decisionProbeConfig(process.env, { whiteLabel }),
+      ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+    });
     const ctx = await prepareContext(
       {
         taskId: adapter.taskId(task),
@@ -267,9 +388,6 @@ export async function runSourcedIssue(
       skills !== undefined ? { skills } : {},
     );
     try {
-      // --plan swaps the source's implement-first stages for the plan-implement-review pipeline
-      // (opus planner → sonnet implementer → reviewer), so a dedicated planning stage precedes the code.
-      const baseStages = deps.plan === true ? planImplementReviewStages() : adapter.stages();
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
       // loop): an under-budget stage that stopped without <promise>COMPLETE</promise> gets nudged to finish.
@@ -277,7 +395,39 @@ export async function runSourcedIssue(
         deps.maxRepairIterations !== undefined
           ? withStageResumeUntilComplete(turnScoped, deps.maxRepairIterations)
           : turnScoped;
-      const pipeline = assembleReviewPipeline(scopedStages, agents, deps);
+      const providerForcedModel = forcedProviderModel(deps.provider ?? 'claude', deps.customProviders);
+      if (labelModel !== undefined) {
+        console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
+      }
+      const pipeline = assembleReviewPipeline(scopedStages, agents, {
+        ...deps,
+        ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
+        ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
+      });
+      const probe = await probePromise;
+      if (probe !== undefined && deps.signal?.aborted !== true) {
+        await persistDecisionProbe(deps.repoPath, adapter.taskId(task), probe).catch(() => undefined);
+        console.log(
+          `vanguard: ${task.id} difficulty probe (${probe.model}, ${probe.latencyMs}ms): first-try ${probe.completesFirstTry.toFixed(2)}, difficulty ${probe.difficulty.toFixed(2)}/4, spec clear ${probe.specClear.toFixed(2)}`,
+        );
+      }
+      // A conformance stage's narrative rides on the reviewer verdict comment (publishReviewVerdict
+      // appends it as a `## Conformance` section). `--conformance` appends the stage to ANY flow, so on
+      // a reviewer-less one (flow-b: adversary+repairer) it would run, cost money, and publish nothing.
+      // Fail at assembly rather than surface nothing the user explicitly asked for. Giving conformance
+      // its own standalone comment would need its own body format + dedupe marker; this error is that TODO.
+      if (pipeline.some((s) => s.name === STAGE.CONFORMANCE) && !pipeline.some((s) => s.name === STAGE.REVIEWER)) {
+        throw new Error(
+          `--conformance needs a flow with a reviewer stage (its verdict rides on the review comment); flow "${flow ?? 'default'}" has none`,
+        );
+      }
+      deps.onEvent?.({
+        type: 'run-start',
+        taskId: adapter.taskId(task),
+        flow: flow ?? 'default',
+        provider: agents.agent.name,
+        stages: pipeline.map((s) => s.name),
+      });
       const outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
@@ -285,10 +435,12 @@ export async function runSourcedIssue(
           ...(adapter.variables?.(issueRef, task) ?? {}),
           RETROSPECTIVE_MEMORY: retrospectiveMemory,
         },
-        ...(deps.forkN !== undefined ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent) } } : {}),
+        ...(deps.forkN !== undefined
+          ? { fork: { n: deps.forkN, complete: sandboxComplete(ctx, agents.agent), ...(forkScore !== undefined ? { score: forkScore } : {}) } }
+          : {}),
+        ...(deps.onEvent !== undefined ? { onEvent: deps.onEvent } : {}),
+        ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
       });
-      console.log(summarizeOutcomes(outcomes));
-
       // Deterministic spec-manifest vs diff conformance gate, joined with the verify command into a
       // single shared-cap repair loop: either gate failing resumes the implementer's own session with
       // a combined gap report (bounded, budget/turn caps already apply to the resumed stage) —
@@ -303,38 +455,107 @@ export async function runSourcedIssue(
       // so its position in `outcomes` is fixed for the duration.
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
       let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
+      // A resumed repair pass inherits the implementer's own turn cap — without this it falls back
+      // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
+      const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
+      const implementerMaxTurns = implementerStage?.maxTurns;
+      // Each resume also gets a per-call USD cap, synthesized as stageCostFraction ×
+      // DEFAULT_RUN_MAX_COST_USD (floored at stageCostFloorUsd) — $3 for the canonical implementer.
+      // Deliberately decoupled from the stage's EFFECTIVE in-stage budget: runStages runs this path
+      // with maxCostUsd = Infinity, so "inherit the stage budget" would mean no cap at all. These
+      // calls run outside runStages' accounting; without this, the only bound would be
+      // iterations × turn cap.
+      const repairBudgetUsd =
+        implementerStage?.stageCostFraction !== undefined
+          ? Math.max(
+              implementerStage.stageCostFraction * DEFAULT_RUN_MAX_COST_USD,
+              implementerStage.stageCostFloorUsd ?? 0,
+            )
+          : undefined;
 
       const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
+      let implementerDone = false;
       let gatePassed = false;
       let repairIterations = 0;
+      // try/finally so the per-stage cost table is printed even when a repair call throws or the run
+      // is cancelled mid-loop — and, on the happy path, after the loop so repairs show up in it.
+      try {
       for (;;) {
         // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
         // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
         conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
         verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
-        gatePassed = conformance.pass && (verification === undefined || verification.passed);
+        // Completion is part of the gate (dogfood #352): an implementer that hit its turn cap or
+        // timeout mid-task can leave residue that still typechecks and tests green — conformance
+        // (often manifest-less) and verification alone would then PASS the gate and publish a
+        // garbage PR titled as the feature. Incomplete → resume the session to finish the work.
+        // Gate on `completed`, NOT on exitReason === 'maxTurns': the SDK counts internal steps as
+        // turns while vanguard counts real ones, so the actual #352 truncation surfaced as
+        // exitReason 'incomplete' with turns 4 — an exitReason gate would have missed it. The cost
+        // is that a provider that finishes work but never emits <promise>COMPLETE</promise> (glm
+        // prose-stops) is re-nudged and, if it still won't signal, downgraded to a Part-of PR —
+        // an unverifiable "done" must not auto-close the issue.
+        // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
+        // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
+        // here. Each resume here is bounded by the implementer's turn cap AND the per-call
+        // repairBudgetUsd computed above.
+        implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
+        gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
         if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
 
         repairIterations += 1;
+        // Reactive escalation: the first repair stays on the (cheap) implementer model; once that has
+        // demonstrably failed, later repairs resume the same session on --escalate-model. Reacting to
+        // an observed red gate beats guessing task difficulty up front — a wrong guess down costs a
+        // failed run plus repairs, a wrong guess up only costs today's price.
+        // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
+        // override it (it could even downgrade).
+        const escalate = repairIterations >= 2 && deps.escalateModel !== undefined && labelModel === undefined;
         console.log(
-          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session`,
+          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session${
+            escalate ? ` on ${deps.escalateModel}` : ''
+          }`,
         );
         const feedback = [
+          !implementerDone
+            ? 'The previous session ended before the task was finished (turn cap or timeout). Continue and complete the remaining work.'
+            : undefined,
           !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
           verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
         ]
           .filter((s): s is string => s !== undefined)
           .join('\n\n');
+        // Resume on the implementer's configured model (routed --provider-model) — omitting it here
+        // silently hands the repair to the provider's default model.
+        const repairModel = escalate ? deps.escalateModel : outcomes[implementerIdx]?.model;
         const repaired = await runAgent(ctx, {
-          promptTemplate: `${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`,
+          // Test output is author-controlled text; see literalPrompt.
+          ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
           agent: agents.agent,
           resumeSessionId,
+          ...(repairModel !== undefined ? { model: repairModel } : {}),
+          ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
+          ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
+          // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
+          // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
+          ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
         });
         const prior = outcomes[implementerIdx];
-        if (prior !== undefined) outcomes[implementerIdx] = { ...prior, result: repaired };
+        // An escalated repair re-labels the stage's configured model, so stats attribute the final
+        // attempt to the model that actually closed the gate rather than reading it as a gateway swap.
+        if (prior !== undefined) {
+          outcomes[implementerIdx] = {
+            ...prior,
+            result: mergeAttempts(prior.result, repaired),
+            ...(escalate && deps.escalateModel !== undefined ? { model: deps.escalateModel } : {}),
+          };
+        }
         resumeSessionId = repaired.sessionId ?? resumeSessionId;
+      }
+      } finally {
+        console.log(summarizeOutcomes(outcomes));
       }
       console.log(`vanguard: gate ${gatePassed ? 'PASSED' : 'FAILED — declaring partial scope'} for ${task.id}`);
 
@@ -369,6 +590,7 @@ export async function runSourcedIssue(
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr (above) + run record.
         if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, block);
+        deps.onEvent?.({ type: 'run-end', secretBlocked: true });
         return { task, secretBlocked: true };
       }
 
@@ -384,6 +606,7 @@ export async function runSourcedIssue(
       });
       if (!commit.committed) {
         await persistStageOutcomes(deps.repoPath, outcomes);
+        deps.onEvent?.({ type: 'run-end' });
         return { task };
       }
 
@@ -395,13 +618,14 @@ export async function runSourcedIssue(
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
         ...(manifest !== undefined ? { conformance, manifest } : {}),
         ...(verificationFailed ? { verificationFailed: true } : {}),
+        ...(!implementerDone ? { implementerIncomplete: true } : {}),
         ...(whiteLabel ? { hideAttribution: true } : {}),
       });
       // Commit-message closing-keyword scan: a rebase merge closes the issue per commit message
       // regardless of this PR body, so a partial result surfaces any commit-level `Closes #N` leak as
       // a blocking warning. Advisory-only on a full green pass — a legitimate `Closes` is expected there.
       const commitLeaks = partial
-        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, 'main'), task.id)
+        ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, deps.baseBranch ?? 'main'), task.id)
         : [];
       // White-label mode keeps the body to just the Closes/Part-of line — no automated proof-of-work
       // blocks — so the PR reads like a plain human PR. The quality gate still runs; it only shapes the
@@ -422,7 +646,13 @@ export async function runSourcedIssue(
         ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
       });
       // White-label mode delivers a plain PR: no Vanguard review comment and no issue link-back comment.
-      if (!whiteLabel) {
+      // A flow without a `reviewer` stage (e.g. flow-b: adversary+repairer) has no verdict to surface,
+      // so skip the verdict comment entirely. The no-silence guarantee still fires for reviewer-bearing
+      // flows: publishReviewVerdict throws if a `reviewer` stage ran but produced no outcome. (A
+      // conformance stage can only reach here alongside a reviewer — the assembly check above rejects
+      // conformance on a reviewer-less flow — so this skip can never swallow a conformance narrative.)
+      const pipelineHasReviewer = pipeline.some((s) => s.name === STAGE.REVIEWER);
+      if (!whiteLabel && pipelineHasReviewer) {
         const reviewerOutcome = outcomes.find((o) => o.name === STAGE.REVIEWER);
         const conformanceOutcome = outcomes.find((o) => o.name === STAGE.CONFORMANCE);
         await adapter.publishVerdict({
@@ -438,6 +668,7 @@ export async function runSourcedIssue(
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
+      deps.onEvent?.({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };
     } finally {
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {

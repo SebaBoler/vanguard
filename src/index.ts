@@ -93,8 +93,13 @@ export {
   buildPullRequestReviewComment,
   buildPullRequestReviewIncompleteComment,
   PR_REVIEW_INCOMPLETE_NOTICE,
+  PR_REVIEW_NO_OUTPUT_NOTICE,
+  PR_REVIEW_NO_VERDICT_NOTICE,
+  incompleteReviewReason,
+  PullRequestReviewIncompleteError,
   pullRequestReviewMarker,
   hasPullRequestReviewMarker,
+  hasPullRequestReviewIncompleteMarker,
   reviewPullRequest,
 } from './runners/pr-review.js';
 export {
@@ -108,6 +113,7 @@ export type {
   PullRequestReviewer,
   PullRequestReviewOutcome,
   PullRequestReviewAttempt,
+  PullRequestReviewIncompleteReason,
   ReviewPullRequestDeps,
   ReviewPullRequestResult,
 } from './runners/pr-review.js';
@@ -161,8 +167,17 @@ export {
   buildMergeRequestReviewComment,
   postMergeRequestNote,
   reviewMergeRequest,
+  MergeRequestReviewIncompleteError,
 } from './runners/mr-review.js';
-export type { MergeRequestReviewTarget, MergeRequestForReview, MergeRequestReviewer, ReviewMergeRequestDeps, ReviewMergeRequestResult } from './runners/mr-review.js';
+export type {
+  MergeRequestReviewTarget,
+  MergeRequestForReview,
+  MergeRequestReviewer,
+  MergeRequestReviewAttempt,
+  MergeRequestReviewOutcome,
+  ReviewMergeRequestDeps,
+  ReviewMergeRequestResult,
+} from './runners/mr-review.js';
 export {
   gitlabMergeRequestWatchPrimitives,
   watchMergeRequestsOnce,

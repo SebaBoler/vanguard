@@ -1,4 +1,4 @@
-import { Card, Chip } from 'chunks-ui';
+import { Card, Chip } from '@/ui';
 import type { Proof } from '../../vanguard-output';
 
 export function ProofGate({ proof }: { proof?: Proof }) {

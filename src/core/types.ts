@@ -2,7 +2,8 @@ import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
 import type { VanguardLogger } from './logger.js';
 
-export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type { ReasoningEffort } from '../wire.js';
+import type { ReasoningEffort } from '../wire.js';
 
 export type ExitReason = 'completed' | 'incomplete' | 'maxTurns' | 'timeout' | 'error' | 'needs_human' | 'budget_exceeded';
 
@@ -48,4 +49,8 @@ export interface RunResult {
   transcript?: string;
   /** Model actually used for the run: the provider-reported model, falling back to the configured one. */
   model?: string;
+  /** Number of agent calls folded into this result (resumes, repairs, fork variants); absent = 1. */
+  attempts?: number;
+  /** Exit reason of the FIRST attempt when more than one was folded in — keeps a truncation visible after a repair. */
+  firstExitReason?: ExitReason;
 }

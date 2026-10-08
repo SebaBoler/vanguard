@@ -11,7 +11,7 @@ import {
   linearWatchPrimitives,
   githubIssueWatchPrimitives,
 } from './watch.js';
-import { runSpecGenerator } from './spec.js';
+import { runSpecGenerator, resolveSpecBaseRef } from './spec.js';
 import { parseSpecManifest } from '../pipeline/conformance-gate.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives, GenerateSpec } from './watch.js';
@@ -572,18 +572,72 @@ function fakeAgent(finalText: string): AgentProvider {
   };
 }
 
-/** Recording agent: captures the model field from the first run() call, returns a valid spec. */
-function recordingSpecAgent(captured: { model: string | undefined }): AgentProvider {
+/** Recording agent: captures the model + maxTurns of the first run() call, returns a valid spec. */
+function recordingSpecAgent(captured: { model?: string | undefined; maxTurns?: number | undefined }): AgentProvider {
   const finalText = 'Here is the plan <tech_spec>\n## Problem\nRetry 5xx.\n</tech_spec> <promise>COMPLETE</promise>';
   return {
     name: 'recording',
     async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
       captured.model = input.model;
+      captured.maxTurns = input.maxTurns;
       yield { text: finalText };
       return { finalText, turns: 1, sessionId: 's1' };
     },
   };
 }
+
+describe('resolveSpecBaseRef', () => {
+  const dirs: string[] = [];
+  const mk = async (prefix: string): Promise<string> => {
+    const d = await mkdtemp(join(tmpdir(), prefix));
+    dirs.push(d);
+    return d;
+  };
+  const commit = (cwd: string, msg: string): Promise<unknown> =>
+    execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg], { cwd });
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  });
+
+  it('fetches origin and cuts from origin/<base> when the local base is behind', async () => {
+    const origin = await mk('vg-origin-');
+    await execa('git', ['init', '-b', 'main'], { cwd: origin });
+    await writeFile(join(origin, 'f.txt'), 'v1');
+    await execa('git', ['add', '.'], { cwd: origin });
+    await commit(origin, 'v1');
+
+    const clone = await mk('vg-clone-');
+    await execa('git', ['clone', origin, clone]);
+
+    // Advance origin past the clone's local main — the stale-baseline scenario.
+    await writeFile(join(origin, 'f.txt'), 'v2');
+    await execa('git', ['add', '.'], { cwd: origin });
+    await commit(origin, 'v2');
+
+    const staleLocal = (await execa('git', ['rev-parse', 'main'], { cwd: clone })).stdout;
+    expect(await resolveSpecBaseRef(clone, 'main')).toBe('origin/main');
+
+    const cut = (await execa('git', ['rev-parse', 'origin/main'], { cwd: clone })).stdout;
+    const originHead = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
+    expect(cut).toBe(originHead); // fetched the newer commit
+    expect(cut).not.toBe(staleLocal); // and it's ahead of the stale local main
+  });
+
+  it('falls back to the local base when there is no origin remote', async () => {
+    const repo = await mk('vg-norem-');
+    await execa('git', ['init', '-b', 'main'], { cwd: repo });
+    await writeFile(join(repo, 'f.txt'), 'x');
+    await execa('git', ['add', '.'], { cwd: repo });
+    await commit(repo, 'init');
+    expect(await resolveSpecBaseRef(repo, 'main')).toBe('main');
+  });
+
+  it('rejects a base that git would parse as an option', async () => {
+    const repo = await mk('vg-dash-');
+    await execa('git', ['init', '-b', 'main'], { cwd: repo });
+    await expect(resolveSpecBaseRef(repo, '--upload-pack=false')).rejects.toThrow('cannot start with "-"');
+  });
+});
 
 describe('runSpecGenerator', () => {
   let repo: string;
@@ -692,5 +746,29 @@ describe('runSpecGenerator', () => {
 
     // explicit specModel always wins regardless of provider
     expect(await runWithDeps({ provider: 'zai', specModel: 'sonnet' })).toBe('sonnet');
+  });
+
+  it('threads deps.maxTurns into the tech-spec stage; defaults to 30 when unset', async () => {
+    const task = readyTask('ENG-21');
+
+    async function capturedMaxTurns(overrides: Partial<RunSpecGeneratorDeps>): Promise<number | undefined> {
+      const captured: { model?: string; maxTurns?: number } = {};
+      const { sandbox } = makeSandbox();
+      const deps: RunSpecGeneratorDeps = {
+        auth: { type: 'api', apiKey: 'x' } as never,
+        repoPath: repo,
+        fetcher: fakeFetcher({ [task.id]: task }, [task]),
+        sandboxFactory: () => sandbox,
+        agent: recordingSpecAgent(captured),
+        ...overrides,
+      };
+      await runSpecGenerator(task.id, deps);
+      return captured.maxTurns;
+    }
+
+    // --max-turns override must reach the tech-spec stage (fails if spec.ts drops the spread)
+    expect(await capturedMaxTurns({ maxTurns: 50 })).toBe(50);
+    // default when unset
+    expect(await capturedMaxTurns({})).toBe(30);
   });
 });

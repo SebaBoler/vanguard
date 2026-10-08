@@ -3,7 +3,7 @@
 # launcher resolves a sibling binary, which breaks when bins are copied across build stages).
 # Pinned by digest for a reproducible, tamper-evident base (the tag is kept for readability).
 FROM node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf
-ARG CLAUDE_CLI_VERSION=2.1.165
+ARG CLAUDE_CLI_VERSION=2.1.260
 ARG LINEAR_CLI_VERSION=latest
 ARG CODEX_CLI_VERSION=latest
 

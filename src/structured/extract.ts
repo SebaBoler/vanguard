@@ -16,6 +16,22 @@ export function extractTag(text: string, tag: string): string | undefined {
   return last;
 }
 
+/**
+ * Like extractTag, but recovers a block whose closing tag never arrived: when no full
+ * <tag>...</tag> pair exists yet a lone opening <tag> does, returns everything after it. This
+ * rescues a long response truncated mid-stream — e.g. a corp MITM proxy severing an SSE before the
+ * closing tag (see claude-stream.ts). `salvaged` marks the tail-may-be-clipped case so callers can
+ * warn. Returns undefined only when the opening tag is absent entirely (nothing was produced).
+ */
+export function extractTagLenient(text: string, tag: string): { text: string; salvaged: boolean } | undefined {
+  const strict = extractTag(text, tag);
+  if (strict !== undefined && strict !== '') return { text: strict, salvaged: false };
+  const open = new RegExp(`<${escapeRegExp(tag)}>`, 'i').exec(text);
+  if (open === null) return undefined;
+  const rest = text.slice(open.index + open[0].length).trim();
+  return rest === '' ? undefined : { text: rest, salvaged: true };
+}
+
 const CODE_FENCE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i;
 
 function stripCodeFences(raw: string): string {

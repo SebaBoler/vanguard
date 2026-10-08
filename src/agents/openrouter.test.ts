@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OpenRouterProvider, OPENROUTER_DEFAULT_MODEL, OPENROUTER_BASE_URL } from './openrouter.js';
+import { OpenRouterProvider, OPENROUTER_DEFAULT_MODEL, OPENROUTER_BASE_URL, toOpenRouterModel } from './openrouter.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentRunInput, AgentRunOutput } from './provider.js';
 
@@ -62,6 +62,16 @@ describe('OpenRouterProvider', () => {
     const cmd = await captureCommand();
     expect(cmd).toContain('--model');
     expect(cmd).toContain(OPENROUTER_DEFAULT_MODEL);
+  });
+
+  it('maps Claude aliases/ids to OpenRouter slugs and rejects unknown bare names', async () => {
+    expect(toOpenRouterModel('haiku')).toBe('anthropic/claude-haiku-5.5');
+    expect(toOpenRouterModel('claude-sonnet-5')).toBe('anthropic/claude-sonnet-5');
+    expect(toOpenRouterModel('z-ai/glm-5.2')).toBe('z-ai/glm-5.2');
+    expect(() => toOpenRouterModel('opus-9')).toThrow(/not an OpenRouter slug/);
+    const cmd = await captureCommand({ model: 'haiku' });
+    expect(cmd).toContain('anthropic/claude-haiku-5.5');
+    expect(cmd).not.toMatch(/--model haiku\b/);
   });
 
   it('respects an explicit --provider-model override', async () => {

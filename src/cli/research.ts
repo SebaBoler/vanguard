@@ -1,4 +1,4 @@
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
@@ -6,6 +6,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { literalPrompt } from '../context/prompt-engine.js';
 import { runResearch } from '../runners/research.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
@@ -76,7 +77,7 @@ async function runDefaultResearcher(
   try {
     const env = llmProxySandboxEnv(sandboxContext.proxyUrl, sandboxContext.llmProxy, providerProxies.openai);
     const sandbox = new DockerSandboxProvider({
-      image: 'vanguard-sandbox:latest',
+      image: sandboxImage(),
       secrets: {
         ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
@@ -91,7 +92,7 @@ async function runDefaultResearcher(
       const result = await runAgent(ctx, {
         stageName: 'research',
         agent: agents.agent,
-        promptTemplate: prompt,
+        ...literalPrompt(prompt),
         maxTurns: 12,
         copyBack: false,
         ...(cmd.researchModel !== undefined ? { model: cmd.researchModel } : {}),

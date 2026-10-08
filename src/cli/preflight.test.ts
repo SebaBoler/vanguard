@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { runPreflight, formatPreflightReport } from './preflight.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
@@ -21,12 +24,16 @@ function githubDoctor(overrides: Partial<DoctorCommand> = {}): DoctorCommand {
   };
 }
 
-function makeRunner(labels: string[] = ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL]): PreflightRunner {
+function makeRunner(
+  labels: string[] = ['ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL, GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL],
+  cliVersion = '2.1.260',
+): PreflightRunner {
   return async (cmd, args) => {
     if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
     if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
     if (cmd === 'docker' && args[0] === 'info') return { stdout: '' };
     if (cmd === 'docker' && args[0] === 'image') return { stdout: '' };
+    if (cmd === 'docker' && args[0] === 'run') return { stdout: `${cliVersion} (Claude Code)` };
     if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
     if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify(labels.map((name) => ({ name }))) };
     throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
@@ -100,9 +107,64 @@ describe('runPreflight', () => {
       'preflight: repo remote ok',
       'preflight: docker daemon ok',
       'preflight: sandbox image ok',
+      'preflight: sandbox claude cli ok',
       'preflight: github auth ok',
       'preflight: github labels ok',
     ]);
+  });
+
+  it('fails when the sandbox image carries a claude CLI older than the repo pin', async () => {
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(undefined, '2.1.165'),
+    });
+
+    expect(report.ok).toBe(false);
+    const cli = report.checks.find((c) => c.name === 'sandbox claude cli');
+    expect(cli?.ok).toBe(false);
+    expect(cli?.reason).toContain('image has 2.1.165');
+    expect(cli?.reason).toContain('./docker/build.sh');
+  });
+
+  it('accepts a sandbox image whose claude CLI is newer than the pin', async () => {
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(undefined, '2.2.0'),
+    });
+
+    expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
+  });
+
+  it('inspects VANGUARD_SANDBOX_IMAGE, not the mutable tag, when the override is set', async () => {
+    const inspected: string[] = [];
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo' };
+      if (cmd === 'git' && args.join(' ') === 'remote get-url origin') return { stdout: 'https://github.com/owner/repo.git' };
+      if (cmd === 'docker' && args[0] === 'info') return { stdout: '' };
+      if (cmd === 'docker' && args[0] === 'image') {
+        inspected.push(args[2]!);
+        return { stdout: '' };
+      }
+      if (cmd === 'docker' && args[0] === 'run') {
+        inspected.push(args[2]!);
+        return { stdout: '2.1.260 (Claude Code)' };
+      }
+      if (cmd === 'gh' && args[0] === 'auth') return { stdout: '' };
+      if (cmd === 'gh' && args[0] === 'label') return { stdout: JSON.stringify([]) };
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+    };
+
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', VANGUARD_SANDBOX_IMAGE: 'sha256:deadbeef' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(inspected).toEqual(['sha256:deadbeef', 'sha256:deadbeef']);
+    expect(report.checks.find((c) => c.name === 'sandbox image')?.ok).toBe(true);
+    expect(report.checks.find((c) => c.name === 'sandbox claude cli')?.ok).toBe(true);
   });
 
   it('checks PR review loop labels before watch-prs can claim a PR', async () => {
@@ -137,6 +199,144 @@ describe('runPreflight', () => {
     expect(report.ok).toBe(false);
     expect(formatPreflightReport(report)).toContain('preflight: linear api missing -> stop before claim');
     expect(formatPreflightReport(report)).toContain('preflight: linear skills missing -> stop before claim');
+  });
+
+  describe('Linear review-surface auth', () => {
+    const linearDoctor: DoctorCommand = { kind: 'doctor', source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills' };
+    const env = { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' };
+
+    function linearRunner(origin: string, glabAuthOk = true): { run: PreflightRunner; calls: string[] } {
+      const calls: string[] = [];
+      const run: PreflightRunner = async (cmd, args) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (cmd === 'git' && args[0] === 'remote') return { stdout: origin };
+        if (cmd === 'glab' && (args[0] === 'auth' || args[0] === 'api')) {
+          if (!glabAuthOk) throw new Error('not logged in');
+          return { stdout: '' };
+        }
+        if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+        return { stdout: '' };
+      };
+      return { run, calls };
+    }
+
+    it('checks glab auth when origin is a GitLab remote', async () => {
+      const { run, calls } = linearRunner('git@gitlab.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(true);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(report.checks.some((c) => c.name === 'github auth')).toBe(false);
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
+    });
+
+    it('fails before claim when glab is not authenticated for a GitLab remote', async () => {
+      const { run } = linearRunner('git@gitlab.com:group/project.git', false);
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    });
+
+    it('fails before claim when a GitLab origin names no project', async () => {
+      const { run } = linearRunner('https://gitlab.com/');
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: gitlab project origin https://gitlab.com/ names no group/project -> stop before claim',
+      );
+    });
+
+    it.each([
+      ['a GitHub remote', 'https://github.com/owner/repo.git'],
+      ['a GitHub Enterprise remote', 'git@github.corp.com:o/r.git'],
+      ['a self-hosted remote without GITLAB_HOST', 'git@git.example.com:group/project.git'],
+    ])('checks gh auth when origin is %s', async (_label, origin) => {
+      const { run, calls } = linearRunner(origin, false);
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
+      expect(report.checks.some((c) => c.name === 'gitlab auth')).toBe(false);
+      expect(calls).toContain('gh auth status');
+      expect(calls).not.toContain('glab auth status');
+    });
+
+    it('fails before claim when glab is logged in to the origin host but GITLAB_HOST does not name it', async () => {
+      const { run: base, calls } = linearRunner('git@git.example.com:group/project.git');
+      const probeEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+      const probeTimeouts: Array<number | undefined> = [];
+      const run: PreflightRunner = async (cmd, args, opts) => {
+        if (cmd === 'glab' && args[0] === 'api') {
+          probeEnvs.push(opts.env);
+          probeTimeouts.push(opts.timeoutMs);
+        }
+        return await base(cmd, args, opts);
+      };
+      const tokens = { GITLAB_TOKEN: 'glpat', GITLAB_ACCESS_TOKEN: 'glpat2', OAUTH_TOKEN: 'oauth', CI_JOB_TOKEN: 'job', GH_TOKEN: 'gh' };
+      const report = await runPreflight(linearDoctor, { env: { ...env, ...tokens }, nodeVersion: '24.11.1', run });
+
+      expect(report.ok).toBe(false);
+      expect(calls).toContain('glab api --hostname git.example.com user');
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: gitlab host glab is logged in to git.example.com; set GITLAB_HOST=git.example.com to publish there through glab -> stop before claim',
+      );
+      // The host may be another forge: no GitLab token may reach it.
+      expect(probeEnvs).toHaveLength(1);
+      expect(Object.keys(probeEnvs[0] ?? {}).filter((key) => key in tokens && key !== 'GH_TOKEN')).toEqual([]);
+      expect(probeEnvs[0]?.LINEAR_API_KEY).toBe('lin');
+      expect(probeTimeouts).toEqual([10_000]);
+    });
+
+    it('names GITLAB_HOST when gh auth is missing for an origin that is not github.com', async () => {
+      const { run: base } = linearRunner('git@git.example.com:group/project.git', false);
+      const run: PreflightRunner = async (cmd, args, opts) => {
+        if (cmd === 'gh' && args[0] === 'auth') throw new Error('not logged in');
+        return await base(cmd, args, opts);
+      };
+      const report = await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain(
+        'preflight: github auth missing for origin host git.example.com; for a self-hosted GitLab set GITLAB_HOST=git.example.com -> stop before claim',
+      );
+    });
+
+    it('does not ask glab about a github.com origin', async () => {
+      const { run, calls } = linearRunner('https://github.com/owner/repo.git');
+      await runPreflight(linearDoctor, { env, nodeVersion: '24.11.1', run });
+
+      expect(calls.some((c) => c.startsWith('glab'))).toBe(false);
+    });
+
+    it('checks glab auth for a self-hosted remote that matches GITLAB_HOST', async () => {
+      const { run, calls } = linearRunner('git@git.example.com:group/project.git');
+      const report = await runPreflight(linearDoctor, { env: { ...env, GITLAB_HOST: 'https://git.example.com:8443' }, nodeVersion: '24.11.1', run });
+
+      expect(formatPreflightReport(report)).toContain('preflight: gitlab auth ok');
+      expect(calls).toContain('glab auth status');
+      expect(calls).not.toContain('gh auth status');
+    });
+  });
+
+  it('reports an invalid VANGUARD_SANDBOX_IMAGE as a failed check and runs no docker command with it', async () => {
+    const calls: string[] = [];
+    const base = makeRunner();
+    const run: PreflightRunner = async (cmd, args, opts) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      return await base(cmd, args, opts);
+    };
+    const report = await runPreflight(githubDoctor(), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', VANGUARD_SANDBOX_IMAGE: '--privileged' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: sandbox image VANGUARD_SANDBOX_IMAGE is not an image reference: "--privileged" -> stop before claim',
+    );
+    expect(calls.some((c) => c.includes('--privileged'))).toBe(false);
   });
 
   it('fails provider auth when doctor uses codex but CODEX_API_KEY/OPENAI_API_KEY are absent', async () => {
@@ -227,6 +427,23 @@ describe('runPreflight gitlab source', () => {
     expect(glabAuthCalled).toBe(true);
   });
 
+  it('fails doctor-mrs when the token cannot read the GitLab user the review dedupe needs', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'api' && args[1] === 'user') throw new Error('403 Forbidden');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: '[]' };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { kind: 'doctor-mrs', project: 'g/p', repoPath: '/repo', label: 'r', reviewingLabel: 'a', reviewedLabel: 'b' },
+      { env: { GITLAB_TOKEN: 'token', CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(formatPreflightReport(report)).toContain(
+      'preflight: gitlab user unreadable (token cannot read GET /user) -> stop before claim',
+    );
+  });
+
   it('skips glab auth check when GITLAB_TOKEN is set', async () => {
     let glabAuthCalled = false;
     const run: PreflightRunner = async (cmd, args) => {
@@ -238,6 +455,23 @@ describe('runPreflight gitlab source', () => {
     };
     await runPreflight(baseCmd, { env: { GITLAB_TOKEN: 'token', ANTHROPIC_API_KEY: 'key' }, nodeVersion: '24.0.0', run });
     expect(glabAuthCalled).toBe(false);
+  });
+
+  it('spec-only gitlab loop-v1 still checks glab auth and the spec routing labels', async () => {
+    const run: PreflightRunner = async (cmd, args) => {
+      if (cmd === 'glab' && args[0] === 'auth') throw new Error('not logged in');
+      if (cmd === 'git') return { stdout: 'https://gitlab.com/g/p.git' };
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      if (cmd === 'glab' && args[0] === 'label') return { stdout: JSON.stringify([{ name: 'vanguard' }, { name: 'ready for spec' }]) };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(
+      { ...baseCmd, specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true },
+      { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token' }, nodeVersion: '24.11.1', run },
+    );
+    expect(report.ok).toBe(false);
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab auth missing -> stop before claim');
+    expect(formatPreflightReport(report)).toContain('preflight: gitlab labels missing ready for agent, needs info -> stop before claim');
   });
 });
 
@@ -351,5 +585,114 @@ describe('runPreflight provider combo check', () => {
     // makeRunner throws on `gh api` -> runOk catches -> unreadable -> best-effort skip (no check pushed)
     const unreadable = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run: makeRunner() });
     expect(unreadable.checks.find((c) => c.name === 'pr-create setting')).toBeUndefined();
+  });
+
+  it.each([
+    ['doctor', githubDoctor({ specOnly: true })],
+    ['watch', githubWatch({ specLabel: 'ready for spec', agentLabel: 'ready for agent', needsInfoLabel: 'needs info', specOnly: true })],
+  ] as const)('spec-only github loop-v1 %s skips the pr-create setting and the agent-pass labels', async (_kind, command) => {
+    const calls: string[] = [];
+    const base = makeRunner(['vanguard', 'ready for spec', 'ready for agent', 'needs info', GITHUB_SPEC_CLAIMED_LABEL]);
+    const run: PreflightRunner = async (cmd, args, opts) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      return cmd === 'gh' && args[0] === 'api'
+        ? { stdout: JSON.stringify({ can_approve_pull_request_reviews: false }) }
+        : await base(cmd, args, opts);
+    };
+    const report = await runPreflight(command, {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },
+      nodeVersion: '24.11.1',
+      run,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(formatPreflightReport(report)).toContain('preflight: github auth ok');
+    expect(formatPreflightReport(report)).toContain('preflight: github labels ok');
+    expect(calls.some((c) => c.startsWith('gh api'))).toBe(false);
+  });
+
+  const linearLoop = { source: 'linear', repoPath: '/repo', label: 'vanguard', skillsDir: '/skills', specState: 'triage', specStateName: 'Spec', needsInfoState: 'Needs Info', specOnly: true } as const;
+  it.each([
+    ['doctor', { kind: 'doctor', ...linearLoop }],
+    ['watch', { kind: 'watch', ...linearLoop, concurrency: 1, intervalMs: 60000, once: true, egress: false }],
+  ] as const)('spec-only linear loop-v1 %s skips the publish auth checks for the origin host', async (_kind, command) => {
+    const calls: string[] = [];
+    const run: PreflightRunner = async (cmd, args) => {
+      calls.push(`${cmd} ${args.join(' ')}`);
+      if (cmd === 'git' && args[0] === 'remote') return { stdout: 'https://gitlab.com/' };
+      if (cmd === 'gh' || cmd === 'glab') throw new Error('not logged in');
+      if (cmd === 'docker' && args[0] === 'run') return { stdout: '2.1.260 (Claude Code)' };
+      return { stdout: '' };
+    };
+    const report = await runPreflight(command, { env: { CLAUDE_CODE_OAUTH_TOKEN: 'token', LINEAR_API_KEY: 'lin' }, nodeVersion: '24.11.1', run });
+
+    expect(report.ok).toBe(true);
+    expect(formatPreflightReport(report)).toContain('preflight: linear api ok');
+    expect(formatPreflightReport(report)).toContain('preflight: linear skills ok');
+    expect(report.checks.some((c) => c.name === 'github auth' || c.name === 'gitlab auth' || c.name === 'gitlab project')).toBe(false);
+    expect(calls.some((c) => c.startsWith('gh') || c.startsWith('glab'))).toBe(false);
+  });
+});
+
+
+describe('runPreflight with S6 custom providers', () => {
+  async function repoWithCustoms(): Promise<string> {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-preflight-'));
+    await mkdir(join(repo, '.vanguard'), { recursive: true });
+    await writeFile(
+      join(repo, '.vanguard', 'app.json'),
+      JSON.stringify({ customProviders: [{ name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_PROXY_API_KEY' }] }),
+    );
+    return repo;
+  }
+
+  it('llm auth follows the custom keyEnv, not the Anthropic credential', async () => {
+    const repoPath = await repoWithCustoms();
+    const withKey = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy' }), {
+      env: { GH_TOKEN: 'gh', MY_PROXY_API_KEY: 'sk' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(withKey.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: true });
+
+    // an Anthropic token does NOT satisfy a custom's key requirement
+    const wrongKey = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'tok' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(wrongKey.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: false });
+  });
+
+  it('generalization fixes the stale zai literal: openrouter llm auth honors OPENROUTER_API_KEY', async () => {
+    const report = await runPreflight(githubDoctor({ provider: 'openrouter' }), {
+      env: { GH_TOKEN: 'gh', OPENROUTER_API_KEY: 'or-key' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: true });
+  });
+
+  it('provider combo reports the direct-only failure for a custom under --llm-proxy', async () => {
+    const repoPath = await repoWithCustoms();
+    const report = await runPreflight(githubDoctor({ repoPath, provider: 'my-proxy', llmProxy: true }), {
+      env: { GH_TOKEN: 'gh', MY_PROXY_API_KEY: 'sk' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    const combo = report.checks.find((c) => c.name === 'provider combo');
+    expect(combo).toMatchObject({ ok: false });
+    expect(combo?.reason).toMatch(/direct-mode only/);
+  });
+
+  it('an unknown provider name fails checks instead of crashing preflight', async () => {
+    const repoPath = await repoWithCustoms();
+    const report = await runPreflight(githubDoctor({ repoPath, provider: 'bogus' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'tok' },
+      nodeVersion: '24.11.1',
+      run: makeRunner(),
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === 'provider combo')).toMatchObject({ ok: false });
   });
 });

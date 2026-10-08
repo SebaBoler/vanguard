@@ -104,6 +104,16 @@ describe('buildRetrospectiveMemory – failed run_complete', () => {
     expect(tes3?.detail).toContain('maxTurns');
   });
 
+  it('surfaces a repaired stage (firstExitReason !== completed, final completed) as a failed run', async () => {
+    const ts = '2026-06-10T13:00:00.000Z';
+    await writeMetrics(repo, [
+      makeMetricsLine({ evt: 'run_complete', ts, taskId: 'TES-4', stage: 'implementer', exitReason: 'completed', completed: true, turns: 45, costUsd: 0.4, attempts: 2, firstExitReason: 'maxTurns' }),
+    ]);
+    const report = await buildRetrospectiveMemory(repo);
+    const entry = report.entries.find((e) => e.kind === 'failed_run' && e.taskId === 'TES-4');
+    expect(entry?.detail).toBe('exitReason: maxTurns [implementer] (completed after 2 attempts)');
+  });
+
   it('does NOT include a completed run_complete in failed_run entries', async () => {
     const ts = '2026-06-10T10:00:00.000Z';
     await writeMetrics(repo, [

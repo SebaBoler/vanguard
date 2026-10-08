@@ -1,2 +1,2 @@
-/** Round to 6 decimal places to prevent IEEE 754 drift in USD cap comparisons and logs. */
-export const roundUsd = (n: number): number => Math.round(n * 1_000_000) / 1_000_000;
+// Lives in core so metric code can round without importing the pipeline; re-exported for existing callers.
+export { roundUsd } from '../core/usd.js';

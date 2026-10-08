@@ -17,6 +17,37 @@ environment (LLM/platform credentials) — see **Launching runs** below.
 
 Gates: `cd src-tauri && cargo test` · `pnpm vitest run` · `pnpm build`.
 
+## Driving the UI with an agent
+
+The frontend is a plain Vite + React app that can run in any browser with a mocked backend — no Rust build,
+no macOS, no `tauri-driver`. When `import.meta.env.DEV` is true and `window.__TAURI_INTERNALS__` is absent
+(plain browser), `main.tsx` dynamically imports `src/dev/mockBackend.ts` which installs typed fixture data
+via `@tauri-apps/api/mocks`. The `import.meta.env.DEV` guard lets Rollup statically eliminate the import
+branch in production builds, so the mock chunk is never emitted into `dist/`.
+
+**Start the dev server:**
+
+```bash
+pnpm --dir apps/desktop dev   # vite → http://localhost:1420, mocks auto-install
+```
+
+**Then drive it via Playwright MCP:**
+
+```
+browser_navigate       http://localhost:1420
+browser_snapshot                      # a11y tree — read structure, find elements
+browser_take_screenshot               # see pixels
+browser_click / browser_type          # interact; click the left rail to change screen
+```
+
+The app renders with populated fixture data (two projects, three runs with full transcript/diff/proof,
+board tasks, capabilities, flows). Navigate screens by clicking the rail icons exactly as a user would —
+no URL routing needed.
+
+**Coverage guard:** `src/dev/mockBackend.test.ts` asserts that every `invoke` command string in
+`src/ipc.ts` has a fixture. A new IPC command added without a matching case in `mockBackend.ts` fails
+the test immediately.
+
 ## What it does (shipped)
 
 - **Dashboard cockpit** — a card per project (runs, tasks, spend, failed, 24h velocity, relative

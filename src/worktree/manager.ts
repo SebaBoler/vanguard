@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 import { WorktreeError } from '../core/errors.js';
 
 export interface Worktree {
@@ -53,6 +54,7 @@ export class WorktreeManager {
   ) {}
 
   async create(taskId: string, baseBranch: string = 'main', opts: CreateOptions = {}): Promise<Worktree> {
+    assertSafeBaseBranch(baseBranch);
     const prefix = opts.branchPrefix ?? VANGUARD_BRANCH_PREFIX;
     const id = opts.branchId ?? taskId;
     if (opts.reuse) {
@@ -124,6 +126,20 @@ export class WorktreeManager {
       return stdout;
     } catch (cause) {
       throw new WorktreeError(`Failed to get worktree diff ${worktreePath}`, { cause });
+    }
+  }
+
+  /**
+   * Paths the worktree changes against HEAD, new files included and both sides of a rename listed.
+   * NUL-separated, so no quoting, and unaffected by diff prefix or rename settings in the user's config.
+   */
+  async changedPaths(worktreePath: string): Promise<string[]> {
+    try {
+      await execa('git', ['add', '-A', '-N'], { cwd: worktreePath });
+      const { stdout } = await execa('git', ['diff', 'HEAD', '--name-only', '--no-renames', '-z'], { cwd: worktreePath });
+      return stdout.split('\0').filter((path) => path !== '');
+    } catch (cause) {
+      throw new WorktreeError(`Failed to list worktree changes ${worktreePath}`, { cause });
     }
   }
 

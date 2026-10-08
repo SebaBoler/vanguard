@@ -71,8 +71,9 @@ export CODEX_AUTH_JSON='<contents of ~/.codex/auth.json>'   # Codex has its own 
 vanguard run --provider meridian --review-provider codex --repo <path> ...
 ```
 
-Do **not** pass `--provider-model` here — it overrides the model on every stage and would flatten the
-planner off `opus`. Leave it unset to keep the opus-plan / sonnet-implement default.
+`--provider-model` is safe to pass here: it sets the implement-tier stages only and leaves the planner
+(and flow-b's adversary) on their pinned `opus`. Leave it unset to keep the plain opus-plan /
+sonnet-implement default.
 
 > **Cross-provider review keeps its own credential local.** Meridian only bridges the Claude/Anthropic
 > path — it does **not** proxy Codex. A `--review-provider codex` reviewer runs its CLI in the sandbox

@@ -2,8 +2,10 @@
 import { parseCli, USAGE } from './args.js';
 import { runGc } from './gc.js';
 import { runCommand } from './run.js';
+import { resolveForkScorerConfig } from '../runners/source-adapter.js';
 import { watchCommand } from './watch.js';
 import { statsCommand } from './stats.js';
+import { metricsCommand } from './metrics.js';
 import { memoryCommand } from './memory.js';
 import { doctorCommand } from './doctor.js';
 import { doctorPrsCommand } from './doctor-prs.js';
@@ -29,6 +31,9 @@ async function main(): Promise<void> {
     return;
   }
   if (command.kind === 'run') {
+    // Validate decision-model credentials/consent ONCE, before the tracker fetch, sidecars and sandbox
+    // (a `run --parent` fan-out would otherwise fail every child the same way).
+    if (command.forkScorer === 'decision') resolveForkScorerConfig(command.commitAuthor !== undefined);
     await runCommand(command);
     return;
   }
@@ -80,12 +85,64 @@ async function main(): Promise<void> {
     await evalCommand(command);
     return;
   }
+  if (command.kind === 'metrics') {
+    await metricsCommand(command);
+    return;
+  }
   if (command.kind === 'stats') {
     await statsCommand(command);
     return;
   }
   if (command.kind === 'memory') {
     await memoryCommand(command);
+    return;
+  }
+  if (command.kind === 'sidecar') {
+    // The JSON protocol owns stdout. Route everything else to stderr so a stray log line can't
+    // corrupt the stream the desktop parses: pino via VANGUARD_SIDECAR (see logger.ts), and the
+    // runner's console.log/info (e.g. summarizeOutcomes, gate messages) redirected here.
+    process.env.VANGUARD_SIDECAR = '1';
+    console.log = (...args: unknown[]): void => console.error(...args);
+    console.info = (...args: unknown[]): void => console.error(...args);
+    const { runSidecar } = await import('../sidecar/sidecar.js');
+    const { productionDeps } = await import('../sidecar/deps.js');
+    const { installCancelHandler } = await import('../sidecar/cancel.js');
+    const { createInterface } = await import('node:readline');
+    installCancelHandler();
+    const rl = createInterface({ input: process.stdin });
+    await runSidecar(rl, (l: string) => void process.stdout.write(l + '\n'), productionDeps());
+    return;
+  }
+  if (command.kind === 'complete') {
+    // Same stdout discipline as the sidecar: the single JSON response line owns stdout, so a stray
+    // log can't corrupt it. Set the gate BEFORE importing the SDK.
+    process.env.VANGUARD_SIDECAR = '1';
+    console.log = (...args: unknown[]): void => console.error(...args);
+    console.info = (...args: unknown[]): void => console.error(...args);
+    console.debug = (...args: unknown[]): void => console.error(...args);
+    const [{ runComplete }, { query }, { createInterface: mkRl }] = await Promise.all([
+      import('../api/complete.js'),
+      import('@anthropic-ai/claude-agent-sdk'),
+      import('node:readline'),
+    ]);
+    const rlc = mkRl({ input: process.stdin });
+    const input = await new Promise<string>((resolve) => {
+      rlc.once('line', (l: string) => {
+        rlc.close();
+        resolve(l);
+      });
+    });
+    let req: unknown;
+    try {
+      req = JSON.parse(input);
+    } catch {
+      process.stdout.write(JSON.stringify({ error: { message: 'invalid request JSON' } }) + '\n');
+      return;
+    }
+    const res = await runComplete(req, {
+      query: (params) => query(params as Parameters<typeof query>[0]),
+    });
+    process.stdout.write(JSON.stringify(res) + '\n');
     return;
   }
   const report = await runGc(command);

@@ -7,6 +7,7 @@ import { runGitlabIssue } from './gitlab.js';
 import { runSpecGenerator } from './spec.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
+import { formatFailureComment } from '../core/errors.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
@@ -69,9 +70,11 @@ export interface WatchTick {
   failed: string[];
   /** Could not be claimed (already taken / state moved). */
   skipped: string[];
+  /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
+  deferred: string[];
 }
 
-type Kind = 'opened' | 'noChange' | 'failed' | 'skipped';
+type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
 
 interface WatchLogOptions {
   log?: (msg: string) => void;
@@ -80,10 +83,56 @@ interface WatchLogOptions {
 
 interface WatchOnceOptions extends WatchLogOptions {
   concurrency?: number;
+  /** Cap the number of ready tasks successfully claimed and processed this poll, per phase (unset: process all). */
+  maxTasks?: number;
+}
+
+interface SpecOnceOptions extends WatchOnceOptions {
+  /** (loop-v1) No agent pass follows the spec pass, so this watch never builds an advanced ticket. */
+  specOnly?: boolean;
 }
 
 function operatorLog(opts: WatchLogOptions, msg: string): void {
   opts.log?.(msg);
+}
+
+/** Summary suffix for a capped poll; empty when --max-tasks left nothing for the next poll. */
+function deferredNote(tick: { deferred: string[] }): string {
+  return tick.deferred.length > 0 ? `, ${tick.deferred.length} deferred by --max-tasks` : '';
+}
+
+function logPoll(ready: number, opts: WatchOnceOptions, phase: string): void {
+  const cappedNote = opts.maxTasks !== undefined && opts.maxTasks < ready ? ` (capped to ${opts.maxTasks} by --max-tasks)` : '';
+  operatorLog(opts, `${phase}: poll -> ${ready} ready${cappedNote}`);
+}
+
+/** `taken`: the claim threw (another runner has it). `deferred`: --max-tasks is already met. */
+type ClaimOutcome = 'claimed' | 'taken' | 'deferred';
+
+/**
+ * Claim gate for one poll. Under --max-tasks, claims run one at a time in fetcher order and only a
+ * successful claim counts, so items another runner already took do not use up the cap; the rest stay
+ * unclaimed for the next poll. Uncapped, claims run concurrently as before.
+ */
+function claimGate(maxTasks: number | undefined): (claim: () => Promise<void>) => Promise<ClaimOutcome> {
+  let claimed = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  return (claim) => {
+    const attempt = async (): Promise<ClaimOutcome> => {
+      if (maxTasks !== undefined && claimed >= maxTasks) return 'deferred';
+      try {
+        await claim();
+      } catch {
+        return 'taken';
+      }
+      claimed += 1;
+      return 'claimed';
+    };
+    if (maxTasks === undefined) return attempt();
+    const next = queue.then(attempt);
+    queue = next;
+    return next;
+  };
 }
 
 /**
@@ -92,19 +141,20 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
  * claim-before-run ordering and dedup are unit-testable without Linear.
  */
 export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOptions = {}): Promise<WatchTick> {
-  const ready = await primitives.listReady();
   const phase = opts.phase ?? 'watch';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
+  const ready = await primitives.listReady();
+  logPoll(ready.length, opts, phase);
+  const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
     ready,
     async (item): Promise<{ id: string; kind: Kind }> => {
-      try {
-        await primitives.claim(item.id);
-        operatorLog(opts, `${phase} ${item.id}: claim -> running`);
-      } catch {
+      const claimed = await claim(() => primitives.claim(item.id));
+      if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
+      if (claimed === 'taken') {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
+      operatorLog(opts, `${phase} ${item.id}: claim -> running`);
       try {
         const { prUrl, parked } = await primitives.runOne(item.id);
         if (prUrl === undefined) {
@@ -125,7 +175,7 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
   );
   const ids = (kind: Kind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped') };
+  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
 }
 
 export interface SpecWatchPrimitives {
@@ -148,9 +198,11 @@ export interface SpecTick {
   failed: string[];
   /** Could not be claimed (already taken / state moved). */
   skipped: string[];
+  /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
+  deferred: string[];
 }
 
-type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
+type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped' | 'deferred';
 
 /**
  * One SPEC poll: claim each ready issue (skipping any that can't be claimed), triage it, then either
@@ -158,26 +210,28 @@ type SpecKind = 'advanced' | 'needsInfo' | 'failed' | 'skipped';
  * to needs-info. Mirrors watchOnce structurally (claim-before-run, fan-out, failure isolation) but
  * with honest spec semantics instead of PR semantics — it never opens a PR.
  */
-export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceOptions = {}): Promise<SpecTick> {
-  const ready = await primitives.listReady();
+export async function specOnce(primitives: SpecWatchPrimitives, opts: SpecOnceOptions = {}): Promise<SpecTick> {
   const phase = opts.phase ?? 'spec';
-  operatorLog(opts, `${phase}: poll -> ${ready.length} ready`);
+  const advancedNext = opts.specOnly === true ? 'not built (--spec-only)' : 'next poll agent';
+  const ready = await primitives.listReady();
+  logPoll(ready.length, opts, phase);
+  const claim = claimGate(opts.maxTasks);
   const results = await fanOut(
     ready,
     async (item): Promise<{ id: string; kind: SpecKind }> => {
-      try {
-        await primitives.claim(item.id);
-        operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
-      } catch {
+      const claimed = await claim(() => primitives.claim(item.id));
+      if (claimed === 'deferred') return { id: item.id, kind: 'deferred' };
+      if (claimed === 'taken') {
         operatorLog(opts, `${phase} ${item.id}: skipped -> already claimed`);
         return { id: item.id, kind: 'skipped' };
       }
+      operatorLog(opts, `${phase} ${item.id}: claim -> triage`);
       try {
         const outcome = await primitives.runSpec(item.id);
         operatorLog(
           opts,
           outcome === 'advanced'
-            ? `${phase} ${item.id}: advanced -> next poll agent`
+            ? `${phase} ${item.id}: advanced -> ${advancedNext}`
             : `${phase} ${item.id}: needs info -> waiting human`,
         );
         return { id: item.id, kind: outcome === 'advanced' ? 'advanced' : 'needsInfo' };
@@ -191,7 +245,7 @@ export async function specOnce(primitives: SpecWatchPrimitives, opts: WatchOnceO
   );
   const ids = (kind: SpecKind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { advanced: ids('advanced'), needsInfo: ids('needsInfo'), failed: ids('failed'), skipped: ids('skipped') };
+  return { advanced: ids('advanced'), needsInfo: ids('needsInfo'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
 }
 
 export interface WatchLinearOptions {
@@ -220,6 +274,8 @@ export interface WatchLinearOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   linear?: LinearCliRunner;
 }
@@ -249,7 +305,7 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
         commentLinearIssue(id, NO_CHANGE_MSG, opts.linear),
         opts.triggerStateName !== undefined ? setLinearState(id, opts.triggerStateName, opts.linear) : undefined,
       ),
-    onFailure: (id, error) => commentLinearIssue(id, `Vanguard run failed: ${String(error)}`, opts.linear),
+    onFailure: (id, error) => commentLinearIssue(id, formatFailureComment('Vanguard run failed', error), opts.linear),
   };
 }
 
@@ -373,7 +429,7 @@ export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentLinearIssue(id, `Vanguard spec failed: ${String(error)}`, opts.linear);
+      await commentLinearIssue(id, formatFailureComment('Vanguard spec failed', error), opts.linear);
       await setLinearState(id, opts.specTriggerStateName, opts.linear);
     },
   };
@@ -382,15 +438,16 @@ export function linearSpecPrimitives(opts: WatchLinearSpecOptions): SpecWatchPri
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    // Detach on the timer path too, or a long-lived signal gains one listener per tick.
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -398,7 +455,14 @@ interface LoopControls {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
+}
+
+interface LoopV1Controls extends LoopControls {
+  /** Run only the spec pass each tick; the agent pass never lists, claims or runs. */
+  specOnly?: boolean;
 }
 
 /** Poll on an interval, running each newly-ready item. Stops on signal or after one pass (once). */
@@ -408,10 +472,11 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
     if (opts.signal?.aborted === true) return;
     const tick = await watchOnce(primitives, {
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
+      ...(opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {}),
       log,
       phase: 'watch',
     });
-    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped.`);
+    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -427,21 +492,30 @@ export async function watchLinear(opts: WatchLinearOptions, log: (msg: string) =
  * agentPrimitives) once per tick. Continuous loops defer freshly-specced tickets to the next poll,
  * giving a human a window to intervene before the agent runs. One-shot runs carry freshly-specced
  * tickets into the same invocation, which avoids relying on GitHub's eventually consistent label
- * search in GitHub Actions.
+ * search in GitHub Actions. With specOnly the agent pass is skipped entirely: advanced tickets move
+ * to the spec pass's agent state/label (a review state in a review-window setup) and this watch
+ * never builds them.
  * Pure orchestration over injected primitives; the per-source wrappers build the primitives.
  */
 export async function runLoopV1(
   specPrimitives: SpecWatchPrimitives,
   agentPrimitives: WatchPrimitives,
-  opts: LoopControls,
+  opts: LoopV1Controls,
   log: (msg: string) => void = console.log,
 ): Promise<void> {
   const intervalMs = opts.intervalMs ?? 60_000;
   const concurrency = opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {};
+  const specOnly = opts.specOnly === true ? { specOnly: true } : {};
   for (;;) {
     if (opts.signal?.aborted === true) return;
-    const spec = await specOnce(specPrimitives, { ...concurrency, log, phase: 'spec' });
-    log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped.`);
+    const maxTasks = opts.maxTasks !== undefined ? { maxTasks: opts.maxTasks } : {};
+    const spec = await specOnce(specPrimitives, { ...concurrency, ...maxTasks, ...specOnly, log, phase: 'spec' });
+    log(`spec: ${spec.advanced.length} advanced, ${spec.needsInfo.length} needs-info, ${spec.failed.length} failed, ${spec.skipped.length} skipped${deferredNote(spec)}.`);
+    if (opts.specOnly === true) {
+      if (opts.once === true) return;
+      await delay(intervalMs, opts.signal);
+      continue;
+    }
     // GitHub's label index is eventually consistent: a label written by the spec pass may not
     // appear in listReady for several seconds. In --once mode carry just-advanced IDs directly
     // into the agent ready-set so spec→build completes in one invocation, deduping against what
@@ -458,8 +532,8 @@ export async function runLoopV1(
       ...agentPrimitives,
       listReady: async () => agentReady,
     };
-    const agent = await watchOnce(agentThisTick, { ...concurrency, log, phase: 'watch' });
-    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped.`);
+    const agent = await watchOnce(agentThisTick, { ...concurrency, ...maxTasks, log, phase: 'watch' });
+    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -473,6 +547,10 @@ export interface WatchLinearLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues move to spec.agentState and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -505,6 +583,8 @@ export interface WatchGithubOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -532,7 +612,7 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
-    onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, opts.gh),
+    onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
 
@@ -584,7 +664,7 @@ export function githubSpecPrimitives(opts: WatchGithubSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentGithubIssue(repo, id, `Vanguard spec failed: ${String(error)}`, opts.gh);
+      await commentGithubIssue(repo, id, formatFailureComment('Vanguard spec failed', error), opts.gh);
       await editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, opts.gh);
     },
   };
@@ -603,6 +683,10 @@ export interface WatchGithubLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 
@@ -627,6 +711,8 @@ export interface WatchGithubProjectOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   gh?: GhRunner;
 }
@@ -716,7 +802,7 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
     onNoChange: (id) => commentAndRevert(commentGithubIssue(repo, id, NO_CHANGE_MSG, gh), setStatus(id, opts.triggerStatus)),
-    onFailure: (id, error) => commentGithubIssue(repo, id, `Vanguard run failed: ${String(error)}`, gh),
+    onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), gh),
   };
 }
 
@@ -747,6 +833,8 @@ export interface WatchGitlabOptions {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
   signal?: AbortSignal;
   /** Injectable runner for tests. Defaults to `defaultGlabRunner`. */
   gl?: GlabRunner;
@@ -782,7 +870,7 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
     onFailure: (id, error) =>
-      commentGitlabIssue(project, id, `Vanguard run failed: ${String(error)}`, glab),
+      commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),
   };
 }
 
@@ -834,7 +922,7 @@ export function gitlabSpecPrimitives(opts: WatchGitlabSpecOptions): SpecWatchPri
       });
     },
     onFailure: async (id, error) => {
-      await commentGitlabIssue(opts.project, id, `Vanguard spec failed: ${String(error)}`, glab);
+      await commentGitlabIssue(opts.project, id, formatFailureComment('Vanguard spec failed', error), glab);
       // Restore spec label so next poll retries
       await editGitlabLabels(opts.project, id, { remove: [opts.claimedLabel], add: [opts.specLabel] }, glab);
     },
@@ -849,6 +937,10 @@ export interface WatchGitlabLoopV1Options {
   concurrency?: number;
   intervalMs?: number;
   once?: boolean;
+  /** Cap the number of ready tasks claimed and processed per poll (unset: process all). */
+  maxTasks?: number;
+  /** Run only the spec pass each poll; advanced issues get spec.agentLabel and are not built by this watch. */
+  specOnly?: boolean;
   signal?: AbortSignal;
 }
 

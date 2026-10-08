@@ -1,23 +1,49 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Vanguard - Autonomous Software Factory" width="820" />
+  <img src="assets/banner.png" alt="Vanguard — Autonomous Software Factory" width="820" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D24-3c873a" alt="Node >=24" />
-  <img src="https://img.shields.io/badge/TypeScript-strict-3178c6" alt="TypeScript strict" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
+  <b>Autonomous software factory</b> — fetches tasks from GitHub, GitLab, or Linear,<br/>
+  implements them with an AI agent pipeline in an isolated sandbox, and opens draft PRs/MRs for human review.
 </p>
 
 <p align="center">
-  A self-improving software factory: take a task (Linear / GitHub), run a Claude Code agent in an
-  isolated Docker sandbox on its own <code>git worktree</code>, and get back a reviewed, verifiable
-  pull request. When the agent fails, you fix the <em>harness</em> — the prompt, the skill, the tool,
-  the limit — not the agent's output, so the same failure can't happen twice. A standalone TypeScript
-  framework, not a wrapper around another tool.
+  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8B5CF6.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-22D3EE" alt="Node >= 24">
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript">
+  <img src="https://img.shields.io/badge/built%20with-Claude%20Agent%20SDK-D97757" alt="Claude Agent SDK">
+  <img src="https://img.shields.io/badge/sandboxed-Docker-2496ED" alt="Docker sandbox">
 </p>
+
+<p align="center">
+  <code>Task ticket&nbsp;&nbsp;→&nbsp;&nbsp;Agent pipeline (plan · implement · review · repair)&nbsp;&nbsp;→&nbsp;&nbsp;Draft PR</code>
+</p>
+
+## What is Vanguard?
+
+Vanguard turns work items into reviewed code changes — autonomously:
+
+1. **Fetch** — pulls a Task from a pluggable Task Source: GitHub Issues, GitLab Issues, or Linear.
+2. **Run** — an AI agent pipeline (planner → implementer → reviewer → adversary → repairer) implements it inside an isolated Docker sandbox.
+3. **Verify** — a Proof-of-Work command runs after the agent finishes; failures flag the PR/MR instead of silently passing.
+4. **Deliver** — opens a **draft PR/MR**. Humans review and merge; Vanguard does the toil.
+
+Run it once per ticket — or let the **Watch Loop** autonomously list ready Tasks, claim them, and process them end to end.
 
 Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phase 3 (adversarial review, human-in-the-loop, budget guardrails, dynamic MCP skills) are implemented and tested. Runs autonomously (AFK) as a `watch` loop; deployed always-on on Docker (Synology / Hetzner / any host).
+
+## What's new (October 2026)
+
+- **Reactive model escalation** — `--escalate-model <m>`: the first gate repair stays on the implementer model; a second red gate resumes the same session on a stronger one. Cheap by default, expensive only after an observed failure. ([Models](#models))
+- **Per-task model label** — `vanguard:model=<m>` on an issue pins that task's implementer model, over `--provider-model`; the human's call beats any heuristic. GitHub, GitLab, Linear.
+- **Honest run metrics** — resumes, repairs and fork variants fold into the stage record (`attempts`, `firstExitReason`); `vanguard stats` gains a `BY MODEL` table that exposes gateway substitutions (`served (requested X)`).
+- **Decision model as fork scorer and eval judge** — `run --fork n --fork-scorer decision` and `eval --judge-model clef-flash` replace an LLM writing JSON in a `<verdict>` tag with a calibrated `P(acceptable)` in ~100 ms. ([Fork-and-select](#fork-and-select))
+- **Decision-model probe (experimental, log-only)** — with Cloudflare Workers AI credentials set, a sub-second [Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/) query scores each task's difficulty before the run; `vanguard stats` shows predicted vs observed first-try rate so you can decide whether it should drive routing. ([Models](#models))
+- **PR review that survives truncation** — the reviewer states a `Verdict:` line first; a reply that stops before its completion signal is still a review, a reply with no verdict on a small diff is reported as the reviewer's failure (with the output tail in the job log), not as "PR too large" (#405).
+- **Durable factory metrics** — `vanguard metrics push` persists a CI run's `metrics.jsonl` lines on an orphan `vanguard-metrics` branch; `vanguard stats --branch vanguard-metrics` reads them back. Without it, stats on GitHub Actions died with the job. ([Cost & limits](#cost--limits))
+- **Current-generation models** — the `$or-est` price table knows Claude 5.5 and Fable 5.1 (live OpenRouter rates, 2026-10-07), the `sonnet`/`opus`/`haiku` aliases point at the 5.5 rows, and an alias resolving within its own family no longer shows as a gateway swap in `vanguard stats`.
+- **Provider routing fixes** — repair loops resume on the routed model (not the provider default); `--plan`/`flow-b` keep their planner-tier model on pass-through providers; OpenRouter accepts Claude aliases (`haiku`, `claude-sonnet-5`) and maps them to slugs.
 
 ## Contents
 
@@ -49,7 +75,7 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 - **Harness over code.** Every agent failure is a *harness* failure. Instead of hand-fixing the agent's output, you fix the instruction, skill, tool, or sandbox limit so the system is immune to that failure class next time. Real cases this codebase hardened against: a macOS worktree-path mismatch, a dangling-symlink copy-back crash, and a Synology kernel with no CPU CFS scheduler — each became a permanent fix, not a one-off patch.
 - **Trade-off reasoning.** System prompts state the *business cost* of decisions — a wrong or sloppy change costs reviewer trust and rework far more than the seconds a typecheck or test run takes — so the model spends "effort" (adaptive thinking) where it matters and escalates when it should, via the `<tradeoffs>` section of the default system prompt.
 - **Token-efficiency by construction.** Sessions are captured to the host and resumed/forked to reuse cached context instead of paying twice for it; `cacheReadInputTokens` and a derived `cacheEfficiency` are first-class on every `RunResult` and tracked per stage. Real runs sit at 97–99% cache, which is what makes always-on AFK economical.
-- **Evals-first.** A judge-scored eval suite over control (ambiguous), edge, and refusal/hand-off cases guards against regressions when a model or prompt changes (corpus seeded; run `vanguard eval` for pass-rate and verdict scores; CI gating is phase 2).
+- **Evals-first.** A judge-scored eval suite over control (ambiguous), edge, and refusal/hand-off cases guards against regressions when a model or prompt changes (corpus seeded; run `vanguard eval` for pass-rate and verdict scores — `--judge-model clef-flash` judges with a decision model, calibrated and parse-free; CI gating is phase 2).
 - **Verifiable run artifacts.** Every run leaves an auditable trail under `.vanguard/runs/`: a per-stage transcript, a **git bundle of the exact changes**, the diff, one `run_complete` metric line (cost, tokens, cache efficiency, duration, exit reason), and optional host-driven Proof of Work with a SHA-256 over verification output. `vanguard stats` rolls it up across the fleet. This is what makes an AFK-generated PR trustworthy. The run also carries an optional host-driven Visual Proof for UI artifacts (see Visual proof below). *(Retrospective memory is also implemented: a deterministic host-side digest of prior failures and reviewer notes, fed back into later runs as advisory context.)*
 
 ## How it works
@@ -104,6 +130,8 @@ const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitH
 ```
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
+
+A Linear task in a repo whose `origin` is on gitlab.com, or on the self-hosted host named by `GITLAB_HOST`, opens a draft GitLab MR through `glab` instead, and the review verdict lands as an MR note. A self-hosted host needs `GITLAB_HOST` even when `glab auth login` already knows it; preflight stops a run whose origin host glab is logged in to but `GITLAB_HOST` does not name. That check never sends `GITLAB_TOKEN` to the origin host, so a job with only a token relies on `GITLAB_HOST`. Host detection reads the hostname in `origin` as written, so a remote that uses an SSH config alias is not recognised: `git@gitlab.com-work:group/project.git` takes the GitHub route on the Linear path, and `--source gitlab` accepts an alias such as `github.com-work` as a GitLab host and fails later in `glab`. Use the real hostname in `origin`. Agent runs never write CI config: `.github/workflows/`, local actions under `.github/actions/` (an action kept elsewhere is not covered), `.gitlab-ci.yml` and every `.yml`/`.yaml` under `.gitlab/`, including insights, dashboards and Kubernetes agent config, are dropped on copy-back with a warning, so a task that only edits those files ends with no changes; make such edits by hand. When a run changed any of them, the PR or MR description (or the `revise-pr` summary comment) lists those files under **Not included**. `vanguard review-mr` skips an MR head it already reviewed, so a CI retry after a completed review posts no second review. Two runs on the same head that overlap can both post, since the check runs before the review and the note is posted after it. Only a marker in a note by the user `glab` runs as counts, so another participant cannot suppress the review by posting a marker. An MR author who can change the job definition can still suppress it, as [External PR review](#external-pr-review) explains. After a switch to a token of another user, earlier reviews stop counting and each open MR head is reviewed once more. A running `watch-mrs` keeps the user it read first, so restart it after such a switch. When it cannot read that user (the token needs `GET /user`) or the MR notes, it fails and posts nothing, and the error says which. The reviewer states a `Verdict:` line first, so a reply cut off before its completion signal still counts as a review (posted with a truncation note). A reply with no verdict is retried once with a larger budget and a verdict-first triage instruction; if the retry has no verdict either, `review-mr` posts nothing and exits non-zero, so the head is never marked as reviewed, and both discarded replies' tails are in the job log.
 
 `LinearCliTaskFetcher` drives Linear entirely through the `linear` CLI (from schpet/linear-cli; authenticate with `linear auth login` or set `LINEAR_API_KEY`), covering fetch/list/comment with no SDK dependency. The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
 
@@ -261,7 +289,57 @@ vanguard run    --linear TES-1 --provider claude --review-provider codex
 vanguard watch  --label vanguard --provider codex --review-provider claude
 ```
 
-**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. `--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
+**Per-stage model** (independent of provider) — `--provider-model <m>` sets the model for the implementer/simplifier stages and `--review-model <m>` for the review stage; each defaults to the provider's own default model. A bare alias (`sonnet`, `opus`, `haiku`) floats to the newest generation the credential serves, so the implementer upgrades itself on release day; a full id (`claude-fable-5-1`) stays pinned, which is what you want wherever the model is a merge gate. `vanguard stats` records both the requested and the served name, so an alias upgrade shows as the new id, while a gateway substituting a different family shows as `served (requested X)`. `--escalate-model <m>` is **reactive escalation**: the first gate repair (conformance/verify/incomplete) resumes on the implementer model; if the gate is still red, the second and later repairs resume the same session on the escalation model. Nothing is predicted up front — the cheap model only gets replaced once it has demonstrably failed. The one up-front call is yours: label an issue `vanguard:model=<m>` (e.g. `vanguard:model=claude-fable-5`) and that task runs exactly as if `--provider-model <m>` had been passed for it — the reviewer keeps `--review-model` (a cross-provider reviewer is untouched), conformance keeps `--conformance-model`, and `--escalate-model` steps aside since the label already is the escalation. It is a plain label with one colon (case-sensitive; not a GitLab scoped label), read once at run start; anyone who can label the issue can pick its model, and the per-stage budget caps still apply. Works on GitHub, GitLab and Linear (labels fetched over GraphQL).
+
+**Decision model vs LLM judge — what Clef is and is not.** A decision model (Cloudflare [Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/), Typesafe Jev) does not replace Haiku, Sonnet or any generating model: it cannot write code, a review or a sentence. It answers typed questions (yes/no, pick one, rate on a rubric) with a calibrated probability per option, in one forward pass. It overlaps with an LLM only where Vanguard asks for a *decision* — the eval judge, the fork scorer, the difficulty probe — and nowhere else. Side by side, for those roles:
+
+| | LLM judge (Haiku default, any `--judge-model`) | Decision model (`clef-flash` / `clef`) |
+|---|---|---|
+| Output | Markdown with a `<verdict>{passed, score, reason}</verdict>` JSON blob that must parse | A probability per allowed answer; nothing to parse |
+| `score` means | The model's self-rated 0..1 quality | P(acceptable); `passed` = P ≥ 0.5 |
+| Calibration | Not calibrated; "0.8" is a feeling | Trained for calibrated probabilities (vendor claim; not yet measured on this corpus) |
+| Latency per decision | Seconds (a one-shot agent run) | ~40 ms (`clef-flash`) to ~200 ms (`clef`) on Workers AI, vendor-measured |
+| Cost per decision | Full LLM tokens, incl. the reasoning it writes | $0.09 / M input tokens, no output tokens |
+| Context | Model-dependent (hundreds of K) | 64K tokens on Workers AI; 16K on a self-hosted `vllm-jev` |
+| Can explain itself | Yes, the `reason` field is prose | No; the reason is just the numbers |
+| Can do the task itself | Yes (it is the same kind of model as the implementer) | No |
+| Where it leaves the host | Through the sandbox / `--llm-proxy` / `--egress` | Host-side HTTP to the endpoint; white-label runs need `VANGUARD_DECISION_PROBE=all` |
+| Verified in this repo | Yes, the default path | Code and tests only; no live call yet (no credentials configured) |
+
+To compare them on the corpus, run `vanguard eval --json` twice (default judge, then `--judge-model clef-flash`) and diff the pass rates per kind — that, not the vendor table, is the number that would justify switching the default.
+
+**Difficulty probe (experimental, log-only).** Decision models (Cloudflare's [Clef](https://developers.cloudflare.com/workers-ai/models/clef-flash/), Typesafe's Jev) answer typed questions with calibrated probabilities in milliseconds instead of generating text. Opt in with `VANGUARD_DECISION_PROBE=1` plus credentials: `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_AUTH_TOKEN` (Workers AI; `VANGUARD_DECISION_MODEL` is `clef-flash` or `clef`), or `VANGUARD_DECISION_URL` [+ `VANGUARD_DECISION_TOKEN`] for any System-One-compatible endpoint. The credentials alone do nothing — they are Cloudflare's generic variable names. While the sandbox is being provisioned, each run asks: will the first attempt pass the gate, how hard is this (Trivial…Research-grade, x.5 rounds up), is the spec clear? The answer is logged (`decision_probe` line in `metrics.jsonl`, one console line) and **changes nothing** about routing. After enough runs, `vanguard stats` prints a `PROBE` table of predicted vs observed first-try rate per predicted level, one pair per run — if they track, the probe earns the right to set `vanguard:model=` automatically; if not, unset the switch. A failing probe warns once and the run proceeds; it can never fail because of it. **What leaves the host:** the task title, labels, description and comments (including a posted or `--spec-file` tech spec) go from the host process to the endpoint — outside the sandbox, `--egress` and `--llm-proxy`. White-label runs (client repos, `--commit-author`) are therefore skipped unless you set `VANGUARD_DECISION_PROBE=all`.
+
+**What switching the decision model on gives you.** Nothing in the implement/review path changes — the implementer, reviewer and escalation keep running exactly as before. What you get:
+
+- **A difficulty signal before every run, for free.** Three calibrated probabilities (first attempt passes the gate, difficulty level, spec clarity) logged next to the run. Today it only observes; once `vanguard stats`' `PROBE` table shows the prediction tracking the observed repair rate, it can start setting `vanguard:model=` automatically — the predictive routing that is deliberately not built on guesswork.
+- **A judge that is fast, cheap and parse-free.** `vanguard eval --judge-model clef-flash` returns a probability per case in ~0.5 s instead of an LLM writing a `<verdict>` JSON blob that has to parse; the pass threshold is `P(acceptable) ≥ 0.5`, not a model's self-rating. Run the corpus twice (default judge, then clef) and diff the pass rates — that comparison is the point.
+- **A fork scorer that compares like with like.** `run --fork n --fork-scorer decision` picks the variant with the highest `P(acceptable)`; the diff's completion state and file list are in the question, and an empty or unfinished diff scores near zero.
+- **A second opinion where parsing used to fail.** Every decision above used to be a generated string parsed by regex or Zod; a decision model cannot produce a malformed answer, only a probability you can threshold.
+
+What it does not give you: text. It cannot write code, a review, or explain its number; it cannot replace Sonnet, Opus, Fable or Haiku anywhere they generate.
+
+**Decision model quick start (Cloudflare Workers AI, free tier).** Workers AI includes 10,000 Neurons a day at no charge; `clef-flash` costs 8,182 Neurons per million input tokens, so the probe (~500 tokens a run) and the eval judge fit in the free allocation many times over.
+
+1. In the Cloudflare dashboard create an API token from the **Workers AI** template (Account → Workers AI → **Read** is enough; drop the Edit row) and copy your **Account ID** from the account's overview sidebar.
+2. Export the credentials outside any dotfiles repo (Vanguard reads the process environment, not `.env`), and switch the probe on:
+   ```bash
+   export CLOUDFLARE_ACCOUNT_ID=…   # 32 hex chars
+   export CLOUDFLARE_AUTH_TOKEN=…   # the token, shown once
+   export VANGUARD_DECISION_PROBE=1
+   ```
+   For the GitHub Actions factory, add the same two values as repository secrets, pass them to the reusable workflow under `secrets:`, and set `decision-probe: true` on the caller (off by default, see [onboarding](docs/onboarding-another-repo.md)).
+3. Run anything. The probe logs one line per run and `vanguard stats` grows a `PROBE` table; `vanguard eval --judge-model clef-flash` and `run --fork 3 --fork-scorer decision` use the same credentials.
+
+What a live call looks like (recorded 2026-10-07, `clef-flash`, 485 input tokens, 518 ms):
+
+```
+vanguard: SebaBoler/vanguard#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
+```
+
+and the judge on a refusal case: an output that charges ahead scores `P(acceptable)=0.11`; one that merely sounds careful but does not do what the expectation names scores `0.48` — the judge reads the expectation, not the tone. The fork scorer gives a small, tested diff `0.91` and an empty diff `0.03`.
+
+`--conformance-model <m>` sets the model for the optional conformance stage (see Models above); it defaults to the implementer/`--provider-model` model, so pass `--conformance-model opus` to run conformance on a planner-tier model. Mix freely with provider selection:
 
 By default `run` uses the implement → review → simplify pipeline (the implementer plans inline). Pass `--plan` to prepend a dedicated planning stage (opus, high effort) that emits a `<plan>` for the implementer to follow — the plan → implement → review pipeline. Combine with `--review-model opus` to also review on the planner-tier model:
 
@@ -286,7 +364,7 @@ The commit is authored `Vanguard <vanguard@local>` by default; override with `--
 
 **Standalone PR review — to the tracker or to a file.** `vanguard review-pr <owner/repo#n> --repo <path> [--review-model <m>]` reviews an existing PR (an adversarial pass, larger budget on retry) and posts the verdict as a PR comment. Add `--out <file>` to write the review to a local file and post **nothing** to the PR — the same no-trace escape hatch as `spec --out`, for reviewing client PRs without leaving an automation comment.
 
-**Address human review feedback.** `vanguard revise-pr <owner/repo#n> --repo <path> [--review-model <m>] [--max-rounds <n>]` reads the human review threads + comments on a bot PR, applies fixes, pushes to the PR branch, and replies to + resolves each addressed thread. Unlike `review-pr` (which *produces* a review), `revise-pr` *consumes* one. On a client repo pass `--commit-author "Name <email>"` — it authors the revision commits as that identity and drops the "vanguard" token from the hidden revision marker, so the whole exchange looks human. Prefer to inspect before anything touches the PR? `--out <file>` runs it as a **dry-run**: it applies the fixes and writes the diff + the reply it would post to each thread into the file, pushing and commenting **nothing** — review it, then re-run without `--out` to apply.
+**Address human review feedback.** `vanguard revise-pr <owner/repo#n> --repo <path> [--review-model <m>] [--max-rounds <n>]` reads the human review threads + comments on a bot PR, applies fixes, pushes to the PR branch, and replies to + resolves each addressed thread. It treats every non-bot commenter's feedback as a change request, whatever their role on the repository, so run it only where the people who can comment are trusted; on a public repository, anyone can. Unlike `review-pr` (which *produces* a review), `revise-pr` *consumes* one. On a client repo pass `--commit-author "Name <email>"` — it authors the revision commits as that identity and drops the "vanguard" token from the hidden revision marker, so the whole exchange looks human. Prefer to inspect before anything touches the PR? `--out <file>` runs it as a **dry-run**: it applies the fixes and writes the diff + the reply it would post to each thread into the file, pushing and commenting **nothing** — review it, then re-run without `--out` to apply.
 
 The quality pipeline (reviewer, conformance, verification) still runs and still gates the `Closes`-vs-`Part of` decision — only the *surfacing* is suppressed. Default (no `--commit-author`) keeps the full Vanguard branding and review comment. Note the white-label branch has no unique marker, so `gc` won't auto-reap it — enable "auto-delete branch on merge" on the repo instead.
 
@@ -295,6 +373,7 @@ The quality pipeline (reviewer, conformance, verification) still runs and still 
 ```bash
 vanguard run --linear TES-1 --provider-model opus --review-model haiku   # plan/implement big, review cheap
 vanguard run --linear TES-1 --provider-model sonnet --conformance --conformance-model opus   # implement on sonnet, check conformance on opus
+vanguard run --linear TES-1 --provider-model sonnet --review-model claude-fable-5-1 --escalate-model claude-fable-5-1   # cheap implement on the current Sonnet; a 2nd failed gate repair escalates to a pinned top model
 vanguard run --github o/r#1 --commit-author "Sebastian Pietrzak <spietrza@gmail.com>"   # commit authored as you
 ```
 
@@ -320,7 +399,7 @@ Constraints: (1) the endpoint must implement the OpenAI **Responses** API (`/v1/
 
 ## Fork-and-select
 
-`run --fork <n>` runs the implementer stage `n` times (each variant forks the same base, on a worktree reset between runs), scores each variant's diff, and keeps the best one before the review/simplify stages continue. Scoring is an LLM verdict produced by a one-shot run of the same provider in a throwaway `/tmp` cwd (the diff is supplied in the prompt, so the scorer never touches the worktree). Use it to trade tokens for quality on hard tasks:
+`run --fork <n>` runs the implementer stage `n` times (each variant forks the same base, on a worktree reset between runs), scores each variant's diff, and keeps the best one before the review/simplify stages continue. Scoring is an LLM verdict produced by a one-shot run of the same provider in a throwaway `/tmp` cwd (the diff is supplied in the prompt, so the scorer never touches the worktree) — or, with `--fork-scorer decision`, a [decision model](#models) (`clef-flash` on Workers AI or any System-One endpoint): `P(acceptable)` for each diff in ~100 ms, a calibrated probability instead of a model's self-rated JSON, with no verdict parsing to fail. The diff leaves the host for that call (outside the sandbox, `--egress` and `--llm-proxy`); on a white-label run (`--commit-author`) that is the client's diff, so it needs the same consent as the difficulty probe: `VANGUARD_DECISION_PROBE=all`. Credentials and consent are checked once at start-up, before any issue is claimed. Use it to trade tokens for quality on hard tasks:
 
 ```bash
 vanguard run --linear TES-1 --fork 3
@@ -328,7 +407,9 @@ vanguard run --linear TES-1 --fork 3
 
 ## Security
 
-The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
+One opt-in feature sends data from the host itself: the [difficulty probe](#models) (`VANGUARD_DECISION_PROBE=1`) posts issue text to a decision-model endpoint outside the sandbox, `--egress` and `--llm-proxy`, and skips white-label runs by default. The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
+
+`VANGUARD_OWNER_LABEL=<id>` labels every container and network with `vanguard.owner=<id>`, so a CI job can remove its own leftovers: first the containers with `docker ps -aq --filter label=vanguard.owner=<id> | xargs -r docker rm -f`, then the egress network with `docker network ls -q --filter label=vanguard.owner=<id> | xargs -r docker network rm`, which Docker refuses while a container still uses it. `xargs -r` skips the command when nothing matches, so a clean job does not fail its `after_script`.
 
 ### Host LLM proxy
 
@@ -441,12 +522,44 @@ vanguard watch --loop-v1 --label vanguard \
   --spec-model haiku
 ```
 
+### Keeping the sandbox image current
+
+`docker/Dockerfile` pins the Claude CLI that ships inside `vanguard-sandbox:latest`. The pin moves with the repo; a built image does not. A stale CLI does not fail loudly — it fails *mid-run*, against the model gateway, after the sandbox is up and the prompt is rendered. One such drift answered every request with `API Error: 400 This session advanced while the request was waiting`, which reads like a gateway or session bug and is neither.
+
+So every sandbox start reads `claude --version` out of the container and refuses to continue when it predates the pin. `vanguard doctor` reports the same thing as a `sandbox claude cli` check.
+
+To repair it:
+
+```bash
+vanguard doctor --fix
+```
+
+This installs the pinned CLI into the existing image and re-runs the checks. It does **not** rebuild — a rebuild also re-downloads the linear-cli release tarball, which is exactly what a corporate MITM proxy breaks, and updating the CLI alone goes through a plain npm install. The original `USER` and `WORKDIR` are read from the image and restored, because `docker commit` snapshots the *container's* config: commit a root container without restoring them and the image starts running as root, at which point the CLI refuses to launch at all.
+
+A full rebuild still works where the network allows it:
+
+```bash
+CLAUDE_CLI_VERSION=2.1.260 ./docker/build.sh
+```
+
+The check is deliberately **not** an auto-update. Refreshing an image needs the network at run start and rewrites an image that concurrent sandboxes share — on the machines where this drift actually bites, the build is itself the unreliable step, so doing it automatically would turn a rare manual command into a recurring mid-run failure. `VANGUARD_SKIP_IMAGE_CHECK=1` bypasses the gate if you are deliberately running an older image.
+
+`VANGUARD_SANDBOX_IMAGE` overrides the image name used everywhere the sandbox runs (main sandbox, preflight, and the llm-proxy/egress sidecars) — set it to an image ID (`sha256:...`) in CI so a job pins the exact image it just built instead of the mutable `vanguard-sandbox:latest` tag, which another pipeline on a shared Docker host could overwrite between build and run.
+
 **Shared behaviour (both sources):**
 
-- `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, `vanguard-sandbox:latest`, source auth, GitHub routing labels, and Linear env/skills setup. On a GitHub repo it also verifies the "Allow GitHub Actions to create and approve pull requests" setting (best-effort — skipped if the token cannot read it) and, when Codex is selected with a `CODEX_AUTH_JSON` subscription credential, validates its shape before the run.
+- `vanguard doctor` runs the AFK preflight without claiming work. It checks Node 24+, LLM auth, repo remote, Docker daemon, the sandbox image, `vanguard-sandbox:latest` or `VANGUARD_SANDBOX_IMAGE` when set (including the Claude CLI version inside it — see [Keeping the sandbox image current](#keeping-the-sandbox-image-current)), source auth, GitHub routing labels, and Linear env/skills setup. On a GitHub repo it also verifies the "Allow GitHub Actions to create and approve pull requests" setting (best-effort — skipped if the token cannot read it) and, when Codex is selected with a `CODEX_AUTH_JSON` subscription credential, validates its shape before the run.
 - Triage is deterministic (`assessTaskReadiness`) and rejects under-specified tickets before spending any model tokens.
 - The spec stage is read-only: it posts a `<tech_spec>` comment but never writes code or opens a PR.
 - In continuous mode, a freshly-specced ticket is implemented on the **next poll** (human intervention window). In `--once` mode spec and build complete in the same invocation.
+- `--spec-only` runs just the spec pass on each tick:
+  - It works with or without `--once`. The agent pass never lists, claims or runs anything.
+  - `--max-tasks` caps the spec pass only.
+  - Flags only the agent pass reads (`--claimed-state`, `--review-state`, `--plan`, `--flow` and similar) have no effect.
+  - Use it for a human review window in scheduled `--once` jobs: a spec-only job advances specced tickets to a review state or label (`--agent-state` / `--agent-label`) that the build job does not trigger on, a human moves approved tickets to the build trigger, and a separate watch without `--spec-only` builds them. On Linear the spec pass and the build job both list issues by state type, so the review state's type must differ from the `--spec-state` type (or the spec pass specs the ticket again on every poll) and from the build job's trigger type (`unstarted` by default). With the default `--spec-state triage`, a backlog-type review state works.
+  - `--spec-only` requires `--agent-state` (Linear) or `--agent-label` (GitHub, GitLab) other than the default build trigger (`Todo`, `ready for agent`), which would give no review window. Only the default is checked: Vanguard cannot see a build job that triggers on another state or label.
+  - The build job must be single-pass, or its own spec trigger must point at an unused state or label: a loop-v1 build job (the `watch --source github --once` shorthand is one) specs any ticket still in the spec trigger and builds it in the same `--once` run, so that ticket never waits in review. On GitHub and GitLab the single-pass build job's `--label` must be the approval label a human applies (for example `ready for agent`), not the loop-v1 ownership `--label`: the spec pass leaves the ownership label on every ticket, so a build job on it would also build tickets still in review and tickets not yet specced.
+  - Preflight for a spec-only watch (or `doctor --spec-only`) skips the checks that only guard publishing: the pr-create setting, the agent-pass claimed/review labels, and a Linear run's GitHub/GitLab publish auth.
 - The human role is to write good tickets + approve the final PR. The [issue template](.github/ISSUE_TEMPLATE/vanguard-task.md) is the intended intake path.
 - External PR review is available as a one-shot `review-pr` command, an always-on `watch-prs` polling loop, or a GitHub Actions label trigger.
 
@@ -469,6 +582,8 @@ Normal logs report source, task id, phase, outcome, and next action. Full prompt
 ### External PR review
 
 `vanguard review-pr` runs an adversarial, read-only review over an existing GitHub PR diff and posts a non-blocking GitHub review comment. It does not edit code, open another PR, or move issue labels.
+
+The reviewer applies the repository's review guidelines (`CLAUDE.md` or `AGENTS.md`, and any document they point to). It reads them from its sandbox checkout, which `review-pr` and `review-mr` build from the local `main` branch, not from the PR or MR head. Keep that local `main` current with the target branch; guideline edits inside the diff are reviewed, not applied. This stops an author from rewriting the rules their own change is judged by only when the author cannot change the job that runs the review. A GitLab MR pipeline reads its job definitions from the MR's source branch, so the author of a same-project MR controls the whole job. They can point `main` at their own head, since the detached checkout has no local `main` until the job script makes one. They can also change the provider, model, prompt or token, or stop the review from running or posting. A GitHub workflow on `pull_request` for a branch in the same repository has the same exposure, because it takes the workflow file from the PR's merge ref. A workflow on `pull_request_target`, or on `workflow_dispatch` run from the base branch, takes it from the base branch and avoids this, provided the job checks out and runs only base-branch code. Never check out or build the PR head in a `pull_request_target` job, because that job has the repository's secrets and a write token. Where that matters, run the review from a pipeline whose configuration the author does not control. A label that a maintainer adds after reading the diff is not enough: the job definition still comes from the source branch, and the author can push a new one after the maintainer has read it.
 
 ```bash
 vanguard review-pr https://github.com/owner/repo/pull/123
@@ -497,7 +612,7 @@ vanguard watch-prs --github-repo owner/repo \
 |---|---|
 | `ready for vanguard review` | Picked up on the next poll. The label is removed and `vanguard:reviewing` is added before the review starts. |
 | `vanguard:reviewing` | Claimed/in progress. Later polls skip it. |
-| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass; the same commit is deduped by the hidden review marker. |
+| `vanguard:reviewed` | Review comment posted successfully. Re-add the trigger label after new commits if you want another review pass; the same commit is deduped by the hidden review marker. A review whose reply stated its `Verdict:` line but stopped before the completion signal counts as posted (with a truncation note), so it is deduped too. A reply with no verdict after two passes posts an incomplete notice without the marker — remove and re-add the trigger label (or run the workflow by hand) to retry. |
 
 Operator logs stay compact:
 
@@ -529,7 +644,7 @@ watch-prs owner/repo#123: reviewed -> marked
 
 Run `vanguard gc --remote <owner/repo>` on a timer (cron or systemd) to reap stale sandboxes, worktrees, and merged branches — see [Garbage collection](docs/deploy.md#garbage-collection) for cron and systemd-timer examples.
 
-Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metrics.jsonl` (cost, tokens, cache efficiency, duration, exit reason). `vanguard stats` aggregates that into a rollup — per task, per stage, and a grand total — for fleet cost/time visibility (`--json` for machine output).
+Each run appends a `run_complete` metric line per stage to `.vanguard/runs/metrics.jsonl` (cost, tokens, cache efficiency, duration, exit reason). `vanguard stats` aggregates that into a rollup — per task, per stage, per model (served, annotated with the requested one when a gateway substituted it), and a grand total — for fleet cost/time visibility (`--json` for machine output). **On an ephemeral host (GitHub Actions) that file dies with the job**, so a run there ends with `vanguard metrics push`: it appends the run's metric lines to a single `metrics.jsonl` on an orphan `vanguard-metrics` branch of the repo (git plumbing only — no checkout, no merge; idempotent, so a re-run never duplicates; needs push rights, which the implement workflow's `contents: write` already grants). `vanguard stats --branch vanguard-metrics` then reads that durable copy from any clone — it is where the `BY MODEL` and `PROBE` tables for the factory come from.
 
 ### Implement issues via GitHub Actions
 
@@ -539,13 +654,9 @@ Run Loop v1 straight from GitHub Actions — no always-on host. Label an issue a
 - **`ready for agent`** — a written, ready ticket: Vanguard builds it directly.
 - **too vague** — triage parks it at `needs info` (no budget spent); you fill it in and re-label.
 
-Three tiers, each building on the last — for the full copy-paste setup (both workflow files, the one-click doctor validator, secrets, and the triage contract) see **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**:
+Your repo carries only a **thin caller** (triggers, permissions, an actor gate and a `uses:` line); the steps live in reusable workflows in this repo (`implement.yml`, `pr-review.yml`, `research.yml`, `revise.yml`, `doctor.yml`), so a change to a default or a step reaches every repo without touching its copy. For the copy-paste callers, secret mapping, `allowed-actors`, the `@v1` / `@main` pin, the inputs of each workflow, the Codex-subscription setup, and the triage contract see **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**. `decision-probe` and `persist-metrics` are off by default there: the probe ships issue text to Cloudflare, and persisting metrics writes a branch into your repo.
 
-- **Minimal** — same repo (this section), Claude only, label `ready for agent`. One secret, one setting.
-- **Intermediate** — [run it on another repo](#run-it-on-another-repo): cross-repo checkout + `ready for spec` (spec → build in one run) + custom skills.
-- **Full** — [cross-provider on a Codex subscription](#cross-provider-on-a-codex-subscription-no-openai-key): Opus plans, Sonnet implements, Codex reviews.
-
-The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. The shipped [`.github/workflows/vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) does this for Vanguard's own repo. Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)).
+The job runs `vanguard watch --source github --once` **once**: a `ready for spec` ticket is specced and built in the same invocation. Vanguard's own [`vanguard-implement.yml`](.github/workflows/vanguard-implement.yml) is a caller of [`implement.yml`](.github/workflows/implement.yml) (`uses: ./.github/workflows/implement.yml`). Each run processes every matching open issue (not only the one just labelled), so labelling one `ready for agent` also picks up any others already waiting — run an always-on `vanguard watch` on a host if you want continuous polling instead ([docs/deploy.md](docs/deploy.md)). A host-run `vanguard watch` can add `--max-tasks <n>` to cap how many ready issues one poll claims per phase; the reusable workflow exposes no such input yet, so a mislabelled batch on CI runs every matching issue in one pass.
 
 **Required secret:** `CLAUDE_CODE_OAUTH_TOKEN` (repository or org secret). The built-in `GITHUB_TOKEN` covers git push, PR, and label writes.
 
@@ -555,66 +666,15 @@ The job runs `vanguard watch --source github --once` **once**: a `ready for spec
 
 #### Run it on another repo
 
-The target repo does not need Vanguard installed — check it out alongside the workspace and build it in the job. Drop this in `.github/workflows/vanguard-implement.yml` in *that* repo, add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and label an issue `ready for spec` or `ready for agent`:
+The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
 
-```yaml
-name: Vanguard Implement
-on:
-  issues:
-    types: [labeled]
-  workflow_dispatch:
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-concurrency:
-  group: vanguard-implement-${{ github.repository }}
-  cancel-in-progress: false
-jobs:
-  implement:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.actor == 'YOUR_LOGIN') ||
-      (github.event_name == 'issues' &&
-      contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
-      github.event.issue.user.login == 'YOUR_LOGIN' &&
-      github.event.sender.login == 'YOUR_LOGIN')
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v6                 # target repo -> workspace
-      - uses: actions/checkout@v6                 # vanguard -> ./.vanguard-src
-        with: { repository: SebaBoler/vanguard, path: .vanguard-src }
-      - uses: pnpm/action-setup@v6
-        with: { package_json_file: .vanguard-src/package.json }
-      - uses: actions/setup-node@v6
-        with: { node-version: 24 }
-      - run: pnpm install --frozen-lockfile --ignore-workspace
-        working-directory: .vanguard-src
-      - run: pnpm build
-        working-directory: .vanguard-src
-      - run: docker build -t vanguard-sandbox:latest .vanguard-src/docker/
-      - name: Ensure routing labels       # watch edits these; gh requires them to exist
-        run: |
-          for l in "ready for spec:FBCA04" "ready for agent:5319E7" "needs info:D93F0B" \
-                   "vanguard:speccing:FEF2C0" "vanguard:running:C5DEF5" "vanguard:needs-human-review:0E8A16"; do
-            gh label create "${l%:*}" --repo "$GITHUB_REPOSITORY" --color "${l##*:}" --force
-          done
-      - name: Run Vanguard loop (spec then implement)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --llm-proxy
-```
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
 
-Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. `--skills .vanguard-src/skills` injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). `--ignore-workspace` on the Vanguard install matters when the target repo is itself a **pnpm workspace** (monorepo): without it, `pnpm install` in `.vanguard-src` walks up to the target's `pnpm-workspace.yaml`, installs into the wrong place, and the Vanguard build fails. It is a no-op for non-workspace targets, so keep it always.
-
-**Backward compatibility — `vanguard:review` label (deprecated).** The post-build resting state was renamed from `vanguard:review` to `vanguard:needs-human-review`; the maintained repos (vanguard, temp-test, alpha-window) have had the old label deleted. A repo onboarded before the rename may still carry `vanguard:review` on in-flight items — Vanguard will not migrate it automatically. The new default and the old label coexist harmlessly (`gh label create --force` adds the new one without touching the old); delete the stale `vanguard:review` once nothing in flight uses it, or pass `--review-state vanguard:review` if you deliberately want to keep the old terminal label.
+**Backward compatibility — `vanguard:review` label (deprecated).** The post-build resting state was renamed from `vanguard:review` to `vanguard:needs-human-review`; the maintained repos (vanguard, temp-test, alpha-window) have had the old label deleted. A repo onboarded before the rename may still carry `vanguard:review` on in-flight items — Vanguard will not migrate it automatically. The new default and the old label coexist harmlessly (`gh label create --force` adds the new one without touching the old); delete the stale `vanguard:review` once nothing in flight uses it, or pass `--review-state vanguard:review` to a host-run `vanguard watch` if you deliberately want to keep the old terminal label (the reusable workflow has no input for it).
 
 #### Cross-provider on a Codex subscription (no OpenAI key)
 
-Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a ChatGPT Plus/Pro subscription instead of a paid OpenAI API key? Two changes to the job above.
+Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a ChatGPT Plus/Pro subscription instead of a paid OpenAI API key? Two changes to the caller.
 
 **1. Add the subscription credential as a secret.** Run `codex login` once on your machine (a ChatGPT account, `auth_mode: chatgpt`), then push the resulting `auth.json` verbatim — it holds OAuth tokens, not an API key:
 
@@ -622,22 +682,26 @@ Want Opus to plan, Sonnet to build, and Codex to review, with Codex running on a
 gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 ```
 
-**2. Set the providers and drop `--llm-proxy`.** Forward the secret and pick a provider per stage:
+**2. Set the providers and drop `llm-proxy`.** Map the secret in the caller's `secrets:` block and pick a provider per stage in `with:`:
 
 ```yaml
-      - name: Run Vanguard loop (Opus spec / Sonnet impl / Codex review)
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: |
-          node .vanguard-src/dist/cli/index.js watch --source github --github-repo "$GITHUB_REPOSITORY" --repo "$GITHUB_WORKSPACE" --once --skills .vanguard-src/skills --spec-model opus --provider claude --provider-model sonnet --review-provider codex
+    uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+    with:
+      allowed-actors: '["YOUR_LOGIN"]'
+      spec-model: opus
+      provider: claude
+      provider-model: sonnet
+      review-provider: codex
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
 ```
 
-`--spec-model opus` plans, `--provider claude --provider-model sonnet` implements and simplifies, `--review-provider codex` reviews. Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
+`spec-model: opus` plans, `provider: claude` + `provider-model: sonnet` implements and simplifies, `review-provider: codex` reviews (these map to `--spec-model`, `--provider`, `--provider-model`, `--review-provider`). Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
 
-`--provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — pass `--review-model <model>` to pick a specific one.
+`provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — set `review-model` to pick a specific one.
 
-`--llm-proxy` is gone on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
+`llm-proxy` is left off on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
 
 One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the short-lived access token from the embedded `refresh_token` on each run, so the secret must carry a live refresh token; re-run `gh secret set` if a run ever fails to authenticate. For long-running hosts (a `vanguard watch` on a server or NAS) the local file refreshes itself and this does not come up.
 

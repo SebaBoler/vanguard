@@ -5,10 +5,122 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { SandboxError } from '../core/errors.js';
-import { sandboxSecurityOpts } from './limits.js';
+import { ownerLabelArgs, sandboxSecurityOpts } from './limits.js';
 import type { ExecOptions, ExecResult, ExecStream, IsolatedSandboxProvider, SandboxConfig } from './provider.js';
 
+/**
+ * Normalise an execa result into an `ExecResult`.
+ *
+ * With `reject: false`, execa hands back its error object for a subprocess that never ran or was
+ * cancelled, and those carry `stdout`/`stderr` as `undefined` — nothing was ever buffered. The
+ * declared `string` then lies to every consumer, and the first `.split('\n')` downstream throws a
+ * bare `TypeError: Cannot read properties of undefined` from inside the consumer, burying the real
+ * failure: `agents/codex.ts` crashed there on line 88 instead of reaching its own guard 35 lines
+ * later, which would have reported the exit code and stderr. Coerce at the seam that declares the
+ * contract, so callers can keep trusting the type.
+ */
+export function toExecResult(raw: {
+  stdout?: string | undefined;
+  stderr?: string | undefined;
+  exitCode?: number | undefined;
+}): ExecResult {
+  return { stdout: raw.stdout ?? '', stderr: raw.stderr ?? '', exitCode: raw.exitCode ?? 1 };
+}
+
 const DEFAULT_IMAGE = 'vanguard-sandbox:latest';
+
+/**
+ * The sandbox image to run: `VANGUARD_SANDBOX_IMAGE` when set (CI passes the exact `sha256:...` ID it
+ * just built, since the shared mutable `vanguard-sandbox:latest` tag on a shared Docker host can be
+ * overwritten by another pipeline between build and run), else the mutable tag for local/dev use.
+ */
+export function sandboxImage(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env['VANGUARD_SANDBOX_IMAGE'];
+  if (override === undefined || override === '') return DEFAULT_IMAGE;
+  // The image sits in docker's argv before the command, so a leading `-` would be read as a flag such as
+  // --privileged. No valid image reference starts with `-` or contains whitespace.
+  if (/^-|\s/.test(override)) throw new SandboxError(`VANGUARD_SANDBOX_IMAGE is not an image reference: ${JSON.stringify(override)}`);
+  return override;
+}
+
+/**
+ * Claude CLI the sandbox image is built with — keep in sync with docker/Dockerfile's
+ * ARG CLAUDE_CLI_VERSION. The pin moves in the repo but a built image does not, and the drift only
+ * surfaces deep inside a run as a gateway error (live case: 2.1.165 answered every Meridian request
+ * with `400 This session advanced while the request was waiting`, burning ~50 min per attempt).
+ */
+export const SANDBOX_CLAUDE_VERSION = '2.1.260';
+
+/** True when `actual` sorts below `expected`; unparseable parts count as older. */
+export function isOlderVersion(actual: string, expected: string): boolean {
+  const a = actual.split('.');
+  const e = expected.split('.');
+  for (let i = 0; i < Math.max(a.length, e.length); i += 1) {
+    const x = Number(a[i] ?? 0);
+    const y = Number(e[i] ?? 0);
+    if (Number.isNaN(x)) return true;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+/** Minimal command runner, injectable so the refresh can be exercised without Docker. */
+export type DockerRunner = (cmd: string, args: string[], opts: { cwd: string }) => Promise<{ stdout: string }>;
+
+const defaultDockerRunner: DockerRunner = async (cmd, args, opts) => {
+  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  return { stdout };
+};
+
+/**
+ * Install the pinned claude CLI into an existing sandbox image, in place. Cheaper and far more
+ * reliable than a rebuild behind a corporate MITM proxy, which breaks on the linear-cli release
+ * tarball. The npm install needs root, but `docker commit` snapshots the CONTAINER's config — so the
+ * original USER/WorkingDir are read first and restored, or the image would silently start running as
+ * root and the CLI would then refuse to launch at all.
+ */
+export async function refreshSandboxClaudeCli(opts: { cwd: string; image?: string; run?: DockerRunner }): Promise<string> {
+  const run = opts.run ?? defaultDockerRunner;
+  const image = opts.image ?? sandboxImage();
+  // `docker commit` onto an image ID or a digest reference cannot change what it names.
+  const immutable = new SandboxError(
+    `Cannot refresh ${image}: an image ID or digest is immutable. Rebuild the image, or unset VANGUARD_SANDBOX_IMAGE to refresh ${DEFAULT_IMAGE}.`,
+  );
+  if (/^(sha256:)?[a-f0-9]{12,64}$|@sha256:[a-f0-9]{64}$/.test(image)) throw immutable;
+  const helper = 'vg-cli-refresh';
+  const { cwd } = opts;
+
+  const inspect = async (field: string): Promise<string> => {
+    const { stdout } = await run('docker', ['image', 'inspect', image, '--format', `{{${field}}}`], { cwd });
+    return stdout.trim();
+  };
+  // Docker also resolves a shorter unique prefix of an ID; only the engine can tell it from a hex repository name.
+  const hex = /^(?:sha256:)?([a-f0-9]+)$/.exec(image)?.[1];
+  if (hex !== undefined && (await inspect('.Id')).replace(/^sha256:/, '').startsWith(hex)) throw immutable;
+  const user = await inspect('.Config.User');
+  const workdir = await inspect('.Config.WorkingDir');
+
+  await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  try {
+    await run('docker', ['run', '--name', helper, '-u', '0', image, 'npm', 'install', '-g', `@anthropic-ai/claude-code@${SANDBOX_CLAUDE_VERSION}`], { cwd });
+    const changes = [
+      ...(user !== '' ? ['--change', `USER ${user}`] : []),
+      ...(workdir !== '' ? ['--change', `WORKDIR ${workdir}`] : []),
+    ];
+    await run('docker', ['commit', ...changes, helper, image], { cwd });
+  } finally {
+    await run('docker', ['rm', '-f', helper], { cwd }).catch(() => undefined);
+  }
+  return SANDBOX_CLAUDE_VERSION;
+}
+
+/**
+ * Once per process: refuse to run against an image whose bundled claude CLI predates the repo pin.
+ * Checked here rather than in preflight because preflight only covers `watch`/`doctor` — `spec` and
+ * `run` reach a sandbox without it. An image with no runnable `claude` is a deliberate custom image,
+ * so it is skipped rather than failed. Escape hatch: VANGUARD_SKIP_IMAGE_CHECK=1.
+ */
+let claudeVersionChecked = false;
 const DEFAULT_WORKDIR = '/workspace';
 const DEFAULT_HOME = '/home/agent';
 const SECRETS_DIR = '/run/vanguard';
@@ -31,7 +143,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   constructor(config: SandboxConfig = {}) {
     this.config = config;
     this.id = randomUUID();
-    this.image = config.image ?? DEFAULT_IMAGE;
+    this.image = config.image ?? sandboxImage();
     this.workdir = config.workdir ?? DEFAULT_WORKDIR;
     this.secretsMode = config.secretsMode ?? 'tmpfs';
     this.secrets = { ...config.secrets };
@@ -80,7 +192,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
   /** Pure `docker run` argv assembly (no docker invocation), so hardening flags are unit-testable
    * without Docker installed. */
   buildRunArgs(): string[] {
-    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`];
+    const args = ['run', '-d', '--name', this.name, '-w', this.workdir, '--label', `vanguard.runId=${this.id}`, ...ownerLabelArgs()];
     // Make the host reachable as host.docker.internal (so HTTPS_PROXY can point at a host egress
     // proxy). Default on Docker Desktop; required on Linux. host-gateway needs Docker >= 20.10.
     args.push('--add-host', 'host.docker.internal:host-gateway');
@@ -131,6 +243,8 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       throw new SandboxError(`Failed to start container ${this.name}`, { cause });
     }
 
+    await this.assertClaudeCliCurrent();
+
     if (this.hasSecrets && this.secretsMode === 'tmpfs') {
       // Write the secrets file via stdin (umask 077) so the value never appears in argv.
       const write = await execa('docker', ['exec', '-i', this.name, 'sh', '-c', `umask 077; cat > ${SECRETS_FILE}`], {
@@ -142,6 +256,23 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
         throw new SandboxError(`Failed to write secrets to tmpfs: ${write.stderr}`);
       }
     }
+  }
+
+  private async assertClaudeCliCurrent(): Promise<void> {
+    if (claudeVersionChecked || process.env['VANGUARD_SKIP_IMAGE_CHECK'] === '1') return;
+    claudeVersionChecked = true;
+    const probe = await execa('docker', ['exec', this.name, 'claude', '--version'], { reject: false });
+    const found = probe.exitCode === 0 ? /(\d+\.\d+\.\d+)/.exec(probe.stdout)?.[1] : undefined;
+    if (found === undefined) return; // custom image without the claude CLI — not our business
+    if (!isOlderVersion(found, SANDBOX_CLAUDE_VERSION)) return;
+    await this.destroy();
+    throw new SandboxError(
+      `Sandbox image ${this.image} has claude ${found}, but this repo pins ${SANDBOX_CLAUDE_VERSION}. ` +
+        `A stale CLI fails mid-run against a gateway. Fix it with:\n` +
+        `  vanguard doctor --fix\n` +
+        `or rebuild: CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh. ` +
+        `Set VANGUARD_SKIP_IMAGE_CHECK=1 to bypass.`,
+    );
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
@@ -156,7 +287,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
       ...(options.signal !== undefined ? { cancelSignal: options.signal } : {}),
     });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
+    return toExecResult(result);
   }
 
   execStream(command: string, options: ExecOptions = {}): ExecStream {
@@ -173,11 +304,7 @@ export class DockerSandboxProvider implements IsolatedSandboxProvider {
       if (child.stdout === undefined || child.stdout === null) return;
       for await (const line of createInterface({ input: child.stdout })) yield line;
     })();
-    const result: Promise<ExecResult> = child.then((r) => ({
-      stdout: r.stdout,
-      stderr: r.stderr,
-      exitCode: r.exitCode ?? 1,
-    }));
+    const result: Promise<ExecResult> = child.then((r) => toExecResult(r));
     return { stdout, result };
   }
 

@@ -29,3 +29,12 @@ export async function renderPrompt(template: string, opts: RenderOptions): Promi
   out = out.replace(KEY, (_full, key: string) => opts.variables[key] ?? '');
   return out;
 }
+
+/**
+ * runAgent input for a finished prompt that holds untrusted text (an MR, PR or issue body). Inlined into a
+ * template, that text would have its !`cmd` run in the sandbox and its {{KEY}}s blanked; a variable value
+ * is substituted after both passes and never rescanned, so the whole prompt goes in as one variable.
+ */
+export function literalPrompt(prompt: string): { promptTemplate: string; variables: Record<string, string> } {
+  return { promptTemplate: '{{PROMPT}}', variables: { PROMPT: prompt } };
+}

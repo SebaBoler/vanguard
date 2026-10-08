@@ -1,12 +1,12 @@
-export type Finding = {
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  kind: 'security' | 'perf' | 'correctness' | 'style';
-  title: string;
-  evidence: string;
-};
+// The Finding shape + vocabularies come from the generated wire contract (S7): the adversary
+// stage's <findings> output is a real cross-boundary contract (core zod derives from the same
+// arrays), and this was the one mirror with no sync header at all.
+import { FINDING_SEVERITIES, FINDING_KINDS } from '../wire';
+import type { Finding } from '../wire';
+export type { Finding } from '../wire';
 
-const SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
-const KINDS = new Set(['security', 'perf', 'correctness', 'style']);
+const SEVERITIES: ReadonlySet<string> = new Set(FINDING_SEVERITIES);
+const KINDS: ReadonlySet<string> = new Set(FINDING_KINDS);
 
 function isFinding(x: unknown): x is Finding {
   if (typeof x !== 'object' || x === null) return false;

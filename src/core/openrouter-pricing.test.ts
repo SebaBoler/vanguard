@@ -20,18 +20,27 @@ describe('estimateOpenRouterCost', () => {
     expect(est!).toBeGreaterThan(0.15);
   });
 
-  it('opus alias matches dated claude-opus-4-8 row', () => {
+  it('prices the 5.5 generation and Fable 5.1 at the live 2026-10-07 rates', () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadInputTokens: 1_000_000 };
+    expect(estimateOpenRouterCost(usage, 'claude-sonnet-5-5')).toBeCloseTo(12.2, 6);
+    expect(estimateOpenRouterCost(usage, 'claude-opus-5-5')).toBeCloseTo(24.2, 6);
+    expect(estimateOpenRouterCost(usage, 'claude-haiku-5-5')).toBeCloseTo(0.61, 6);
+    expect(estimateOpenRouterCost(usage, 'claude-fable-5-1')).toBeCloseTo(60.25, 6);
+    expect(estimateOpenRouterCost(usage, 'claude-fable-5')).toBeCloseTo(61, 6);
+  });
+
+  it('opus alias matches the current-generation claude-opus-5-5 row', () => {
     const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 500_000 };
     expect(estimateOpenRouterCost(usage, 'opus')).toBeCloseTo(
-      estimateOpenRouterCost(usage, 'claude-opus-4-8')!,
+      estimateOpenRouterCost(usage, 'claude-opus-5-5')!,
       10,
     );
   });
 
-  it('sonnet alias matches the current-generation claude-sonnet-5 row', () => {
+  it('sonnet alias matches the current-generation claude-sonnet-5-5 row', () => {
     const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 500_000 };
     expect(estimateOpenRouterCost(usage, 'sonnet')).toBeCloseTo(
-      estimateOpenRouterCost(usage, 'claude-sonnet-5')!,
+      estimateOpenRouterCost(usage, 'claude-sonnet-5-5')!,
       10,
     );
   });
@@ -42,10 +51,10 @@ describe('estimateOpenRouterCost', () => {
     expect(estimateOpenRouterCost(usage, 'claude-sonnet-5')).toBeCloseTo(0.9, 6);
   });
 
-  it('haiku alias matches dated claude-haiku-4-5-20251001 row', () => {
+  it('haiku alias matches the current-generation claude-haiku-5-5 row', () => {
     const usage = { inputTokens: 100_000, outputTokens: 50_000, cacheReadInputTokens: 500_000 };
     expect(estimateOpenRouterCost(usage, 'haiku')).toBeCloseTo(
-      estimateOpenRouterCost(usage, 'claude-haiku-4-5-20251001')!,
+      estimateOpenRouterCost(usage, 'claude-haiku-5-5')!,
       10,
     );
   });

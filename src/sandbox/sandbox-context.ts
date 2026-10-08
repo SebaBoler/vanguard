@@ -1,11 +1,11 @@
 import { startEgressEnclave } from './egress-network.js';
 import { startLlmProxy } from './llm-proxy.js';
 import { llmProxyEgressAllowlist } from './egress-proxy.js';
+import { DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
 import { llmProxyAuth } from '../agents/auth.js';
 import type { LlmProxyDep } from './llm-proxy.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
 import type { AgentAuth } from '../agents/auth.js';
-import type { ProviderName } from '../agents/registry.js';
 
 /**
  * The sandbox-side wiring shared by `vanguard run` and `vanguard watch`: the egress enclave's proxy
@@ -36,8 +36,12 @@ export interface SandboxContextOptions {
    * primary-sidecar credential).
    */
   auth?: AgentAuth;
-  /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic). */
-  provider?: ProviderName;
+  /** Provider whose primary LLM sidecar to start under --llm-proxy (default 'claude' → Anthropic).
+   *  Widened to string for S6 customs — they never reach the llm-proxy branch (directOnly rejects
+   *  the combination at dispatch) and direct mode returns before reading this. */
+  provider?: string;
+  /** Extra egress-enclave allowlist hosts (S6 custom endpoints), computed at dispatch. */
+  extraEgressHosts?: string[];
 }
 
 /**
@@ -56,8 +60,12 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
     return { destroy: async (): Promise<void> => {} };
   }
 
+  // Custom-provider hosts (S6) extend the allowlist here, at enclave creation — the list is baked
+  // into the proxy container's env at start, so it cannot be widened later in the run.
+  const extras = opts.extraEgressHosts ?? [];
+  const baseAllowlist = opts.llmProxy ? llmProxyEgressAllowlist() : DEFAULT_EGRESS_ALLOWLIST;
   const enclave = await startEgressEnclave(
-    opts.llmProxy ? { allowlist: llmProxyEgressAllowlist() } : {},
+    extras.length > 0 || opts.llmProxy ? { allowlist: [...baseAllowlist, ...extras] } : {},
   );
   console.log('egress: sandbox confined to an internal network; only the allowlist proxy can reach out.');
 

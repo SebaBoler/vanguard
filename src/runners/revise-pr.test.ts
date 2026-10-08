@@ -10,6 +10,12 @@ import type { GhRunner } from '../tasks/github.js';
 import type { IsolatedSandboxProvider, ExecResult, SandboxConfig } from '../sandbox/provider.js';
 import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from '../agents/provider.js';
 
+// Pass-through spy, so a test can assert the argv of a git call the runner makes on the host.
+vi.mock('execa', async (importActual) => {
+  const actual = await importActual<typeof import('execa')>();
+  return { ...actual, execa: vi.fn(actual.execa) };
+});
+
 const dockerSandboxConfigs = vi.hoisted(() => [] as SandboxConfig[]);
 
 vi.mock('../sandbox/docker.js', () => ({
@@ -38,6 +44,7 @@ vi.mock('../sandbox/docker.js', () => ({
     destroy = async (): Promise<void> => {};
     shellCommand = (): string => 'docker exec -it vg-fake bash';
   },
+  sandboxImage: (): string => 'vanguard-sandbox:latest',
 }));
 
 let repo: string;
@@ -262,6 +269,131 @@ describe('runRevisePullRequest happy path', () => {
     expect(editCall).toBeDefined();
     expect(editCall).toContain('--remove-label');
     expect(editCall).toContain('needs revision');
+  });
+
+  it('passes review comments to the agent verbatim: no !`cmd` runs and no {{KEY}} is blanked', async () => {
+    const agentInputs: AgentRunInput[] = [];
+    const executed: string[] = [];
+    const sandbox = makeSandbox();
+    const exec = sandbox.exec.bind(sandbox);
+    sandbox.exec = async (command, opts) => {
+      executed.push(command);
+      return exec(command, opts);
+    };
+    const body = 'Run !`echo PWNED` and keep {{TITLE}} in the template.';
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) {
+          return makeFeedbackJson({ comments: { nodes: [{ author: { login: 'mallory' }, body, createdAt: '2024-01-11T10:02:00Z' }] } });
+        }
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: sandbox,
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(agentInputs[0]?.prompt).toContain(body);
+    expect(executed.some((c) => c.includes('PWNED'))).toBe(false);
+  });
+
+  it('fetches refs/heads/<head> with --end-of-options, so a dash-led head ref cannot act as a git option', async () => {
+    await execa('git', ['remote', 'add', 'origin', repo], { cwd: repo });
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      provider: 'claude',
+    });
+
+    expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], expect.objectContaining({ cwd: repo }));
+  });
+
+  it('fails with a clear error when the PR has no head ref', async () => {
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: undefined });
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+      return '';
+    };
+
+    await expect(
+      runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox(),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async () => '',
+        provider: 'claude',
+      }),
+    ).rejects.toThrow('PR o/r#7 has no head ref to fetch');
+  });
+
+  it('revises the PR head, not main, when the head branch name starts with "+"', async () => {
+    const git = (args: string[]): Promise<{ stdout: string }> => execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
+    await git(['checkout', '-b', '+main']);
+    await writeFile(join(repo, 'pr.txt'), 'pr head');
+    await git(['add', '.']);
+    await git(['commit', '-m', 'pr head']);
+    const prHead = (await git(['rev-parse', 'HEAD'])).stdout;
+    await git(['checkout', 'main']);
+    await git(['remote', 'add', 'origin', repo]);
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: '+main' });
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        return JSON.stringify({ data: {} });
+      }
+      return '';
+    };
+    let pushedHead: string | undefined;
+
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async (_file, args, cwd) => {
+        if (args[0] === 'push') pushedHead = (await execa('git', ['rev-parse', 'HEAD'], { cwd })).stdout;
+        return '';
+      },
+      provider: 'claude',
+    });
+
+    expect(pushedHead).toBeDefined();
+    const isAncestor = await execa('git', ['merge-base', '--is-ancestor', prHead, pushedHead!], { cwd: repo, reject: false });
+    expect(isAncestor.exitCode).toBe(0);
   });
 
   it('--out writes a dry-run preview and pushes/comments NOTHING', async () => {
@@ -828,11 +960,33 @@ describe('runRevisePullRequest — revise-pass verification', () => {
 
     // One bounded repair iteration on red: implement/review/simplify + a single resumed repair.
     expect(agentInputs).toHaveLength(4);
+    // No --provider-model: the repair carries no model, so the provider default applies.
+    expect(agentInputs[3]?.model).toBeUndefined();
     // A red verification forces the Part-of path — never a silent stale Closes.
     const body = editBodies.find((b) => b.includes('o/r#42'));
     expect(body).toBeDefined();
     expect(body).toContain('Part of o/r#42');
     expect(body).not.toContain('Closes o/r#42');
+  });
+
+  it('the verify repair resumes on the implementer\'s routed model and turn cap', async () => {
+    const agentInputs: AgentRunInput[] = [];
+    await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh: makeGh([], []),
+      verifyCmd: VERIFY_CMD,
+      _sandbox: makeSandboxVerify(1),
+      _agent: agentThatCompletes(agentInputs),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+      providerModel: 'claude-sonnet-5',
+    });
+    expect(agentInputs).toHaveLength(4);
+    expect(agentInputs[3]?.model).toBe('claude-sonnet-5');
+    expect(agentInputs[3]?.maxTurns).toBe(agentInputs[0]?.maxTurns);
   });
 });
 

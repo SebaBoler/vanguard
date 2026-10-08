@@ -1,15 +1,9 @@
-import { Button, Card, Chip, Empty } from 'chunks-ui';
+import type { CSSProperties } from 'react';
+import { Button, Card, Chip, Empty } from '@/ui';
 import { FolderPlus, LayoutGrid, X } from 'lucide-react';
+import { projectColor } from '../../color';
+import { relTime } from '../../time';
 import type { Project } from '../../vanguard-output';
-
-function relTime(iso?: string): string | null {
-  if (!iso) return null;
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
 
 function Stat({
   label,
@@ -53,7 +47,7 @@ export function Dashboard({
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4">
+    <div className="mx-auto h-full w-full max-w-5xl space-y-4 overflow-y-auto p-6">
       <div className="flex items-center gap-3">
         <h2 className="font-semibold">Projects</h2>
         <Button className="ml-auto" onClick={onAdd} startIcon={<FolderPlus className="size-4" />}>
@@ -88,13 +82,22 @@ export function Dashboard({
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => {
-              const last = relTime(p.lastRun);
+              const last = p.lastRun ? relTime(new Date(p.lastRun).getTime()) : null;
+              const color = projectColor(p);
               return (
                 <Card.Root
                   key={p.path}
                   onClick={() => onOpen({ path: p.path, name: p.name })}
-                  className="cursor-pointer transition-colors hover:border-primary/40"
+                  style={{ ['--proj']: color } as CSSProperties}
+                  className="relative cursor-pointer overflow-hidden pl-1.5 transition-colors hover:border-[color:var(--proj)]"
                 >
+                  {/* Project identity color — matches the in-project top bar and the border on hover so
+                      cards read as one consistent object. */}
+                  <span
+                    className="absolute inset-y-0 left-0 w-1.5"
+                    style={{ backgroundColor: color }}
+                    aria-hidden
+                  />
                   <Card.Header className="flex flex-row items-start justify-between gap-2 pb-2">
                     <div className="min-w-0">
                       <Card.Title className="flex items-center gap-2 truncate">

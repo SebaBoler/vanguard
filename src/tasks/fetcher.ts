@@ -18,11 +18,22 @@ export interface Task {
   labels: string[];
   children: SubTask[];
   comments: TaskComment[];
+  /** Provider-native short ref (`904`, `42`, `DEV-639`) — the board id mint's input (S9). Never in prompts. */
+  ref?: string;
+  /** Provider lifecycle state (`open`/`closed`/`opened`/Linear state name) — the board's column input (S9). */
+  state?: string;
 }
 
 export interface TaskFilter {
   labels?: string[];
   state?: string;
+  /**
+   * Page/result cap (S9, board parity). STRICTLY conditional: unset ⇒ gh/glab argv is
+   * byte-identical to before this field existed, and Linear keeps first:100 + exhaustive
+   * pagination (behavior-identical; the query wire now passes `first` as a variable) — watch
+   * never sets it, and its fetch size must not change. Set ⇒ gh -L / glab -P / Linear single page.
+   */
+  limit?: number;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels } from './gitlab.js';
+import { issueIID, encodeProject, GitLabTaskFetcher, commentGitlabIssue, editGitlabLabels, neutralizeQuickActions } from './gitlab.js';
 
 describe('issueIID', () => {
   it('returns bare number unchanged', () => {
@@ -90,6 +90,31 @@ describe('commentGitlabIssue', () => {
   });
 });
 
+describe('neutralizeQuickActions', () => {
+  it('stops every line from starting with a slash and a command name, and leaves other slashes alone', () => {
+    expect(neutralizeQuickActions('Quoted:\n/merge\n  /approve\n\t/label ~x\n/Close\ntext /close stays\na/b')).toBe(
+      'Quoted:\n\\/merge\n  \\/approve\n\t\\/label ~x\n\\/Close\ntext /close stays\na/b',
+    );
+  });
+
+  it('also escapes a slash-and-letter line inside a code fence, where GitLab would show the backslash', () => {
+    // Accepted cost: parsing fences the way GitLab does is harder to get exactly right than a stray backslash.
+    expect(neutralizeQuickActions('```\n/usr/local/bin/x\n```')).toBe('```\n\\/usr/local/bin/x\n```');
+  });
+
+  it('leaves comment and JSDoc lines in quoted code alone', () => {
+    const code = '```ts\n// keep\n/** doc */\n  // indented\n```';
+    expect(neutralizeQuickActions(code)).toBe(code);
+  });
+
+  it('applies to issue notes', async () => {
+    const calls: string[][] = [];
+    const glab = async (args: string[]) => { calls.push(args); return ''; };
+    await commentGitlabIssue('g/p', 'g/p#5', 'see\n/close', glab);
+    expect(calls[0]?.at(-1)).toBe('see\n\\/close');
+  });
+});
+
 describe('editGitlabLabels', () => {
   it('adds and removes labels', async () => {
     const calls: string[][] = [];
@@ -107,4 +132,26 @@ describe('editGitlabLabels', () => {
     await editGitlabLabels('g/p', 'g/p#3', {}, glab);
     expect(calls).toHaveLength(0);
   });
+});
+
+// S9: TaskFilter.limit is STRICTLY conditional — unset keeps watch's argv byte-identical.
+it('list() argv is byte-identical to the pre-S9 shape when limit is unset (watch contract)', async () => {
+  const calls: string[][] = [];
+  const glab = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return '[]';
+  };
+  await new GitLabTaskFetcher('g/p', glab).list({ labels: ['x'] });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'g/p', '--output', 'json', '--label', 'x']);
+});
+
+it('list() with limit + all adds -P and --all (the board call); state carried onto the task', async () => {
+  const calls: string[][] = [];
+  const glab = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return JSON.stringify([{ iid: 5, title: 't', description: null, labels: [], state: 'closed' }]);
+  };
+  const tasks = await new GitLabTaskFetcher('g/p', glab).list({ state: 'all', limit: 50 });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'g/p', '--output', 'json', '--all', '-P', '50']);
+  expect(tasks[0]).toMatchObject({ ref: '5', state: 'closed' });
 });

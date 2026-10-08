@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { extractJson } from './extract.js';
+import { FINDING_SEVERITIES, FINDING_KINDS } from '../wire.js';
 
+// Enum vocabularies live in src/wire.ts (the shared desktop contract — S7); zod derives from them.
 const findingItemSchema = z.object({
-  severity: z.enum(['low', 'medium', 'high', 'critical']),
-  kind: z.enum(['security', 'perf', 'correctness', 'style']),
+  severity: z.enum(FINDING_SEVERITIES),
+  kind: z.enum(FINDING_KINDS),
   title: z.string(),
   evidence: z.string(),
 });

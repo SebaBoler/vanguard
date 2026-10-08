@@ -1,10 +1,19 @@
 import { cacheEfficiency } from '../agents/provider.js';
 import { alignTable } from './table.js';
+import { DIFFICULTY_LEVELS } from './decision-probe.js';
 
 /** One parsed `run_complete` line from .vanguard/runs/metrics.jsonl. */
 export interface MetricRecord {
   taskId: string;
+  /** ISO timestamp of the line; used to join probes to the run they preceded. */
+  ts?: string;
   stage?: string;
+  model?: string;
+  requestedModel?: string;
+  exitReason?: string;
+  /** Agent calls folded into the stage (resumes/repairs); absent = 1. */
+  attempts?: number;
+  firstExitReason?: string;
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
@@ -22,10 +31,35 @@ export interface Bucket {
   durationMs: number;
 }
 
+/** One `decision_probe` line: the log-only difficulty probe taken before a run. */
+export interface ProbeRecord {
+  taskId: string;
+  ts: string;
+  completesFirstTry: number;
+  difficulty: number;
+  specClear: number;
+}
+
+/** Probe predictions bucketed by predicted difficulty level, joined to what the implementer did. */
+export interface ProbeBucket {
+  level: string;
+  runs: number;
+  /** Implementer stages that needed a repair/resume or did not complete. */
+  repaired: number;
+  /** Mean predicted probability of a clean first attempt. */
+  predictedFirstTry: number;
+  /** Observed share of clean first attempts (1 - repaired/runs). */
+  observedFirstTry: number;
+}
+
 export interface StatsReport {
   byTask: Array<{ key: string } & Bucket>;
   byStage: Array<{ key: string } & Bucket>;
+  /** Keyed by the model actually served (see modelKey), so a model swap can be priced against its predecessor. */
+  byModel: Array<{ key: string } & Bucket>;
   total: Bucket;
+  /** Present only when decision_probe lines exist: predicted vs observed, per difficulty level. */
+  probes?: ProbeBucket[];
 }
 
 function num(value: unknown): number {
@@ -54,7 +88,13 @@ export function parseMetrics(text: string): MetricRecord[] {
     if (parsed.evt !== 'run_complete' || typeof parsed.taskId !== 'string') continue;
     records.push({
       taskId: parsed.taskId,
+      ...(typeof parsed.ts === 'string' ? { ts: parsed.ts } : {}),
       ...(typeof parsed.stage === 'string' ? { stage: parsed.stage } : {}),
+      ...(typeof parsed.model === 'string' ? { model: parsed.model } : {}),
+      ...(typeof parsed.requestedModel === 'string' ? { requestedModel: parsed.requestedModel } : {}),
+      ...(typeof parsed.exitReason === 'string' ? { exitReason: parsed.exitReason } : {}),
+      ...(typeof parsed.attempts === 'number' ? { attempts: parsed.attempts } : {}),
+      ...(typeof parsed.firstExitReason === 'string' ? { firstExitReason: parsed.firstExitReason } : {}),
       costUsd: num(parsed.costUsd),
       inputTokens: num(parsed.inputTokens),
       outputTokens: num(parsed.outputTokens),
@@ -63,6 +103,62 @@ export function parseMetrics(text: string): MetricRecord[] {
     });
   }
   return records;
+}
+
+/** Parse `decision_probe` lines (see persistDecisionProbe); malformed lines are skipped. */
+export function parseProbes(text: string): ProbeRecord[] {
+  const probes: ProbeRecord[] = [];
+  for (const parsed of parseJsonlLines(text)) {
+    if (parsed.evt !== 'decision_probe' || typeof parsed.taskId !== 'string' || typeof parsed.ts !== 'string') continue;
+    if (typeof parsed.completesFirstTry !== 'number' || typeof parsed.difficulty !== 'number' || typeof parsed.specClear !== 'number') continue;
+    probes.push({ taskId: parsed.taskId, ts: parsed.ts, completesFirstTry: parsed.completesFirstTry, difficulty: parsed.difficulty, specClear: parsed.specClear });
+  }
+  return probes;
+}
+
+/**
+ * Join each probe to the implementer record of THE RUN IT PRECEDED — the first implementer line for
+ * that task at or after the probe's timestamp and before the task's next probe — and bucket by the
+ * rounded difficulty level (x.5 rounds up). "Repaired" = the stage needed more than one attempt or did
+ * not end completed, i.e. the outcome the probe is supposed to predict. A probe whose run never
+ * produced an implementer record (cancelled, threw before the pipeline) is dropped, and a re-run task
+ * contributes one pair per run instead of N probes against its last outcome.
+ */
+export function probeReport(records: ReadonlyArray<MetricRecord>, probes: ReadonlyArray<ProbeRecord>): ProbeBucket[] {
+  const implementersByTask = new Map<string, MetricRecord[]>();
+  for (const r of records) {
+    if (r.stage !== 'implementer' || r.ts === undefined) continue;
+    implementersByTask.set(r.taskId, [...(implementersByTask.get(r.taskId) ?? []), r]);
+  }
+  for (const list of implementersByTask.values()) list.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''));
+  const probesByTask = new Map<string, ProbeRecord[]>();
+  for (const p of probes) probesByTask.set(p.taskId, [...(probesByTask.get(p.taskId) ?? []), p]);
+  const acc = new Map<number, { runs: number; repaired: number; predicted: number }>();
+  for (const [taskId, taskProbes] of probesByTask) {
+    taskProbes.sort((a, b) => a.ts.localeCompare(b.ts));
+    const runs = implementersByTask.get(taskId) ?? [];
+    for (const [i, probe] of taskProbes.entries()) {
+      const next = taskProbes[i + 1]?.ts;
+      const run = runs.find((r) => (r.ts ?? '') >= probe.ts && (next === undefined || (r.ts ?? '') < next));
+      if (run === undefined) continue;
+      const level = Math.min(DIFFICULTY_LEVELS.length - 1, Math.max(0, Math.round(probe.difficulty)));
+      const bucket = acc.get(level) ?? { runs: 0, repaired: 0, predicted: 0 };
+      bucket.runs += 1;
+      bucket.predicted += probe.completesFirstTry;
+      const repaired = (run.attempts ?? 1) > 1 || (run.exitReason !== undefined && run.exitReason !== 'completed');
+      if (repaired) bucket.repaired += 1;
+      acc.set(level, bucket);
+    }
+  }
+  return [...acc.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([level, b]) => ({
+      level: DIFFICULTY_LEVELS[level] ?? String(level),
+      runs: b.runs,
+      repaired: b.repaired,
+      predictedFirstTry: Math.round((b.predicted / b.runs) * 1000) / 1000,
+      observedFirstTry: Math.round((1 - b.repaired / b.runs) * 1000) / 1000,
+    }));
 }
 
 function emptyBucket(): Bucket {
@@ -78,26 +174,50 @@ function add(bucket: Bucket, record: MetricRecord): void {
   bucket.durationMs += record.durationMs;
 }
 
-/** Aggregate records into per-task, per-stage, and grand-total buckets. */
-export function aggregateMetrics(records: ReadonlyArray<MetricRecord>): StatsReport {
+/**
+ * Bucket key for the BY MODEL table: the served model, annotated with the configured one when a
+ * gateway served something else — a silent substitution then shows up as its own row instead of
+ * being folded into the model the operator asked for. Records predating the model field land in
+ * one '(no model recorded)' row.
+ */
+/** `sonnet` served as `claude-sonnet-5-5` is the alias doing its job, not a substitution. */
+function aliasResolvesTo(requested: string, served: string): boolean {
+  return /^[a-z]+$/.test(requested) && served.startsWith(`claude-${requested}-`);
+}
+
+export function modelKey(record: Pick<MetricRecord, 'model' | 'requestedModel'>): string {
+  if (record.model === undefined) return record.requestedModel ?? '(no model recorded)';
+  if (record.requestedModel === undefined || record.requestedModel === record.model) return record.model;
+  if (aliasResolvesTo(record.requestedModel, record.model)) return record.model;
+  return `${record.model} (requested ${record.requestedModel})`;
+}
+
+/** Aggregate records into per-task, per-stage, per-model, and grand-total buckets (+ probe join when given). */
+export function aggregateMetrics(records: ReadonlyArray<MetricRecord>, probes: ReadonlyArray<ProbeRecord> = []): StatsReport {
   const byTask = new Map<string, Bucket>();
   const byStage = new Map<string, Bucket>();
+  const byModel = new Map<string, Bucket>();
   const total = emptyBucket();
+  const addTo = (map: Map<string, Bucket>, key: string, record: MetricRecord): void => {
+    const bucket = map.get(key) ?? emptyBucket();
+    add(bucket, record);
+    map.set(key, bucket);
+  };
   for (const record of records) {
-    const taskBucket = byTask.get(record.taskId) ?? emptyBucket();
-    add(taskBucket, record);
-    byTask.set(record.taskId, taskBucket);
-
-    const stageKey = record.stage ?? '(none)';
-    const stageBucket = byStage.get(stageKey) ?? emptyBucket();
-    add(stageBucket, record);
-    byStage.set(stageKey, stageBucket);
-
+    addTo(byTask, record.taskId, record);
+    addTo(byStage, record.stage ?? '(none)', record);
+    addTo(byModel, modelKey(record), record);
     add(total, record);
   }
   const entries = (map: Map<string, Bucket>): Array<{ key: string } & Bucket> =>
     [...map.entries()].map(([key, bucket]) => ({ key, ...bucket }));
-  return { byTask: entries(byTask), byStage: entries(byStage), total };
+  return {
+    byTask: entries(byTask),
+    byStage: entries(byStage),
+    byModel: entries(byModel),
+    total,
+    ...(probes.length > 0 ? { probes: probeReport(records, probes) } : {}),
+  };
 }
 
 function pct(bucket: Bucket): string {
@@ -124,7 +244,7 @@ function row(label: string, bucket: Bucket): string[] {
 
 const HEADER = ['', 'runs', 'in', 'out', 'cacheR', 'cache%', '$cost', 'time'];
 
-/** Render a stats report: a per-task table, a per-stage table, and a grand total. */
+/** Render a stats report: per-task, per-stage and per-model tables, and a grand total. */
 export function formatStats(report: StatsReport): string {
   const taskTable = alignTable([
     ['BY TASK', ...HEADER.slice(1)],
@@ -134,6 +254,20 @@ export function formatStats(report: StatsReport): string {
     ['BY STAGE', ...HEADER.slice(1)],
     ...report.byStage.map((b) => row(b.key, b)),
   ]);
+  const modelTable = alignTable([
+    ['BY MODEL', ...HEADER.slice(1)],
+    ...report.byModel.map((b) => row(b.key, b)),
+  ]);
   const totalLine = alignTable([row('TOTAL', report.total)]);
-  return [taskTable, '', stageTable, '', totalLine].join('\n');
+  const sections = [taskTable, '', stageTable, '', modelTable, '', totalLine];
+  if (report.probes !== undefined && report.probes.length > 0) {
+    // Predicted vs observed clean-first-attempt rate per predicted difficulty: if the probe is any
+    // good, "predicted" tracks "observed" and both fall as the level rises.
+    const probeTable = alignTable([
+      ['PROBE: predicted difficulty', 'runs', 'repaired', 'pred.first-try', 'obs.first-try'],
+      ...report.probes.map((b) => [b.level, String(b.runs), String(b.repaired), `${Math.round(b.predictedFirstTry * 100)}%`, `${Math.round(b.observedFirstTry * 100)}%`]),
+    ]);
+    sections.push('', probeTable);
+  }
+  return sections.join('\n');
 }

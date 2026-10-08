@@ -37,6 +37,14 @@ describe('parseCli', () => {
     expect(parseCli(['gc', '--bogus-flag'], '/work').kind).toBe('help');
   });
 
+  it('parses the hidden __sidecar entrypoint (no flags)', () => {
+    expect(parseCli(['__sidecar'], '/work')).toEqual({ kind: 'sidecar' });
+  });
+
+  it('parses the hidden __complete entrypoint (no flags)', () => {
+    expect(parseCli(['__complete'], '/work')).toEqual({ kind: 'complete' });
+  });
+
   it('parses a linear run with parent fan-out', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--parent', '--skills', '/s', '--concurrency', '3'], '/work')).toEqual({
       kind: 'run',
@@ -132,10 +140,29 @@ describe('parseCli', () => {
     expect('forkN' in parseCli(['run', '--linear', 'TES-1', '--fork', 'x'], '/work')).toBe(false);
   });
 
-  it('returns an error for an unknown provider name', () => {
+  // S6 churn: run/watch/doctor --provider relaxes to the name grammar (repo customs are legal and
+  // only dispatch can read app.json). A grammar-VALID unknown name now parses through and fails at
+  // dispatch listing built-ins + customs; grammar-invalid names and every other command still fail
+  // right here. --review-provider stays closed-set everywhere.
+  it('parses a grammar-valid non-built-in provider through for run/watch/doctor (resolved at dispatch)', () => {
     expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'gpt'], '/work')).toMatchObject({
+      kind: 'run',
+      provider: 'gpt',
+    });
+    expect(parseCli(['watch', '--source', 'github', '--label', 'x', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'watch',
+      provider: 'my-proxy',
+    });
+  });
+
+  it('still rejects grammar-invalid providers, custom names on other commands, and unknown review-providers at parse', () => {
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'GPT'], '/work')).toMatchObject({
       kind: 'error',
-      message: expect.stringContaining('Unknown provider "gpt"'),
+      message: expect.stringContaining('Unknown provider "GPT"'),
+    });
+    expect(parseCli(['review-pr', '1', '--provider', 'my-proxy'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('Unknown provider "my-proxy"'),
     });
     expect(parseCli(['run', '--linear', 'TES-1', '--review-provider', 'bard'], '/work')).toMatchObject({
       kind: 'error',
@@ -150,6 +177,37 @@ describe('parseCli', () => {
       kind: 'error',
       message: expect.stringContaining('transport'),
     });
+  });
+
+  it('parses --escalate-model on run and watch', () => {
+    const run = parseCli(['run', '--linear', 'TES-1', '--escalate-model', 'claude-fable-5'], '/work');
+    expect(run.kind === 'run' && run.escalateModel).toBe('claude-fable-5');
+    const watch = parseCli(['watch', '--label', 'vanguard', '--escalate-model', 'opus'], '/work');
+    expect(watch.kind === 'watch' && watch.escalateModel).toBe('opus');
+    const bare = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(bare.kind === 'run' && 'escalateModel' in bare).toBe(false);
+  });
+
+  it('parses stats --branch and metrics push, and rejects an unknown metrics subcommand', () => {
+    expect(parseCli(['stats', '--branch', 'vanguard-metrics'], '/work')).toMatchObject({ kind: 'stats', branch: 'vanguard-metrics' });
+    expect(parseCli(['stats'], '/work')).not.toHaveProperty('branch');
+    expect(parseCli(['metrics', 'push'], '/work')).toEqual({ kind: 'metrics', action: 'push', repoPath: '/work' });
+    expect(parseCli(['metrics', 'push', '--repo', '/r', '--branch', 'b'], '/work')).toMatchObject({ kind: 'metrics', repoPath: '/r', branch: 'b' });
+    const bad = parseCli(['metrics', 'pull'], '/work');
+    expect(bad.kind === 'error' && bad.message).toMatch(/metrics expects a subcommand/);
+  });
+
+  it('parses --fork-scorer on run, rejects it on watch and rejects unknown values', () => {
+    const run = parseCli(['run', '--linear', 'TES-1', '--fork', '3', '--fork-scorer', 'decision'], '/work');
+    expect(run.kind === 'run' && run.forkScorer).toBe('decision');
+    const watch = parseCli(['watch', '--label', 'vanguard', '--fork-scorer', 'llm'], '/work');
+    expect(watch.kind === 'error' && watch.message).toMatch(/watch does not fork/);
+    const bare = parseCli(['run', '--linear', 'TES-1'], '/work');
+    expect(bare.kind === 'run' && 'forkScorer' in bare).toBe(false);
+    const bad = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'coin'], '/work');
+    expect(bad.kind === 'error' && bad.message).toMatch(/--fork-scorer expects llm or decision/);
+    const noFork = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'decision'], '/work');
+    expect(noFork.kind === 'error' && noFork.message).toMatch(/only applies with --fork/);
   });
 
   it('parses --provider-model and --review-model on run', () => {
@@ -178,6 +236,26 @@ describe('parseCli', () => {
     );
     expect(cmd.kind === 'watch' && cmd.maxTurns).toBe(80);
     expect(cmd.kind === 'watch' && cmd.maxRepairIterations).toBe(5);
+  });
+
+  it('parses --max-turns on review-mr and review-pr, and omits it when absent', () => {
+    const mr = parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '48'], '/work');
+    expect(mr.kind === 'review-mr' && mr.maxTurns).toBe(48);
+    const pr = parseCli(['review-pr', 'o/r#7', '--max-turns', '48'], '/work');
+    expect(pr.kind === 'review-pr' && pr.maxTurns).toBe(48);
+    expect('maxTurns' in parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p'], '/work')).toBe(false);
+    expect('maxTurns' in parseCli(['review-pr', 'o/r#7'], '/work')).toBe(false);
+    const wm = parseCli(['watch-mrs', '--gitlab-project', 'g/p', '--label', 'l', '--max-turns', '48'], '/work');
+    expect(wm.kind === 'watch-mrs' && wm.maxTurns).toBe(48);
+    const wp = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'l', '--max-turns', '48'], '/work');
+    expect(wp.kind === 'watch-prs' && wp.maxTurns).toBe(48);
+  });
+
+  it('clamps a huge --max-turns or --max-rounds to Number.MAX_SAFE_INTEGER', () => {
+    const huge = parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '1e308'], '/work');
+    expect(huge.kind === 'review-mr' && huge.maxTurns).toBe(Number.MAX_SAFE_INTEGER);
+    const rounds = parseCli(['revise-pr', '7', '--github-repo', 'o/r', '--max-rounds', '1e308'], '/work');
+    expect(rounds.kind === 'revise-pr' && rounds.maxRounds).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it('rejects --max-turns 0, negative, or non-numeric (no override set)', () => {
@@ -304,6 +382,20 @@ describe('parseCli', () => {
     expect(parseCli(['watch-prs', '--label', 'ready for vanguard review'], '/work')).toMatchObject({ kind: 'error' });
   });
 
+  it('parses watch-prs --pr as a pinned PR number', () => {
+    const cmd = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '316'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch-prs', pr: 316 });
+  });
+
+  it('rejects a watch-prs --pr that is not a positive PR number', () => {
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', 'abc'], '/work')).toMatchObject({
+      kind: 'error',
+    });
+    expect(parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'x', '--pr', '0'], '/work')).toMatchObject({
+      kind: 'error',
+    });
+  });
+
   it('parses doctor-prs with PR review label defaults', () => {
     expect(parseCli(['doctor-prs', '--github-repo', 'o/r', '--label', 'ready for vanguard review'], '/work')).toEqual({
       kind: 'doctor-prs',
@@ -375,6 +467,32 @@ describe('parseCli', () => {
       once: false,
       egress: false,
     });
+  });
+
+  it('parses a valid --max-tasks on watch', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--max-tasks', '3'], '/work')).toEqual({
+      kind: 'watch',
+      source: 'linear',
+      label: 'vanguard',
+      maxTasks: 3,
+      repoPath: '/work',
+      concurrency: 2,
+      intervalMs: 60000,
+      once: false,
+      egress: false,
+    });
+  });
+
+  it('rejects a --max-tasks that is not a positive integer instead of processing everything', () => {
+    for (const raw of ['soon', '0', '-2']) {
+      const cmd = parseCli(['watch', '--label', 'vanguard', `--max-tasks=${raw}`], '/work');
+      expect(cmd).toEqual({ kind: 'error', message: `--max-tasks needs a positive integer, got "${raw}".` });
+    }
+  });
+
+  it('leaves maxTasks unset when --max-tasks is absent', () => {
+    const cmd = parseCli(['watch', '--label', 'vanguard'], '/work');
+    expect(cmd.kind === 'watch' && cmd.maxTasks === undefined).toBe(true);
   });
 
   it('parses a github watch with markers and interval', () => {
@@ -620,6 +738,31 @@ describe('parseCli', () => {
     expect(noPlan.kind === 'run' && 'plan' in noPlan).toBe(false);
   });
 
+  it('parses --flow on run and watch (a FLOWS key)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'flow-b'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('flow-b');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'flow-b'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('flow-b');
+
+    const noFlow = parseCli(['run', '--github', 'o/r#1'], '/work');
+    expect(noFlow.kind === 'run' && 'flow' in noFlow).toBe(false);
+  });
+
+  it('lets an unknown --flow through as a string — repo .vanguard/flows flows resolve in the async dispatch (S5)', () => {
+    const run = parseCli(['run', '--github', 'o/r#1', '--flow', 'my-custom'], '/work');
+    expect(run.kind === 'run' && run.flow).toBe('my-custom');
+
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--flow', 'my-custom'], '/work');
+    expect(watch.kind === 'watch' && watch.flow).toBe('my-custom');
+  });
+
+  it('rejects --plan and --flow together', () => {
+    const cmd = parseCli(['run', '--github', 'o/r#1', '--plan', '--flow', 'flow-b'], '/work');
+    expect(cmd.kind).toBe('error');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/not both/);
+  });
+
   it('parses --base on run and watch (defaults to undefined)', () => {
     const run = parseCli(['run', '--github', 'o/r#1', '--base', 'dev'], '/work');
     expect(run.kind === 'run' && run.baseBranch).toBe('dev');
@@ -629,6 +772,13 @@ describe('parseCli', () => {
 
     const noBase = parseCli(['run', '--github', 'o/r#1'], '/work');
     expect(noBase.kind === 'run' && 'baseBranch' in noBase).toBe(false);
+  });
+
+  it('rejects an unsafe or empty watch --base before any polling starts', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base=-dev'], '/work');
+    expect(cmd.kind === 'error' && cmd.message).toMatch(/Invalid base branch "-dev"/);
+    const empty = parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--base='], '/work');
+    expect(empty.kind === 'error' && empty.message).toMatch(/cannot be empty/);
   });
 
   it('parses review-pr --out (write-to-file, no PR comment)', () => {
@@ -672,15 +822,21 @@ describe('parseCli', () => {
     expect(cmd.kind === 'research' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
   });
 
-  it('parses spec with --spec-model and --commit-author (white-label toggle)', () => {
+  it('parses spec with --spec-model, --base, and --commit-author (white-label toggle)', () => {
     const cmd = parseCli(
-      ['spec', 'o/r#1', '--spec-model', 'claude-fable-5', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
+      ['spec', 'o/r#1', '--spec-model', 'claude-fable-5', '--base', 'feat/allocation', '--commit-author', 'Sebastian Pietrzak <s@p.co>'],
       '/work',
     );
     expect(cmd.kind).toBe('spec');
     expect(cmd.kind === 'spec' && cmd.issueRef).toBe('o/r#1');
     expect(cmd.kind === 'spec' && cmd.specModel).toBe('claude-fable-5');
+    expect(cmd.kind === 'spec' && cmd.baseBranch).toBe('feat/allocation');
     expect(cmd.kind === 'spec' && cmd.commitAuthor).toEqual({ name: 'Sebastian Pietrzak', email: 's@p.co' });
+  });
+
+  it('omits spec baseBranch when --base is absent (defaults to main downstream)', () => {
+    const cmd = parseCli(['spec', 'o/r#1'], '/work');
+    expect(cmd.kind === 'spec' && cmd.baseBranch).toBeUndefined();
   });
 
   it('parses spec with a bare number and --github-repo, and returns help without a ref', () => {
@@ -984,6 +1140,124 @@ describe('parseCli', () => {
       expect('specClaimedLabel' in cmd).toBe(false);
     }
   });
+
+  // --- --spec-only: spec pass without the agent pass ---
+
+  it('parses --spec-only with --once on linear loop-v1', () => {
+    const cmd = parseCli(
+      [
+        'watch',
+        '--label', 'ready-for-agent',
+        '--team', 'DEV',
+        '--once',
+        '--spec-only',
+        '--spec-state', 'triage',
+        '--spec-state-name', 'Triage',
+        '--agent-state', 'Spec Review',
+        '--needs-info-state', 'Needs Info',
+      ],
+      '/work',
+    );
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'linear', once: true, specOnly: true, agentState: 'Spec Review' });
+  });
+
+  it('parses --spec-only on github loop-v1 defaults with a review label', () => {
+    const cmd = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--agent-label', 'spec review', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'github', specLabel: 'ready for spec', agentLabel: 'spec review', specOnly: true, once: false });
+  });
+
+  it('parses --spec-only on doctor so preflight matches the spec-only watch', () => {
+    const cmd = parseCli(['doctor', '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec Review', '--spec-only'], '/work');
+    expect(cmd).toMatchObject({ kind: 'doctor', specOnly: true });
+  });
+
+  const linearTargetError =
+    'watch --spec-only requires --agent-state <review state> other than "Todo"; that default is the build trigger, so specced issues would get no review window.';
+  const labelTargetError =
+    'watch --spec-only requires --agent-label <review label> other than "ready for agent"; that default is the build trigger, so specced issues would get no review window.';
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r'], labelTargetError],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1'], labelTargetError],
+  ])('rejects --spec-only on %s without an explicit review target', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
+  });
+
+  it.each([
+    ['linear', ['--loop-v1', '--label', 'vanguard', '--agent-state', ' todo'], linearTargetError],
+    ['github', ['--source', 'github', '--github-repo', 'o/r', '--agent-label', 'Ready for agent'], labelTargetError],
+  ])('rejects --spec-only on %s when the review target is the default build trigger given explicitly', (_name, args, message) => {
+    expect(parseCli(['watch', ...args, '--once', '--spec-only'], '/work')).toEqual({ kind: 'error', message });
+  });
+
+  it('omits specOnly when --spec-only is absent', () => {
+    const cmd = parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--once'], '/work');
+    expect(cmd.kind).toBe('watch');
+    if (cmd.kind === 'watch') {
+      expect('specOnly' in cmd).toBe(false);
+    }
+  });
+
+  it('returns an error when --spec-only is used without loop-v1', () => {
+    expect(parseCli(['watch', '--label', 'vanguard', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only requires loop-v1, which any loop-v1 flag turns on (for example --loop-v1, --spec-state or --spec-label); single-pass watch has no spec pass.',
+    });
+  });
+
+  it('returns an error when --spec-only advances to the spec trigger state, ignoring case', () => {
+    expect(
+      parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--spec-state-name', 'Spec', '--agent-state', 'spec', '--spec-only'], '/work'),
+    ).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger state "Spec"; set --agent-state to another state, or the spec pass specs the same issues again on every poll.',
+    });
+  });
+
+  it('rejects --spec-only with an --agent-state matching the default spec state name in another case', () => {
+    expect(parseCli(['watch', '--loop-v1', '--label', 'vanguard', '--agent-state', ' SPEC ', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only cannot advance specced issues into the spec trigger state "Spec"'),
+    });
+  });
+
+  it.each([
+    ['github', ['--source', 'github', '--github-repo', 'o/r']],
+    ['gitlab', ['--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard']],
+  ])('rejects --spec-only on %s when --agent-label is the spec trigger label, ignoring case', (_name, sourceArgs) => {
+    expect(parseCli(['watch', ...sourceArgs, '--spec-label', 'Ready', '--agent-label', 'ready', '--once', '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: 'watch --spec-only cannot advance specced issues into the spec trigger label "Ready"; set --agent-label to another label, or the spec pass specs the same issues again on every poll.',
+    });
+  });
+
+  it.each(['watch', 'doctor'])('applies the spec trigger guard to %s only with --spec-only', (kind) => {
+    const args = [kind, '--loop-v1', '--label', 'vanguard', '--agent-state', 'Spec'];
+    expect(parseCli(args, '/work')).toMatchObject({ kind, agentState: 'Spec' });
+    expect(parseCli([...args, '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining(`${kind} --spec-only cannot advance specced issues into the spec trigger state "Spec"`),
+    });
+  });
+
+  it('returns an error when --spec-only is used on the project source', () => {
+    expect(parseCli(['watch', '--source', 'project', '--project', '7', '--spec-only'], '/work')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
+
+  it.each([
+    ['run', '--linear', 'TES-1'],
+    ['watch-prs', '--github-repo', 'o/r', '--label', 'x'],
+    ['watch-mrs', '--gitlab-project', 'g/p', '--label', 'x'],
+  ])('rejects --spec-only on %s, which would otherwise ignore it', (...argv) => {
+    expect(parseCli([...argv, '--spec-only'], '/work')).toEqual({
+      kind: 'error',
+      message: '--spec-only is only supported with watch and doctor.',
+    });
+  });
 });
 
 describe('parseCli revise-pr', () => {
@@ -1055,6 +1329,18 @@ describe('parseCli gitlab run', () => {
 });
 
 describe('parseCli watch gitlab', () => {
+  it('parses --spec-only on gitlab loop-v1', () => {
+    const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--loop-v1', '--agent-label', 'spec review', '--once', '--spec-only'], '/repo');
+    expect(cmd).toMatchObject({ kind: 'watch', source: 'gitlab', specLabel: 'ready for spec', once: true, specOnly: true });
+  });
+
+  it('rejects --spec-only on single-pass gitlab watch', () => {
+    expect(parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'g/p', '--label', 'vanguard', '--spec-only'], '/repo')).toMatchObject({
+      kind: 'error',
+      message: expect.stringContaining('--spec-only requires loop-v1'),
+    });
+  });
+
   it('parses --source gitlab with --gitlab-project', () => {
     const cmd = parseCli(['watch', '--source', 'gitlab', '--gitlab-project', 'owner/project', '--label', 'vanguard'], '/repo');
     assert(cmd.kind === 'watch');

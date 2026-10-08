@@ -1,8 +1,11 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { anthropicTransportKeyEnv, assertProvidersResolvable, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { loadCustomProviders } from '../agents/custom.js';
+import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
+import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
-import type { ProviderName } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { Command } from './args.js';
 
 type WatchCommand = Extract<Command, { kind: 'watch' }>;
@@ -15,7 +18,7 @@ export type PreflightCommand = WatchCommand | DoctorCommand | DoctorPrsCommand |
 export type PreflightRunner = (
   cmd: string,
   args: string[],
-  opts: { cwd: string },
+  opts: { cwd: string; env?: NodeJS.ProcessEnv; timeoutMs?: number },
 ) => Promise<{ stdout: string }>;
 
 export interface PreflightOptions {
@@ -36,13 +39,21 @@ export interface PreflightReport {
 }
 
 const MIN_NODE_MAJOR = 24;
-const SANDBOX_IMAGE = 'vanguard-sandbox:latest';
+/** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
+export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
-  const { stdout } = await execa(cmd, args, { cwd: opts.cwd });
+  const { stdout } = await execa(cmd, args, {
+    cwd: opts.cwd,
+    ...(opts.env !== undefined ? { env: opts.env, extendEnv: false } : {}),
+    ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+  });
   return { stdout };
 };
+
+/** Environment variables glab sends as a token to whatever host a command names. */
+const GLAB_TOKEN_VARS = ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'OAUTH_TOKEN', 'CI_JOB_TOKEN'];
 
 function check(name: string, ok: boolean, reason?: string): PreflightCheck {
   return reason === undefined ? { name, ok } : { name, ok, reason };
@@ -89,14 +100,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   if (cmd.kind === 'doctor-prs') return unique([cmd.label, cmd.reviewingLabel, cmd.reviewedLabel]);
   if (cmd.source !== 'github') return [];
   if (cmd.specLabel !== undefined) {
+    // A spec-only watch never runs the agent pass, so it never writes the claimed/review labels.
+    const agentPassLabels = cmd.specOnly === true ? [] : [cmd.claimedState ?? GITHUB_CLAIMED_LABEL, cmd.reviewState ?? GITHUB_REVIEW_LABEL];
     return unique([
       cmd.label,
       cmd.specLabel,
       cmd.agentLabel,
       cmd.needsInfoLabel,
       cmd.specClaimedLabel ?? GITHUB_SPEC_CLAIMED_LABEL,
-      cmd.claimedState ?? GITHUB_CLAIMED_LABEL,
-      cmd.reviewState ?? GITHUB_REVIEW_LABEL,
+      ...agentPassLabels,
     ]);
   }
   return unique([
@@ -106,9 +118,15 @@ function githubLabelsFor(cmd: LoopCommand): string[] {
   ]);
 }
 
-async function runOk(run: PreflightRunner, cwd: string, cmd: string, args: string[]): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+async function runOk(
+  run: PreflightRunner,
+  cwd: string,
+  cmd: string,
+  args: string[],
+  extra: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
   try {
-    const { stdout } = await run(cmd, args, { cwd });
+    const { stdout } = await run(cmd, args, { cwd, ...extra });
     return { ok: true, stdout };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -198,12 +216,12 @@ function codexAuthOk(env: NodeJS.ProcessEnv): PreflightCheck | undefined {
  * Collect the set of providers that need a host-key check (i.e. non-claude providers that
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
-function collectProviders(cmd: PreflightCommand): ProviderName[] {
+function collectProviders(cmd: PreflightCommand, customs: readonly CustomProviderEntry[]): string[] {
   const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
   const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, reviewProvider];
   // Zai is excluded here: it rides the Claude transport and its key is already covered by the
   // provider-aware 'llm auth' check above. Codex/Cursor still get a dedicated 'provider auth' check.
-  return candidates.filter((name): name is ProviderName => name !== undefined && requiresApiKey(name));
+  return candidates.filter((name): name is string => name !== undefined && requiresApiKey(name, customs));
 }
 
 /** Run AFK-readiness checks before a watch loop can claim work. */
@@ -220,16 +238,33 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
       : check('node 24', false, `found ${nodeVersion}`),
   );
 
-  // The primary LLM auth: Anthropic token by default, or ZAI_API_KEY for --provider zai (zai owns its
-  // transport and never needs an Anthropic credential). Reported concisely as 'missing' so the
-  // preflight summary stays one line; the detailed requirement surfaces when the runner runs.
-  const llmAuthPresent = cmd.provider === 'zai' ? hasEnv(env, 'ZAI_API_KEY') : authFromEnv(env) !== undefined;
+  // Repo customs (S6): resolved once here so every provider-aware check below sees them. A watch
+  // then validates exactly what its runs will resolve. Load failures never break preflight for
+  // built-in providers — broken entries only surface when a custom name is actually selected.
+  const customs = await loadCustomProviders(cmd.repoPath);
+
+  // The primary LLM auth: Anthropic token by default, or the transport-owning provider's own key
+  // env (zai, openrouter, meridian, customs — generalized from a stale zai-only literal in S6).
+  // Reported concisely as 'missing' so the preflight summary stays one line.
+  let llmAuthPresent: boolean;
+  try {
+    const keyEnvs = cmd.provider !== undefined ? anthropicTransportKeyEnv(cmd.provider, customs) : undefined;
+    llmAuthPresent = keyEnvs !== undefined ? keyEnvs.some((name) => hasEnv(env, name)) : authFromEnv(env) !== undefined;
+  } catch {
+    llmAuthPresent = false; // unknown/broken provider name — the 'provider combo' check reports the why
+  }
   checks.push(llmAuthPresent ? check('llm auth', true) : check('llm auth', false, 'missing'));
 
-  const usedProviders = collectProviders(cmd);
+  let usedProviders: string[];
+  try {
+    usedProviders = collectProviders(cmd, customs);
+  } catch (error) {
+    usedProviders = [];
+    checks.push(check('provider auth', false, error instanceof Error ? error.message : String(error)));
+  }
   if (usedProviders.length > 0) {
     try {
-      providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true });
+      providerSecrets(usedProviders, env, { proxyMode: cmd.llmProxy === true }, customs);
       checks.push(check('provider auth', true));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -245,13 +280,15 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
 
   try {
     const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
-    validateProviderChoice(
-      {
-        ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-        ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-      },
-      { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true },
-    );
+    const choice = {
+      ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
+      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(customs.length > 0 ? { customProviders: customs } : {}),
+    };
+    // Resolvability first: validateProviderChoice's lookups live inside its pairing/proxy branches,
+    // so a bare unknown name would pass it (same guard as the dispatch entry points).
+    assertProvidersResolvable(choice);
+    validateProviderChoice(choice, { proxyMode: 'llmProxy' in cmd && cmd.llmProxy === true });
     checks.push(check('provider combo', true));
   } catch (error) {
     checks.push(check('provider combo', false, error instanceof Error ? error.message : String(error)));
@@ -264,8 +301,33 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   const dockerInfo = await runOk(run, cmd.repoPath, 'docker', ['info']);
   checks.push(dockerInfo.ok ? check('docker daemon', true) : check('docker daemon', false, 'unavailable'));
 
-  const sandboxImage = await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', SANDBOX_IMAGE]);
-  checks.push(sandboxImage.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${SANDBOX_IMAGE}`));
+  let image: string | undefined;
+  try {
+    image = sandboxImage(env);
+  } catch (error) {
+    checks.push(check('sandbox image', false, error instanceof Error ? error.message : String(error)));
+  }
+  const sandboxImageCheck = image === undefined ? undefined : await runOk(run, cmd.repoPath, 'docker', ['image', 'inspect', image]);
+  if (sandboxImageCheck !== undefined) {
+    checks.push(sandboxImageCheck.ok ? check('sandbox image', true) : check('sandbox image', false, `missing ${image}`));
+  }
+
+  if (image !== undefined && sandboxImageCheck?.ok === true) {
+    const cli = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', image, 'claude', '--version']);
+    const found = cli.ok ? /(\d+\.\d+\.\d+)/.exec(cli.stdout)?.[1] : undefined;
+    checks.push(
+      found === undefined
+        ? check(SANDBOX_CLI_CHECK, false, `could not read \`claude --version\` from ${image}`)
+        : isOlderVersion(found, SANDBOX_CLAUDE_VERSION)
+          ? check(
+              SANDBOX_CLI_CHECK,
+              false,
+              `image has ${found}, repo pins ${SANDBOX_CLAUDE_VERSION} — run \`vanguard doctor --fix\`, ` +
+                `or rebuild with CLAUDE_CLI_VERSION=${SANDBOX_CLAUDE_VERSION} ./docker/build.sh`,
+            )
+          : check(SANDBOX_CLI_CHECK, true),
+    );
+  }
 
   const isGitlabBacked =
     cmd.kind === 'doctor-mrs' ||
@@ -281,6 +343,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     } else {
       checks.push(await gitlabLabelsOk(run, cmd.repoPath, project, gitlabLabelsFor(cmd)));
     }
+    // The MR review dedupe counts only markers written by this user, and review-mr fails closed without it.
+    if (cmd.kind === 'doctor-mrs' || cmd.kind === 'watch-mrs') {
+      const user = await runOk(run, cmd.repoPath, 'glab', ['api', 'user']);
+      checks.push(user.ok ? check('gitlab user', true) : check('gitlab user', false, 'unreadable (token cannot read GET /user)'));
+    }
   }
 
   if (isLoopCommand(cmd)) {
@@ -295,7 +362,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
         checks.push(check('github labels', false, 'repo unknown'));
       } else {
         checks.push(await githubLabelsOk(run, cmd.repoPath, repoSlug, githubLabelsFor(cmd)));
-        const prCreate = await prCreateSettingOk(run, cmd.repoPath, repoSlug);
+        // A spec-only watch never opens a PR, so the pr-create setting cannot block it.
+        const specOnly = cmd.kind !== 'doctor-prs' && cmd.specOnly === true;
+        const prCreate = specOnly ? undefined : await prCreateSettingOk(run, cmd.repoPath, repoSlug);
         if (prCreate !== undefined) checks.push(prCreate);
       }
     }
@@ -303,6 +372,34 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear') {
       checks.push(hasEnv(env, 'LINEAR_API_KEY') ? check('linear api', true) : check('linear api', false, 'missing'));
       checks.push(cmd.skillsDir !== undefined || hasEnv(env, 'SKILLS_DIR') ? check('linear skills', true) : check('linear skills', false, 'missing'));
+    }
+
+    // The checks below guard publishing a Linear run's PR/MR; a spec-only watch never publishes.
+    if (cmd.kind !== 'doctor-prs' && cmd.source === 'linear' && cmd.specOnly !== true) {
+      // Same rule as runLinearIssue: glab for gitlab.com or GITLAB_HOST, gh for any other host.
+      const gitlabOrigin = remote.ok && isKnownGitlabRemote(remote.stdout, env);
+      // A self-hosted GitLab that GITLAB_HOST does not name takes the gh path and would fail at publish, after
+      // the agent work: `glab auth login` sets no GITLAB_HOST, and a CI job may only have GITLAB_TOKEN.
+      const host = remote.ok && !gitlabOrigin ? remoteHostname(remote.stdout) : undefined;
+      const otherHost = host !== undefined && host !== 'github.com' ? host : undefined;
+      const auth = gitlabOrigin ? await gitlabAuthOk(run, cmd.repoPath, env) : await githubAuthOk(run, cmd.repoPath, env);
+      checks.push(
+        !auth.ok && otherHost !== undefined
+          ? check(auth.name, false, `missing for origin host ${otherHost}; for a self-hosted GitLab set GITLAB_HOST=${otherHost}`)
+          : auth,
+      );
+      // glab sends GITLAB_TOKEN to whatever host a command names, and this host may be GitHub Enterprise or
+      // another forge, so the probe runs without token variables: only a login stored for this host counts.
+      const probeEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !GLAB_TOKEN_VARS.includes(key)));
+      // A host that drops packets must not stall preflight until the OS connect timeout; a timeout reads as not logged in.
+      const probe = { env: probeEnv, timeoutMs: 10_000 };
+      if (otherHost !== undefined && (await runOk(run, cmd.repoPath, 'glab', ['api', '--hostname', otherHost, 'user'], probe)).ok) {
+        checks.push(check('gitlab host', false, `glab is logged in to ${otherHost}; set GITLAB_HOST=${otherHost} to publish there through glab`));
+      }
+      // runLinearIssue throws on a GitLab origin that names no project; stop here instead of at run start.
+      if (gitlabOrigin && parseGitlabProjectFromRemote(remote.stdout) === undefined) {
+        checks.push(check('gitlab project', false, `origin ${redactRemote(remote.stdout)} names no group/project`));
+      }
     }
   }
 

@@ -88,6 +88,19 @@ describe('runClaudeCli', () => {
     expect(out.costUsd).toBe(0.01);
   });
 
+  // Observed on data-controls-engine#2489: the CLI ended on a thinking-only message and reported
+  // result:"" after real text had streamed. Overwriting finalText there discards the run's output.
+  it('keeps the streamed assistant text when the result event carries an empty string', async () => {
+    const emptyResult = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '<tech_spec>S</tech_spec>' }] } }),
+      JSON.stringify({ type: 'result', result: '', total_cost_usd: 1.67 }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(emptyResult, 0));
+    expect(out.finalText).toBe('<tech_spec>S</tech_spec>');
+    expect(out.costUsd).toBe(1.67); // the rest of the result event is still honoured
+  });
+
   it('does not throw on a non-zero exit when a result was produced (graceful stop e.g. max_turns)', async () => {
     const { out } = await drain(fakeSandbox(streamJson, 1));
     expect(out.finalText).toBe('done');
@@ -128,6 +141,47 @@ describe('runClaudeCli', () => {
 
   it('throws "no parseable output" on empty stdout', async () => {
     await expectRunRejects(fakeSandbox('', 1), /no parseable output/);
+  });
+
+  it('throws with the CLI error text when every assistant turn is synthetic (gateway never answered)', async () => {
+    // Shape of a real Meridian failure: init reports the requested model, the only assistant message is
+    // one the CLI fabricated itself, and the result event carries zero tokens and zero cost.
+    const syntheticOnly = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-1', model: 'claude-fable-5-1' }),
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 500 upstream stream closed' }] },
+      }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-1',
+        result: '',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+        total_cost_usd: 0,
+      }),
+    ].join('\n');
+    await expectRunRejects(fakeSandbox(syntheticOnly, 0), /Provider returned no completion/);
+    await expectRunRejects(fakeSandbox(syntheticOnly, 0), /API Error: 500 upstream stream closed/);
+  });
+
+  it('does not fire the synthetic guard when a real assistant turn also streamed', async () => {
+    const mixed = [
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: overloaded' }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-1',
+        message: { model: 'claude-fable-5-1', content: [{ type: 'text', text: 'real output' }] },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', session_id: 'sess-1', result: 'real output' }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(mixed));
+    expect(out.finalText).toBe('real output');
   });
 
   it('skips interleaved non-JSON diagnostic lines without failing the parse', async () => {

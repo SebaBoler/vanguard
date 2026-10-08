@@ -57,6 +57,8 @@ pub struct Project {
     pub running_count: usize,
     /// Completed runs whose timestamp is within the last 24h (velocity).
     pub runs_last_24h: usize,
+    /// Configured per-project color (`#rrggbb`), or None → the UI derives one from the path.
+    pub color: Option<String>,
 }
 
 fn projects_file(config_dir: &Path) -> PathBuf {
@@ -126,6 +128,7 @@ fn aggregate_at(repo_path: &Path, now: DateTime<Utc>) -> Project {
         last_run,
         running_count,
         runs_last_24h,
+        color: crate::appconfig::read(repo_path).color,
     }
 }
 

@@ -1,7 +1,8 @@
+import { execa } from 'execa';
 import { taskToVariables } from '../tasks/fetcher.js';
-import { DockerSandboxProvider } from '../sandbox/docker.js';
+import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
-import { selectAgents } from '../agents/registry.js';
+import { forcedProviderModel, selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
@@ -9,7 +10,7 @@ import { persistRunRecord } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
-import { extractTag } from '../structured/extract.js';
+import { extractTag, extractTagLenient } from '../structured/extract.js';
 import { VanguardError } from '../core/errors.js';
 import { SPEC_TAG } from '../tasks/triage.js';
 import { SPEC_MANIFEST_TAG } from '../pipeline/conformance-gate.js';
@@ -21,7 +22,8 @@ import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
-import type { VanguardLogger } from '../core/logger.js';
+import { createLogger, type VanguardLogger } from '../core/logger.js';
+import { assertSafeBaseBranch } from '../core/base-branch.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -47,6 +49,10 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
   llmProxy?: LlmProxyDep;
   /** Model for the tech-spec stage (default: techSpecStage's own default). */
   specModel?: string;
+  /** Override the tech-spec stage turn cap (default: techSpecStage's own default). Backs --max-turns. */
+  maxTurns?: number;
+  /** Branch the research worktree is cut from — the baseline Fable specs against (default: main). */
+  baseBranch?: string;
   logger?: VanguardLogger;
   signal?: AbortSignal;
   /**
@@ -69,7 +75,7 @@ function defaultSandboxFactory(
 ): IsolatedSandboxProvider {
   const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, openaiProxy);
   return new DockerSandboxProvider({
-    image: 'vanguard-sandbox:latest',
+    image: sandboxImage(),
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
     secrets: {
       ...(deps.llmProxy === undefined && deps.auth !== undefined && injectAnthropicAuth ? authSecrets(deps.auth) : {}),
@@ -79,6 +85,37 @@ function defaultSandboxFactory(
     ...(env !== undefined ? { env } : {}),
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
+}
+
+/**
+ * Resolve the ref the spec's research worktree is cut from, fetching it from `origin` first so the
+ * spec is written against the branch as it exists on the remote — not a stale, or entirely absent,
+ * local copy (the very reason a spec diverges from a branch someone else is actively pushing to).
+ * Best-effort: with no `origin`, offline, or a branch the remote doesn't carry, it logs and returns
+ * the local `base` so the spec pass still runs.
+ *
+ * @throws VanguardError when git would misread `base` (see assertSafeBaseBranch).
+ */
+export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger): Promise<string> {
+  assertSafeBaseBranch(base);
+  // Default a logger so the resolved baseline is ALWAYS announced — the one positive signal that tells
+  // you which ref the spec was actually written against (vs a silent fallback to a stale local copy).
+  const log = logger ?? createLogger();
+  try {
+    await execa('git', ['fetch', 'origin', base], { cwd: repoPath });
+  } catch (err) {
+    log.warn({ err, base }, `spec: git fetch origin ${base} failed — researching against local ${base} (may be stale)`);
+    return base;
+  }
+  try {
+    // Cut from the freshly-fetched remote-tracking ref so the worktree reflects origin, not local.
+    const { stdout: sha } = await execa('git', ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`], { cwd: repoPath });
+    log.info({ base, sha }, `spec: researching against origin/${base} @ ${sha.slice(0, 7)}`);
+    return `origin/${base}`;
+  } catch {
+    log.warn({ base }, `spec: origin has no ${base} — researching against local ${base}`);
+    return base;
+  }
 }
 
 /**
@@ -124,6 +161,9 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
+    // Fetch the base up front so the spec is researched against origin's view of the branch, not a
+    // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.
+    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger);
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
       {
@@ -131,15 +171,18 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         localRepoPath: deps.repoPath,
         sandbox,
         agentName: agent.name,
+        baseBranch,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
       deps.contextDeps ?? {},
     );
     try {
-      // haiku keeps the spec pass cheap on Claude; z.ai doesn't serve haiku, so let ZaiProvider pick its
-      // own default (glm). An explicit --spec-model always wins.
-      const specModel = deps.specModel ?? (deps.provider === 'zai' ? undefined : 'haiku');
-      const outcomes = await runStages(ctx, techSpecStage(specModel !== undefined ? { model: specModel } : {}), {
+      // haiku keeps the spec pass cheap on Claude; a provider that forces its own model (zai's glm,
+      // a custom's configured model) doesn't serve haiku, so let it pick its default instead of
+      // handing it a Claude-only name. An explicit --spec-model always wins.
+      const forcesModel = deps.provider !== undefined && forcedProviderModel(deps.provider, deps.customProviders) !== undefined;
+      const specModel = deps.specModel ?? (forcesModel ? undefined : 'haiku');
+      const outcomes = await runStages(ctx, techSpecStage({ ...(specModel !== undefined ? { model: specModel } : {}), ...(deps.maxTurns !== undefined ? { maxTurns: deps.maxTurns } : {}) }), {
         agent,
         variables: { ...taskToVariables(task), RETROSPECTIVE_MEMORY: retrospectiveMemory },
         ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
@@ -150,13 +193,25 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       if (specOutcome === undefined) {
         throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
       }
-      const spec = extractTag(specOutcome.result.finalText, SPEC_TAG);
-
-      // Fail fast on a missing spec BEFORE persisting, so a found spec is never discarded by a later
-      // persist failure (we still return the spec if extraction succeeded even if persistence throws).
-      if (spec === undefined || spec === '') {
-        throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
+      // Lenient extraction recovers a spec whose closing tag was lost to a truncated stream (common
+      // through a corp MITM proxy). A genuinely empty result yields undefined below.
+      const extracted = extractTagLenient(specOutcome.result.finalText, SPEC_TAG);
+      if (extracted === undefined) {
+        // Persist the failed run BEFORE throwing so its transcript/cost survive for diagnosis instead
+        // of being discarded (best-effort: a persist failure must not mask the real error).
+        await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' }).catch(() => {});
+        throw new VanguardError(
+          `Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id} ` +
+            `(exitReason: ${specOutcome.result.exitReason}, turns: ${specOutcome.result.turns}). Re-run the spec.`,
+        );
       }
+      if (extracted.salvaged) {
+        deps.logger?.warn(
+          { taskId: ctx.taskId, exitReason: specOutcome.result.exitReason, turns: specOutcome.result.turns },
+          `salvaged a truncated <${SPEC_TAG}> block (closing tag missing) — the spec tail may be clipped`,
+        );
+      }
+      const spec = extracted.text;
 
       // techSpecStage always returns exactly one stage; persist that single outcome.
       await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });

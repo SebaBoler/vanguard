@@ -9,7 +9,7 @@ import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { ProviderName } from '../agents/registry.js';
+import type { CustomProviderEntry } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
@@ -81,12 +81,14 @@ export async function runGithubProject(
 export async function githubDepsFromEnv(
   repoPath: string,
   repoSlug?: string,
-  provider?: ProviderName,
-  reviewProvider?: ProviderName,
+  provider?: string,
+  reviewProvider?: string,
+  customProviders?: readonly CustomProviderEntry[],
 ): Promise<RunGithubIssueDeps> {
   const auth = agentAuthFromEnv({
     ...(provider !== undefined ? { provider } : {}),
     ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+    ...(customProviders !== undefined ? { customProviders } : {}),
   });
   const slug = repoSlug ?? process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
   return { ...(auth !== undefined ? { auth } : {}), repoPath, repoSlug: slug };

@@ -1,4 +1,4 @@
-import { Table, Chip } from 'chunks-ui';
+import { Table, Chip, ScrollTable } from '@/ui';
 import { listRemoteRuns } from '../../ipc';
 import { useAsync } from '../../hooks';
 import type { RemoteRun } from '../../vanguard-output';
@@ -34,8 +34,9 @@ export function RemoteRuns({ project }: { project: string }) {
     return <div className="text-sm text-muted-foreground">No CI runs found for this repo.</div>;
   }
   return (
+    <ScrollTable>
     <Table.Root>
-      <Table.Header>
+      <Table.Header className="sticky top-0 z-10 bg-muted">
         <Table.Row>
           <Table.Head>Workflow</Table.Head>
           <Table.Head>Title</Table.Head>
@@ -60,5 +61,6 @@ export function RemoteRuns({ project }: { project: string }) {
         ))}
       </Table.Body>
     </Table.Root>
+    </ScrollTable>
   );
 }

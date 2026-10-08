@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .vanguard/
+# ...except the flow-loader test fixture: `ref = "path#export"` resolves against a repo's `.vanguard/`,
+# so the fixture repo must have a real one. Un-ignore the DIRECTORY — git cannot re-include a file whose
+# parent directory is excluded.
+!src/flows/__fixtures__/repo/.vanguard/
 *.log
 docker/sbom.spdx.json
 package-lock.json

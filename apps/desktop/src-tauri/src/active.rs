@@ -30,6 +30,31 @@ pub struct SessionRead {
     pub entries: Vec<TranscriptEntry>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    /// Live spend estimate in USD, priced per-message off each message's own model. Unknown models
+    /// contribute nothing, so this is a lower bound — surface it as "~$" in the UI, never as exact.
+    pub est_cost_usd: f64,
+}
+
+/// USD per 1M tokens as (input, output, cache_read). Ported from src/core/openrouter-pricing.ts
+/// OPENROUTER_PRICING (the fuller map: aliases + bare Vanguard ids + the provider-prefixed dotted
+/// slugs OpenRouter echoes back, e.g. `anthropic/claude-opus-4.8`, `z-ai/glm-5.2`) — refresh both
+/// together on model/price updates. `contains` (not `starts_with`) so both `claude-opus-4-8` and
+/// `anthropic/claude-opus-4.8` match. Order matters: sonnet-5 before generic sonnet keeps its rate.
+fn model_price(model: &str) -> Option<(f64, f64, f64)> {
+    if model.contains("claude-opus") || model == "opus" {
+        Some((5.0, 25.0, 0.5))
+    } else if model.contains("claude-sonnet-5") || model == "sonnet" {
+        Some((2.0, 10.0, 0.2))
+    } else if model.contains("claude-sonnet") {
+        Some((3.0, 15.0, 0.3))
+    } else if model.contains("claude-haiku") || model == "haiku" {
+        Some((1.0, 5.0, 0.1))
+    } else if model.contains("glm") {
+        Some((0.93, 3.0, 0.18))
+    } else {
+        None
+    }
 }
 
 fn within(t: SystemTime, now: SystemTime, w: Duration) -> bool {
@@ -137,6 +162,8 @@ pub fn read_session(session_file: &Path) -> io::Result<SessionRead> {
     let mut entries = Vec::new();
     let mut input_tokens = 0u64;
     let mut output_tokens = 0u64;
+    let mut cache_read_tokens = 0u64;
+    let mut est_cost_usd = 0.0f64;
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -145,8 +172,15 @@ pub fn read_session(session_file: &Path) -> io::Result<SessionRead> {
             continue;
         }
         if let Some(u) = v.pointer("/message/usage") {
-            input_tokens += u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-            output_tokens += u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            let it = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            let ot = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            let cr = u.get("cache_read_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            input_tokens += it;
+            output_tokens += ot;
+            cache_read_tokens += cr;
+            if let Some((pi, po, pc)) = v.pointer("/message/model").and_then(|m| m.as_str()).and_then(model_price) {
+                est_cost_usd += (it as f64 * pi + ot as f64 * po + cr as f64 * pc) / 1_000_000.0;
+            }
         }
         let Some(blocks) = v.pointer("/message/content").and_then(|c| c.as_array()) else {
             continue;
@@ -168,7 +202,7 @@ pub fn read_session(session_file: &Path) -> io::Result<SessionRead> {
             }
         }
     }
-    Ok(SessionRead { entries, input_tokens, output_tokens })
+    Ok(SessionRead { entries, input_tokens, output_tokens, cache_read_tokens, est_cost_usd })
 }
 
 #[cfg(test)]
@@ -195,6 +229,39 @@ mod tests {
         assert_eq!(out[0].text, "Working on it");
         assert_eq!(out[1].role, "tool");
         assert_eq!(out[1].text, "Edit");
+    }
+
+    #[test]
+    fn estimates_cost_per_message_off_model_and_usage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("s.jsonl");
+        fs::write(
+            &f,
+            [
+                // opus: 1M in @ $5 + 1M out @ $25 + 1M cacheRead @ $0.5 = $30.5
+                r#"{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_read_input_tokens":1000000},"content":[{"type":"text","text":"a"}]}}"#,
+                // unknown model contributes tokens but no cost (lower-bound estimate)
+                r#"{"type":"assistant","message":{"model":"mystery-9","usage":{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"b"}]}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let r = read_session(&f).unwrap();
+        assert_eq!(r.input_tokens, 2_000_000);
+        assert_eq!(r.output_tokens, 1_000_000);
+        assert_eq!(r.cache_read_tokens, 1_000_000);
+        assert!((r.est_cost_usd - 30.5).abs() < 1e-9, "est was {}", r.est_cost_usd);
+    }
+
+    #[test]
+    fn prices_openrouter_slugs_and_orders_sonnet_5_before_sonnet_4() {
+        // OpenRouter echoes provider-prefixed dotted slugs; they must price like the bare ids.
+        assert_eq!(model_price("anthropic/claude-opus-4.8"), Some((5.0, 25.0, 0.5)));
+        assert_eq!(model_price("z-ai/glm-5.2"), Some((0.93, 3.0, 0.18)));
+        // sonnet-5 keeps its cheaper introductory rate; sonnet-4.6 must NOT match the sonnet-5 arm.
+        assert_eq!(model_price("anthropic/claude-sonnet-5"), Some((2.0, 10.0, 0.2)));
+        assert_eq!(model_price("anthropic/claude-sonnet-4.6"), Some((3.0, 15.0, 0.3)));
+        assert_eq!(model_price("mystery-9"), None);
     }
 
     #[test]

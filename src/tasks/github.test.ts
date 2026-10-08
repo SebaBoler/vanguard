@@ -11,7 +11,7 @@ function fakeGh(): GhRunner {
 describe('GitHubTaskFetcher', () => {
   it('maps an issue to a Task (id = repo#number)', async () => {
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
-    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'], children: [], comments: [] });
+    expect(task).toEqual({ id: 'SebaBoler/vanguard#7', title: 'Bug', description: 'desc', labels: ['bug'], children: [], comments: [], ref: '7' }); // ref additive (S9)
   });
 
   it('accepts a repo#number reference', async () => {
@@ -61,4 +61,26 @@ describe('linkPullRequest', () => {
     expect(calls[0]).toEqual(expect.arrayContaining(['issue', 'comment', '7', '--repo', 'SebaBoler/vanguard']));
     expect(calls[0]?.join(' ')).toContain('https://example/pr/1');
   });
+});
+
+// S9: TaskFilter.limit is STRICTLY conditional — unset keeps watch's argv byte-identical.
+it('list() argv is byte-identical to the pre-S9 shape when limit is unset (watch contract)', async () => {
+  const calls: string[][] = [];
+  const gh = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return '[]';
+  };
+  await new GitHubTaskFetcher('o/r', gh).list({ state: 'open', labels: ['x'] });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'o/r', '--json', 'number,title,body,labels', '--state', 'open', '--label', 'x']);
+});
+
+it('list() with limit adds -L and the state field to --json (the board call)', async () => {
+  const calls: string[][] = [];
+  const gh = async (args: string[]): Promise<string> => {
+    calls.push(args);
+    return JSON.stringify([{ number: 9, title: 't', body: null, labels: [], state: 'closed' }]);
+  };
+  const tasks = await new GitHubTaskFetcher('o/r', gh).list({ state: 'all', limit: 50 });
+  expect(calls[0]).toEqual(['issue', 'list', '--repo', 'o/r', '--json', 'number,title,body,labels,state', '--state', 'all', '-L', '50']);
+  expect(tasks[0]).toMatchObject({ ref: '9', state: 'closed' });
 });

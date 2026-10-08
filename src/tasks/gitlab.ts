@@ -13,6 +13,8 @@ export interface GitLabIssue {
   title: string;
   description: string | null;
   labels: string[];
+  /** glab always includes it; carried for the board (S9). */
+  state?: string;
 }
 
 /** Runs a `glab` subcommand and returns its stdout. Injected so unit tests never call real glab. */
@@ -43,6 +45,8 @@ function toGitLabTask(project: string, issue: GitLabIssue, notes: GitLabNote[] =
     labels: issue.labels,
     children: [],
     comments,
+    ref: String(issue.iid),
+    ...(issue.state !== undefined ? { state: issue.state } : {}),
   };
 }
 
@@ -73,11 +77,24 @@ export class GitLabTaskFetcher implements TaskFetcher {
     const state = filter?.state ?? 'opened';
     if (state === 'closed') args.push('--closed');
     else if (state === 'all') args.push('--all');
+    if (filter?.limit !== undefined) args.push('-P', String(filter.limit)); // conditional — see TaskFilter.limit
     for (const label of filter?.labels ?? []) args.push('--label', label);
     const out = await this.glab(args);
     // comments are not fetched on bulk list() — avoids N+1; only fetch() returns them
     return (JSON.parse(out) as GitLabIssue[]).map((issue) => toGitLabTask(this.project, issue));
   }
+}
+
+/**
+ * Keep GitLab from running quick actions in text the bot posts. A note or description created through the
+ * API runs each line that starts with `/` and a command name (`/merge`, `/approve`, `/label ~x`) as the
+ * posting user, and bot text quotes MR, issue and agent content. A backslash before the slash stops that and
+ * renders as nothing outside code. Every command name starts with a letter, so `//` and `/**` lines in quoted
+ * code stay as they are. Leading spaces and tabs are covered too, although GitLab only matches a `/` at the
+ * very start of a line.
+ */
+export function neutralizeQuickActions(text: string): string {
+  return text.replace(/^([ \t]*)\/(?=[a-z])/gim, '$1\\/');
 }
 
 /** Post a note on a GitLab issue. */
@@ -87,7 +104,7 @@ export async function commentGitlabIssue(
   body: string,
   glab: GlabRunner = defaultGlabRunner,
 ): Promise<void> {
-  await glab(['issue', 'note', 'create', issueIID(issueRef), '--repo', project, '-m', body]);
+  await glab(['issue', 'note', 'create', issueIID(issueRef), '--repo', project, '-m', neutralizeQuickActions(body)]);
 }
 
 /** Comment an MR link back onto the source GitLab issue (closes the loop). */

@@ -10,3 +10,31 @@ export class AgentError extends VanguardError {}
 export class NotImplementedError extends VanguardError {}
 export class StructuredOutputError extends VanguardError {}
 export class WorkflowGuardError extends VanguardError {}
+
+/** Cap on stack lines carried into an issue comment: enough to name the failing site, short enough to skim. */
+const FAILURE_STACK_LINES = 25;
+
+/**
+ * Failure text for an issue comment. `String(error)` alone drops the stack, so a bare
+ * `TypeError: Cannot read properties of undefined` reaches the reader with no throwing site — the
+ * diagnosis then costs a manual hunt through the engine. Carry a trimmed stack in a collapsed
+ * block instead. Non-Error throws (strings, rejected non-errors) keep the old one-line shape.
+ */
+export function formatFailureComment(prefix: string, error: unknown): string {
+  const headline = `${prefix}: ${String(error)}`;
+  const stack = error instanceof Error ? error.stack : undefined;
+  if (stack === undefined || stack.trim() === '') return headline;
+  const trimmed = stack.split('\n').slice(0, FAILURE_STACK_LINES).join('\n');
+  return `${headline}\n\n<details><summary>stack</summary>\n\n\`\`\`\n${trimmed}\n\`\`\`\n\n</details>`;
+}
+
+/**
+ * Normalise a raw thrown value into a user-visible VanguardError: an existing VanguardError passes
+ * through untouched; anything else is wrapped with the first non-empty line of its message — where
+ * CLIs like gh/glab/git put the actionable text. Shared by the board and repo-file read paths.
+ */
+export function visibleError(error: unknown): VanguardError {
+  if (error instanceof VanguardError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new VanguardError(message.split('\n').find((l) => l.trim() !== '') ?? message);
+}

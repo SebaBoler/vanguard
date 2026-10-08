@@ -1,4 +1,5 @@
 import { parsePullRequestUrl, postPullRequestReview, buildMainLoopReviewComment } from '../runners/pr-review.js';
+import { stripReviewMarkers, hasBlockingFinding } from '../runners/review-prompt.js';
 import { extractFindings } from '../structured/findings.js';
 import type { StageOutcome } from './pipeline.js';
 import type { RunResult } from '../core/types.js';
@@ -28,20 +29,9 @@ export function buildReviewerAttribution(outcome: StageOutcome | undefined, fall
     : outcome?.providerName ?? fallbackName;
 }
 
-/**
- * Determine whether a reviewer verdict contains blocking (high or critical severity) findings.
- * Prefers a structured <findings> JSON block when present; falls back to keyword detection in the
- * Markdown text for robustness when the reviewer produces free-form prose only.
- */
-export function hasBlockingFinding(verdictText: string): boolean {
-  try {
-    const { findings } = extractFindings(verdictText);
-    return findings.some((f) => f.severity === 'high' || f.severity === 'critical');
-  } catch {
-    // No structured findings block — scan prose for severity keywords.
-    return /\b(critical|high[- ]severity)\b/i.test(verdictText);
-  }
-}
+// hasBlockingFinding lives in review-prompt.ts so the external review-pr/review-mr path shares one
+// detector with this merge gate; re-exported for the existing callers (publishReviewVerdict, gitlab.ts).
+export { hasBlockingFinding };
 
 const PROMISE_RE = /<promise>\s*COMPLETE\s*<\/promise>/gi;
 
@@ -60,12 +50,14 @@ const CONFORMANCE_SKIP_SENTINEL = 'No spec, conformance skipped.';
  */
 export function renderConformanceSection(result: RunResult): string | undefined {
   if (result.completed === false) return CONFORMANCE_INCOMPLETE_NOTICE;
-  const cleaned = result.finalText.replace(PROMISE_RE, '').trim();
+  // The section lands in the bot's review note, so a marker quoted from the diff must not survive:
+  // strip the prose, and the rendered findings too, since parsed evidence can put one on its own line.
+  const cleaned = stripReviewMarkers(result.finalText.replace(PROMISE_RE, '')).trim();
   if (cleaned === CONFORMANCE_SKIP_SENTINEL) return undefined;
   try {
     const { findings } = extractFindings(cleaned);
     if (findings.length > 0) {
-      return findings.map((f) => `- **${f.severity}** (${f.kind}) — ${f.title}\n  ${f.evidence}`).join('\n');
+      return stripReviewMarkers(findings.map((f) => `- **${f.severity}** (${f.kind}) — ${f.title}\n  ${f.evidence}`).join('\n'));
     }
   } catch {
     // No structured findings block — fall through to the cleaned prose.
@@ -91,6 +83,7 @@ export async function publishReviewVerdict(input: PublishReviewVerdictInput): Pr
   let commentBody = buildMainLoopReviewComment(verdictText, {
     headRefOid: input.headSha,
     attribution: input.attribution,
+    completed: input.reviewerOutcome.result.completed,
   });
 
   const conformanceResult = input.conformanceOutcome?.result;

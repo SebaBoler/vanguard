@@ -5,6 +5,7 @@
 - **Node.js** 24 or later
 - **pnpm** (version declared in `package.json` under `packageManager`)
 - **Docker** (for building and running the sandbox image)
+- **Git** 2.28 or later (the tests use `git init -b`, and `revise-pr` uses `git fetch --end-of-options`, added in 2.24)
 
 ## Install and build
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { githubPullRequestWatchPrimitives, watchPullRequestsOnce } from './pr-watch.js';
+import { getEventListeners } from 'node:events';
+import { githubPullRequestWatchPrimitives, watchPullRequests, watchPullRequestsOnce } from './pr-watch.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestWatchItem, PullRequestWatchPrimitives } from './pr-watch.js';
 
@@ -364,5 +365,209 @@ describe('githubPullRequestWatchPrimitives', () => {
       ['pr', 'edit', '12', '--repo', 'o/r', '--remove-label', 'vanguard:reviewing', '--add-label', 'vanguard:reviewed'],
       ['pr', 'edit', '12', '--repo', 'o/r', '--remove-label', 'vanguard:reviewing', '--add-label', 'ready for vanguard review'],
     ]);
+  });
+
+  it('logs why a scanned PR is skipped when its head is already reviewed', async () => {
+    const logs: string[] = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 12,
+            title: 'Fix auth',
+            isDraft: false,
+            author: { login: 'alice' },
+            headRefOid: 'abc123',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({ comments: [], reviews: [{ body: '<!-- vanguard-pr-review: abc123 -->' }] });
+      }
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      log: (line) => logs.push(line),
+      gh,
+      reviewOne: async () => {},
+    });
+
+    await expect(primitives.listReady()).resolves.toEqual([]);
+    expect(logs).toContain('watch-prs o/r#12: skip -> head abc123 already reviewed');
+  });
+
+  it('pins the hinted PR when the label scan misses it (eventually consistent search)', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'list') return '[]';
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({
+          number: 316,
+          title: 'Re-labeled after a failed review',
+          isDraft: false,
+          author: { login: 'alice' },
+          headRefOid: 'abc123',
+          labels: [{ name: 'ready for vanguard review' }],
+          state: 'OPEN',
+        });
+      }
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      hintPr: 316,
+      gh,
+      reviewOne: async () => {},
+    });
+
+    const ready = await primitives.listReady();
+
+    expect(ready.map((item) => item.number)).toEqual([316]);
+    expect(calls).toContainEqual([
+      'pr',
+      'view',
+      '316',
+      '--repo',
+      'o/r',
+      '--json',
+      'number,title,isDraft,author,headRefOid,labels,state',
+    ]);
+  });
+
+  it('reviews the hinted PR even when its head already carries a review marker', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 12,
+            title: 'Deliberately re-labeled',
+            isDraft: false,
+            author: { login: 'alice' },
+            headRefOid: 'abc123',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({ comments: [], reviews: [{ body: '<!-- vanguard-pr-review: abc123 -->' }] });
+      }
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      hintPr: 12,
+      gh,
+      reviewOne: async () => {},
+    });
+
+    const ready = await primitives.listReady();
+
+    expect(ready.map((item) => item.number)).toEqual([12]);
+    // The dedupe lookup is bypassed for the hinted PR — the re-label was deliberate.
+    expect(calls.some((args) => args[0] === 'pr' && args[1] === 'view')).toBe(false);
+  });
+
+  it('skips the hinted PR when it is no longer open or lost the trigger label', async () => {
+    const logs: string[] = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'list') return '[]';
+      if (args[0] === 'pr' && args[1] === 'view') {
+        return JSON.stringify({
+          number: 316,
+          title: 'Merged already',
+          isDraft: false,
+          author: { login: 'alice' },
+          headRefOid: 'abc123',
+          labels: [{ name: 'ready for vanguard review' }],
+          state: 'MERGED',
+        });
+      }
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      hintPr: 316,
+      log: (line) => logs.push(line),
+      gh,
+      reviewOne: async () => {},
+    });
+
+    await expect(primitives.listReady()).resolves.toEqual([]);
+    expect(logs).toContain('watch-prs o/r#316: hint skip -> state MERGED');
+  });
+
+  it('keeps the scan alive when the hint fetch fails', async () => {
+    const logs: string[] = [];
+    const gh: GhRunner = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return JSON.stringify([
+          {
+            number: 12,
+            title: 'Fix auth',
+            isDraft: false,
+            author: { login: 'alice' },
+            headRefOid: 'abc123',
+            labels: [{ name: 'ready for vanguard review' }],
+          },
+        ]);
+      }
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === '99') throw new Error('boom');
+      if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ comments: [], reviews: [] });
+      return '';
+    };
+    const primitives = githubPullRequestWatchPrimitives({
+      repoSlug: 'o/r',
+      label: 'ready for vanguard review',
+      reviewingLabel: 'vanguard:reviewing',
+      reviewedLabel: 'vanguard:reviewed',
+      hintPr: 99,
+      log: (line) => logs.push(line),
+      gh,
+      reviewOne: async () => {},
+    });
+
+    const ready = await primitives.listReady();
+
+    expect(ready.map((item) => item.number)).toEqual([12]);
+    expect(logs).toContain('watch-prs o/r#99: hint fetch failed -> boom');
+  });
+});
+
+describe('watchPullRequests', () => {
+  it('continuous ticks leave no abort listener behind on the signal', async () => {
+    const controller = new AbortController();
+    const listeners: number[] = [];
+    const primitives: PullRequestWatchPrimitives = {
+      listReady: async () => {
+        listeners.push(getEventListeners(controller.signal, 'abort').length);
+        if (listeners.length === 12) controller.abort();
+        return [];
+      },
+      claim: async () => {},
+      review: async () => {},
+      markReviewed: async () => {},
+      onFailure: async () => {},
+    };
+
+    await watchPullRequests(primitives, { signal: controller.signal, intervalMs: 0 });
+
+    expect(listeners).toEqual(Array(12).fill(0));
   });
 });

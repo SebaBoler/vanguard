@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION="${CLAUDE_CLI_VERSION:-2.1.165}"
+VERSION="${CLAUDE_CLI_VERSION:-2.1.260}"
 TAG="${TAG:-vanguard-sandbox:latest}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 docker build --build-arg "CLAUDE_CLI_VERSION=${VERSION}" -t "${TAG}" "${HERE}"

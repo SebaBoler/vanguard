@@ -1,13 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { resolveVerifyCommand, runVerification } from '../pipeline/verify.js';
 import { resolveAndRunVisualProof } from '../pipeline/visual-proof.js';
-import { pickRunOptions, runSourcedIssue, conventionalCommitMessage } from './source-adapter.js';
+import { pickRunOptions, runSourcedIssue, conventionalCommitMessage, modelFromLabels } from './source-adapter.js';
 import type { RunIssueDeps, SourceAdapter } from './source-adapter.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
+import type { RunEvent } from '../pipeline/events.js';
 
 describe('PR body assembly', () => {
   it('starts with Closes <task.id> for auto-close on merge', () => {
@@ -30,6 +32,7 @@ describe('pickRunOptions', () => {
       conformance: false,
       conformanceModel: 'opus',
       reviewGate: true,
+      flow: 'flow-b',
     };
 
     expect(pickRunOptions(cmd)).toEqual({
@@ -42,7 +45,17 @@ describe('pickRunOptions', () => {
       visualProofCmd: 'pnpm screenshots',
       conformance: false,
       conformanceModel: 'opus',
+      flow: 'flow-b',
     });
+  });
+
+  it('carries loaded customProviders through the copy — dropping this line strips a valid custom before selectAgents (S6)', () => {
+    const customs = [{ index: 0, name: 'my-proxy', spec: { name: 'my-proxy', baseUrl: 'https://x.example', keyEnv: 'K' } }];
+    expect(pickRunOptions({ provider: 'my-proxy', customProviders: customs })).toEqual({
+      provider: 'my-proxy',
+      customProviders: customs,
+    });
+    expect('customProviders' in pickRunOptions({})).toBe(false);
   });
 
   it('copies maxTurns and maxRepairIterations when defined, omits when absent', () => {
@@ -71,10 +84,34 @@ vi.mock('../sandbox/llm-proxy.js', () => ({
   startProviderProxies: vi.fn(async () => ({ openai: undefined, destroy: vi.fn(async () => {}) })),
 }));
 vi.mock('../sandbox/egress-proxy.js', () => ({ llmProxySandboxEnv: vi.fn(() => undefined) }));
-vi.mock('../sandbox/docker.js', () => ({ DockerSandboxProvider: class { constructor(_opts?: unknown) {} } }));
+const { sandboxImage, capturedSandboxOpts } = vi.hoisted(() => ({
+  sandboxImage: vi.fn(() => 'vanguard-sandbox:latest'),
+  capturedSandboxOpts: [] as Array<{ image?: string }>,
+}));
+vi.mock('../sandbox/docker.js', () => ({
+  DockerSandboxProvider: class {
+    constructor(opts?: { image?: string }) {
+      capturedSandboxOpts.push(opts ?? {});
+    }
+  },
+  sandboxImage,
+}));
 vi.mock('../sandbox/limits.js', () => ({ sandboxResourceLimits: vi.fn(() => ({})) }));
+const { probeTaskDifficulty } = vi.hoisted(() => ({ probeTaskDifficulty: vi.fn(async () => undefined) }));
+vi.mock('../core/decision-probe.js', () => ({ probeTaskDifficulty, decisionProbeConfig: vi.fn(() => undefined) }));
+const { decisionModelConfig } = vi.hoisted(() => ({ decisionModelConfig: vi.fn((): unknown => undefined) }));
+vi.mock('../core/decision-model.js', () => ({
+  decisionModelConfig,
+  decide: vi.fn(async () => undefined),
+  num: (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined),
+  probability: (v: unknown) => (typeof v === 'number' && v >= 0 && v <= 1 ? v : undefined),
+  decisionEgressAllowed: (whiteLabel: boolean, env: NodeJS.ProcessEnv) => !whiteLabel || env['VANGUARD_DECISION_PROBE'] === 'all',
+  decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
+  DECISION_MODEL_DEFAULT: 'clef-flash',
+}));
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
+  forcedProviderModel: vi.fn(() => undefined),
 }));
 const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
   wmDiff: vi.fn(async () => ''),
@@ -96,10 +133,12 @@ vi.mock('../core/retrospective-memory.js', () => ({
   loadRetrospectiveMemory: vi.fn(async () => ''),
   refreshRetrospectiveMemory: vi.fn(async () => {}),
 }));
+const { persistDecisionProbe } = vi.hoisted(() => ({ persistDecisionProbe: vi.fn(async () => {}) }));
 vi.mock('../core/run-record.js', () => ({
   persistStageOutcomes: (...args: unknown[]) => persistStageOutcomes(...(args as [])),
   persistVerification: vi.fn(async () => {}),
   persistVisualProof: vi.fn(async () => {}),
+  persistDecisionProbe: (...args: unknown[]) => persistDecisionProbe(...(args as [])),
 }));
 vi.mock('../core/run-summary.js', () => ({ summarizeOutcomes: vi.fn(() => '') }));
 vi.mock('../pipeline/verify.js', () => ({
@@ -156,13 +195,15 @@ function fakeAdapter(order: string[], stages: PipelineStage[]): SourceAdapter {
 }
 
 const STAGES: PipelineStage[] = [
-  { name: 'implementer', promptTemplate: '', maxTurns: 30 },
+  { name: 'implementer', promptTemplate: '', maxTurns: 30, stageCostFraction: 0.6, stageCostFloorUsd: 0.25 },
   { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
 ];
 
 describe('runSourcedIssue', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    capturedSandboxOpts.length = 0;
+    sandboxImage.mockReturnValue('vanguard-sandbox:latest');
     runStages.mockResolvedValue([stageOutcome('reviewer')]);
     commitStage.mockResolvedValue({ committed: true, branch: 'b', sha: 'abc1234' });
     publishForReview.mockResolvedValue({ branch: 'b', prUrl: MR_URL });
@@ -190,6 +231,108 @@ describe('runSourcedIssue', () => {
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
   });
 
+  it('a vanguard:model=<m> label pins the implementer model for that task, over --provider-model', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['ready for agent', 'vanguard:model=claude-fable-5'] } }));
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', providerModel: 'claude-sonnet-5', reviewModel: 'claude-opus-4-8' }, labelled);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.model).toBe('claude-fable-5');
+    // --review-model is untouched: the label is implementer-tier only.
+    expect(assembled.find((s) => s.name === 'reviewer')?.model).toBe('claude-opus-4-8');
+  });
+
+  it('the label routes like --provider-model: a same-provider reviewer without --review-model takes it too', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['vanguard:model=claude-fable-5'] } }));
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', provider: 'claude' }, labelled);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.every((s) => s.model === 'claude-fable-5')).toBe(true);
+  });
+
+  it('--escalate-model does not override a per-task model label on later repairs', async () => {
+    const labelled = fakeAdapter([], STAGES);
+    labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['vanguard:model=claude-fable-5'] } }));
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-fable-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 1 } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', escalateModel: 'opus' }, labelled);
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-fable-5' });
+  });
+
+  it('--fork-scorer decision hands runStages a decision scorer, and fails fast without credentials', async () => {
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES)),
+    ).rejects.toThrow(/--fork-scorer decision: set CLOUDFLARE_ACCOUNT_ID/);
+    expect(runStages).not.toHaveBeenCalled();
+
+    // A white-label run needs explicit consent before the client diff leaves the host.
+    decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision', commitAuthor: { name: 'c', email: 'c@x' } }, fakeAdapter([], STAGES)),
+    ).rejects.toThrow(/VANGUARD_DECISION_PROBE=all/);
+
+    decisionModelConfig.mockReturnValueOnce({ url: 'https://example.test', model: 'clef-flash' });
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2, forkScorer: 'decision' }, fakeAdapter([], STAGES));
+    const opts = runStages.mock.calls[0]?.[2] as { fork?: { n: number; score?: unknown } };
+    expect(opts.fork?.n).toBe(2);
+    expect(typeof opts.fork?.score).toBe('function');
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', forkN: 2 }, fakeAdapter([], STAGES));
+    const plain = runStages.mock.calls[1]?.[2] as { fork?: { score?: unknown } };
+    expect(plain.fork?.score).toBeUndefined();
+  });
+
+  it('the difficulty probe is log-only: persisted with the implementer model, never routing', async () => {
+    probeTaskDifficulty.mockResolvedValueOnce({ model: 'clef-flash', completesFirstTry: 0.3, difficulty: 3.1, difficultyConfidence: 0.7, specClear: 0.6, latencyMs: 90 } as never);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', providerModel: 'claude-sonnet-5' }, fakeAdapter([], STAGES));
+    expect(probeTaskDifficulty).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }), 'claude-sonnet-5', expect.objectContaining({}));
+    expect(persistDecisionProbe).toHaveBeenCalledWith('/repo', 'gl-1', expect.objectContaining({ difficulty: 3.1 }));
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.model).toBe('claude-sonnet-5');
+  });
+
+  it('a probe that is disabled or fails leaves no trace and does not block the run', async () => {
+    probeTaskDifficulty.mockResolvedValueOnce(undefined as never);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+    expect(result.prUrl).toBe(MR_URL);
+    expect(persistDecisionProbe).not.toHaveBeenCalled();
+  });
+
+  it('modelFromLabels: last matching label wins, blanks ignored, none → undefined', () => {
+    expect(modelFromLabels(['bug', 'vanguard:model=opus', 'vanguard:model=claude-fable-5'])).toBe('claude-fable-5');
+    expect(modelFromLabels(['vanguard:model= '])).toBeUndefined();
+    expect(modelFromLabels(['ready for agent'])).toBeUndefined();
+  });
+
+  it('modelFromLabels: malformed values are ignored and reported, well-formed slugs pass', () => {
+    const bad: string[] = [];
+    const labels = ['vanguard:model=opus; rm -rf /', 'vanguard:model=$(id)', 'vanguard:model=anthropic/claude-sonnet-4.6'];
+    expect(modelFromLabels(labels, (l) => bad.push(l))).toBe('anthropic/claude-sonnet-4.6');
+    expect(bad).toEqual(['vanguard:model=opus; rm -rf /', 'vanguard:model=$(id)']);
+    expect(modelFromLabels(['vanguard:model=gpt-5.6-sol'])).toBe('gpt-5.6-sol');
+    expect(modelFromLabels([`vanguard:model=${'a'.repeat(81)}`])).toBeUndefined();
+  });
+
+  it('builds the sandbox with the shared sandboxImage() resolver, so a VANGUARD_SANDBOX_IMAGE override reaches it too', async () => {
+    sandboxImage.mockReturnValue('sha256:deadbeef');
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(sandboxImage).toHaveBeenCalled();
+    expect(capturedSandboxOpts).toContainEqual(expect.objectContaining({ image: 'sha256:deadbeef' }));
+  });
+
   it('--plan swaps in the plan-implement-review pipeline (a dedicated planner stage runs first)', async () => {
     const adapter = fakeAdapter([], STAGES); // adapter's own stages are implementer→reviewer (no planner)
     await runSourcedIssue('group/project#1', { repoPath: '/repo', plan: true }, adapter);
@@ -197,6 +340,97 @@ describe('runSourcedIssue', () => {
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled[0]?.name).toBe('planner'); // planning runs before the implementer
     expect(assembled.some((s) => s.name === 'implementer')).toBe(true);
+  });
+
+  it('--flow flow-b runs planner→implementer→adversary→repairer and reports the flow key', async () => {
+    const events: RunEvent[] = [];
+    const adapter = fakeAdapter([], STAGES);
+    // Faithful mock: echo outcomes for the ACTUAL assembled stages (no synthetic 'reviewer'), so the
+    // reviewer-less publish path is exercised — flow-b has adversary+repairer but no reviewer.
+    runStages.mockImplementation(async (_ctx: unknown, stages: PipelineStage[]) => stages.map((s) => stageOutcome(s.name)));
+    const result = await runSourcedIssue(
+      'group/project#1',
+      { repoPath: '/repo', flow: 'flow-b', onEvent: (e) => events.push(e) },
+      adapter,
+    );
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.map((s) => s.name)).toEqual(['planner', 'implementer', 'adversary', 'repairer']);
+    const runStart = events.find((e) => e.type === 'run-start');
+    expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('flow-b');
+    // A reviewer-less flow completes and publishes the PR, but posts no verdict comment.
+    expect(result.prUrl).toBe(MR_URL);
+    expect(adapter.publishVerdict).not.toHaveBeenCalled();
+  });
+
+  it('--max-turns overrides only the implementer of an HCL-shaped flow; other stages survive', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', maxTurns: 10 }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.maxTurns).toBe(10); // flag wins on implementer
+    expect(assembled.find((s) => s.name === 'adversary')?.maxTurns).toBe(12); // non-implementer HCL value survives
+  });
+
+  it("--flow default keeps the adapter's own stages (Linear's issue-reading implementer survives)", async () => {
+    // 'default' is a selectable name in capabilities().flows, so a name-driven UI will send it. It must
+    // mean "the adapter's stages", NOT FLOWS.default.build — an adapter may customize them (Linear swaps
+    // in an implementer that reads the issue via linear-cli), and overriding that is a silent regression.
+    const linearish: PipelineStage[] = [
+      { name: 'implementer', promptTemplate: 'Use the linear-cli skill to read Linear issue {{ISSUE}}', maxTurns: 30 },
+      { name: 'reviewer', promptTemplate: '', maxTurns: 20 },
+    ];
+    const adapter = fakeAdapter([], linearish);
+    await runSourcedIssue('VAN-1', { repoPath: '/repo', flow: 'default' }, adapter);
+
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    expect(assembled.find((s) => s.name === 'implementer')?.promptTemplate).toContain('linear-cli');
+  });
+
+  it('--conformance on a reviewer-less flow throws instead of running a stage nobody will see', async () => {
+    // flow-b is adversary+repairer, no reviewer. The conformance narrative is published as a section of
+    // the reviewer verdict comment, so without a reviewer it would run and surface nowhere.
+    const adapter = fakeAdapter([], STAGES);
+    await expect(
+      runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'flow-b', conformance: true }, adapter),
+    ).rejects.toThrow(/--conformance needs a flow with a reviewer stage/);
+    expect(runStages).not.toHaveBeenCalled(); // rejected at assembly — no agent time burned
+  });
+
+  it('an unknown flow throws BEFORE the tracker fetch and any proxy/sandbox machinery (fail-fast)', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    await expect(runSourcedIssue('group/project#1', { repoPath: '/repo', flow: 'nope' }, adapter)).rejects.toThrow(
+      /unknown flow "nope" — choose one of: default, plan, flow-b/,
+    );
+    // a typo must cost nothing: no issue fetched, no provider proxies, no sandbox
+    expect(adapter.prepare).not.toHaveBeenCalled();
+    expect(vi.mocked(startProviderProxies)).not.toHaveBeenCalled();
+  });
+
+  it('--flow <name> resolves a repo .vanguard/flows/*.hcl flow and runs its lowered stages (S5)', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'vg-sa-flows-'));
+    try {
+      await mkdir(join(repo, '.vanguard', 'flows'), { recursive: true });
+      await writeFile(
+        join(repo, '.vanguard', 'flows', 'my-flow.hcl'),
+        'flow "my-flow" {\n  label = "Mine"\n\n  stage {\n    name = "implementer"\n    model = "special-model"\n  }\n}\n',
+        'utf8',
+      );
+      const events: RunEvent[] = [];
+      runStages.mockImplementation(async (_ctx: unknown, stages: PipelineStage[]) => stages.map((s) => stageOutcome(s.name)));
+      await runSourcedIssue(
+        'group/project#1',
+        { repoPath: repo, flow: 'my-flow', onEvent: (e) => events.push(e) },
+        fakeAdapter([], STAGES),
+      );
+      const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+      expect(assembled.map((s) => s.name)).toEqual(['implementer']);
+      expect(assembled[0]?.model).toBe('special-model'); // HCL override over the library record
+      expect((assembled[0]?.promptTemplate.length ?? 0) > 0).toBe(true); // identity from the library
+      const runStart = events.find((e) => e.type === 'run-start');
+      expect(runStart !== undefined && 'flow' in runStart ? runStart.flow : undefined).toBe('my-flow');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
   it('--max-turns overrides the assembled implementer stage maxTurns; default stays 30 without the flag', async () => {
@@ -398,7 +632,7 @@ describe('runSourcedIssue', () => {
     vi.mocked(runVerification)
       .mockResolvedValueOnce({ passed: false } as never)
       .mockResolvedValueOnce({ passed: true } as never);
-    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2' } as never);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2', completed: true, exitReason: 'completed' } as never);
 
     const adapter = fakeAdapter([], STAGES);
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
@@ -409,6 +643,121 @@ describe('runSourcedIssue', () => {
     expect(adapter.addFailureLabel).not.toHaveBeenCalledWith(MR_URL, 'verify');
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('an incomplete implementer (max-turns/timeout) fails the gate and resumes its session — never a straight PR of residue (dogfood #352)', async () => {
+    // Run #352 rerun: the implementer hit the SDK's turn cap mid-exploration, leaving only junk in
+    // the tree; conformance had no manifest and the junk passed the verify command, so the gate
+    // said PASS and the pipeline published a garbage PR titled as the feature. This fixture IS the
+    // real dogfood shape — exitReason 'incomplete' with turns 4, NOT 'maxTurns': the SDK counts
+    // internal steps as turns while vanguard counts real ones, so a genuine cap-out lands below
+    // vanguard's own turns >= maxTurns check. That is exactly why the gate reads `completed`, not
+    // exitReason. Completion must be part of the gate: incomplete → resume to finish, not publish.
+    runStages.mockResolvedValueOnce([
+      {
+        name: 'implementer',
+        result: {
+          taskId: 'gl-1', completed: false, exitReason: 'incomplete', turns: 4,
+          worktreePath: '/wt', worktreePreserved: true, finalText: 'Let me check what packages are available.',
+          sessionId: 'sess-1',
+        },
+      },
+      stageOutcome('reviewer'),
+    ]);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-2', completed: true, exitReason: 'completed' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    // The resume inherits the implementer's own turn cap — not runAgent's 6-turn default, which
+    // would be useless for finishing work that already exhausted 30 turns — plus a synthesized USD
+    // cap (stageCostFraction 0.6 × DEFAULT_RUN_MAX_COST_USD 5 = $3). Synthesized, not inherited:
+    // runStages runs this path with maxCostUsd = Infinity, and these resumes run outside its
+    // accounting anyway, so without the per-call cap spend would be unbounded in USD.
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', maxTurns: 30, maxBudgetUsd: 3 });
+    const prompt = runAgent.mock.calls[0]?.[1]?.variables?.['PROMPT'] as string;
+    expect(prompt).toMatch(/ended before the task was finished/);
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('a persistently incomplete implementer exhausts the repair cap and declares partial scope', async () => {
+    runStages.mockResolvedValueOnce([
+      {
+        name: 'implementer',
+        model: 'claude-sonnet-5',
+        result: {
+          taskId: 'gl-1', completed: false, exitReason: 'incomplete', turns: 4,
+          worktreePath: '/wt', worktreePreserved: true, finalText: 'still going',
+          sessionId: 'sess-1', costUsd: 0.5,
+        },
+      },
+      stageOutcome('reviewer'),
+    ]);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: false, exitReason: 'incomplete', turns: 3, costUsd: 0.25 } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
+    // Repairs resume on the implementer's routed model, and their cost folds into the stage record.
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
+    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
+    const implementer = persisted?.[1].find((o) => o.name === 'implementer');
+    expect(implementer?.result.costUsd).toBeCloseTo(1.0);
+    expect(implementer?.result.turns).toBe(10);
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Part of ${task.id}`);
+    expect(body).not.toContain(`Closes ${task.id}`);
+  });
+
+  it('--escalate-model: first repair stays on the implementer model, later repairs resume on the escalated one', async () => {
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-sonnet-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent
+      .mockResolvedValueOnce({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'claude-sonnet-5' } as never)
+      .mockResolvedValueOnce({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'claude-fable-5' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo', escalateModel: 'claude-fable-5' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-fable-5' });
+    // The stage record is re-labelled to the model that closed the gate.
+    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
+    expect(persisted?.[1].find((o) => o.name === 'implementer')?.model).toBe('claude-fable-5');
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain(`Closes ${task.id}`);
+  });
+
+  it('without --escalate-model every repair stays on the implementer model', async () => {
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), model: 'claude-sonnet-5' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 1 } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, fakeAdapter([], STAGES));
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ model: 'claude-sonnet-5' });
   });
 
   it('exhausts the shared repair cap on persistent red verification and declares partial scope', async () => {
@@ -459,6 +808,15 @@ describe('runSourcedIssue', () => {
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain('Commit message closes the issue on rebase merge');
     expect(body).toContain(`\`Closes ${task.id}\``);
+  });
+
+  it('scans commit messages from the run base branch, not main', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValueOnce({ passed: false } as never);
+
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'master' }, fakeAdapter([], STAGES));
+
+    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', 'master');
   });
 
   it('omits the commit-leak warning on a full green pass', async () => {

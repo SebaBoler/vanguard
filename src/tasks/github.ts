@@ -21,6 +21,8 @@ export interface GitHubIssue {
   body: string | null;
   labels: GitHubLabel[];
   comments?: GitHubComment[];
+  /** Present only when list() requests it (S9 board). */
+  state?: string;
 }
 
 /** Runs a `gh` subcommand and returns its stdout. Injected so unit tests never call real gh. */
@@ -46,6 +48,8 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     labels: issue.labels.map((label) => label.name),
     children: [], // the gh issue mapping does not fetch sub-issues
     comments,
+    ref: String(issue.number),
+    ...(issue.state !== undefined ? { state: issue.state } : {}),
   };
 }
 
@@ -63,8 +67,12 @@ export class GitHubTaskFetcher implements TaskFetcher {
   }
 
   async list(filter?: TaskFilter): Promise<Task[]> {
-    // comments are not fetched on bulk list() (avoids N+1); only fetch() returns them
-    const args = ['issue', 'list', '--repo', this.repo, '--json', 'number,title,body,labels', '--state', filter?.state ?? 'open'];
+    // comments are not fetched on bulk list() (avoids N+1); only fetch() returns them.
+    // `state` joins --json ONLY when a limit is set (the board call): keeping the unset-limit argv
+    // byte-identical protects watch's fetch shape (S9 — conditional by contract, test-pinned).
+    const fields = filter?.limit !== undefined ? 'number,title,body,labels,state' : 'number,title,body,labels';
+    const args = ['issue', 'list', '--repo', this.repo, '--json', fields, '--state', filter?.state ?? 'open'];
+    if (filter?.limit !== undefined) args.push('-L', String(filter.limit));
     if (filter?.labels !== undefined && filter.labels.length > 0) args.push('--label', filter.labels.join(','));
     const out = await this.gh(args);
     return (JSON.parse(out) as GitHubIssue[]).map((issue) => toTask(this.repo, issue));

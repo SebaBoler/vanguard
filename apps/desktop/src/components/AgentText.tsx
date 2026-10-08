@@ -1,6 +1,4 @@
-import { Chip } from 'chunks-ui';
-import { Markdown } from './Markdown';
-import { Callout } from './Callout';
+import { Chip, Markdown, Callout } from '@/ui';
 import { type Finding } from './findings';
 import { parseAgentText, type AgentTextSegment } from './parse-agent-text';
 

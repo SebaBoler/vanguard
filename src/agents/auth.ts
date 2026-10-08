@@ -42,7 +42,8 @@ export function agentAuthFromEnv(
   choice: ProviderChoice,
   env: NodeJS.ProcessEnv = process.env,
 ): AgentAuth | undefined {
-  const hostEnv = choice.provider !== undefined ? anthropicTransportKeyEnv(choice.provider) : undefined;
+  const hostEnv =
+    choice.provider !== undefined ? anthropicTransportKeyEnv(choice.provider, choice.customProviders) : undefined;
   if (hostEnv !== undefined) {
     const key = hostEnv.map((k) => env[k]).find((v) => v !== undefined && v !== '');
     if (key === undefined) {

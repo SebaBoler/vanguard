@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Button, Chip } from 'chunks-ui';
+import { Button, Chip } from '@/ui';
 import { Square, X } from 'lucide-react';
 
 export interface Spawn {

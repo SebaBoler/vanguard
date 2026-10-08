@@ -1,17 +1,19 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
+import { mergeAttempts } from '../core/run-metric.js';
 import { forkAndSelect } from './fork-select.js';
 import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
 import { roundUsd } from './budget.js';
+import { neutralizeQuickActions } from '../tasks/gitlab.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';
-import type { ProviderName } from '../agents/registry.js';
 import type { Complete } from '../evals/judges.js';
 import type { EvalVerdict } from '../evals/types.js';
+import type { RunEvent } from './events.js';
 
 /** Single source of truth for all canonical pipeline stage names. String values are stable. */
 export const STAGE = {
@@ -26,6 +28,9 @@ export const STAGE = {
   ADVERSARY: 'adversary',
   TECH_SPEC: 'tech-spec',
 } as const;
+
+/** Stages whose flow-pinned model (opus) survives --provider-model: they plan/red-team, not implement. */
+const PLANNER_TIER: ReadonlySet<string> = new Set([STAGE.PLANNER, STAGE.ADVERSARY]);
 
 /** Union of all canonical stage name string literals. A typo is a compile error. */
 export type StageName = (typeof STAGE)[keyof typeof STAGE];
@@ -60,6 +65,12 @@ export interface PipelineStage {
    * times or until the stage signals COMPLETE. Default 0 (no resume). Opt-in per stage.
    */
   resumeUntilComplete?: number;
+  /**
+   * Prompt sent on each auto-resume. Defaults to RESUME_NUDGE, which talks about files written to
+   * disk — wrong for a read-only stage that produces a text block rather than a diff. Override it
+   * there so the nudge names what the stage actually owes.
+   */
+  resumeNudge?: string;
   /**
    * When this stage's provider throws AgentError (unavailable/rate-limited/non-zero exit), re-run
    * the stage once on this provider+model instead of failing the entire run. Used for the reviewer:
@@ -140,6 +151,8 @@ export interface ForkOptions {
   n?: number;
   /** LLM completion function used to score each variant's diff. Higher score wins. */
   complete: Complete;
+  /** Scorer override (e.g. a decision model); when set, `complete` is not used for scoring. */
+  score?: (diff: string, result: RunResult) => Promise<EvalVerdict>;
   /**
    * Name of the stage to run via forkAndSelect. Defaults to 'implementer'.
    * If no stage with this name exists in the pipeline, fork is silently ignored.
@@ -154,6 +167,8 @@ export interface RunStagesOptions {
   maxCostUsd?: number;
   /** When set, run the implementer stage via forkAndSelect instead of a single pass. */
   fork?: ForkOptions;
+  /** When set, receives structured run events (stage lifecycle + cost). Absent ⇒ no events, no behavior change. */
+  onEvent?: (e: RunEvent) => void;
 }
 
 /** Sandbox dir for the fork scorer: a throwaway cwd so any stray write never touches the worktree. */
@@ -216,21 +231,40 @@ const RESUME_NUDGE = [
   'When (and only when) it is genuinely all done and verified, write <promise>COMPLETE</promise>.',
 ].join('\n');
 
+/**
+ * Resume nudge for the tech-spec stage. The default nudge points at files on disk; this stage writes
+ * none, so it is told to stop researching and emit the block it already has the material for.
+ */
+const SPEC_RESUME_NUDGE = [
+  'You stopped before emitting the specification. Stop researching now — you already have enough.',
+  'Write the complete <tech_spec>...</tech_spec> block from what you have learned, followed by the',
+  '<spec_manifest>{...}</spec_manifest> JSON. Mark anything you could not verify as an explicit',
+  'assumption or risk inside the spec rather than going back to explore it.',
+  'Then write <promise>COMPLETE</promise>.',
+].join('\n');
+
+/** Default whole-run USD cap when the caller sets none. Shared with the gate-loop repair budget. */
+export const DEFAULT_RUN_MAX_COST_USD = 5;
+
 export async function runBudgetedStages(
   ctx: RunContext,
   stages: PipelineStage[],
   opts: RunStagesOptions,
 ): Promise<PipelineResult> {
-  const maxCostUsd = opts.maxCostUsd ?? 5;
+  const maxCostUsd = opts.maxCostUsd ?? DEFAULT_RUN_MAX_COST_USD;
   const outcomes: StageOutcome[] = [];
   let previous: RunResult | undefined;
   let prevName = '';
   let sessionId: string | undefined;
   let spentUsd = 0;
+  const emit = opts.onEvent ?? ((): void => {});
+  let index = 0;
+  const of = stages.length;
   for (const stage of stages) {
     if (spentUsd >= maxCostUsd) {
       return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
+    emit({ type: 'stage-start', name: stage.name, index, of });
     const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
 
@@ -259,15 +293,19 @@ export async function runBudgetedStages(
       const forkResult = await forkAndSelect(ctx, stage, {
         agent,
         ...(opts.fork.n !== undefined ? { n: opts.fork.n } : {}),
-        score: makeDiffScorer(opts.fork.complete),
+        score: opts.fork.score ?? makeDiffScorer(opts.fork.complete),
         variables,
         ...(resume && sessionId !== undefined ? { forkFromSessionId: sessionId } : {}),
         ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
         ...(isFiniteCap ? { stageBudgetUsd: effectiveCap } : {}),
         ...(isFiniteGlobal ? { remainingBudgetUsd: remainingGlobal } : {}),
       });
-      const result = forkResult.winner;
-      const forkStageCost = roundUsd(forkResult.variants.reduce((sum, v) => sum + (v.result.costUsd ?? 0), 0));
+      // The winner keeps its identity; the losing variants' cost/tokens fold in so the stage metric
+      // reflects everything the fork spent, not just the chosen branch.
+      const result = forkResult.variants
+        .filter((_, i) => i !== forkResult.winnerIndex)
+        .reduce((acc, loser) => mergeAttempts(loser.result, acc), forkResult.winner);
+      const forkStageCost = roundUsd(result.costUsd ?? 0);
       outcomes.push({
         name: stage.name,
         result,
@@ -278,6 +316,9 @@ export async function runBudgetedStages(
       prevName = stage.name;
       if (result.sessionId !== undefined) sessionId = result.sessionId;
       spentUsd = roundUsd(spentUsd + forkStageCost);
+      emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
+      emit({ type: 'cost', usdSpent: spentUsd });
+      index += 1;
 
       // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
       if (isFiniteCap && forkStageCost >= effectiveCap) {
@@ -353,15 +394,18 @@ export async function runBudgetedStages(
         { taskId: ctx.taskId, stage: stage.name, exitReason: result.exitReason, resumesLeft },
         'stage incomplete — resuming session',
       );
-      result = await runAgent(ctx, {
+      const resumed = await runAgent(ctx, {
         ...stageOpts,
-        promptTemplate: RESUME_NUDGE,
+        promptTemplate: stage.resumeNudge ?? RESUME_NUDGE,
         agent: effectiveAgent,
         ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
         resumeSessionId: result.sessionId,
         ...(isFiniteCap ? { maxBudgetUsd: effectiveCap - stageCost } : {}),
       });
-      stageCost = roundUsd(stageCost + (result.costUsd ?? 0));
+      // Fold the resume into the stage result so the persisted metric carries every attempt's cost;
+      // the loop's cap check reads the same figure.
+      result = mergeAttempts(result, resumed);
+      stageCost = roundUsd(result.costUsd ?? 0);
     }
 
     outcomes.push({
@@ -374,6 +418,9 @@ export async function runBudgetedStages(
     prevName = stage.name;
     if (result.sessionId !== undefined) sessionId = result.sessionId;
     spentUsd = roundUsd(spentUsd + stageCost);
+    emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
+    emit({ type: 'cost', usdSpent: spentUsd });
+    index += 1;
 
     // Orchestrator-side post-stage cap check (reactive; covers providers that ignore maxBudgetUsd).
     if (isFiniteCap && stageCost >= effectiveCap) {
@@ -602,8 +649,8 @@ export function withStageFallback(
 }
 
 export interface ReviewPipelineDeps {
-  provider?: ProviderName;
-  reviewProvider?: ProviderName;
+  provider?: string;
+  reviewProvider?: string;
   providerModel?: string;
   reviewModel?: string;
   noSimplify?: boolean;
@@ -611,6 +658,12 @@ export interface ReviewPipelineDeps {
   conformance?: boolean;
   /** Model override for the conformance stage only (e.g. 'opus' for planner-tier). */
   conformanceModel?: string;
+  /**
+   * Model the implement provider forces when a stage names none (zai → glm, openrouter → its slug, a
+   * custom's `model`). Set only for such providers: a flow-pinned planner-tier model (opus) cannot be
+   * served there, so those stages take `providerModel` or, failing that, this forced model.
+   */
+  providerForcedModel?: string;
 }
 
 /**
@@ -641,10 +694,12 @@ export function resolveRouting(
  * fallback wiring in one place so neither the GitHub nor Linear runner needs to inline these steps.
  *
  * Membership is decided first (filter/append); then a flat routing config is built and applied by
- * resolveRouting in one pass. Two subtle rules live as explicit config-building code: (1) a
+ * resolveRouting in one pass. Three subtle rules live as explicit config-building code: (1) a
  * cross-provider reviewer is excluded from `providerModel` — an Anthropic model name handed to a
- * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it; and
- * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins).
+ * Codex/ChatGPT reviewer is rejected by the backend, while a same-provider reviewer keeps it;
+ * (2) `conformanceModel` wins over `providerModel` on the conformance stage (last-writer-wins); and
+ * (3) a planner-tier stage (PLANNER_TIER) with a flow-pinned model keeps it — unless the provider
+ * forces its own model (`providerForcedModel`), which cannot serve the pinned alias.
  */
 export function assembleReviewPipeline(
   base: PipelineStage[],
@@ -663,15 +718,23 @@ export function assembleReviewPipeline(
     config[name] = { ...config[name], ...patch };
   };
 
-  if (deps.providerModel !== undefined) {
-    // Only a CROSS-provider reviewer is excluded from the implement model. Gating on the mere presence
-    // of reviewAgent would wrongly strip the model when --review-provider equals --provider. Every other
-    // stage (incl. conformance, planning side) gets providerModel.
+  if (deps.providerModel !== undefined || deps.providerForcedModel !== undefined) {
+    // Only a CROSS-provider reviewer and the pinned planner-tier stages are excluded from the implement
+    // model. Gating on the mere presence of reviewAgent would wrongly strip the model when
+    // --review-provider equals --provider. Planner/adversary keep the stronger model their flow pins
+    // (opus) — the whole point of --plan/flow-b is "plan and red-team high, implement cheap", which a
+    // single implement model flag must not flatten. The exception is a forced-model provider, which
+    // cannot serve `opus` at all: there the pinned tier takes providerModel (or the forced default) so
+    // the flow still runs. An UNPINNED planner-tier stage (repo HCL flow) gets providerModel like any
+    // other stage. Everything else (incl. conformance) gets providerModel.
     const crossProviderReview =
       deps.reviewProvider !== undefined && deps.reviewProvider !== (deps.provider ?? 'claude');
     for (const stage of pipeline) {
       if (crossProviderReview && stage.name === STAGE.REVIEWER) continue;
-      route(stage.name as StageName, { model: deps.providerModel });
+      const pinnedPlannerTier = PLANNER_TIER.has(stage.name) && stage.model !== undefined;
+      if (pinnedPlannerTier && deps.providerForcedModel === undefined) continue;
+      const model = deps.providerModel ?? (pinnedPlannerTier ? deps.providerForcedModel : undefined);
+      if (model !== undefined) route(stage.name as StageName, { model });
     }
   }
   // Cross-provider reviewer: route it to its own provider, and fall back to the planning provider on
@@ -706,7 +769,7 @@ export function planImplementReviewStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       promptTemplate:
         'Task: {{TITLE}}\n\n{{DESCRIPTION}}\n\nProduce a concise implementation plan inside <plan>...</plan>. Do not edit files yet. When done, write <promise>COMPLETE</promise>.',
@@ -830,7 +893,7 @@ export function planImplementAdversaryStages(): PipelineStage[] {
       name: STAGE.PLANNER,
       model: 'opus',
       effort: 'high',
-      maxTurns: 10,
+      maxTurns: 15,
       resumePrevious: false,
       systemPrompt,
       promptTemplate:
@@ -894,14 +957,21 @@ export function techSpecSystemPrompt(): string {
  * Model is omitted from the stage unless explicitly supplied via opts.model; the caller owns the
  * provider-aware default (e.g. 'haiku' for Claude, omitted for z.ai so ZaiProvider picks glm).
  */
-export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
+export function techSpecStage(opts?: { model?: string; maxTurns?: number }): PipelineStage[] {
   return [
     {
       name: STAGE.TECH_SPEC,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),
       copyBack: false,
       resumePrevious: false,
-      maxTurns: 15,
+      // Research over a whole codebase needs more turns than implementation; 15 silently starved
+      // large tickets (hit maxTurns mid-research, no <tech_spec> emitted). Overridable via --max-turns.
+      maxTurns: opts?.maxTurns ?? 30,
+      // Research over a large monorepo can end "incomplete" with the whole exploration still in the
+      // session but nothing emitted — the run then throws and every turn of research is discarded.
+      // Resuming the SAME session costs one nudge and turns that sunk cost into a spec.
+      resumeUntilComplete: 2,
+      resumeNudge: SPEC_RESUME_NUDGE,
       systemPrompt: techSpecSystemPrompt(),
       promptTemplate: [
         'Task: {{TITLE}}',
@@ -914,6 +984,11 @@ export function techSpecStage(opts?: { model?: string }): PipelineStage[] {
         retrospectiveMemoryBlock(),
         '',
         'Research the existing codebase read-only (do not edit any files). Produce a technical specification for this task.',
+        '',
+        // Observed on data-controls-engine#2489: the model announced "I'll continue the research",
+        // then ended its turn on a thinking-only message having emitted nothing — 25 turns discarded.
+        'Never end a turn without either calling a tool or emitting output. If you are running low on',
+        'room, stop exploring and write the spec from what you have, marking anything unverified as a risk.',
         '',
         'The spec MUST include:',
         '- **Problem** — what exactly needs to be solved and why',
@@ -1014,6 +1089,21 @@ export async function pushToExistingBranch(ctx: RunContext, opts: PushToExisting
   }
 }
 
+const DROPPED_CI_LISTED = 20;
+
+/**
+ * PR/MR body (and revision summary) note for CI config the agent changed but copy-back dropped, so the
+ * review does not look complete. Brand-neutral for white-label runs. Paths come from the sandbox, so
+ * they are reduced to a plain charset that cannot add markdown or HTML.
+ */
+export function droppedCiPathsNote(paths: Iterable<string> = []): string {
+  const sorted = [...paths].sort();
+  if (sorted.length === 0) return '';
+  const shown = sorted.slice(0, DROPPED_CI_LISTED).map((p) => `\`${p.replace(/[^\w./ -]/g, '?')}\``);
+  const more = sorted.length > DROPPED_CI_LISTED ? ` and ${sorted.length - DROPPED_CI_LISTED} more` : '';
+  return `**Not included:** changes to CI config are never copied into this branch: ${shown.join(', ')}${more}. Apply them by hand if this change needs them.`;
+}
+
 /**
  * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
  * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the
@@ -1026,6 +1116,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
   await run('git', ['push', '--no-verify', '-u', opts.remote ?? 'origin', ctx.branch], ctx.worktreePath);
+  const body = [opts.body, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== undefined && part !== '').join('\n\n');
   let args: string[];
   if (tool === 'glab') {
     args = [
@@ -1033,7 +1124,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       '--source-branch', ctx.branch,
       '--target-branch', opts.baseBranch ?? 'main',
       '--title', opts.title,
-      '--description', opts.body ?? '',
+      '--description', neutralizeQuickActions(body),
     ];
     if (opts.draft === true) args.push('--draft');
   } else {
@@ -1042,7 +1133,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
       '--head', ctx.branch,
       '--base', opts.baseBranch ?? 'main',
       '--title', opts.title,
-      '--body', opts.body ?? '',
+      '--body', body,
     ];
     if (opts.draft === true) args.push('--draft');
   }
