@@ -269,6 +269,35 @@ describe('parseCli', () => {
     }
   });
 
+  it('carries every shared flag onto doctor except the stage-only three', () => {
+    const argv = [
+      'doctor', '--source', 'github', '--label', 'vanguard',
+      '--provider', 'codex', '--review-provider', 'claude', '--fallback-provider', 'cursor', '--fallback-model', 'cursor-fast',
+      '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
+      '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
+      '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
+    ];
+    const doctor = parseCli(argv, '/work');
+    expect(doctor).toMatchObject({
+      kind: 'doctor',
+      provider: 'codex',
+      reviewProvider: 'claude',
+      fallbackProvider: 'cursor',
+      fallbackModel: 'cursor-fast',
+      providerModel: 'gpt-5',
+      reviewModel: 'claude-opus',
+      escalateModel: 'claude-fable-5',
+      noSimplify: true,
+      verifyCmd: 'pnpm test',
+      commitAuthor: { name: 'Seba', email: 'seba@example.com' },
+      flow: 'flow-b',
+      baseBranch: 'dev',
+      maxTurns: 80,
+      maxRepairIterations: 5,
+    });
+    for (const key of ['visualProofCmd', 'conformance', 'conformanceModel']) expect(key in doctor).toBe(false);
+  });
+
   it('rejects the run-only flags on watch and doctor instead of ignoring them', () => {
     for (const command of ['watch', 'doctor']) {
       const base = [command, '--source', 'linear', '--label', 'vanguard'];

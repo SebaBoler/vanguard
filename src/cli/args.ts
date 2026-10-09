@@ -103,7 +103,7 @@ export type Command =
       provider?: ProviderName;
       llmProxy?: boolean;
     }
-  | {
+  | ({
       kind: 'doctor';
       /** Repair what the checks can repair (today: refresh the sandbox image's claude CLI). */
       fix?: boolean;
@@ -120,15 +120,8 @@ export type Command =
       repoSlug?: string;
       repoPath: string;
       skillsDir?: string;
-      provider?: string;
-      reviewProvider?: string;
-      fallbackProvider?: string;
-      fallbackModel?: string;
-      providerModel?: string;
-      reviewModel?: string;
-      /** Model for gate repairs after the first one failed (reactive escalation); default: stay on the implementer model. */
-      escalateModel?: string;
-      verifyCmd?: string;
+      /** Cap on ready tasks per poll; parsed with watch's flags, read by nothing doctor runs. */
+      maxTasks?: number;
       specModel?: string;
       specLabel?: string;
       agentLabel?: string;
@@ -141,7 +134,7 @@ export type Command =
       specClaimedState?: string;
       specOnly?: boolean;
       llmProxy?: boolean;
-    }
+    } & Omit<SharedRunOptions, StageOnlyKey>)
   | ({
       kind: 'run';
       source: 'linear' | 'github' | 'project' | 'gitlab';
@@ -303,6 +296,9 @@ type RunOnlyKey = 'forkScorer' | 'specFile';
  * repo at dispatch (provider-choice.ts), never parsed.
  */
 export type SharedRunOptions = Omit<RunOptions, RunOnlyKey | 'customProviders'>;
+
+/** Shared keys only a running stage reads: doctor's preflight never runs one, so they stay off its command. */
+type StageOnlyKey = 'visualProofCmd' | 'conformance' | 'conformanceModel';
 
 /**
  * Every key of T, present or not — so a RunOptions field added without a line in parseRunOptions
@@ -601,17 +597,6 @@ export function parseCli(argv: string[], cwd: string): Command {
   const maxTurns = parseLimit(values['max-turns']);
   const maxRepairIterations = parseLimit(values['max-repair-iterations']);
 
-  const runOptions = parseRunOptions(values, {
-    provider,
-    reviewProvider,
-    fallbackProvider,
-    fallbackModel,
-    commitAuthor,
-    flow: flowRaw,
-    maxTurns,
-    maxRepairIterations,
-  });
-
   if (positionals[0] === 'stats') {
     return {
       kind: 'stats',
@@ -862,6 +847,18 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
   }
 
+  // Shared by the two branches below; every command above returned already.
+  const runOptions = parseRunOptions(values, {
+    provider,
+    reviewProvider,
+    fallbackProvider,
+    fallbackModel,
+    commitAuthor,
+    flow: flowRaw,
+    maxTurns,
+    maxRepairIterations,
+  });
+
   if (positionals[0] === 'run') {
     const sources: Array<['linear' | 'github' | 'project' | 'gitlab', string]> = [];
     if (typeof values.linear === 'string') sources.push(['linear', values.linear]);
@@ -1068,7 +1065,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
 
     if (commandKind === 'doctor') {
-      // Preflight never runs a stage: the proof/conformance knobs stay off the doctor command.
+      // StageOnlyKey: the proof/conformance knobs stay off the doctor command.
       const { visualProofCmd: _visualProofCmd, conformance: _conformance, conformanceModel: _conformanceModel, ...checks } = common;
       return { kind: 'doctor', ...checks, ...(values.fix === true ? { fix: true } : {}) };
     }
@@ -1104,8 +1101,10 @@ const SHARED_RUN_OPTIONS_USAGE = `    --provider <claude|codex|cursor|zai|openro
     --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
     --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
     --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
-    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
-    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)`;
+    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan`;
+
+/** Printed after each section's own --base/--max-turns lines. */
+const MAX_REPAIR_ITERATIONS_USAGE = '    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)';
 
 export const USAGE = `vanguard <command>
 
@@ -1156,6 +1155,7 @@ Commands:
 ${SHARED_RUN_OPTIONS_USAGE}
     --base <branch>          Base branch to branch off and target the PR at; also the loop-v1 spec pass's research baseline (default: main)
     --max-turns <n>            Override the implementer (or loop-v1 spec pass's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
+${MAX_REPAIR_ITERATIONS_USAGE}
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -1232,6 +1232,7 @@ ${SHARED_RUN_OPTIONS_USAGE}
 ${SHARED_RUN_OPTIONS_USAGE}
     --base <branch>          Base branch to branch off and target the PR at (default: main)
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
+${MAX_REPAIR_ITERATIONS_USAGE}
     --fork <n>               Run the implementer as n variants (n>=2) and keep the best-scored diff
     --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
                              decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
