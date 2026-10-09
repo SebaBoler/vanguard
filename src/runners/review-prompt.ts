@@ -86,6 +86,43 @@ export function diffLineCount(diff: string): number {
   return diff === '' ? 0 : diff.split('\n').length;
 }
 
+// Tested against the `b/` path of each `diff --git` header. Generated files carry no reviewable intent
+// and dominate the prompt when present: alpha-window #1652 was 9 403 diff lines, almost all one
+// drizzle snapshot.
+// ponytail: fixed list; make it configurable when a repo needs its own
+const GENERATED_FILE_PATTERNS: readonly RegExp[] = [
+  /(^|\/)drizzle\/meta\/[^/]*_snapshot\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)package-lock\.json$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)bun\.lockb?$/,
+  /(^|\/)Cargo\.lock$/,
+];
+
+const DIFF_GIT_HEADER_RE = /^diff --git a\/.+? b\/(.+)$/;
+
+/**
+ * Replace each generated file's block in a unified diff with its `diff --git` header and a one-line
+ * placeholder, so the reviewer still sees that the file changed but does not read it. Other blocks
+ * are kept byte-for-byte. Applied where the diff is fetched, so `diffLineCount` and the prompt see
+ * the same, filtered diff.
+ */
+export function omitGeneratedFiles(diff: string): string {
+  // A block starts at a `diff --git ` line; content lines carry a `+`/`-`/space prefix, so none can start one.
+  return diff
+    .split(/^(?=diff --git )/m)
+    .map((block) => {
+      const newline = block.indexOf('\n');
+      const header = newline === -1 ? block : block.slice(0, newline);
+      const path = DIFF_GIT_HEADER_RE.exec(header)?.[1];
+      if (path === undefined || !GENERATED_FILE_PATTERNS.some((re) => re.test(path))) return block;
+      const trailing = block.endsWith('\n') ? '\n' : '';
+      const omitted = block.split('\n').length - 1 - trailing.length;
+      return `${header}\n(generated file: ${omitted} diff lines omitted from review)${trailing}`;
+    })
+    .join('');
+}
+
 /** Last part of a reply, for the job log when a review is thrown away — otherwise the failure is undiagnosable. */
 export function outputTail(text: string, maxChars = 1200): string {
   const trimmed = text.trim();

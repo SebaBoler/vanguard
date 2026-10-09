@@ -7,6 +7,7 @@ import {
   buildMergeRequestReviewComment,
   buildMergeRequestReviewPrompt,
   reviewMergeRequest,
+  fetchMergeRequestForReview,
   MergeRequestReviewIncompleteError,
 } from './mr-review.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
@@ -23,6 +24,19 @@ const BASE_MR = {
   targetBranch: 'main',
   diff: 'diff --git a/auth.ts b/auth.ts',
 };
+
+describe('fetchMergeRequestForReview', () => {
+  it('stores the diff with generated files omitted', async () => {
+    const glab: GlabRunner = async (args) => {
+      if (args[1] === 'view') return JSON.stringify({ iid: 5 });
+      return 'diff --git a/yarn.lock b/yarn.lock\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-1\n+2\n';
+    };
+
+    const mr = await fetchMergeRequestForReview({ project: 'g/p', iid: 5 }, glab);
+
+    expect(mr.diff).toBe('diff --git a/yarn.lock b/yarn.lock\n(generated file: 3 diff lines omitted from review)\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-1\n+2\n');
+  });
+});
 
 describe('buildMergeRequestReviewPrompt', () => {
   it('builds a review prompt with MR metadata and diff', () => {

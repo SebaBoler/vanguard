@@ -1,7 +1,7 @@
 import { VanguardError } from '../core/errors.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import { defaultGlabRunner, encodeProject, neutralizeQuickActions } from '../tasks/gitlab.js';
-import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
+import { AUTHORITATIVE_BLOCK_INSTRUCTION, RETRY_TRIAGE_INSTRUCTION, VERDICT_INSTRUCTION, VERDICT_WITHOUT_COMPLETION_NOTE, neutralizePromptTags, omitGeneratedFiles, outputTail, reviewOutcomeUsable, stripReviewMarkers, VERDICT_CONTRADICTION_LOG, verdictContradictsFindings } from './review-prompt.js';
 
 export interface MergeRequestReviewTarget {
   project: string;
@@ -102,7 +102,7 @@ export async function fetchMergeRequestForReview(
   const view = JSON.parse(
     await glab(['mr', 'view', iid, '--repo', target.project, '--output', 'json']),
   ) as GlabMrView;
-  const diff = await glab(['mr', 'diff', iid, '--repo', target.project]);
+  const diff = omitGeneratedFiles(await glab(['mr', 'diff', iid, '--repo', target.project]));
   return {
     project: target.project,
     iid: view.iid ?? target.iid,
