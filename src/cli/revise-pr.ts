@@ -17,8 +17,14 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
   const log = deps.log ?? console.log;
   const runRevise = deps.revisePullRequest ?? runRevisePullRequest;
 
+  // Ctrl-C during a repair resume aborts it (observed when the current agent exec ends), as in watch-prs.
+  const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
   const baseDeps = {
     repoPath: cmd.repoPath,
+    signal: controller.signal,
     ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),

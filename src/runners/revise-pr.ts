@@ -18,10 +18,12 @@ import {
   guardedPoint,
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
-import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
+import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
+import { repairUntilGreen } from '../pipeline/repair-gate.js';
+import { persistStageOutcomes } from '../core/run-record.js';
 import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
@@ -94,6 +96,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   /** Extra logins to treat as bots (beyond the built-in heuristic). */
   botLogins?: string[];
   log?: (line: string) => void;
+  /** Cancels an in-flight repair resume (observed when the current agent exec ends). */
+  signal?: AbortSignal;
   // Test hooks
   /** Injected sandbox provider (avoids Docker in unit tests). */
   _sandbox?: IsolatedSandboxProvider;
@@ -274,32 +278,28 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // pattern as runSourcedIssue so a red revision never silently ships (alpha-window#901: 5
       // NameError tests pushed through revise). Auto-detect only touches the worktree, no manifest.
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
-      const implementerOutcome = outcomes.find((o) => o.name === STAGE.IMPLEMENTER);
-      let resumeSessionId = implementerOutcome?.result.sessionId;
-      const implementerModel = implementerOutcome?.model;
-      // runAgent's default turn cap (6) is useless for finishing work that already used the implementer's.
-      const implementerMaxTurns = pipeline.find((s) => s.name === STAGE.IMPLEMENTER)?.maxTurns;
+      // Same repair gate as the first delivery (shared caps, cost accounting, cancel): a red revision
+      // never silently ships (alpha-window#901: 5 NameError tests pushed through revise).
       let verification: VerificationResult | undefined;
       if (verifyCmd !== undefined) {
-        let verifyRepairs = 0;
-        for (;;) {
-          verification = await runVerification(ctx.sandbox, verifyCmd);
-          if (verification.passed || verifyRepairs >= MAX_VERIFY_REPAIRS || resumeSessionId === undefined) {
-            break;
-          }
-          verifyRepairs += 1;
-          log(`revise-pr ${target.repoSlug}#${target.number}: verify FAILED (attempt ${verifyRepairs}/${MAX_VERIFY_REPAIRS}) — resuming implement session`);
-          const repaired = await runAgent(ctx, {
-            ...literalPrompt(`${renderVerificationFeedback(verification)}\n\nWhen the verification passes, write <promise>COMPLETE</promise>.`),
-            agent: agents.agent,
-            resumeSessionId,
-            // Same model the implementer ran on; otherwise the repair drops to the provider default.
-            ...(implementerModel !== undefined ? { model: implementerModel } : {}),
-            ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
-          });
-          resumeSessionId = repaired.sessionId ?? resumeSessionId;
-        }
+        const cmd = verifyCmd;
+        await repairUntilGreen(ctx, {
+          label: `${target.repoSlug}#${target.number}`,
+          gate: async () => {
+            verification = await runVerification(ctx.sandbox, cmd);
+            return { pass: verification.passed, feedback: verification.passed ? '' : renderVerificationFeedback(verification) };
+          },
+          agent: agents.agent,
+          outcomes,
+          pipeline,
+          maxIterations: MAX_VERIFY_REPAIRS,
+          ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+          log,
+        });
       }
+      // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
+      // the outcomes are persisted — the first delivery does this in runSourcedIssue.
+      await persistStageOutcomes(deps.repoPath, outcomes);
       const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.

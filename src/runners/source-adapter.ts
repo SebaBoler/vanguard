@@ -4,14 +4,12 @@ import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
 import { resolveRemoteBaseRef } from '../core/base-branch.js';
-import { prepareContext, disposeContext, runAgent } from '../core/vanguard.js';
-import { mergeAttempts } from '../core/run-metric.js';
+import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
 import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
 import { VanguardError } from '../core/errors.js';
 import { decisionDiffScorer } from '../evals/decision-judge.js';
-import { literalPrompt } from '../context/prompt-engine.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE, DEFAULT_RUN_MAX_COST_USD } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -25,6 +23,7 @@ import { resolveVerifyCommand, runVerification, renderVerificationFeedback, proo
 import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-proof.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
+import { repairUntilGreen } from '../pipeline/repair-gate.js';
 import { deliverChange } from './deliver-change.js';
 import {
   parseSpecManifest,
@@ -459,109 +458,53 @@ export async function runSourcedIssue(
       const manifest = parseSpecManifest(specText);
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
 
-      // Resolve the implementer outcome once — the loop only runs while its session is resumable,
-      // so its position in `outcomes` is fixed for the duration.
+      // The implementer's position in `outcomes` is fixed while its session is resumable (repairUntilGreen
+      // merges each repair into that entry in place).
       const implementerIdx = outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
-      let resumeSessionId = implementerIdx !== -1 ? outcomes[implementerIdx]?.result.sessionId : undefined;
-      // A resumed repair pass inherits the implementer's own turn cap — without this it falls back
-      // to runAgent's default (6), useless for finishing work that already exhausted 30 turns.
-      const implementerStage = pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
-      const implementerMaxTurns = implementerStage?.maxTurns;
-      // Each resume also gets a per-call USD cap, synthesized as stageCostFraction ×
-      // DEFAULT_RUN_MAX_COST_USD (floored at stageCostFloorUsd) — $3 for the canonical implementer.
-      // Deliberately decoupled from the stage's EFFECTIVE in-stage budget: runStages runs this path
-      // with maxCostUsd = Infinity, so "inherit the stage budget" would mean no cap at all. These
-      // calls run outside runStages' accounting; without this, the only bound would be
-      // iterations × turn cap.
-      const repairBudgetUsd =
-        implementerStage?.stageCostFraction !== undefined
-          ? Math.max(
-              implementerStage.stageCostFraction * DEFAULT_RUN_MAX_COST_USD,
-              implementerStage.stageCostFloorUsd ?? 0,
-            )
-          : undefined;
-
-      const maxRepairIterations = deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS;
       let conformance: ConformanceResult = PASSING_RESULT;
       let verification: VerificationResult | undefined;
       let implementerDone = false;
       let gatePassed = false;
-      let repairIterations = 0;
       // try/finally so the per-stage cost table is printed even when a repair call throws or the run
       // is cancelled mid-loop — and, on the happy path, after the loop so repairs show up in it.
       try {
-      for (;;) {
-        // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
-        // spec skips the conformance half of the gate entirely (zero extra work, no spurious `wm.diff` call).
-        conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
-        verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
-        // Completion is part of the gate (dogfood #352): an implementer that hit its turn cap or
-        // timeout mid-task can leave residue that still typechecks and tests green — conformance
-        // (often manifest-less) and verification alone would then PASS the gate and publish a
-        // garbage PR titled as the feature. Incomplete → resume the session to finish the work.
-        // Gate on `completed`, NOT on exitReason === 'maxTurns': the SDK counts internal steps as
-        // turns while vanguard counts real ones, so the actual #352 truncation surfaced as
-        // exitReason 'incomplete' with turns 4 — an exitReason gate would have missed it. The cost
-        // is that a provider that finishes work but never emits <promise>COMPLETE</promise> (glm
-        // prose-stops) is re-nudged and, if it still won't signal, downgraded to a Part-of PR —
-        // an unverifiable "done" must not auto-close the issue.
-        // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be
-        // resumed up to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N
-        // here. Each resume here is bounded by the implementer's turn cap AND the per-call
-        // repairBudgetUsd computed above.
-        implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
-        gatePassed = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
-        if (gatePassed || repairIterations >= maxRepairIterations || resumeSessionId === undefined) break;
-
-        repairIterations += 1;
-        // Reactive escalation: the first repair stays on the (cheap) implementer model; once that has
-        // demonstrably failed, later repairs resume the same session on --escalate-model. Reacting to
-        // an observed red gate beats guessing task difficulty up front — a wrong guess down costs a
-        // failed run plus repairs, a wrong guess up only costs today's price.
-        // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
-        // override it (it could even downgrade).
-        const escalate = repairIterations >= 2 && deps.escalateModel !== undefined && labelModel === undefined;
-        console.log(
-          `vanguard: gate FAILED for ${task.id} (attempt ${repairIterations}/${maxRepairIterations}) — resuming implement session${
-            escalate ? ` on ${deps.escalateModel}` : ''
-          }`,
-        );
-        const feedback = [
-          !implementerDone
-            ? 'The previous session ended before the task was finished (turn cap or timeout). Continue and complete the remaining work.'
-            : undefined,
-          !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
-          verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
-        ]
-          .filter((s): s is string => s !== undefined)
-          .join('\n\n');
-        // Resume on the implementer's configured model (routed --provider-model) — omitting it here
-        // silently hands the repair to the provider's default model.
-        const repairModel = escalate ? deps.escalateModel : outcomes[implementerIdx]?.model;
-        const repaired = await runAgent(ctx, {
-          // Test output is author-controlled text; see literalPrompt.
-          ...literalPrompt(`${feedback}\n\nWhen every gap above is addressed, write <promise>COMPLETE</promise>.`),
+        const repair = await repairUntilGreen(ctx, {
+          label: task.id,
+          gate: async () => {
+            // Only touch the worktree diff when there is a manifest to check against — a legacy/no-manifest
+            // spec skips the conformance half of the gate entirely.
+            conformance = manifest !== undefined ? checkConformance(manifest, await ctx.wm.diff(ctx.worktreePath)) : PASSING_RESULT;
+            verification = verifyCmd !== undefined ? await runVerification(ctx.sandbox, verifyCmd) : undefined;
+            // Completion is part of the gate (dogfood #352): an implementer that hit its turn cap or timeout
+            // mid-task can leave residue that still typechecks and tests green. Gate on `completed`, NOT on
+            // exitReason === 'maxTurns': the SDK counts internal steps as turns while vanguard counts real
+            // ones. A provider that finishes but never emits <promise>COMPLETE</promise> is re-nudged and,
+            // if it still won't signal, downgraded to a Part-of PR — an unverifiable "done" must not
+            // auto-close the issue.
+            implementerDone = implementerIdx === -1 || outcomes[implementerIdx]?.result.completed === true;
+            const pass = conformance.pass && (verification === undefined || verification.passed) && implementerDone;
+            const feedback = [
+              !implementerDone
+                ? 'The previous session ended before the task was finished (turn cap or timeout). Continue and complete the remaining work.'
+                : undefined,
+              !conformance.pass ? renderConformanceFeedback(conformance) : undefined,
+              verification !== undefined && !verification.passed ? renderVerificationFeedback(verification) : undefined,
+            ].filter((part): part is string => part !== undefined).join('\n\n');
+            return { pass, feedback };
+          },
           agent: agents.agent,
-          resumeSessionId,
-          ...(repairModel !== undefined ? { model: repairModel } : {}),
-          ...(implementerMaxTurns !== undefined ? { maxTurns: implementerMaxTurns } : {}),
-          ...(repairBudgetUsd !== undefined ? { maxBudgetUsd: repairBudgetUsd } : {}),
-          // Honor cancel here too, else an aborted run keeps burning repair iterations. Cancel latency
-          // is up to one in-flight agent exec (the abort is observed when the current stage's exec ends).
+          outcomes,
+          pipeline,
+          // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be resumed up
+          // to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N here.
+          maxIterations: deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS,
+          ...(deps.escalateModel !== undefined ? { escalateModel: deps.escalateModel } : {}),
+          // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
+          // override it (it could even downgrade).
+          modelPinned: labelModel !== undefined,
           ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
         });
-        const prior = outcomes[implementerIdx];
-        // An escalated repair re-labels the stage's configured model, so stats attribute the final
-        // attempt to the model that actually closed the gate rather than reading it as a gateway swap.
-        if (prior !== undefined) {
-          outcomes[implementerIdx] = {
-            ...prior,
-            result: mergeAttempts(prior.result, repaired),
-            ...(escalate && deps.escalateModel !== undefined ? { model: deps.escalateModel } : {}),
-          };
-        }
-        resumeSessionId = repaired.sessionId ?? resumeSessionId;
-      }
+        gatePassed = repair.passed;
       } finally {
         console.log(summarizeOutcomes(outcomes));
       }
