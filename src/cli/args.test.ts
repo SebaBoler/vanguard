@@ -127,6 +127,8 @@ describe('parseCli', () => {
     expect(watch.kind === 'watch' && watch.fallbackProvider).toBe('codex');
     expect(parseCli(['run', '--linear', 'TES-1', '--fallback-provider', 'bogus'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('Unknown fallback-provider "bogus"') });
     expect(parseCli(['run', '--linear', 'TES-1', '--fallback-model', 'x'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('--fallback-model needs --fallback-provider') });
+    expect(parseCli(['run', '--linear', 'TES-1', '--fallback-provider', 'codex', '--fork', '3'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('does not apply to --fork') });
+    expect(parseCli(['run', '--linear', 'TES-1', '--provider', 'claude', '--fallback-provider', 'openrouter'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('Implementer fallback cannot mix') });
   });
 
   it('parses provider flags on watch too', () => {

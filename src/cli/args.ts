@@ -607,7 +607,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (provider === undefined || isProviderName(provider)) {
     try {
       validateProviderChoice(
-        { ...(provider !== undefined ? { provider } : {}), ...(reviewProvider !== undefined ? { reviewProvider } : {}) },
+        {
+          ...(provider !== undefined ? { provider } : {}),
+          ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+          ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+        },
         { proxyMode },
       );
     } catch (error) {
@@ -823,6 +827,9 @@ export function parseCli(argv: string[], cwd: string): Command {
     const forkScorer = parseForkScorer(values['fork-scorer']);
     if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
     if (forkScorer !== undefined && !(Number.isFinite(forkN) && forkN >= 2)) return fail('--fork-scorer only applies with --fork <n> (n>=2).');
+    // forkAndSelect runs every variant on the primary agent and returns before the stage fallback is
+    // consulted, so the flag would be accepted and silently never fire.
+    if (fallbackProvider !== undefined && Number.isFinite(forkN) && forkN >= 2) return fail('--fallback-provider does not apply to --fork variants; drop one of them.');
     return {
       kind: 'run',
       source: picked[0],

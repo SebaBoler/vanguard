@@ -6,6 +6,7 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
+import { redactTokens } from '../core/secret-scan.js';
 import { roundUsd } from '../core/usd.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
@@ -356,8 +357,9 @@ export async function runBudgetedStages(
       });
     } catch (err) {
       if (err instanceof AgentError && stage.fallback !== undefined) {
+        // AgentError carries the CLI's raw stderr; an auth failure may echo the credential it was given.
         ctx.log.warn(
-          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: err.message },
+          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: redactTokens(err.message) },
           `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;

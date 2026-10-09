@@ -539,6 +539,21 @@ describe('runPreflight provider combo check', () => {
     expect(comboCheck?.reason).toMatch(/cannot mix "claude" and "zai"/);
   });
 
+  it('--fallback-provider is preflighted like the reviewer: credential, auth shape and transport pairing', async () => {
+    const base = { nodeVersion: '24.11.1', run: makeRunner() };
+    // codex implementer with a claude fallback: the Anthropic token IS required (the fallback consumes it).
+    const noToken = await runPreflight(githubWatch({ provider: 'codex', fallbackProvider: 'claude' }), { ...base, env: { GH_TOKEN: 'gh', CODEX_API_KEY: 'c-key' } });
+    expect(noToken.checks.find((c) => c.name === 'llm auth')).toMatchObject({ ok: false });
+    // claude implementer with a codex fallback and no codex credential: provider auth fails before the run.
+    const noCodex = await runPreflight(githubWatch({ provider: 'claude', fallbackProvider: 'codex' }), { ...base, env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' } });
+    expect(noCodex.checks.find((c) => c.name === 'provider auth')).toMatchObject({ ok: false });
+    // claude + openrouter share the claude CLI transport: rejected here, not per task inside the loop.
+    const collide = await runPreflight(githubWatch({ provider: 'claude', fallbackProvider: 'openrouter' }), { ...base, env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', OPENROUTER_API_KEY: 'o' } });
+    expect(collide.checks.find((c) => c.name === 'provider combo')).toMatchObject({ ok: false, reason: expect.stringContaining('Implementer fallback cannot mix') });
+    const ok = await runPreflight(githubWatch({ provider: 'claude', fallbackProvider: 'codex' }), { ...base, env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CODEX_API_KEY: 'c-key' } });
+    expect(ok.checks.filter((c) => ['llm auth', 'provider auth', 'provider combo'].includes(c.name)).every((c) => c.ok)).toBe(true);
+  });
+
   it('passes provider combo when codex implements and zai reviews (different transports)', async () => {
     const report = await runPreflight(
       githubWatch({ provider: 'codex', reviewProvider: 'zai' }),

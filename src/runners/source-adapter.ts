@@ -481,6 +481,8 @@ export async function runSourcedIssue(
       // try/finally so the per-stage cost table is printed even when a repair call throws or the run
       // is cancelled mid-loop — and, on the happy path, after the loop so repairs show up in it.
       try {
+        const fallbackHolder = agents.fallbackAgent !== undefined && outcomes[implementerIdx]?.providerName === agents.fallbackAgent.name ? agents.fallbackAgent : undefined;
+        const onFallback = fallbackHolder !== undefined;
         const repair = await repairUntilGreen(ctx, {
           label: task.id,
           gate: async () => {
@@ -506,13 +508,15 @@ export async function runSourcedIssue(
             return { pass, feedback };
           },
           // Resume on the provider that actually ran the stage: after a fallback the session belongs to it.
-          agent: agents.fallbackAgent !== undefined && outcomes[implementerIdx]?.providerName === agents.fallbackAgent.name ? agents.fallbackAgent : agents.agent,
+          agent: fallbackHolder ?? agents.agent,
           outcomes,
           pipeline,
           // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be resumed up
           // to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N here.
           maxIterations: deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS,
-          ...(deps.escalateModel !== undefined ? { escalateModel: deps.escalateModel } : {}),
+          // --escalate-model names a model of the implementer's provider; handed to the fallback CLI it is
+          // an AgentError, so the fallback repairs on its own model only.
+          ...(deps.escalateModel !== undefined && !onFallback ? { escalateModel: deps.escalateModel } : {}),
           // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
           // override it (it could even downgrade).
           modelPinned: labelModel !== undefined,

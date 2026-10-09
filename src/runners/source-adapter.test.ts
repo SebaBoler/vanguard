@@ -286,6 +286,34 @@ describe('runSourcedIssue', () => {
     expect(assembled.filter((st) => st.name !== 'implementer').every((st) => st.fallback === undefined)).toBe(true);
   });
 
+  it('after a fallback the repair loop resumes on the fallback provider and --escalate-model stays off', async () => {
+    vi.mocked(selectAgents).mockReturnValueOnce({
+      agent: { name: 'claude' },
+      fallbackAgent: { name: 'codex' },
+      secrets: {},
+      proxySecrets: {},
+      injectAnthropicAuth: false,
+    } as never);
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), providerName: 'codex', model: 'gpt-5.6-sol' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'gpt-5.6-sol' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', fallbackProvider: 'codex', escalateModel: 'claude-fable-5' }, adapter);
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    for (const call of runAgent.mock.calls) {
+      expect(call[1]).toMatchObject({ agent: { name: 'codex' }, resumeSessionId: 'sess-1', model: 'gpt-5.6-sol' });
+    }
+  });
+
   it('a vanguard:model=<m> label pins the implementer model for that task, over --provider-model', async () => {
     const labelled = fakeAdapter([], STAGES);
     labelled.prepare = vi.fn(async () => ({ task: { ...task, labels: ['ready for agent', 'vanguard:model=claude-fable-5'] } }));

@@ -216,9 +216,19 @@ function codexAuthOk(env: NodeJS.ProcessEnv): PreflightCheck | undefined {
  * Collect the set of providers that need a host-key check (i.e. non-claude providers that
  * require an explicit API key). Claude is excluded — its auth is already covered by the llm auth check.
  */
+/** The providers a loop command uses besides the implementer: the reviewer and the implementer fallback
+ *  (watch only). Every provider-aware check below must see the same set the run's selectAgents will. */
+function secondaryProviders(cmd: PreflightCommand): { reviewProvider?: string; fallbackProvider?: string } {
+  if (!isLoopCommand(cmd) || cmd.kind === 'doctor-prs') return {};
+  return {
+    ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...('fallbackProvider' in cmd && cmd.fallbackProvider !== undefined ? { fallbackProvider: cmd.fallbackProvider } : {}),
+  };
+}
+
 function collectProviders(cmd: PreflightCommand, customs: readonly CustomProviderEntry[]): string[] {
-  const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
-  const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, reviewProvider];
+  const { reviewProvider, fallbackProvider } = secondaryProviders(cmd);
+  const candidates = cmd.kind === 'doctor-prs' ? [cmd.provider] : [cmd.provider, reviewProvider, fallbackProvider];
   // Zai is excluded here: it rides the Claude transport and its key is already covered by the
   // provider-aware 'llm auth' check above. Codex/Cursor still get a dedicated 'provider auth' check.
   return candidates.filter((name): name is string => name !== undefined && requiresApiKey(name, customs));
@@ -254,12 +264,11 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
     } else {
       // Codex/Cursor-only consumes no Anthropic credential in direct mode (#391); --llm-proxy still needs
       // one for the primary sidecar. Mirrors agentAuthFromEnv so preflight stops exactly when the run would.
-      const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
       const anthropicNeeded =
         cmd.llmProxy === true ||
         needsAnthropicAuth({
           ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-          ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+          ...secondaryProviders(cmd),
           customProviders: customs,
         });
       llmAuthPresent = !anthropicNeeded || authFromEnv(env) !== undefined;
@@ -293,10 +302,9 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   }
 
   try {
-    const reviewProvider = isLoopCommand(cmd) && cmd.kind !== 'doctor-prs' ? cmd.reviewProvider : undefined;
     const choice = {
       ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
-      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...secondaryProviders(cmd),
       ...(customs.length > 0 ? { customProviders: customs } : {}),
     };
     // Resolvability first: validateProviderChoice's lookups live inside its pairing/proxy branches,
