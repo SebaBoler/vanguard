@@ -8,6 +8,8 @@ import { runSpecGenerator } from './spec.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { failureReason, formatFailureComment } from '../core/errors.js';
+import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
@@ -41,9 +43,33 @@ export function specComment(spec: string, opts?: { whiteLabel?: boolean }): stri
 const NO_CHANGE_MSG =
   'Vanguard run produced no changes — no PR was opened. Cleared `vanguard:running`; re-apply the trigger label to retry. See the run log.';
 
+/**
+ * Comment posted when the secret scan withheld the PR: what the watch did with the claim and the
+ * exact step that releases the hold on THIS source (the configured trigger label / status / state).
+ * The adapter's masked-findings comment carries no procedure — it also serves one-shot runs.
+ */
+function holdMessage(claimNote: string, resume: string): string {
+  return `Vanguard held this issue: the outgoing secret scan withheld the PR. ${claimNote} To retry once the secret is out of the change, ${resume}.`;
+}
+
 /** Post the no-change comment and (optionally) revert the claim — independent I/O, run concurrently. */
 async function commentAndRevert(comment: Promise<void>, revert?: Promise<void>): Promise<void> {
   await Promise.all(revert === undefined ? [comment] : [comment, revert]);
+}
+
+/**
+ * Outcome of one issue run as the watch loop sees it. No `prUrl` has three meanings, and only the
+ * first is a genuine no-change: the agent ran and the diff was empty (`onNoChange` un-sticks the
+ * claim); `parked` — the agent never ran, triage already routed the ticket elsewhere (needs-info);
+ * `secretBlocked` — the diff was withheld by the outgoing secret scan and the adapter already
+ * labelled/commented the issue. The last must NOT revert the claim: sources that revert to the
+ * trigger state (Linear, GitHub Projects) would re-list the issue next poll, re-run it, re-hit the
+ * secret and re-post the block comment forever.
+ */
+export interface WatchRunOutcome {
+  prUrl?: string;
+  parked?: boolean;
+  secretBlocked?: boolean;
 }
 
 export interface WatchPrimitives {
@@ -51,16 +77,20 @@ export interface WatchPrimitives {
   listReady: () => Promise<Array<{ id: string }>>;
   /** Claim an issue so a later poll won't pick it again (e.g. move it out of the trigger state). */
   claim: (id: string) => Promise<void>;
-  /**
-   * `parked` distinguishes a genuine no-change (agent ran, empty diff) from a triage-park (agent
-   * never ran because the ticket was already routed elsewhere, e.g. needs-info). Only the former
-   * should trigger `onNoChange`.
-   */
-  runOne: (id: string) => Promise<{ prUrl?: string; parked?: boolean }>;
+  /** See WatchRunOutcome: only a genuine no-change (no PR, not parked, not secret-blocked) triggers `onNoChange`. */
+  runOne: (id: string) => Promise<WatchRunOutcome>;
   /** Mark an issue as in review (a PR opened). */
   review: (id: string) => Promise<void>;
   /** No PR AND not parked: undo the claim so the issue is not stuck on the claimed marker. */
   onNoChange: (id: string) => Promise<void>;
+  /**
+   * The secret scan withheld the PR. Mark the hold WITHOUT restoring the trigger (a revert would
+   * re-list the issue next poll) and tell the human how to release it: label sources swap the
+   * claimed label for the secret-blocked label; state sources keep the claimed state. Every real
+   * source supplies it; absent (test doubles) the issue simply stays claimed. A rejection routes to
+   * onFailure and the claim stays.
+   */
+  onSecretBlocked?: (id: string) => Promise<void>;
   onFailure: (id: string, error: unknown) => Promise<void>;
 }
 
@@ -72,9 +102,11 @@ export interface WatchTick {
   skipped: string[];
   /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
   deferred: string[];
+  /** PR withheld by the secret scan; held for a human (never reverted to the trigger). */
+  secretBlocked: string[];
 }
 
-type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
+type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred' | 'secretBlocked';
 
 interface WatchLogOptions {
   log?: (msg: string) => void;
@@ -99,6 +131,11 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
 /** Summary suffix for a capped poll; empty when --max-tasks left nothing for the next poll. */
 function deferredNote(tick: { deferred: string[] }): string {
   return tick.deferred.length > 0 ? `, ${tick.deferred.length} deferred by --max-tasks` : '';
+}
+
+/** Summary suffix for runs the secret scan withheld; empty on a clean poll. */
+function secretBlockedNote(tick: { secretBlocked: string[] }): string {
+  return tick.secretBlocked.length > 0 ? `, ${tick.secretBlocked.length} secret-blocked` : '';
 }
 
 function logPoll(ready: number, opts: WatchOnceOptions, phase: string): void {
@@ -156,7 +193,13 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
       }
       operatorLog(opts, `${phase} ${item.id}: claim -> running`);
       try {
-        const { prUrl, parked } = await primitives.runOne(item.id);
+        const { prUrl, parked, secretBlocked } = await primitives.runOne(item.id);
+        if (secretBlocked === true) {
+          // Log first: if the hold edit below throws, the failure comment must not be the only record.
+          operatorLog(opts, `${phase} ${item.id}: secret blocked -> held for a human`);
+          await primitives.onSecretBlocked?.(item.id);
+          return { id: item.id, kind: 'secretBlocked' };
+        }
         if (prUrl === undefined) {
           if (parked !== true) await primitives.onNoChange(item.id);
           operatorLog(opts, `${phase} ${item.id}: no change -> idle`);
@@ -175,7 +218,14 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
   );
   const ids = (kind: Kind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
+  return {
+    opened: ids('opened'),
+    noChange: ids('noChange'),
+    failed: ids('failed'),
+    skipped: ids('skipped'),
+    deferred: ids('deferred'),
+    secretBlocked: ids('secretBlocked'),
+  };
 }
 
 export interface SpecWatchPrimitives {
@@ -305,6 +355,19 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
         commentLinearIssue(id, NO_CHANGE_MSG, opts.linear),
         opts.triggerStateName !== undefined ? setLinearState(id, opts.triggerStateName, opts.linear) : undefined,
       ),
+    // Linear has no blocked state and reverting to the trigger state would re-list the issue next
+    // poll, so the hold keeps the claimed state; the comment names the exact state to move back to.
+    // Holding is only safe while `claimedState` (a state NAME) does not resolve to the `triggerState`
+    // TYPE that listReady filters on — the same assumption the claim itself and onFailure rest on.
+    onSecretBlocked: (id) =>
+      commentLinearIssue(
+        id,
+        holdMessage(
+          `It stays in "${opts.claimedState}" so the watch will not re-run it.`,
+          `move it back to ${opts.triggerStateName !== undefined ? `"${opts.triggerStateName}"` : 'its trigger state'}`,
+        ),
+        opts.linear,
+      ),
     onFailure: (id, error) => commentLinearIssue(id, formatFailureComment('Vanguard run failed', error), opts.linear),
   };
 }
@@ -390,12 +453,12 @@ async function runSpecCore(
 async function triageAgentRun(
   id: string,
   fetcher: { fetch: (id: string) => Promise<Task> },
-  runner: (id: string) => Promise<{ prUrl?: string }>,
+  runner: (id: string) => Promise<WatchRunOutcome>,
   action: {
     comment: (body: string) => Promise<void>;
     toNeedsInfo: () => Promise<void>;
   },
-): Promise<{ prUrl?: string; parked?: boolean }> {
+): Promise<WatchRunOutcome> {
   const task = await fetcher.fetch(id);
   if (assessTaskReadiness(task, 'agent') === 'needs_info') {
     await action.comment(clarifyMessage('agent'));
@@ -476,7 +539,7 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
       log,
       phase: 'watch',
     });
-    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}.`);
+    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}${secretBlockedNote(tick)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -533,7 +596,7 @@ export async function runLoopV1(
       listReady: async () => agentReady,
     };
     const agent = await watchOnce(agentThisTick, { ...concurrency, ...maxTasks, log, phase: 'watch' });
-    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}.`);
+    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}${secretBlockedNote(agent)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -595,9 +658,24 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
   const fetcher = new GitHubTaskFetcher(repo, opts.gh);
   const needsInfoLabel = opts.needsInfoLabel;
   const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
+  // Ready issues still carrying the hold label from an earlier secret block: a human re-triggered
+  // them, so the claim clears it too. Only for issues seen with the label — a blind `--remove-label`
+  // makes `gh issue edit` fail in a repo that never created it.
+  const heldBefore = new Set<string>();
   return {
-    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
-    claim: (id) => editGithubLabels(repo, id, { remove: [opts.label], add: [opts.claimedLabel] }, opts.gh),
+    listReady: async () => {
+      const tasks = await fetcher.list({ labels: agentLabels });
+      heldBefore.clear();
+      for (const task of tasks) if (task.labels.includes(GITHUB_SECRET_BLOCKED_LABEL)) heldBefore.add(task.id);
+      return tasks.map((task) => ({ id: task.id }));
+    },
+    claim: (id) =>
+      editGithubLabels(
+        repo,
+        id,
+        { remove: heldBefore.has(id) ? [opts.label, GITHUB_SECRET_BLOCKED_LABEL] : [opts.label], add: [opts.claimedLabel] },
+        opts.gh,
+      ),
     runOne:
       needsInfoLabel === undefined
         ? (id) => runGithubIssue(id, opts.deps)
@@ -612,6 +690,21 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
+    // One edit swaps claimed -> secret-blocked, so the claim is never released without the hold
+    // label landing (the adapter pre-created the label and best-effort added it; adding it again is
+    // idempotent). If the edit fails it throws into onFailure and the claimed marker stays. The
+    // trigger label was removed on claim and is not restored; the comment names the label to
+    // re-apply. Same in white-label mode: the claim label is already the watch's own marker, and a
+    // white-label adapter posts no findings, so this comment is the human's only signal.
+    onSecretBlocked: async (id) => {
+      await editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [GITHUB_SECRET_BLOCKED_LABEL] }, opts.gh);
+      await commentGithubIssue(
+        repo,
+        id,
+        holdMessage(`Swapped \`${opts.claimedLabel}\` for \`${GITHUB_SECRET_BLOCKED_LABEL}\`.`, `re-apply the \`${opts.label}\` label`),
+        opts.gh,
+      );
+    },
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
@@ -740,6 +833,8 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
 
   // Populated on each listReady call; claim/review look up the project item node ID here.
   const itemNodeIds = new Map<string, string>();
+  // Ready items still carrying the hold label from an earlier secret block; cleared on claim.
+  const heldBefore = new Set<string>();
 
   // Single cached promise: fetches project node ID and Status field in parallel, resolved once.
   let projectMeta: Promise<ProjectMeta> | undefined;
@@ -786,6 +881,7 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
         }>;
       };
       itemNodeIds.clear();
+      heldBefore.clear();
       const ready: Array<{ id: string }> = [];
       for (const item of parsed.items) {
         const content = item.content;
@@ -794,14 +890,30 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
         itemNodeIds.set(issueRef, item.id);
         if (item.status !== opts.triggerStatus) continue;
         if (opts.label !== undefined && !(content.labels ?? []).includes(opts.label)) continue;
+        if ((content.labels ?? []).includes(GITHUB_SECRET_BLOCKED_LABEL)) heldBefore.add(issueRef);
         ready.push({ id: issueRef });
       }
       return ready;
     },
-    claim: (id) => setStatus(id, opts.claimedStatus),
+    // A re-triggered item (moved back to the trigger status by a human) sheds the hold label from
+    // its earlier secret block; only for items listReady saw carrying it (see githubIssueWatchPrimitives).
+    claim: async (id) => {
+      await setStatus(id, opts.claimedStatus);
+      if (heldBefore.has(id)) await editGithubLabels(repo, id, { remove: [GITHUB_SECRET_BLOCKED_LABEL] }, gh);
+    },
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
     onNoChange: (id) => commentAndRevert(commentGithubIssue(repo, id, NO_CHANGE_MSG, gh), setStatus(id, opts.triggerStatus)),
+    // The only configured statuses are trigger/claimed/review and reverting to the trigger status
+    // would re-list the item next poll, so the hold keeps the claimed status; the comment names the
+    // status to move back to. The adapter already added the secret-blocked label + masked findings.
+    onSecretBlocked: (id) =>
+      commentGithubIssue(
+        repo,
+        id,
+        holdMessage(`It stays in "${opts.claimedStatus}" so the watch will not re-run it.`, `move it back to "${opts.triggerStatus}"`),
+        gh,
+      ),
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), gh),
   };
 }
@@ -847,12 +959,25 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
   const fetcher = new GitLabTaskFetcher(project, glab);
   const needsInfoLabel = opts.needsInfoLabel;
   const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
+  // Ready issues still carrying the hold label from an earlier secret block (re-triggered by a
+  // human): the claim clears it too. See githubIssueWatchPrimitives.
+  const heldBefore = new Set<string>();
   return {
-    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
+    listReady: async () => {
+      const tasks = await fetcher.list({ labels: agentLabels });
+      heldBefore.clear();
+      for (const task of tasks) if (task.labels.includes(GITLAB_SECRET_BLOCKED_LABEL)) heldBefore.add(task.id);
+      return tasks.map((task) => ({ id: task.id }));
+    },
     claim: (id) =>
       // Explicitly remove trigger label so future polls don't pick it up again.
       // GitLab scoped :: only auto-removes within the same scope prefix.
-      editGitlabLabels(project, id, { remove: [opts.label], add: [opts.claimedLabel] }, glab),
+      editGitlabLabels(
+        project,
+        id,
+        { remove: heldBefore.has(id) ? [opts.label, GITLAB_SECRET_BLOCKED_LABEL] : [opts.label], add: [opts.claimedLabel] },
+        glab,
+      ),
     runOne:
       needsInfoLabel === undefined
         ? (id) => runGitlabIssue(id, opts.deps)
@@ -868,6 +993,19 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
     onNoChange: async (id) => {
       await commentGitlabIssue(project, id, NO_CHANGE_MSG, glab);
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
+    },
+    // One edit swaps claimed -> secret-blocked so the claim is never released without the hold
+    // label landing; a failing edit throws into onFailure and the claimed marker stays. Trigger
+    // label not restored (removed on claim); the note names the label to re-apply. Same in
+    // white-label mode (see githubIssueWatchPrimitives).
+    onSecretBlocked: async (id) => {
+      await editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab);
+      await commentGitlabIssue(
+        project,
+        id,
+        holdMessage(`Swapped \`${opts.claimedLabel}\` for \`${GITLAB_SECRET_BLOCKED_LABEL}\`.`, `re-apply the \`${opts.label}\` label`),
+        glab,
+      );
     },
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),

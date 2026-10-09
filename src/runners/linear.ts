@@ -15,7 +15,7 @@ import type { CustomProviderEntry } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
-import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, RunIssueResult, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps extends RunIssueDeps {
@@ -23,11 +23,8 @@ export interface RunLinearIssueDeps extends RunIssueDeps {
   skillsDir: string;
 }
 
-export interface RunLinearIssueResult {
-  task: Task;
-  /** Absent when the agent produced no changes (no PR opened). */
-  prUrl?: string;
-}
+/** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld PR is not read as "no changes". */
+export type RunLinearIssueResult = RunIssueResult;
 
 /**
  * The canonical implement/review/simplify pipeline with only the implementer's prompt swapped, so
@@ -85,7 +82,8 @@ export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, 
       await linkLinearIssue(task.id, prUrl);
     },
     async signalSecretBlock(_issueRef: string, task: Task, block: SecretBlock) {
-      // Linear uses workflow states, not labels; the comment is the primary signal.
+      // Linear uses workflow states, not labels; the comment is the primary signal. The watch
+      // primitive that holds the issue posts how to release it (it knows the configured states).
       try {
         await commentLinearIssue(task.id, renderSecretBlockComment(block));
       } catch { /* best-effort */ }

@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { agentAuthFromEnv } from '../agents/auth.js';
-import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue } from '../tasks/gitlab.js';
+import { GitLabTaskFetcher, linkMergeRequest, addMrFailureLabel, editGitlabLabels, commentGitlabIssue, defaultGlabRunner } from '../tasks/gitlab.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { parseMergeRequestRef, postMergeRequestNote, mergeRequestReviewMarker } from './mr-review.js';
 import { REVIEW_INCOMPLETE, stripReviewMarkers } from './review-prompt.js';
@@ -13,7 +13,7 @@ import type { Task } from '../tasks/fetcher.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { SecretBlock } from '../core/secret-scan.js';
-import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, RunIssueResult, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitLab issue end to end. */
 export interface RunGitlabIssueDeps extends RunIssueDeps {
@@ -21,10 +21,8 @@ export interface RunGitlabIssueDeps extends RunIssueDeps {
   project: string;
 }
 
-export interface RunGitlabIssueResult {
-  task: Task;
-  prUrl?: string;
-}
+/** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld MR is not read as "no changes". */
+export type RunGitlabIssueResult = RunIssueResult;
 
 /** @internal Exported for unit tests; production callers use runGitlabIssue. */
 export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): SourceAdapter {
@@ -43,10 +41,15 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
       await linkMergeRequest(deps.project, issueRef, mrUrl, glab);
     },
     async signalSecretBlock(issueRef: string, _task: Task, block: SecretBlock) {
-      await Promise.all([
-        editGitlabLabels(deps.project, issueRef, { add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab).catch(() => undefined),
-        commentGitlabIssue(deps.project, issueRef, renderSecretBlockComment(block), glab).catch(() => undefined),
-      ]);
+      // `glab issue update --label` is a silent no-op on a project lacking the label (see
+      // addMrFailureLabel), which would leave the held issue with no Vanguard label at all. Ensure
+      // it first; every step stays best-effort.
+      const label = (glab ?? defaultGlabRunner)(['label', 'create', '--repo', deps.project, '--name', GITLAB_SECRET_BLOCKED_LABEL])
+        .catch(() => undefined)
+        .then(() => editGitlabLabels(deps.project, issueRef, { add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab))
+        .catch(() => undefined);
+      // No recovery procedure here (the watch primitive that holds the issue posts the resume line).
+      await Promise.all([label, commentGitlabIssue(deps.project, issueRef, renderSecretBlockComment(block), glab).catch(() => undefined)]);
     },
   };
 }
