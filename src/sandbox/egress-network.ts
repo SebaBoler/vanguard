@@ -1,11 +1,10 @@
-import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
-import { sandboxImage } from './docker.js';
 import { DEFAULT_EGRESS_ALLOWLIST } from './egress-proxy.js';
-import { ownerLabelArgs, sidecarMemoryArgs } from './limits.js';
-import type { DockerRunner } from './llm-proxy.js';
+import { ownerLabelArgs } from './limits.js';
+import { startSidecar, defaultDocker } from './sidecar.js';
+import type { DockerRunner } from './sidecar.js';
 
 const PROXY_PORT = 8080;
 // Resolves to dist/sandbox/egress-proxy-server.mjs (built) or src/... (tsx) — next to this module.
@@ -13,14 +12,6 @@ const PROXY_SCRIPT = fileURLToPath(new URL('./egress-proxy-server.mjs', import.m
 // Shared allow logic the server imports via a relative `./egress-allow.mjs`; cp'd into the SAME
 // /tmp dir so that relative import resolves inside the container.
 const PROXY_LOGIC = fileURLToPath(new URL('./egress-allow.mjs', import.meta.url));
-
-const defaultDocker: DockerRunner = async (args, opts) => {
-  const result = await execa('docker', args, {
-    reject: false,
-    ...(opts?.input !== undefined ? { input: opts.input } : {}),
-  });
-  return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
-};
 
 export interface EgressEnclave {
   /** Internal docker network the sandbox must join (no route to the internet, only to the proxy). */
@@ -48,50 +39,31 @@ export async function startEgressEnclave(
 ): Promise<EgressEnclave> {
   const docker = opts.docker ?? defaultDocker;
   const allowlist = opts.allowlist ?? DEFAULT_EGRESS_ALLOWLIST;
-  // The proxy sidecar runs its node script inside the sandbox image itself (no dedicated proxy
-  // image), so it must follow the same CI-pinned override as the main sandbox.
-  const image = opts.image ?? sandboxImage();
   const id = randomUUID().slice(0, 8);
   const network = `vg-egr-${id}`;
   const proxy = `vg-proxy-${id}`;
-  const teardown = async (): Promise<void> => {
-    await docker(['rm', '-f', proxy]);
-    await docker(['network', 'rm', network]);
-  };
-  const must = async (args: string[]): Promise<void> => {
-    const result = await docker(args);
-    if (result.exitCode !== 0) throw new Error(`docker ${args[0]} failed: ${result.stderr}`);
-  };
+  const networkCreate = await docker(['network', 'create', '--internal', ...ownerLabelArgs(), network]);
+  if (networkCreate.exitCode !== 0) throw new SandboxError(`Failed to start egress enclave ${id}`, { cause: new Error(`docker network create failed: ${networkCreate.stderr}`) });
   try {
-    await must(['network', 'create', '--internal', ...ownerLabelArgs(), network]);
-    // Created (not started) on the default bridge so the script can be cp'd in first; joined to the
-    // internal network before start.
-    await must([
-      'create',
-      '--name',
-      proxy,
-      '--label',
-      `vanguard.runId=${id}`,
-      ...ownerLabelArgs(),
-      '--restart',
-      'on-failure:10',
-      ...sidecarMemoryArgs(),
-      '-e',
-      `ALLOW=${allowlist.join(',')}`,
-      '-e',
-      `PORT=${PROXY_PORT}`,
-      image,
-      'node',
-      '/tmp/egress-proxy.mjs',
-    ]);
-    await must(['network', 'connect', network, proxy]);
-    await must(['cp', PROXY_SCRIPT, `${proxy}:/tmp/egress-proxy.mjs`]);
-    // The shared logic must sit next to the server so its relative import resolves.
-    await must(['cp', PROXY_LOGIC, `${proxy}:/tmp/egress-allow.mjs`]);
-    await must(['start', proxy]);
-    return { network, proxyUrl: `http://${proxy}:${PROXY_PORT}`, destroy: teardown };
+    const sidecar = await startSidecar({
+      name: proxy,
+      runId: id,
+      docker,
+      ...(opts.image !== undefined ? { image: opts.image } : {}),
+      network,
+      files: [
+        { src: PROXY_SCRIPT, dest: '/tmp/egress-proxy.mjs' },
+        // The shared logic must sit next to the server so its relative import resolves.
+        { src: PROXY_LOGIC, dest: '/tmp/egress-allow.mjs' },
+      ],
+      env: { ALLOW: allowlist.join(','), PORT: String(PROXY_PORT) },
+      createArgs: ['--restart', 'on-failure:10'],
+      cmd: ['node', '/tmp/egress-proxy.mjs'],
+      alsoDestroy: async () => { await docker(['network', 'rm', network]); },
+    });
+    return { network, proxyUrl: `http://${proxy}:${PROXY_PORT}`, destroy: sidecar.destroy };
   } catch (cause) {
-    await teardown();
+    // startSidecar's teardown already removed the proxy container and (via alsoDestroy) the network.
     throw new SandboxError(`Failed to start egress enclave ${id}`, { cause });
   }
 }

@@ -158,6 +158,19 @@ describe('startLlmProxy', () => {
     }
   });
 
+  it('a non-zero docker exit (the production failure shape) tears down and throws instead of returning a dead proxy URL', async () => {
+    const removed: string[][] = [];
+    const run = async (args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+      if (args[0] === 'rm') removed.push(args);
+      if (args[0] === 'cp') return { exitCode: 1, stdout: '', stderr: 'no such file' };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    await expect(
+      startLlmProxy({ network: 'n', auth: { mode: 'api', secret: 's' }, docker: run }),
+    ).rejects.toThrow(/Failed to start llm proxy/);
+    expect(removed.some((a) => a.includes('-f'))).toBe(true);
+  });
+
   it('tears down the sidecar and wraps failures in SandboxError', async () => {
     const removed: string[][] = [];
     const run = async (args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
