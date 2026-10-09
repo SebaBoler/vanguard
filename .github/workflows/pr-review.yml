@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted: a fallback whose credential is missing is disabled with a warning (never a red job); any other preflight failure, e.g. an unknown provider name, fails the run. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted: a fallback whose credential is missing is disabled with a warning (never a red job); any other preflight failure, e.g. an unknown provider name, fails the run. The retry keeps the event hint, so the just-labeled PR is found even when the label search lags; a head the first attempt already reviewed no longer carries the trigger label and is skipped.'
         type: string
         default: ''
       fallback-model:
@@ -183,12 +183,13 @@ jobs:
             node .vanguard-src/dist/cli/index.js "${args[@]}"
           }
           if [ -n "$IN_FALLBACK_PROVIDER" ] && [ "$IN_FALLBACK_OK" = "true" ]; then
-            # The fallback runs with no event hint: the hinted (just-labeled) PR bypasses the "head already
-            # reviewed" check, so a retry after the first attempt had already posted its review would post a
-            # second one. Scanned by label only, the fallback skips a head that has a verdict. Residual gap:
-            # a deliberately re-labeled head whose first attempt failed before posting gets no fallback review
-            # — re-add the label.
-            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL" || GITHUB_EVENT_PATH='' run_review "$IN_FALLBACK_PROVIDER" "$IN_FALLBACK_MODEL"
+            # The fallback keeps the event hint. Without it the retry relied on the label scan, which lagged
+            # behind the label restore the failed attempt had just made and returned "0 ready": the fallback
+            # reviewed nothing, exited 0, and the job went green with no review on the PR (alpha-window run
+            # 37902049649). The hint cannot double-post: a PR the first attempt reviewed has had the trigger
+            # label swapped for the reviewed label, so the hinted fetch skips it. Residual: a review that was
+            # posted but whose label edit then failed gets a second review — accepted over a silent green job.
+            run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL" || run_review "$IN_FALLBACK_PROVIDER" "$IN_FALLBACK_MODEL"
           else
             run_review "$IN_PROVIDER" "$IN_REVIEW_MODEL"
           fi
