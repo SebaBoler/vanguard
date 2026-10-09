@@ -46,21 +46,40 @@ async function commentAndRevert(comment: Promise<void>, revert?: Promise<void>):
   await Promise.all(revert === undefined ? [comment] : [comment, revert]);
 }
 
+/**
+ * Outcome of one issue run as the watch loop sees it. No `prUrl` has three meanings, and only the
+ * first is a genuine no-change: the agent ran and the diff was empty (`onNoChange` un-sticks the
+ * claim); `parked` — the agent never ran, triage already routed the ticket elsewhere (needs-info);
+ * `secretBlocked` — the diff was withheld by the outgoing secret scan and the adapter already
+ * labelled/commented the issue. The last must NOT revert the claim: sources that revert to the
+ * trigger state (Linear, GitHub Projects) would re-list the issue next poll, re-run it, re-hit the
+ * secret and re-post the block comment forever.
+ */
+export interface WatchRunOutcome {
+  prUrl?: string;
+  parked?: boolean;
+  secretBlocked?: boolean;
+}
+
 export interface WatchPrimitives {
   /** List issues currently ready to run (trigger state + label). */
   listReady: () => Promise<Array<{ id: string }>>;
   /** Claim an issue so a later poll won't pick it again (e.g. move it out of the trigger state). */
   claim: (id: string) => Promise<void>;
-  /**
-   * `parked` distinguishes a genuine no-change (agent ran, empty diff) from a triage-park (agent
-   * never ran because the ticket was already routed elsewhere, e.g. needs-info). Only the former
-   * should trigger `onNoChange`.
-   */
-  runOne: (id: string) => Promise<{ prUrl?: string; parked?: boolean }>;
+  /** See WatchRunOutcome: only a genuine no-change (no PR, not parked, not secret-blocked) triggers `onNoChange`. */
+  runOne: (id: string) => Promise<WatchRunOutcome>;
   /** Mark an issue as in review (a PR opened). */
   review: (id: string) => Promise<void>;
   /** No PR AND not parked: undo the claim so the issue is not stuck on the claimed marker. */
   onNoChange: (id: string) => Promise<void>;
+  /**
+   * The secret scan withheld the PR: take the issue off the claimed marker WITHOUT restoring the
+   * trigger, so it is neither re-picked nor shown as running. The adapter has already posted the
+   * masked findings and (where the source has labels) the secret-blocked label; a human strips the
+   * secret and re-triggers. Absent: the issue stays on the claimed marker (sources whose only
+   * revert is "back to the trigger state").
+   */
+  onSecretBlocked?: (id: string) => Promise<void>;
   onFailure: (id: string, error: unknown) => Promise<void>;
 }
 
@@ -72,9 +91,11 @@ export interface WatchTick {
   skipped: string[];
   /** Ready but left unclaimed for the next poll, because --max-tasks was already met. */
   deferred: string[];
+  /** PR withheld by the secret scan; held for a human (never reverted to the trigger). */
+  secretBlocked: string[];
 }
 
-type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred';
+type Kind = 'opened' | 'noChange' | 'failed' | 'skipped' | 'deferred' | 'secretBlocked';
 
 interface WatchLogOptions {
   log?: (msg: string) => void;
@@ -99,6 +120,11 @@ function operatorLog(opts: WatchLogOptions, msg: string): void {
 /** Summary suffix for a capped poll; empty when --max-tasks left nothing for the next poll. */
 function deferredNote(tick: { deferred: string[] }): string {
   return tick.deferred.length > 0 ? `, ${tick.deferred.length} deferred by --max-tasks` : '';
+}
+
+/** Summary suffix for runs the secret scan withheld; empty on a clean poll. */
+function secretBlockedNote(tick: { secretBlocked: string[] }): string {
+  return tick.secretBlocked.length > 0 ? `, ${tick.secretBlocked.length} secret-blocked` : '';
 }
 
 function logPoll(ready: number, opts: WatchOnceOptions, phase: string): void {
@@ -156,7 +182,12 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
       }
       operatorLog(opts, `${phase} ${item.id}: claim -> running`);
       try {
-        const { prUrl, parked } = await primitives.runOne(item.id);
+        const { prUrl, parked, secretBlocked } = await primitives.runOne(item.id);
+        if (secretBlocked === true) {
+          await primitives.onSecretBlocked?.(item.id);
+          operatorLog(opts, `${phase} ${item.id}: secret blocked -> held for a human`);
+          return { id: item.id, kind: 'secretBlocked' };
+        }
         if (prUrl === undefined) {
           if (parked !== true) await primitives.onNoChange(item.id);
           operatorLog(opts, `${phase} ${item.id}: no change -> idle`);
@@ -175,7 +206,14 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
   );
   const ids = (kind: Kind): string[] =>
     results.flatMap((o) => (o.status === 'fulfilled' && o.value.kind === kind ? [o.value.id] : []));
-  return { opened: ids('opened'), noChange: ids('noChange'), failed: ids('failed'), skipped: ids('skipped'), deferred: ids('deferred') };
+  return {
+    opened: ids('opened'),
+    noChange: ids('noChange'),
+    failed: ids('failed'),
+    skipped: ids('skipped'),
+    deferred: ids('deferred'),
+    secretBlocked: ids('secretBlocked'),
+  };
 }
 
 export interface SpecWatchPrimitives {
@@ -305,6 +343,8 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
         commentLinearIssue(id, NO_CHANGE_MSG, opts.linear),
         opts.triggerStateName !== undefined ? setLinearState(id, opts.triggerStateName, opts.linear) : undefined,
       ),
+    // No onSecretBlocked: Linear has no blocked state to move to and reverting to the trigger state
+    // would re-list the issue next poll. It stays claimed; the adapter's masked comment is the signal.
     onFailure: (id, error) => commentLinearIssue(id, formatFailureComment('Vanguard run failed', error), opts.linear),
   };
 }
@@ -390,12 +430,12 @@ async function runSpecCore(
 async function triageAgentRun(
   id: string,
   fetcher: { fetch: (id: string) => Promise<Task> },
-  runner: (id: string) => Promise<{ prUrl?: string }>,
+  runner: (id: string) => Promise<WatchRunOutcome>,
   action: {
     comment: (body: string) => Promise<void>;
     toNeedsInfo: () => Promise<void>;
   },
-): Promise<{ prUrl?: string; parked?: boolean }> {
+): Promise<WatchRunOutcome> {
   const task = await fetcher.fetch(id);
   if (assessTaskReadiness(task, 'agent') === 'needs_info') {
     await action.comment(clarifyMessage('agent'));
@@ -476,7 +516,7 @@ async function runWatchLoop(primitives: WatchPrimitives, opts: LoopControls, log
       log,
       phase: 'watch',
     });
-    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}.`);
+    log(`watch: ${tick.opened.length} PR(s), ${tick.noChange.length} no-change, ${tick.failed.length} failed, ${tick.skipped.length} skipped${deferredNote(tick)}${secretBlockedNote(tick)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -533,7 +573,7 @@ export async function runLoopV1(
       listReady: async () => agentReady,
     };
     const agent = await watchOnce(agentThisTick, { ...concurrency, ...maxTasks, log, phase: 'watch' });
-    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}.`);
+    log(`watch: ${agent.opened.length} PR(s), ${agent.noChange.length} no-change, ${agent.failed.length} failed, ${agent.skipped.length} skipped${deferredNote(agent)}${secretBlockedNote(agent)}.`);
     if (opts.once === true) return;
     await delay(intervalMs, opts.signal);
   }
@@ -612,6 +652,9 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
+    // The trigger label was removed on claim and is not restored: the issue sits on
+    // `vanguard:secret-blocked` (added by the adapter) until a human re-triggers it.
+    onSecretBlocked: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
@@ -802,6 +845,9 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
     onNoChange: (id) => commentAndRevert(commentGithubIssue(repo, id, NO_CHANGE_MSG, gh), setStatus(id, opts.triggerStatus)),
+    // No onSecretBlocked: the only configured statuses are trigger/claimed/review, and reverting to
+    // the trigger status would re-list the item next poll. It stays claimed; the adapter's
+    // secret-blocked label + masked comment on the issue are the signal.
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), gh),
   };
 }
@@ -869,6 +915,9 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await commentGitlabIssue(project, id, NO_CHANGE_MSG, glab);
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
+    // Trigger label not restored (removed on claim): the issue sits on `vanguard::secret-blocked`
+    // (added by the adapter) until a human re-triggers it.
+    onSecretBlocked: (id) => editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab),
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),
   };

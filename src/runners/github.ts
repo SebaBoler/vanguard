@@ -12,18 +12,15 @@ import type { Task } from '../tasks/fetcher.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
-import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, RunIssueResult, SourceAdapter, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitHub issue end to end. */
 export interface RunGithubIssueDeps extends RunIssueDeps {
   repoSlug: string;
 }
 
-export interface RunGithubIssueResult {
-  task: Task;
-  /** Absent when the agent produced no changes (no PR opened). */
-  prUrl?: string;
-}
+/** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld PR is not read as "no changes". */
+export type RunGithubIssueResult = RunIssueResult;
 
 function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
   return {

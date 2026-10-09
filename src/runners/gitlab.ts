@@ -13,7 +13,7 @@ import type { Task } from '../tasks/fetcher.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { SecretBlock } from '../core/secret-scan.js';
-import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
+import type { RunIssueDeps, RunIssueResult, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
 
 /** Everything needed to run a single GitLab issue end to end. */
 export interface RunGitlabIssueDeps extends RunIssueDeps {
@@ -21,10 +21,8 @@ export interface RunGitlabIssueDeps extends RunIssueDeps {
   project: string;
 }
 
-export interface RunGitlabIssueResult {
-  task: Task;
-  prUrl?: string;
-}
+/** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld MR is not read as "no changes". */
+export type RunGitlabIssueResult = RunIssueResult;
 
 /** @internal Exported for unit tests; production callers use runGitlabIssue. */
 export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): SourceAdapter {
