@@ -47,6 +47,40 @@ export interface AgentRunOutput {
   model?: string;
 }
 
+/** Which CLI an adapter drives — the trait callers need instead of matching provider names. */
+export type AgentFamily = 'claude-cli' | 'codex' | 'cursor' | 'pi';
+
+/**
+ * The one table mapping an adapter name to its family. Every adapter that runs `runClaudeCli`
+ * (claude-code, zai, openrouter, meridian, and every repo-configured custom provider) is
+ * `claude-cli`: it writes a resumable session jsonl, reads skills from ~/.claude, and so on. Callers
+ * read the trait here instead of keeping their own name lists, which drifted (openrouter, meridian
+ * and customs silently lost session capture).
+ */
+const AGENT_FAMILIES: Readonly<Record<string, AgentFamily>> = {
+  'claude-code': 'claude-cli',
+  zai: 'claude-cli',
+  openrouter: 'claude-cli',
+  meridian: 'claude-cli',
+  codex: 'codex',
+  cursor: 'cursor',
+  pi: 'pi',
+};
+
+/**
+ * Family of an adapter by its `AgentProvider.name` (`'claude-code'`, `'zai'`, … or `custom:<name>`) —
+ * NOT the registry key a user types (`'claude'`); see providerUpstream in registry.ts for that namespace.
+ * An unknown name is a custom provider, which always drives the Claude CLI.
+ */
+export function agentFamily(adapterName: string | undefined): AgentFamily {
+  return adapterName !== undefined && Object.hasOwn(AGENT_FAMILIES, adapterName) ? (AGENT_FAMILIES[adapterName] ?? 'claude-cli') : 'claude-cli';
+}
+
+/** True when the table names this adapter explicitly (built-ins must; customs fall through by design). */
+export function agentFamilyIsExplicit(adapterName: string): boolean {
+  return Object.hasOwn(AGENT_FAMILIES, adapterName);
+}
+
 export interface AgentProvider {
   readonly name: string;
   /** Run one agent invocation inside the sandbox; yields assistant turns, returns a summary. */

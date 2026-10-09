@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isProviderName, makeProvider, providerSecrets, selectAgents, validateProviderChoice, PROVIDER_NAMES } from './registry.js';
+import { isProviderName, makeProvider, providerSecrets, providerUpstream, selectAgents, validateProviderChoice, PROVIDER_NAMES } from './registry.js';
 
 describe('isProviderName', () => {
   it('accepts known providers and rejects others', () => {
@@ -350,5 +350,15 @@ describe('validateProviderChoice', () => {
     expect(() => selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env2, { proxyMode: true })).toThrow(
       /needs "zai" as the implementer/,
     );
+  });
+});
+
+describe('providerUpstream', () => {
+  it('reads the sidecar upstream from the provider table: zai and openrouter own one, the rest ride Anthropic', () => {
+    expect(providerUpstream('zai')).toBe('zai');
+    expect(providerUpstream('openrouter')).toBe('openrouter');
+    for (const name of ['claude', 'codex', 'cursor', 'meridian', undefined, 'acme-custom']) {
+      expect(providerUpstream(name)).toBe('anthropic');
+    }
   });
 });

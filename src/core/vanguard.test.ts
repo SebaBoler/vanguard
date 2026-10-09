@@ -361,6 +361,24 @@ describe('vanguard.run', () => {
     expect(captureAttempted).toBe(false); // skipped by provider, not attempted-and-swallowed
   });
 
+  for (const name of ['openrouter', 'meridian', 'custom:acme-gateway']) {
+    it(`attempts session capture for ${name} — every adapter that drives the Claude CLI, not only two names`, async () => {
+      const wm = new WorktreeManager(repo);
+      let captureAttempted = false;
+      const sandbox = sessionTrackingSandbox(() => { captureAttempted = true; });
+      const agent: AgentProvider = {
+        name,
+        async *run(): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+          return { finalText: 'done', turns: 1, sessionId: 's1' };
+        },
+      };
+      const ctx = await prepareContext({ taskId: `cap-${name}`, localRepoPath: repo, sandbox }, { worktrees: wm });
+      await runAgent(ctx, { promptTemplate: 'p', agent });
+      await disposeContext(ctx);
+      expect(captureAttempted).toBe(true);
+    });
+  }
+
   it('does not fail a claude-family stage when session capture fails (non-fatal, attempted)', async () => {
     const wm = new WorktreeManager(repo);
     let captureAttempted = false;

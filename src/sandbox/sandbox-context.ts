@@ -1,4 +1,5 @@
 import { startEgressEnclave } from './egress-network.js';
+import { providerUpstream } from '../agents/registry.js';
 import { startLlmProxy } from './llm-proxy.js';
 import { llmProxyEgressAllowlist } from './egress-proxy.js';
 import { DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
@@ -82,7 +83,7 @@ export async function startSandboxContext(opts: SandboxContextOptions): Promise<
   }
 
   if (opts.auth === undefined) throw new Error(LLM_PROXY_CREDENTIAL_MESSAGE); // narrowing; checked above
-  const upstream: Upstream = opts.provider === 'zai' || opts.provider === 'openrouter' ? opts.provider : 'anthropic';
+  const upstream: Upstream = providerUpstream(opts.provider);
   const auth = llmProxyAuth(opts.auth);
   // startLlmProxy fails closed on any docker error; the enclave created above is this function's to
   // clean up, or its network and proxy container would survive until `vanguard gc`.
