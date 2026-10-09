@@ -1,4 +1,4 @@
-import { anthropicTransportKeyEnv, needsAnthropicAuth } from './registry.js';
+import { claudeCliKeyEnv, needsAnthropicAuth } from './registry.js';
 import type { ProviderChoice } from './registry.js';
 
 export type AgentAuth = { mode: 'subscription'; token: string } | { mode: 'api'; apiKey: string };
@@ -43,7 +43,7 @@ export function agentAuthFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): AgentAuth | undefined {
   const hostEnv =
-    choice.provider !== undefined ? anthropicTransportKeyEnv(choice.provider, choice.customProviders) : undefined;
+    choice.provider !== undefined ? claudeCliKeyEnv(choice.provider, choice.customProviders) : undefined;
   if (hostEnv !== undefined) {
     const key = hostEnv.map((k) => env[k]).find((v) => v !== undefined && v !== '');
     if (key === undefined) {

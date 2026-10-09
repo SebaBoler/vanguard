@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { anthropicTransportKeyEnv, makeProvider } from '../agents/registry.js';
+import { claudeCliKeyEnv, makeProvider } from '../agents/registry.js';
 import type { CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage } from '../pipeline/pipeline.js';
 import { STAGE_LIBRARY } from './library.js';
@@ -91,13 +91,13 @@ function resolveProvider(
 ): ReturnType<typeof makeProvider> {
   // A stage pin only swaps the AGENT for that stage; the sandbox transport env (ANTHROPIC_BASE_URL
   // + token) is fixed per-run by selectAgents from the run's --provider. A pinned provider that
-  // owns the Anthropic transport (zai, openrouter, meridian, customs) would therefore silently run
+  // owns the Claude CLI transport (zai, openrouter, meridian, customs) would therefore silently run
   // against the RUN provider's endpoint with the pin's forced model — reject loudly instead.
-  // (anthropicTransportKeyEnv doubles as the unknown-name check: it throws the listing error.)
-  if (anthropicTransportKeyEnv(name, customs) !== undefined) {
+  // (claudeCliKeyEnv doubles as the unknown-name check: it throws the listing error.)
+  if (claudeCliKeyEnv(name, customs) !== undefined) {
     throw new Error(
       `unknown provider configuration: stage "${stageName}" pins provider "${name}", which owns the ` +
-        `Anthropic transport — per-stage transport rerouting is not supported; set it as the run's --provider instead`,
+        `Claude CLI transport — per-stage transport rerouting is not supported; set it as the run's --provider instead`,
     );
   }
   return makeProvider(name, customs);
