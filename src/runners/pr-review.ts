@@ -10,6 +10,7 @@ import {
   VERDICT_WITHOUT_COMPLETION_NOTE,
   diffLineCount,
   neutralizePromptTags,
+  omitGeneratedFiles,
   outputTail,
   reviewOutcomeUsable,
   stripReviewMarkers,
@@ -128,7 +129,7 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
   const view = JSON.parse(
     await gh(['pr', 'view', number, '--repo', target.repoSlug, '--json', 'number,title,body,url,author,headRefName,headRefOid,baseRefName']),
   ) as GhPullRequestView;
-  const diff = await gh(['pr', 'diff', number, '--repo', target.repoSlug]);
+  const diff = omitGeneratedFiles(await gh(['pr', 'diff', number, '--repo', target.repoSlug]));
   return {
     repoSlug: target.repoSlug,
     number: view.number ?? target.number,
