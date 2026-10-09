@@ -258,6 +258,9 @@ export async function runBudgetedStages(
   // The provider that produced `sessionId`: a session is only resumable on the CLI that opened it, so
   // after an implementer fallback a resumePrevious stage on the primary agent starts fresh instead.
   let sessionOwner: string | undefined;
+  // Set once a stage's primary provider threw and its fallback took over: later stages that carry a
+  // fallback go straight to it instead of paying a failed attempt each against the same dead provider.
+  let primaryDown = false;
   let spentUsd = 0;
   const emit = opts.onEvent ?? ((): void => {});
   let index = 0;
@@ -334,8 +337,9 @@ export async function runBudgetedStages(
     }
 
     // Effective provider and model; may be overridden when the stage's fallback activates.
-    let effectiveAgent = agent;
-    let effectiveModel: string | undefined = stage.model;
+    const skipPrimary = primaryDown && stage.provider === undefined && stage.fallback !== undefined;
+    let effectiveAgent = skipPrimary && stage.fallback !== undefined ? stage.fallback.provider : agent;
+    let effectiveModel: string | undefined = skipPrimary && stage.fallback !== undefined ? stage.fallback.model : stage.model;
 
     // Stable per-stage options shared by the primary attempt, fallback, and any auto-resume calls.
     const stageOpts = {
@@ -370,6 +374,7 @@ export async function runBudgetedStages(
         );
         effectiveAgent = stage.fallback.provider;
         effectiveModel = stage.fallback.model;
+        if (stage.provider === undefined) primaryDown = true;
         // Do not resume the failed primary session.
         result = await runAgent(ctx, {
           ...stageOpts,

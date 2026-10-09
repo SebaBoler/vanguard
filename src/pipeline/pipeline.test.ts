@@ -19,6 +19,7 @@ import {
   withStageModel,
   withStageModelExcept,
   withStageFallback,
+  withPrimaryFallback,
   withStageMaxTurns,
   withStageResumeUntilComplete,
   DELIVER_FULL_SCOPE_CLAUSE,
@@ -269,6 +270,41 @@ describe('runBudgetedStages', () => {
     expect(fallbackInputs[1]?.resumeSessionId).toBeUndefined();
     expect(fallbackInputs[1]?.model).toBeUndefined();
     expect(reviewerInputs[0]?.resumeSessionId).toBeUndefined();
+    await disposeContext(ctx);
+  });
+
+  it('once the primary has fallen over, later stages with a fallback skip it instead of failing again', async () => {
+    const wm = new WorktreeManager(repo);
+    const primaryInputs: AgentRunInput[] = [];
+    const fallbackInputs: AgentRunInput[] = [];
+    const primary: AgentProvider = {
+      name: 'claude',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        primaryInputs.push(input);
+        throw new AgentError('usage limit reached');
+      },
+    };
+    const fallback = recordingAgent(fallbackInputs);
+    const ctx = await prepareContext({ taskId: 'latch', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages = withPrimaryFallback(
+      [
+        { name: 'implementer', promptTemplate: 'implement', model: 'claude-sonnet-5' },
+        { name: 'simplifier', promptTemplate: 'simplify', resumePrevious: false },
+      ],
+      { provider: fallback, model: 'gpt-5.6-sol' },
+    );
+
+    const result = await runBudgetedStages(ctx, stages, { agent: primary, maxCostUsd: 1 });
+
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes.map((o) => [o.name, o.providerName, o.model])).toEqual([
+        ['implementer', 'rec', 'gpt-5.6-sol'],
+        ['simplifier', 'rec', 'gpt-5.6-sol'],
+      ]);
+    }
+    expect(primaryInputs).toHaveLength(1);
+    expect(fallbackInputs).toHaveLength(2);
     await disposeContext(ctx);
   });
 

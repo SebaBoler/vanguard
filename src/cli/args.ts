@@ -1098,8 +1098,8 @@ Commands:
                            run/watch/doctor also accept a custom provider name from the repo's
                            .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
-    --fallback-provider <name>  Retry the implementer on this provider when the primary one fails (outage, limit, revoked credential); must sit on a different transport (e.g. codex for a claude implementer)
-    --fallback-model <model>    Model for the fallback implementer (default: that provider's default)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
@@ -1194,8 +1194,8 @@ Commands:
                            run/watch/doctor also accept a custom provider name from the repo's
                            .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
-    --fallback-provider <name>  Retry the implementer on this provider when the primary one fails (outage, limit, revoked credential); must sit on a different transport (e.g. codex for a claude implementer)
-    --fallback-model <model>    Model for the fallback implementer (default: that provider's default)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
