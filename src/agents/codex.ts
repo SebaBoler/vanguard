@@ -72,11 +72,15 @@ export class CodexProvider implements AgentProvider {
     // caught by the graceful-exit guard.
     await sh(CODEX_SETUP, execOpts);
 
+    // Feed the prompt on stdin (`-` as the PROMPT arg), never on argv: the command runs through
+    // `sh -lc "<command>"`, so the whole prompt lands in ONE argv string, which Linux caps at
+    // MAX_ARG_STRLEN (128 KiB). A PR-review prompt embeds the diff; past the cap `codex` never starts
+    // (exit 1 within seconds, empty stdout AND stderr), which surfaces below as "no parseable output".
     const args = buildArgs(input);
-    args.push(input.prompt);
+    args.push('-');
     const command = `codex ${args.map(shellQuote).join(' ')}`;
 
-    const res = await sh(command, execOpts);
+    const res = await sh(command, { ...execOpts, input: input.prompt });
 
     let sessionId: string | undefined;
     let finalText = '';
