@@ -48,7 +48,7 @@ function makeSandbox(): IsolatedSandboxProvider {
 describe('publishForReview', () => {
   it('pushes the branch and opens a PR via the injected runner', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'pub', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'pub', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: Array<{ file: string; args: string[] }> = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
       calls.push({ file, args });
@@ -69,9 +69,25 @@ describe('publishForReview', () => {
     await disposeContext(ctx);
   });
 
+  it('fetches and targets the base the context was prepared for, never a default (#446)', async () => {
+    await execa('git', ['branch', 'dev'], { cwd: repo });
+    const wm = new WorktreeManager(repo, undefined, () => 'r-dev');
+    const ctx = await prepareContext({ taskId: 'pub-dev', localRepoPath: repo, baseBranch: 'dev', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
+    const calls: string[][] = [];
+    const runner = async (file: string, args: string[]): Promise<string> => {
+      calls.push([file, ...args]);
+      if (args[0] === 'ls-remote') throw new Error('exit 2');
+      return file === 'gh' ? 'https://github.com/o/r/pull/44' : '';
+    };
+    await publishForReview(ctx, { title: 'PR', runner });
+    expect(calls).toContainEqual(['git', 'fetch', '--end-of-options', 'origin', 'dev']);
+    expect(calls.at(-1)).toEqual(expect.arrayContaining(['pr', 'create', '--base', 'dev']));
+    await disposeContext(ctx);
+  });
+
   it('rebases onto the remote base, then pushes, when the base moved during the run (#423)', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r2');
-    const ctx = await prepareContext({ taskId: 'pub2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'pub2', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
     let ghArgs: string[] = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
@@ -99,7 +115,7 @@ describe('publishForReview', () => {
 
   it('still pushes when the base cannot be fetched (no remote / offline)', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r3');
-    const ctx = await prepareContext({ taskId: 'pub3', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'pub3', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
       if (file === 'gh') return 'https://github.com/o/r/pull/44';
@@ -116,7 +132,7 @@ describe('publishForReview', () => {
 
   it('publishForReview with glab calls glab mr create with gitlab flags', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'gl-test', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'gl-test', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: Array<{ file: string; args: string[]; cwd: string }> = [];
     const runner = async (file: string, args: string[], cwd: string): Promise<string> => {
       calls.push({ file, args, cwd });
@@ -144,7 +160,7 @@ describe('publishForReview', () => {
 
   it('keeps a line of a GitLab MR description from running as a quick action', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'qa-desc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'qa-desc', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: string[][] = [];
     await publishForReview(ctx, {
       title: 'MR',
@@ -162,7 +178,7 @@ describe('publishForReview', () => {
 
   it('lists the CI config copy-back dropped, with sandbox-chosen names reduced to plain characters', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'ci-note', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ci-note', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const bodyOf = async (): Promise<string> => {
       const calls: string[][] = [];
       await publishForReview(ctx, {
@@ -208,7 +224,7 @@ describe('pushAuthConfigArgs', () => {
 describe('pushToExistingBranch', () => {
   it('with pushToken set, prepends the extraheader override before push', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'push-token', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'push-token', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: Array<{ file: string; args: string[] }> = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
       calls.push({ file, args });
@@ -230,7 +246,7 @@ describe('pushToExistingBranch', () => {
 
   it('with pushToken absent, argv is exactly the baseline (no -c prefix)', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'push-notoken', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'push-notoken', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const calls: Array<{ file: string; args: string[] }> = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
       calls.push({ file, args });
@@ -243,7 +259,7 @@ describe('pushToExistingBranch', () => {
 
   it('redacts the base64 credential from a push failure when a token is in use', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'push-fail', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'push-fail', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const b64 = Buffer.from('x-access-token:TOK').toString('base64');
     const runner = async (): Promise<string> => {
       throw new Error(`git push failed: -c http.https://github.com/.extraheader=AUTHORIZATION: basic ${b64}`);

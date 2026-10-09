@@ -171,7 +171,7 @@ describe('vanguard.run', () => {
   it('reuses one context across multiple agent stages (R11)', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();
-    const ctx = await prepareContext({ taskId: 't3', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 't3', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const a1 = await runAgent(ctx, {
       promptTemplate: 'a',
       agent: fakeAgent([{ text: 'one' }], { finalText: 'one', turns: 1, sessionId: 's' }),
@@ -188,11 +188,11 @@ describe('vanguard.run', () => {
     expect(wasDestroyed()).toBe(true);
   });
 
-  it('passes PrepareOptions.reuse to WorktreeManager.create', async () => {
+  it('a reuse start asks WorktreeManager.create for the existing branch', async () => {
     const wm = new WorktreeManager(repo);
     const spy = vi.spyOn(wm, 'create');
     const { sandbox } = makeSandbox();
-    const ctx = await prepareContext({ taskId: 'reuse-test', localRepoPath: repo, sandbox, reuse: true }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'reuse-test', localRepoPath: repo, baseBranch: 'main', start: 'reuse', sandbox }, { worktrees: wm });
     await disposeContext(ctx);
     expect(spy).toHaveBeenCalledOnce();
     expect(spy.mock.calls[0]?.[2]).toEqual({ reuse: true });
@@ -201,7 +201,7 @@ describe('vanguard.run', () => {
   it('keeps the sandbox alive when disposeContext is told to keep it', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();
-    const ctx = await prepareContext({ taskId: 'keep', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'keep', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     await disposeContext(ctx, { keep: true });
     expect(wasDestroyed()).toBe(false);
   });
@@ -241,7 +241,7 @@ describe('vanguard.run', () => {
     } as unknown as IsolatedSandboxProvider;
 
     const agent = fakeAgent([{ text: 'noop' }], { finalText: 'noop', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'cb-false', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cb-false', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent, copyBack: false });
     await disposeContext(ctx);
 
@@ -278,7 +278,7 @@ describe('vanguard.run', () => {
     } as unknown as IsolatedSandboxProvider;
 
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'cb-default', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cb-default', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -293,7 +293,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'output.txt'), 'created');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'cb-true', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cb-true', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent, copyBack: true });
     await disposeContext(ctx);
 
@@ -304,7 +304,7 @@ describe('vanguard.run', () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox();
     const agent = fakeAgent([], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'model-fallback', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'model-fallback', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent, model: 'configured-model' });
     await disposeContext(ctx);
 
@@ -315,7 +315,7 @@ describe('vanguard.run', () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox();
     const agent = fakeAgent([], { finalText: 'done', turns: 1, model: 'actual-model' });
-    const ctx = await prepareContext({ taskId: 'model-reported', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'model-reported', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent, model: 'configured-model' });
     await disposeContext(ctx);
 
@@ -353,7 +353,7 @@ describe('vanguard.run', () => {
         return { finalText: 'reviewed', turns: 1, sessionId: 'codex-thread-1' };
       },
     };
-    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -372,7 +372,7 @@ describe('vanguard.run', () => {
           return { finalText: 'done', turns: 1, sessionId: 's1' };
         },
       };
-      const ctx = await prepareContext({ taskId: `cap-${name.replace(/[^a-z0-9]/gi, '-')}`, localRepoPath: repo, sandbox }, { worktrees: wm });
+      const ctx = await prepareContext({ taskId: `cap-${name.replace(/[^a-z0-9]/gi, '-')}`, localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
       await runAgent(ctx, { promptTemplate: 'p', agent });
       await disposeContext(ctx);
       expect(captureAttempted).toBe(true);
@@ -389,7 +389,7 @@ describe('vanguard.run', () => {
         return { finalText: 'done', turns: 1, sessionId: 's1' };
       },
     };
-    const ctx = await prepareContext({ taskId: 'cap-warn', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-warn', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -408,7 +408,7 @@ describe('vanguard.run', () => {
       costUsd: 0.01,
     });
     const ctx = await prepareContext(
-      { taskId: 'log-1', localRepoPath: repo, sandbox, logger },
+      { taskId: 'log-1', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox, logger },
       { worktrees: wm },
     );
     await runAgent(ctx, { promptTemplate: 'p', agent, stageName: 'implementer' });
@@ -439,7 +439,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'src', 'app.ts'), 'export const x = 1;\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'wf-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'wf-skip', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -456,7 +456,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, '.github', 'workflows', 'evil.yml'), 'on: push\njobs: {}\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'wf-warn', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'wf-warn', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox, logger }, { worktrees: wm });
     await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -477,7 +477,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, '.gitlab', 'merge_request_templates', 'default.md'), 'template\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'gl-skip', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'gl-skip', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -496,7 +496,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, '.github', 'dependabot.yml'), 'version: 2\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'wf-sibling', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'wf-sibling', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -531,7 +531,7 @@ describe('vanguard.run', () => {
       await symlink(outside, join(hostPath, '.gitlab', 'linked.yml'));
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'ci-changed', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ci-changed', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox, logger }, { worktrees: wm });
     await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
     await rm(outside, { force: true });
@@ -558,7 +558,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'sub', '.gitlab'), 'not a directory\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'ci-symlink', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ci-symlink', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     const linked = await Promise.all(['.gitlab', '.github'].map((name) => lstat(join(ctx.worktreePath, name)).then(() => true, () => false)));
     await disposeContext(ctx);
@@ -577,7 +577,7 @@ describe('vanguard.run', () => {
       for (let i = 0; i < 25; i++) await writeFile(join(hostPath, '.gitlab', 'ci', `job-${i}.yml`), `job${i}: {}\n`);
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'ci-flood', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ci-flood', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox, logger }, { worktrees: wm });
     await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -633,7 +633,7 @@ describe('vanguard.run', () => {
       await execa('git', ['config', 'diff.srcPrefix', 'src/'], { cwd: repo });
       await execa('git', ['config', 'diff.dstPrefix', 'dst/'], { cwd: repo });
       const wm = new WorktreeManager(repo);
-      const ctx = await prepareContext({ taskId: 'wf-paths', localRepoPath: repo, sandbox: makeSandbox().sandbox }, { worktrees: wm });
+      const ctx = await prepareContext({ taskId: 'wf-paths', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox().sandbox }, { worktrees: wm });
 
       await chmod(join(ctx.worktreePath, '.github', 'workflows', 'ci.yml'), 0o755);
       await writeFile(join(ctx.worktreePath, '.gitlab', 'ci', 'job.yml'), Buffer.from([0, 1, 2, 0]));
@@ -665,7 +665,7 @@ describe('vanguard.run', () => {
     const wm = new WorktreeManager(repo);
     const { sandbox } = makeSandbox();
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'wf-guard-block', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'wf-guard-block', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     // Simulate a bypass of the copy-back skip (e.g. a future regression) by placing a workflow
     // file directly on the worktree, as the guard's job is to catch exactly this.
     await mkdir(join(ctx.worktreePath, '.github', 'workflows'), { recursive: true });
@@ -683,7 +683,7 @@ describe('vanguard.run', () => {
       await writeFile(join(hostPath, 'src', 'app.ts'), 'export const x = 1;\n');
     });
     const agent = fakeAgent([{ text: 'done' }], { finalText: 'done', turns: 1 });
-    const ctx = await prepareContext({ taskId: 'wf-normal', localRepoPath: repo, sandbox, logger }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'wf-normal', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox, logger }, { worktrees: wm });
     const result = await runAgent(ctx, { promptTemplate: 'p', agent });
     await disposeContext(ctx);
 
@@ -723,5 +723,82 @@ describe('vanguard.run base resolution (#429)', () => {
     await run({ taskId: 'rb', localRepoPath: clone, promptTemplate: 'p', sandbox, agent }, { worktrees: new WorktreeManager(clone) });
     // The sandbox received origin's tree, not the stale local main.
     expect(copiedIn).toBe('v2');
+  });
+
+  /** An origin with a `main` and a `feature` branch, and a clone whose local main is one commit behind origin's. */
+  const originAndStaleClone = async (): Promise<{ origin: string; clone: string }> => {
+    const origin = await mkdtemp(join(tmpdir(), 'vg-origin-'));
+    dirs.push(origin);
+    await execa('git', ['init', '-q', '-b', 'main'], { cwd: origin });
+    await commitFile(origin, 'v1');
+    const clone = await mkdtemp(join(tmpdir(), 'vg-clone-'));
+    dirs.push(clone);
+    await execa('git', ['clone', '-q', origin, clone]);
+    await execa('git', ['checkout', '-q', '-b', 'feature'], { cwd: origin });
+    await commitFile(origin, 'feature-work');
+    await execa('git', ['checkout', '-q', 'main'], { cwd: origin });
+    await commitFile(origin, 'v2');
+    return { origin, clone };
+  };
+  const sha = async (cwd: string, ref: string): Promise<string> => (await execa('git', ['rev-parse', ref], { cwd })).stdout;
+
+  it('records the start commit once: origin/<base> for a base start, the local base for reuse, the fetched head for a PR head', async () => {
+    const { origin, clone } = await originAndStaleClone();
+    const { logger, entries } = captureLogger();
+    const wm = new WorktreeManager(clone);
+    const spy = vi.spyOn(wm, 'create');
+
+    const base = await prepareContext({ taskId: 'start-base', localRepoPath: clone, baseBranch: 'main', start: 'base', sandbox: makeSandbox().sandbox, logger }, { worktrees: wm });
+    await disposeContext(base);
+    expect(base.startRef).toBe(await sha(origin, 'main'));
+    expect(base.baseBranch).toBe('main');
+    // Announced exactly once, and the worktree was cut from that very SHA.
+    expect(entries.filter((e) => e.msg === 'run start').map((e) => e.obj.startRef)).toEqual([base.startRef]);
+    expect(spy.mock.calls.at(-1)?.[1]).toBe(base.startRef);
+
+    const reuse = await prepareContext({ taskId: 'start-reuse', localRepoPath: clone, baseBranch: 'main', start: 'reuse', sandbox: makeSandbox().sandbox }, { worktrees: wm });
+    await disposeContext(reuse);
+    expect(reuse.startRef).toBe(await sha(clone, 'refs/heads/main')); // the local copy, never fetched
+    expect(reuse.startRef).not.toBe(base.startRef);
+
+    const head = await prepareContext({ taskId: 'start-head', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'feature' }, sandbox: makeSandbox().sandbox }, { worktrees: wm });
+    await disposeContext(head);
+    expect(head.startRef).toBe(await sha(origin, 'feature'));
+  });
+
+  it('fails loudly when the start cannot be resolved instead of landing on a default', async () => {
+    const { clone } = await originAndStaleClone();
+    const wm = new WorktreeManager(clone);
+    // A fresh reuse cut from a base this clone does not carry fails where it always did (the cut).
+    await expect(
+      prepareContext({ taskId: 'start-missing', localRepoPath: clone, baseBranch: 'no-such-branch', start: 'reuse', sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+    ).rejects.toThrow(/Failed to create worktree for start-missing/);
+    await expect(
+      prepareContext({ taskId: 'start-nohead', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'no-such-branch' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+    ).rejects.toThrow(/no-such-branch/);
+    await expect(
+      prepareContext({ taskId: 'start-unsafe', localRepoPath: clone, baseBranch: '--upload-pack=x', start: { prHead: 'feature' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+    ).rejects.toThrow(/cannot start with "-"/);
+  });
+
+  it('a reuse start still resumes a run branch when the base has no local branch (tracking ref, then the branch tip)', async () => {
+    const { origin, clone } = await originAndStaleClone();
+    // `release` exists on origin and as a tracking ref here, but was never checked out locally.
+    await execa('git', ['branch', 'release', 'main'], { cwd: origin });
+    await execa('git', ['fetch', '-q', 'origin', 'release'], { cwd: clone });
+    const wm = new WorktreeManager(clone, undefined, () => 'r1');
+    const { logger, entries } = captureLogger();
+
+    const first = await prepareContext({ taskId: 'resume', localRepoPath: clone, baseBranch: 'release', start: 'reuse', sandbox: makeSandbox().sandbox, logger }, { worktrees: wm });
+    await disposeContext(first);
+    expect(first.startRef).toBe(await sha(clone, 'refs/remotes/origin/release'));
+
+    // The base gone entirely: the existing run branch is still picked up, measured from its own tip, and says so.
+    await execa('git', ['branch', '-D', '-r', 'origin/release'], { cwd: clone });
+    const resumed = await prepareContext({ taskId: 'resume', localRepoPath: clone, baseBranch: 'release', start: 'reuse', sandbox: makeSandbox().sandbox, logger }, { worktrees: wm });
+    await disposeContext(resumed);
+    expect(resumed.branch).toBe(first.branch);
+    expect(resumed.startRef).toBe(await sha(clone, `refs/heads/${first.branch}`));
+    expect(entries.some((e) => e.msg.includes('release is not a commit here'))).toBe(true);
   });
 });

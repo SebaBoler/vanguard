@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import { WorktreeManager } from '../worktree/manager.js';
 import {
   specOnce,
   runLoopV1,
@@ -11,7 +12,7 @@ import {
   linearWatchPrimitives,
   githubIssueWatchPrimitives,
 } from './watch.js';
-import { runSpecGenerator, resolveSpecBaseRef } from './spec.js';
+import { runSpecGenerator } from './spec.js';
 import { parseSpecManifest } from '../pipeline/conformance-gate.js';
 import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives, GenerateSpec } from './watch.js';
@@ -586,72 +587,47 @@ function recordingSpecAgent(captured: { model?: string | undefined; maxTurns?: n
   };
 }
 
-describe('resolveSpecBaseRef', () => {
+describe('runSpecGenerator base', () => {
   const dirs: string[] = [];
   const mk = async (prefix: string): Promise<string> => {
     const d = await mkdtemp(join(tmpdir(), prefix));
     dirs.push(d);
     return d;
   };
-  const commit = (cwd: string, msg: string): Promise<unknown> =>
-    execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg], { cwd });
+  const commit = async (cwd: string, msg: string): Promise<void> => {
+    await writeFile(join(cwd, 'f.txt'), msg);
+    await execa('git', ['add', '.'], { cwd });
+    await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', msg], { cwd });
+  };
   afterEach(async () => {
     await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
   });
 
-  it('fetches origin and cuts from origin/<base> when the local base is behind', async () => {
+  it('researches against origin/<base> even when the local base is ahead (a spec never trusts a local copy)', async () => {
     const origin = await mk('vg-origin-');
     await execa('git', ['init', '-b', 'main'], { cwd: origin });
-    await writeFile(join(origin, 'f.txt'), 'v1');
-    await execa('git', ['add', '.'], { cwd: origin });
-    await commit(origin, 'v1');
-
-    const clone = await mk('vg-clone-');
-    await execa('git', ['clone', origin, clone]);
-
-    // Advance origin past the clone's local main — the stale-baseline scenario.
-    await writeFile(join(origin, 'f.txt'), 'v2');
-    await execa('git', ['add', '.'], { cwd: origin });
-    await commit(origin, 'v2');
-
-    const staleLocal = (await execa('git', ['rev-parse', 'main'], { cwd: clone })).stdout;
-    const originHeadNow = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
-    expect(await resolveSpecBaseRef(clone, 'main')).toBe(originHeadNow);
-
-    const cut = (await execa('git', ['rev-parse', 'origin/main'], { cwd: clone })).stdout;
-    const originHead = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
-    expect(cut).toBe(originHead); // fetched the newer commit
-    expect(cut).not.toBe(staleLocal); // and it's ahead of the stale local main
-  });
-
-  it('falls back to the local base when there is no origin remote', async () => {
-    const repo = await mk('vg-norem-');
-    await execa('git', ['init', '-b', 'main'], { cwd: repo });
-    await writeFile(join(repo, 'f.txt'), 'x');
-    await execa('git', ['add', '.'], { cwd: repo });
-    await commit(repo, 'init');
-    expect(await resolveSpecBaseRef(repo, 'main')).toBe('refs/heads/main');
-  });
-
-  it('rejects a base that git would parse as an option', async () => {
-    const repo = await mk('vg-dash-');
-    await execa('git', ['init', '-b', 'main'], { cwd: repo });
-    await expect(resolveSpecBaseRef(repo, '--upload-pack=false')).rejects.toThrow('cannot start with "-"');
-  });
-
-  it('keeps a local base that is ahead of origin only when asked to (outside CI); on CI origin wins', async () => {
-    const origin = await mk('vg-origin-');
-    await execa('git', ['init', '-b', 'main'], { cwd: origin });
-    await writeFile(join(origin, 'f.txt'), 'v1');
-    await execa('git', ['add', '.'], { cwd: origin });
     await commit(origin, 'v1');
     const clone = await mk('vg-clone-');
-    await execa('git', ['clone', origin, clone]);
-    await writeFile(join(clone, 'f.txt'), 'local');
-    await execa('git', ['add', '.'], { cwd: clone });
-    await commit(clone, 'local-only');
-    expect(await resolveSpecBaseRef(clone, 'main', undefined, true)).toBe('refs/heads/main');
-    expect(await resolveSpecBaseRef(clone, 'main', undefined, false)).toBe((await execa('git', ['rev-parse', 'refs/remotes/origin/main'], { cwd: clone })).stdout);
+    await execa('git', ['clone', '-q', origin, clone]);
+    await commit(clone, 'local-only'); // ahead of origin: a `run` outside CI would keep it, the spec must not
+
+    const wm = new WorktreeManager(clone);
+    const create = vi.spyOn(wm, 'create');
+    const { sandbox } = makeSandbox();
+    const task = readyTask('ENG-11');
+    const finalText = 'plan <tech_spec>\n## Problem\nx\n</tech_spec> <promise>COMPLETE</promise>';
+    await runSpecGenerator(task.id, {
+      auth: { type: 'api', apiKey: 'x' } as never,
+      repoPath: clone,
+      fetcher: fakeFetcher({ [task.id]: task }, [task]),
+      sandboxFactory: () => sandbox,
+      agent: fakeAgent(finalText),
+      contextDeps: { worktrees: wm },
+    });
+
+    const originTip = (await execa('git', ['rev-parse', 'main'], { cwd: origin })).stdout;
+    expect(create).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0]?.[1]).toBe(originTip); // the worktree was cut from origin's commit, not the local one
   });
 });
 

@@ -27,7 +27,6 @@ export type DeliveryTarget =
       /** Built after the commit so it can carry the closing-keyword leaks found in the new commits. */
       body: (info: { commitLeaks: CommitClosingLeak[] }) => string;
       draft?: boolean;
-      baseBranch?: string;
       cli?: PublishOptions['cli'];
       /** Injected git/gh runner (tests). */
       runner?: CommandRunner;
@@ -47,8 +46,8 @@ export interface DeliverChangeOptions {
   /** White-label identity for the commit and the pre-push rebase; default Vanguard. */
   commitAuthor?: CommitAuthor;
   target: DeliveryTarget;
-  /** Scan the new commits for `Closes #N` against this base (a partial delivery must not auto-close). */
-  closingKeywordBase?: string;
+  /** Scan the new commits (`ctx.startRef..HEAD`) for `Closes #N` (a partial delivery must not auto-close). */
+  closingKeywordScan?: boolean;
 }
 
 export type DeliverChangeResult =
@@ -92,8 +91,8 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
 
   // A rebase merge closes the issue per commit message regardless of the PR body, so a partial
   // result surfaces any commit-level `Closes #N` as a blocking warning in the body.
-  const commitLeaks = opts.closingKeywordBase !== undefined
-    ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, opts.closingKeywordBase), opts.taskId)
+  const commitLeaks = opts.closingKeywordScan === true
+    ? scanCommitClosingKeywords(await ctx.wm.commitMessages(ctx.worktreePath, ctx.startRef), opts.taskId)
     : [];
 
   const { target } = opts;
@@ -102,7 +101,6 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
       title: target.title,
       body: target.body({ commitLeaks }),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
-      ...(target.baseBranch !== undefined ? { baseBranch: target.baseBranch } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
       ...(target.runner !== undefined ? { runner: target.runner } : {}),
       // Same identity as the commit: the pre-push rebase replays the commits.
