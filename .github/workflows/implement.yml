@@ -42,7 +42,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider the implementer retries on when the primary one fails (--fallback-provider); must sit on a different transport, e.g. codex for a claude implementer. Empty = off.'
+        description: 'Provider the implementer (and every other stage on its provider) retries on when the primary one fails (--fallback-provider); must sit on a different transport, e.g. codex for a claude implementer. Empty = off.'
         type: string
         default: ''
       fallback-model:

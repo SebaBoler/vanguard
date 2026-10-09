@@ -63,6 +63,8 @@ export interface PrepareOptions {
   agentName?: string;
   /** Provider name for the review stage; when different from agentName, skills are injected for both families. */
   reviewAgentName?: string;
+  /** Provider name of the implementer fallback; its family gets skills too, or the rescued stage runs without them. */
+  fallbackAgentName?: string;
   sandbox: IsolatedSandboxProvider;
   logger?: VanguardLogger;
 }
@@ -142,7 +144,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await seedSandboxGit(opts.sandbox);
-    await skills.injectAll(opts.sandbox, home, opts.agentName, opts.reviewAgentName);
+    await skills.injectAll(opts.sandbox, home, opts.agentName, opts.reviewAgentName, opts.fallbackAgentName);
     const ctx: RunContext = {
       taskId: opts.taskId,
       sandbox: opts.sandbox,

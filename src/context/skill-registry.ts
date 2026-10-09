@@ -252,12 +252,12 @@ export class SkillRegistry {
    * - codex → $CODEX_HOME/AGENTS.md (pointer index) + .vanguard/skills/<id> bodies
    * - cursor → .cursor/rules/<id>.mdc per skill + .vanguard/skills/<id> bodies
    *
-   * When agentName and reviewAgentName resolve to different families (e.g. claude implement / codex
-   * review), both injection paths run so every stage's provider finds its skills.
+   * When the names resolve to different families (e.g. claude implement / codex review, or a codex
+   * implementer fallback), every injection path runs so each provider that may run finds its skills.
    */
-  async injectAll(sandbox: IsolatedSandboxProvider, home: string, agentName?: string, reviewAgentName?: string): Promise<void> {
+  async injectAll(sandbox: IsolatedSandboxProvider, home: string, agentName?: string, ...otherAgentNames: Array<string | undefined>): Promise<void> {
     const families = new Set<'claude' | 'codex' | 'cursor'>([providerFamily(agentName)]);
-    if (reviewAgentName !== undefined) families.add(providerFamily(reviewAgentName));
+    for (const name of otherAgentNames) if (name !== undefined) families.add(providerFamily(name));
 
     const needsBodies = families.has('codex') || families.has('cursor');
     const bodyEntriesP = needsBodies ? prepareSkillEntries(this.skills, sandbox) : Promise.resolve([]);

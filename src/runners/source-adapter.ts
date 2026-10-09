@@ -9,7 +9,7 @@ import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe
 import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
 import { VanguardError } from '../core/errors.js';
 import { decisionDiffScorer } from '../evals/decision-judge.js';
-import { runStages, assembleReviewPipeline, withStageFallback, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, withPrimaryFallback, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -392,6 +392,7 @@ export async function runSourcedIssue(
         sandbox,
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
+        ...(agents.fallbackAgent !== undefined ? { fallbackAgentName: agents.fallbackAgent.name } : {}),
         ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
         baseBranch: baseRef,
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
@@ -417,11 +418,12 @@ export async function runSourcedIssue(
       });
       // Implementer fallback: on an AgentError from the primary provider (outage, usage limit, revoked
       // credential) runStages retries the stage once on this provider — same as the reviewer's fallback.
+      // Every stage on the primary gets it (simplifier, planner…): the provider that failed the
+      // implementer fails them too, and a rescued implementer whose simplifier dies still loses the PR.
       if (agents.fallbackAgent !== undefined) {
-        pipeline = withStageFallback(
+        pipeline = withPrimaryFallback(
           pipeline,
           { provider: agents.fallbackAgent, ...(deps.fallbackModel !== undefined ? { model: deps.fallbackModel } : {}) },
-          STAGE.IMPLEMENTER,
         );
       }
       const probe = await probePromise;

@@ -270,7 +270,7 @@ describe('runSourcedIssue', () => {
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
   });
 
-  it('--fallback-provider puts a fallback on the implementer stage only, with --fallback-model', async () => {
+  it('--fallback-provider puts a fallback on every stage that runs on the primary agent, with --fallback-model', async () => {
     vi.mocked(selectAgents).mockReturnValueOnce({
       agent: { name: 'claude' },
       fallbackAgent: { name: 'codex' },
@@ -283,7 +283,9 @@ describe('runSourcedIssue', () => {
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     const implementer = assembled.find((st) => st.name === 'implementer');
     expect(implementer?.fallback).toEqual({ provider: { name: 'codex' }, model: 'gpt-5.6-sol' });
-    expect(assembled.filter((st) => st.name !== 'implementer').every((st) => st.fallback === undefined)).toBe(true);
+    expect(assembled.filter((st) => st.provider === undefined).every((st) => st.fallback?.provider.name === 'codex')).toBe(true);
+    expect(assembled.filter((st) => st.provider !== undefined).every((st) => st.fallback?.provider.name !== 'codex')).toBe(true);
+    expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ fallbackAgentName: 'codex' }));
   });
 
   it('after a fallback the repair loop resumes on the fallback provider and --escalate-model stays off', async () => {

@@ -70,6 +70,22 @@ describe('SkillRegistry.injectAll — claude family', () => {
     ]);
   });
 
+  it('injects for the implementer fallback family too: claude implementer + codex fallback gets both paths', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vg-skills-'));
+    try {
+      await mkdir(join(dir, 'lint'), { recursive: true });
+      await writeFile(join(dir, 'lint', 'SKILL.md'), '---\nname: lint\ndescription: Run the linter.\n---\n# Lint\n');
+      const registry = await skillRegistryFromDirectory(dir);
+      const { sandbox, copies } = makeSandbox();
+      await registry.injectAll(sandbox, '/home/agent', 'claude-code', undefined, 'codex');
+      const targets = copies.map(([, to]) => to);
+      expect(targets).toContain('/home/agent/.claude/skills/lint');
+      expect(targets.some((to) => to.startsWith('/workspace/.vanguard/skills/'))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('injects all skills into ~/.claude/skills for zai', async () => {
     const { sandbox, copies } = makeSandbox();
     await new SkillRegistry({ lint: '/host/lint' }).injectAll(sandbox, '/home/agent', 'zai');

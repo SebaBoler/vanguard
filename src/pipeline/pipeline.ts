@@ -6,7 +6,6 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
-import { redactTokens } from '../core/secret-scan.js';
 import { roundUsd } from '../core/usd.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
@@ -363,11 +362,10 @@ export async function runBudgetedStages(
       });
     } catch (err) {
       if (err instanceof AgentError && stage.fallback !== undefined) {
-        // AgentError carries the CLI's raw stderr; an auth failure may echo the credential it was given.
-        // Redacted AND cut to the first line: the secret patterns know common token shapes, not every
-        // vendor's, and the first line is where the CLI states why it stopped.
+        // No `reason` here: AgentError carries the CLI's raw stderr, and an auth failure may echo the
+        // credential it was handed — the redactor knows common token shapes, not every vendor's.
         ctx.log.warn(
-          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: redactTokens(err.message.split('\n')[0] ?? '').slice(0, 200) },
+          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name },
           `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;
@@ -658,6 +656,16 @@ export function withStageFallback(
   stageName: StageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
+}
+
+/**
+ * Attach `fallback` to every stage that runs on the primary agent (no `provider` of its own and no
+ * fallback yet): implementer, simplifier, planner, tech-spec — and any name a repo flow uses. A
+ * provider that is down for the implementer is down for the simplifier too; rescuing one stage
+ * would still lose the run (and the work) at the next.
+ */
+export function withPrimaryFallback(stages: PipelineStage[], fallback: { provider: AgentProvider; model?: string }): PipelineStage[] {
+  return stages.map((stage) => (stage.provider === undefined && stage.fallback === undefined ? { ...stage, fallback } : stage));
 }
 
 export interface ReviewPipelineDeps {
