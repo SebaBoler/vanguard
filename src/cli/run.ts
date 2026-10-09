@@ -113,7 +113,7 @@ export async function runGithub(
   network: string | undefined,
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -135,7 +135,7 @@ export async function runGitlab(
   const projectFromRef = cmd.project === undefined && cmd.id.includes('#')
     ? cmd.id.split('#')[0]
     : undefined;
-  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project ?? projectFromRef, cmd.provider, cmd.reviewProvider, cmd.customProviders);
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project ?? projectFromRef, cmd);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;
@@ -153,7 +153,7 @@ export async function runProject(
   llmProxy: LlmProxyDep | undefined,
 ): Promise<void> {
   const projectNumber = Number(cmd.id);
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd);
   if (proxyUrl !== undefined) deps.proxyUrl = proxyUrl;
   if (network !== undefined) deps.network = network;
   if (llmProxy !== undefined) deps.llmProxy = llmProxy;

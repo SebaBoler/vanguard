@@ -9,7 +9,7 @@ import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe
 import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
 import { VanguardError } from '../core/errors.js';
 import { decisionDiffScorer } from '../evals/decision-judge.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, withPrimaryFallback, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -46,6 +46,8 @@ import type { SkillRegistry } from '../context/skill-registry.js';
 export interface RunOptions extends ProviderChoice {
   providerModel?: string;
   reviewModel?: string;
+  /** Model for the implementer fallback provider (ProviderChoice.fallbackProvider); undefined = its default. */
+  fallbackModel?: string;
   /** Model for gate repairs after the first failed one; undefined = keep the implementer model. */
   escalateModel?: string;
   /** How --fork variants are scored; 'decision' needs decision-model credentials (fails fast without). */
@@ -102,6 +104,8 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.fallbackProvider !== undefined ? { fallbackProvider: cmd.fallbackProvider } : {}),
+    ...(cmd.fallbackModel !== undefined ? { fallbackModel: cmd.fallbackModel } : {}),
     // Loaded repo customs must survive this copy or selectAgents sees a bare name (S6).
     ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
@@ -388,6 +392,7 @@ export async function runSourcedIssue(
         sandbox,
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
+        ...(agents.fallbackAgent !== undefined ? { fallbackAgentName: agents.fallbackAgent.name } : {}),
         ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
         baseBranch: baseRef,
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
@@ -406,11 +411,21 @@ export async function runSourcedIssue(
       if (labelModel !== undefined) {
         console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
       }
-      const pipeline = assembleReviewPipeline(scopedStages, agents, {
+      let pipeline = assembleReviewPipeline(scopedStages, agents, {
         ...deps,
         ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
+      // Implementer fallback: on an AgentError from the primary provider (outage, usage limit, revoked
+      // credential) runStages retries the stage once on this provider — same as the reviewer's fallback.
+      // Every stage on the primary gets it (simplifier, planner…): the provider that failed the
+      // implementer fails them too, and a rescued implementer whose simplifier dies still loses the PR.
+      if (agents.fallbackAgent !== undefined) {
+        pipeline = withPrimaryFallback(
+          pipeline,
+          { provider: agents.fallbackAgent, ...(deps.fallbackModel !== undefined ? { model: deps.fallbackModel } : {}) },
+        );
+      }
       const probe = await probePromise;
       if (probe !== undefined && deps.signal?.aborted !== true) {
         await persistDecisionProbe(deps.repoPath, adapter.taskId(task), probe).catch(() => undefined);
@@ -468,6 +483,8 @@ export async function runSourcedIssue(
       // try/finally so the per-stage cost table is printed even when a repair call throws or the run
       // is cancelled mid-loop — and, on the happy path, after the loop so repairs show up in it.
       try {
+        const fallbackHolder = agents.fallbackAgent !== undefined && outcomes[implementerIdx]?.providerName === agents.fallbackAgent.name ? agents.fallbackAgent : undefined;
+        const onFallback = fallbackHolder !== undefined;
         const repair = await repairUntilGreen(ctx, {
           label: task.id,
           gate: async () => {
@@ -492,13 +509,16 @@ export async function runSourcedIssue(
             ].filter((part): part is string => part !== undefined).join('\n\n');
             return { pass, feedback };
           },
-          agent: agents.agent,
+          // Resume on the provider that actually ran the stage: after a fallback the session belongs to it.
+          agent: fallbackHolder ?? agents.agent,
           outcomes,
           pipeline,
           // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be resumed up
           // to ~2N times total — N in-stage (resumeUntilComplete inside runStages) plus N here.
           maxIterations: deps.maxRepairIterations ?? MAX_REPAIR_ITERATIONS,
-          ...(deps.escalateModel !== undefined ? { escalateModel: deps.escalateModel } : {}),
+          // --escalate-model names a model of the implementer's provider; handed to the fallback CLI it is
+          // an AgentError, so the fallback repairs on its own model only.
+          ...(deps.escalateModel !== undefined && !onFallback ? { escalateModel: deps.escalateModel } : {}),
           // A per-task label is the human's own escalation call; the fleet-wide --escalate-model does not
           // override it (it could even downgrade).
           modelPinned: labelModel !== undefined,

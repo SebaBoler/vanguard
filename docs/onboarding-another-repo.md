@@ -89,6 +89,8 @@ The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, 
 | `review-provider` | string | `''` | cross-provider reviewer, e.g. `codex` (`--review-provider`) |
 | `review-model` | string | `''` | reviewer model (`--review-model`) |
 | `escalate-model` | string | `''` (off) | model escalated to on the 2nd+ gate repair (`--escalate-model`); must be a model of the implementation provider |
+| `fallback-provider` | string | `''` (off) | `--fallback-provider`: provider the implementer (and every other stage on its provider) retries on when the primary one throws (outage, usage limit, revoked credential); must be on a different transport, e.g. `codex` for a `claude` implementer |
+| `fallback-model` | string | `''` (provider default) | `--fallback-model`: model for the fallback implementer |
 | `conformance` | boolean | `false` | opt-in conformance review pass (`--conformance`) |
 | `conformance-model` | string | `''` | model for the conformance pass |
 | `llm-proxy` | boolean | `false` | keep the model credential in a sidecar (`--llm-proxy`) |

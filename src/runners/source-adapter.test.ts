@@ -109,6 +109,7 @@ vi.mock('../core/decision-model.js', () => ({
   decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
   DECISION_MODEL_DEFAULT: 'clef-flash',
 }));
+import { selectAgents } from '../agents/registry.js';
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -267,6 +268,52 @@ describe('runSourcedIssue', () => {
     // assembleReviewPipeline appends the conformance stage when deps.conformance is true.
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
+  });
+
+  it('--fallback-provider puts a fallback on every stage that runs on the primary agent, with --fallback-model', async () => {
+    vi.mocked(selectAgents).mockReturnValueOnce({
+      agent: { name: 'claude' },
+      fallbackAgent: { name: 'codex' },
+      secrets: {},
+      proxySecrets: {},
+      injectAnthropicAuth: false,
+    } as never);
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', fallbackProvider: 'codex', fallbackModel: 'gpt-5.6-sol' }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    const implementer = assembled.find((st) => st.name === 'implementer');
+    expect(implementer?.fallback).toEqual({ provider: { name: 'codex' }, model: 'gpt-5.6-sol' });
+    expect(assembled.filter((st) => st.provider === undefined).every((st) => st.fallback?.provider.name === 'codex')).toBe(true);
+    expect(assembled.filter((st) => st.provider !== undefined).every((st) => st.fallback?.provider.name !== 'codex')).toBe(true);
+    expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ fallbackAgentName: 'codex' }));
+  });
+
+  it('after a fallback the repair loop resumes on the fallback provider and --escalate-model stays off', async () => {
+    vi.mocked(selectAgents).mockReturnValueOnce({
+      agent: { name: 'claude' },
+      fallbackAgent: { name: 'codex' },
+      secrets: {},
+      proxySecrets: {},
+      injectAnthropicAuth: false,
+    } as never);
+    runStages.mockResolvedValueOnce([
+      { ...stageOutcome('implementer', 'sess-1'), providerName: 'codex', model: 'gpt-5.6-sol' },
+      stageOutcome('reviewer'),
+    ]);
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: true } as never);
+    runAgent.mockResolvedValue({ sessionId: 'sess-1', completed: true, exitReason: 'completed', turns: 2, model: 'gpt-5.6-sol' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', fallbackProvider: 'codex', escalateModel: 'claude-fable-5' }, adapter);
+
+    expect(runAgent).toHaveBeenCalledTimes(2);
+    for (const call of runAgent.mock.calls) {
+      expect(call[1]).toMatchObject({ agent: { name: 'codex' }, resumeSessionId: 'sess-1', model: 'gpt-5.6-sol' });
+    }
   });
 
   it('a vanguard:model=<m> label pins the implementer model for that task, over --provider-model', async () => {

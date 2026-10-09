@@ -255,6 +255,12 @@ export async function runBudgetedStages(
   let previous: RunResult | undefined;
   let prevName = '';
   let sessionId: string | undefined;
+  // The provider that produced `sessionId`: a session is only resumable on the CLI that opened it, so
+  // after an implementer fallback a resumePrevious stage on the primary agent starts fresh instead.
+  let sessionOwner: string | undefined;
+  // Set once a stage's primary provider threw and its fallback took over: later stages that carry a
+  // fallback go straight to it instead of paying a failed attempt each against the same dead provider.
+  let primaryDown = false;
   let spentUsd = 0;
   const emit = opts.onEvent ?? ((): void => {});
   let index = 0;
@@ -264,8 +270,8 @@ export async function runBudgetedStages(
       return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     emit({ type: 'stage-start', name: stage.name, index, of });
-    const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
+    const resume = (stage.resumePrevious ?? true) && sessionOwner === agent.name;
 
     // Per-stage effective cap: fraction → floor → min(remainingGlobal).
     // Global always wins (Math.min) so tiny-budget runs never spend past their limit.
@@ -313,7 +319,10 @@ export async function runBudgetedStages(
       });
       previous = result;
       prevName = stage.name;
-      if (result.sessionId !== undefined) sessionId = result.sessionId;
+      if (result.sessionId !== undefined) {
+        sessionId = result.sessionId;
+        sessionOwner = agent.name;
+      }
       spentUsd = roundUsd(spentUsd + forkStageCost);
       emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
       emit({ type: 'cost', usdSpent: spentUsd });
@@ -328,8 +337,9 @@ export async function runBudgetedStages(
     }
 
     // Effective provider and model; may be overridden when the stage's fallback activates.
-    let effectiveAgent = agent;
-    let effectiveModel: string | undefined = stage.model;
+    const skipPrimary = primaryDown && stage.provider === undefined && stage.fallback !== undefined;
+    let effectiveAgent = skipPrimary && stage.fallback !== undefined ? stage.fallback.provider : agent;
+    let effectiveModel: string | undefined = skipPrimary && stage.fallback !== undefined ? stage.fallback.model : stage.model;
 
     // Stable per-stage options shared by the primary attempt, fallback, and any auto-resume calls.
     const stageOpts = {
@@ -356,12 +366,15 @@ export async function runBudgetedStages(
       });
     } catch (err) {
       if (err instanceof AgentError && stage.fallback !== undefined) {
+        // No `reason` here: AgentError carries the CLI's raw stderr, and an auth failure may echo the
+        // credential it was handed — the redactor knows common token shapes, not every vendor's.
         ctx.log.warn(
           { stage: stage.name, from: agent.name, to: stage.fallback.provider.name },
-          'review provider unavailable — downgrading to planning provider',
+          `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;
         effectiveModel = stage.fallback.model;
+        if (stage.provider === undefined) primaryDown = true;
         // Do not resume the failed primary session.
         result = await runAgent(ctx, {
           ...stageOpts,
@@ -415,7 +428,10 @@ export async function runBudgetedStages(
     });
     previous = result;
     prevName = stage.name;
-    if (result.sessionId !== undefined) sessionId = result.sessionId;
+    if (result.sessionId !== undefined) {
+      sessionId = result.sessionId;
+      sessionOwner = effectiveAgent.name;
+    }
     spentUsd = roundUsd(spentUsd + stageCost);
     emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
     emit({ type: 'cost', usdSpent: spentUsd });
@@ -642,9 +658,19 @@ export function withStageModelExcept(stages: PipelineStage[], model: string, exc
 export function withStageFallback(
   stages: PipelineStage[],
   fallback: { provider: AgentProvider; model?: string },
-  stageName = STAGE.REVIEWER,
+  stageName: StageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
+}
+
+/**
+ * Attach `fallback` to every stage that runs on the primary agent (no `provider` of its own and no
+ * fallback yet): implementer, simplifier, planner, tech-spec — and any name a repo flow uses. A
+ * provider that is down for the implementer is down for the simplifier too; rescuing one stage
+ * would still lose the run (and the work) at the next.
+ */
+export function withPrimaryFallback(stages: PipelineStage[], fallback: { provider: AgentProvider; model?: string }): PipelineStage[] {
+  return stages.map((stage) => (stage.provider === undefined && stage.fallback === undefined ? { ...stage, fallback } : stage));
 }
 
 export interface ReviewPipelineDeps {

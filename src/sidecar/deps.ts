@@ -192,14 +192,18 @@ export function productionDeps(): SidecarDeps {
           ...(ctx.network !== undefined ? { network: ctx.network } : {}),
           ...(ctx.llmProxy !== undefined ? { llmProxy: ctx.llmProxy } : {}),
         };
+        const authChoice = {
+          ...(provider !== undefined ? { provider } : {}),
+          ...(customProviders !== undefined ? { customProviders } : {}),
+        };
         if (transport === 'gitlab') {
-          const deps = await gitlabDepsFromEnv(repoPath, undefined, provider, undefined, customProviders);
+          const deps = await gitlabDepsFromEnv(repoPath, undefined, authChoice);
           return await runGitlabIssue(params.issueRef, { ...deps, ...common });
         }
         if (transport === 'linear') {
           return await runLinearIssue(params.issueRef, { ...common, ...linearExtras(repoPath, auth) });
         }
-        const deps = await githubDepsFromEnv(repoPath, undefined, provider, undefined, customProviders);
+        const deps = await githubDepsFromEnv(repoPath, undefined, authChoice);
         return await runGithubIssue(params.issueRef, { ...deps, ...common });
       } finally {
         await ctx.destroy();

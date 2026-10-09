@@ -44,6 +44,11 @@ describe('loadProviderChoice (the S6 dispatch entry block)', () => {
     );
   });
 
+  it('carries --fallback-provider into the choice so auth resolution and pairing checks see it', async () => {
+    await expect(loadProviderChoice({ repoPath: '/nowhere', provider: 'codex', fallbackProvider: 'claude' })).resolves.toMatchObject({ provider: 'codex', fallbackProvider: 'claude' });
+    await expect(loadProviderChoice({ repoPath: '/nowhere', provider: 'claude', fallbackProvider: 'zai' })).rejects.toThrow(/Implementer fallback cannot mix/);
+  });
+
   it('http custom + --egress fails fast; without --egress it loads', async () => {
     const repoPath = await repoWith([{ ...ENTRY, baseUrl: 'http://nas.local:3456' }]);
     await expect(loadProviderChoice({ repoPath, provider: 'my-proxy', egress: true })).rejects.toThrow(

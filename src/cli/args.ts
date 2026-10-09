@@ -122,6 +122,8 @@ export type Command =
       skillsDir?: string;
       provider?: string;
       reviewProvider?: string;
+      fallbackProvider?: string;
+      fallbackModel?: string;
       providerModel?: string;
       reviewModel?: string;
       /** Model for gate repairs after the first one failed (reactive escalation); default: stay on the implementer model. */
@@ -414,6 +416,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // provider selection (run + watch)
         provider: { type: 'string' },
         'review-provider': { type: 'string' },
+        'fallback-provider': { type: 'string' },
+        'fallback-model': { type: 'string' },
         // model selection per stage (run + watch)
         'provider-model': { type: 'string' },
         'review-model': { type: 'string' },
@@ -490,6 +494,8 @@ export function parseCli(argv: string[], cwd: string): Command {
   // (customs never review — spec §2/§3).
   const providerRaw = typeof values.provider === 'string' ? values.provider : undefined;
   const reviewProviderRaw = typeof values['review-provider'] === 'string' ? values['review-provider'] : undefined;
+  const fallbackProviderRaw = typeof values['fallback-provider'] === 'string' ? values['fallback-provider'] : undefined;
+  const fallbackModel = typeof values['fallback-model'] === 'string' ? values['fallback-model'] : undefined;
   const customsAllowed = positionals[0] === 'run' || positionals[0] === 'watch' || positionals[0] === 'doctor';
   if (providerRaw !== undefined && !isProviderName(providerRaw)) {
     if (!customsAllowed || !CUSTOM_NAME_RE.test(providerRaw)) {
@@ -500,7 +506,14 @@ export function parseCli(argv: string[], cwd: string): Command {
     return fail(`Unknown review-provider "${reviewProviderRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
   }
   const provider: string | undefined = providerRaw;
+  if (fallbackProviderRaw !== undefined && !isProviderName(fallbackProviderRaw)) {
+    return fail(`Unknown fallback-provider "${fallbackProviderRaw}". Choose one of: ${PROVIDER_NAMES.join(', ')}.`);
+  }
+  if (fallbackModel !== undefined && fallbackProviderRaw === undefined) {
+    return fail('--fallback-model needs --fallback-provider.');
+  }
   const reviewProvider: ProviderName | undefined = reviewProviderRaw;
+  const fallbackProvider: ProviderName | undefined = fallbackProviderRaw;
   // Closed-set shapes: the gate above guarantees a built-in there; this re-narrow is for the compiler.
   const builtinProvider: ProviderName | undefined =
     provider !== undefined && isProviderName(provider) ? provider : undefined;
@@ -594,7 +607,11 @@ export function parseCli(argv: string[], cwd: string): Command {
   if (provider === undefined || isProviderName(provider)) {
     try {
       validateProviderChoice(
-        { ...(provider !== undefined ? { provider } : {}), ...(reviewProvider !== undefined ? { reviewProvider } : {}) },
+        {
+          ...(provider !== undefined ? { provider } : {}),
+          ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+          ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+        },
         { proxyMode },
       );
     } catch (error) {
@@ -810,6 +827,9 @@ export function parseCli(argv: string[], cwd: string): Command {
     const forkScorer = parseForkScorer(values['fork-scorer']);
     if (forkScorer === null) return fail(`--fork-scorer expects llm or decision, got "${String(values['fork-scorer'])}".`);
     if (forkScorer !== undefined && !(Number.isFinite(forkN) && forkN >= 2)) return fail('--fork-scorer only applies with --fork <n> (n>=2).');
+    // forkAndSelect runs every variant on the primary agent and returns before the stage fallback is
+    // consulted, so the flag would be accepted and silently never fire.
+    if (fallbackProvider !== undefined && Number.isFinite(forkN) && forkN >= 2) return fail('--fallback-provider does not apply to --fork variants; drop one of them.');
     return {
       kind: 'run',
       source: picked[0],
@@ -828,6 +848,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['gitlab-project'] === 'string' && picked[0] === 'gitlab' ? { project: values['gitlab-project'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+      ...(fallbackModel !== undefined ? { fallbackModel } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
@@ -978,6 +1000,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(provider !== undefined ? { provider } : {}),
       ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+      ...(fallbackModel !== undefined ? { fallbackModel } : {}),
       ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
       ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
       ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
@@ -1074,6 +1098,8 @@ Commands:
                            run/watch/doctor also accept a custom provider name from the repo's
                            .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
@@ -1168,6 +1194,8 @@ Commands:
                            run/watch/doctor also accept a custom provider name from the repo's
                            .vanguard/app.json customProviders (S6) — direct mode only.
     --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
     --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
     --review-model <m>       Model for the review stage (default: provider's default)
     --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer

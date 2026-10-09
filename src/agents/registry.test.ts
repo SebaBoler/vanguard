@@ -362,3 +362,29 @@ describe('providerUpstream', () => {
     }
   });
 });
+
+describe('implementer fallback provider', () => {
+  it('selects the fallback agent and delivers its secrets alongside the implementer (claude → codex)', () => {
+    const env = { CODEX_API_KEY: 'c-key', CLAUDE_CODE_OAUTH_TOKEN: 't' } as NodeJS.ProcessEnv;
+    const selected = selectAgents({ provider: 'claude', fallbackProvider: 'codex' }, env);
+    expect(selected.agent.name).toBe('claude-code');
+    expect(selected.fallbackAgent?.name).toBe('codex');
+    expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
+    expect(selected.injectAnthropicAuth).toBe(true);
+  });
+
+  it('rejects a fallback on the implementer\'s transport slot (claude → openrouter both drive the claude CLI via ANTHROPIC_BASE_URL)', () => {
+    expect(() => validateProviderChoice({ provider: 'claude', fallbackProvider: 'openrouter' })).toThrow(/Implementer fallback cannot mix "claude" and "openrouter"/);
+    expect(() => validateProviderChoice({ provider: 'codex', fallbackProvider: 'claude' })).not.toThrow();
+  });
+
+  it('rejects a fallback that collides with the review provider, or equals the implementer', () => {
+    expect(() => validateProviderChoice({ provider: 'claude', reviewProvider: 'codex', fallbackProvider: 'codex' })).not.toThrow(); // same provider may serve both roles
+    expect(() => validateProviderChoice({ provider: 'codex', reviewProvider: 'claude', fallbackProvider: 'openrouter' })).toThrow(/share the anthropic transport/);
+    expect(() => validateProviderChoice({ provider: 'claude', fallbackProvider: 'claude' })).toThrow(/is the implementer itself/);
+  });
+
+  it('under --llm-proxy a fallback that owns the primary sidecar transport is rejected', () => {
+    expect(() => validateProviderChoice({ provider: 'codex', fallbackProvider: 'zai' }, { proxyMode: true })).toThrow(/cannot be a fallback under --llm-proxy/);
+  });
+});

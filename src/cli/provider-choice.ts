@@ -13,6 +13,7 @@ export async function loadProviderChoice(cmd: {
   repoPath: string;
   provider?: string;
   reviewProvider?: string;
+  fallbackProvider?: string;
   egress?: boolean;
   llmProxy?: boolean;
 }): Promise<ProviderChoice> {
@@ -20,6 +21,7 @@ export async function loadProviderChoice(cmd: {
   const choice: ProviderChoice = {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.fallbackProvider !== undefined ? { fallbackProvider: cmd.fallbackProvider } : {}),
     ...(customProviders.length > 0 ? { customProviders } : {}),
   };
   assertProvidersResolvable(choice); // unknown/broken names die here, before any side effect
