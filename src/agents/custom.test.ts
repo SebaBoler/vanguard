@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { CustomProvider, customProviderError, loadCustomProviders } from './custom.js';
 import {
-  anthropicTransportKeyEnv,
+  claudeCliKeyEnv,
   assertEgressCompatible,
   customEgressHosts,
   forcedProviderModel,
@@ -132,10 +132,10 @@ describe('registry resolution with customs', () => {
     expect(() => providerSecrets(['my-proxy'], {}, {}, loaded())).toThrow(/MY_PROXY_API_KEY/);
   });
 
-  it('owns the Anthropic transport: auth suppression + keyEnv-carried credential', () => {
+  it('owns the Claude CLI transport: auth suppression + keyEnv-carried credential', () => {
     const customs = loaded();
     expect(needsAnthropicAuth({ provider: 'my-proxy', customProviders: customs })).toBe(false);
-    expect(anthropicTransportKeyEnv('my-proxy', customs)).toEqual(['MY_PROXY_API_KEY']);
+    expect(claudeCliKeyEnv('my-proxy', customs)).toEqual(['MY_PROXY_API_KEY']);
     const auth = agentAuthFromEnv({ provider: 'my-proxy', customProviders: customs }, { MY_PROXY_API_KEY: 'sk-x' });
     expect(auth).toEqual({ mode: 'api', apiKey: 'sk-x' });
   });
@@ -143,7 +143,7 @@ describe('registry resolution with customs', () => {
   it('selectAgents: sandbox secrets set, Anthropic authSecrets suppressed', () => {
     const selected = selectAgents({ provider: 'my-proxy', customProviders: loaded() }, { MY_PROXY_API_KEY: 'k' });
     expect(selected.agent.name).toBe('custom:my-proxy');
-    expect(selected.injectAnthropicAuth).toBe(false);
+    expect(selected.injectClaudeCliAuth).toBe(false);
     expect(selected.secrets.ANTHROPIC_BASE_URL).toBe('https://llm.example.com/api');
   });
 
@@ -163,7 +163,7 @@ describe('registry resolution with customs', () => {
 
   it('transport collision: custom + claude cross-review rejected', () => {
     expect(() => validateProviderChoice({ provider: 'my-proxy', reviewProvider: 'claude', customProviders: loaded() }))
-      .toThrow(/share the anthropic transport/);
+      .toThrow(/share the claude-cli transport/);
   });
 
   it('customEgressHosts extracts the hostname (port dropped); built-ins contribute none', () => {

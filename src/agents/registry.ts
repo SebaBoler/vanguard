@@ -13,7 +13,7 @@ import type { CustomProviderEntry } from './custom.js';
  * Real provider keys handed to SECONDARY sidecars (proxy mode) — never injected into the sandbox.
  * Only providers proxied by their own sidecar appear here (Codex → OpenAI sidecar). Providers that ride
  * the PRIMARY sidecar (Zai) are NOT here: their key reaches the sidecar via `auth`, and proxy mode just
- * keeps it out of the sandbox (see providerSecrets + ownsAnthropicTransport).
+ * keeps it out of the sandbox (see providerSecrets + ownsClaudeCliTransport).
  */
 export interface ProviderProxySecrets {
   /** Real OpenAI/Codex key, owned by the OpenAI proxy sidecar instead of the sandbox. */
@@ -24,9 +24,15 @@ export interface ProviderProxySecrets {
  * The transport "slot" a provider drives inside the sandbox — the env namespace its CLI authenticates
  * through. Two DIFFERENT providers sharing one slot cannot run in the same sandbox: their env vars
  * collide (a sandbox env holds one ANTHROPIC_BASE_URL, one OPENAI_API_KEY, …). Claude and Zai both
- * drive the `claude` CLI via ANTHROPIC_*, so both occupy the 'anthropic' slot and cannot be paired.
+ * drive the `claude` CLI via ANTHROPIC_*, so both occupy the 'claude-cli' slot and cannot be paired.
  */
-type Transport = 'anthropic' | 'openai' | 'cursor';
+/**
+ * Which CLI/endpoint slot a provider occupies in one sandbox env. 'claude-cli' is every provider that
+ * drives the `claude` CLI — claude itself, and zai/openrouter/meridian/customs, which point that CLI at
+ * their own gateway through ANTHROPIC_BASE_URL (the CLI's endpoint variable, not a statement about the
+ * vendor behind it). Two of them cannot share an env: the variable holds one URL.
+ */
+type Transport = 'claude-cli' | 'openai' | 'cursor';
 
 /** How a provider's API key is read from the host and wired into a run. Absent for auth-token providers (Claude). */
 interface ProviderKeySpec {
@@ -62,20 +68,20 @@ interface ProviderSpec {
   /** API-key wiring; absent when auth is handled by authSecrets instead (Claude). */
   key?: ProviderKeySpec;
   /**
-   * When true, the provider owns the Anthropic transport with its OWN credentials, so the runner must
+   * When true, the provider owns the Claude CLI transport with its OWN credentials, so the runner must
    * NOT also layer its Anthropic authSecrets (a competing ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN
    * would make the Claude CLI prefer api.anthropic.com over this provider's endpoint).
    */
-  ownsAnthropicTransport?: boolean;
+  ownsClaudeCliTransport?: boolean;
   /**
-   * When true, the provider cannot run under --llm-proxy: it owns the Anthropic transport but has no
+   * When true, the provider cannot run under --llm-proxy: it owns the Claude CLI transport but has no
    * upstream a trusted sidecar could target (it carries only a base URL and authenticates on its own
    * host, e.g. Meridian). Without this guard --llm-proxy would fall the sidecar back to api.anthropic.com.
    */
   directOnly?: boolean;
   /**
    * Which upstream the trusted LLM-proxy sidecar must target when this provider rides the primary
-   * Anthropic transport under --llm-proxy (absent = api.anthropic.com).
+   * Claude CLI transport under --llm-proxy (absent = api.anthropic.com).
    */
   upstream?: 'zai' | 'openrouter';
   /**
@@ -99,17 +105,17 @@ interface ProviderSpec {
  * Notes:
  * - Claude has no `key`: it authenticates via authSecrets (subscription token or ANTHROPIC_API_KEY).
  * - Codex authenticates with OPENAI_API_KEY (read from the documented CODEX_API_KEY, or OPENAI_API_KEY).
- * - Zai reuses the Claude CLI against z.ai's Anthropic-compatible endpoint, so it owns the 'anthropic'
+ * - Zai reuses the Claude CLI against z.ai's Anthropic-compatible endpoint, so it owns the 'claude-cli'
  *   transport: in normal mode its key becomes ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN; in proxy mode
  *   the key is delivered to the primary sidecar via `auth` and withheld from the sandbox (not a secondary
- *   sidecar secret — see ownsAnthropicTransport in providerSecrets).
+ *   sidecar secret — see ownsClaudeCliTransport in providerSecrets).
  * - OpenRouter is the same pattern as Zai, against OpenRouter's Anthropic-Messages-compatible "skin"
- *   instead of z.ai's endpoint: it also owns the 'anthropic' transport and rides the primary sidecar.
+ *   instead of z.ai's endpoint: it also owns the 'claude-cli' transport and rides the primary sidecar.
  */
 const PROVIDERS = {
   claude: {
     factory: () => new ClaudeCodeProvider(),
-    transport: 'anthropic',
+    transport: 'claude-cli',
   },
   codex: {
     factory: () => new CodexProvider(),
@@ -134,21 +140,21 @@ const PROVIDERS = {
   },
   zai: {
     factory: () => new ZaiProvider(),
-    transport: 'anthropic',
-    ownsAnthropicTransport: true,
+    transport: 'claude-cli',
+    ownsClaudeCliTransport: true,
     upstream: 'zai',
     forcedModel: ZAI_DEFAULT_MODEL,
     key: {
       hostEnv: ['ZAI_API_KEY'],
       toSandboxSecrets: (key) => ({ ANTHROPIC_BASE_URL: ZAI_BASE_URL, ANTHROPIC_AUTH_TOKEN: key }),
       // No proxyKey: zai rides the PRIMARY sidecar (key delivered via auth). In proxy mode its key is
-      // simply withheld from the sandbox via ownsAnthropicTransport — not handed to a secondary sidecar.
+      // simply withheld from the sandbox via ownsClaudeCliTransport — not handed to a secondary sidecar.
     },
   },
   openrouter: {
     factory: () => new OpenRouterProvider(),
-    transport: 'anthropic',
-    ownsAnthropicTransport: true,
+    transport: 'claude-cli',
+    ownsClaudeCliTransport: true,
     upstream: 'openrouter',
     // OpenRouter expects dotted slugs, so a Claude-only name like spec's `haiku` must not reach it.
     forcedModel: OPENROUTER_DEFAULT_MODEL,
@@ -160,8 +166,8 @@ const PROVIDERS = {
   },
   meridian: {
     factory: () => new MeridianProvider(),
-    transport: 'anthropic',
-    ownsAnthropicTransport: true,
+    transport: 'claude-cli',
+    ownsClaudeCliTransport: true,
     key: {
       // Meridian's base URL is operator-specific (its NAS/host address), so the "key" IS the base URL:
       // it flows through the same api-key slot but expands to ANTHROPIC_BASE_URL + a placeholder token.
@@ -213,8 +219,8 @@ function resolveSpec(name: string, customs?: readonly CustomProviderEntry[]): Pr
     const custom = entry.spec;
     return {
       factory: () => new CustomProvider(custom),
-      transport: 'anthropic',
-      ownsAnthropicTransport: true,
+      transport: 'claude-cli',
+      ownsClaudeCliTransport: true,
       directOnly: true,
       ...(model !== undefined ? { forcedModel: model } : {}),
       egressHost: new URL(baseUrl).hostname,
@@ -255,14 +261,14 @@ export function requiresApiKey(name: string, customs?: readonly CustomProviderEn
 }
 
 /**
- * Host env var(s) an Anthropic-transport-owning provider (zai, openrouter, customs) reads its key
+ * Host env var(s) an Claude-CLI-transport-owning provider (zai, openrouter, customs) reads its key
  * from, in priority order; undefined for providers that don't own the transport (they use Anthropic
  * authSecrets instead). Lets callers like agentAuthFromEnv resolve a primary-sidecar credential
  * generically instead of hardcoding a per-provider branch.
  */
-export function anthropicTransportKeyEnv(name: string, customs?: readonly CustomProviderEntry[]): string[] | undefined {
+export function claudeCliKeyEnv(name: string, customs?: readonly CustomProviderEntry[]): string[] | undefined {
   const s = resolveSpec(name, customs);
-  return s.ownsAnthropicTransport === true ? s.key?.hostEnv : undefined;
+  return s.ownsClaudeCliTransport === true ? s.key?.hostEnv : undefined;
 }
 
 /**
@@ -274,7 +280,7 @@ export function anthropicTransportKeyEnv(name: string, customs?: readonly Custom
  *
  * Routing, driven entirely by each provider's PROVIDERS spec:
  * - Normal mode: the key is expanded via `toSandboxSecrets` into the sandbox.
- * - Proxy mode + `ownsAnthropicTransport` (Zai): emit nothing — the key reaches the PRIMARY sidecar via
+ * - Proxy mode + `ownsClaudeCliTransport` (Zai): emit nothing — the key reaches the PRIMARY sidecar via
  *   `auth`, and proxy mode just withholds it from the sandbox.
  * - Proxy mode + `proxyKey` (Codex): the key is routed to `proxySecrets[proxyKey]` for its own SECONDARY
  *   sidecar and kept out of `sandboxSecrets`.
@@ -328,7 +334,7 @@ export function providerSecrets(
     if (value === undefined) {
       throw new AgentError(`Provider "${name}" needs ${key.hostEnv.join(' or ')} in the environment.`);
     }
-    if (opts.proxyMode === true && s.ownsAnthropicTransport === true) {
+    if (opts.proxyMode === true && s.ownsClaudeCliTransport === true) {
       continue; // primary-sidecar provider (zai): key comes via auth; just withhold it from the sandbox.
     }
     if (opts.proxyMode === true && key.proxyKey !== undefined) {
@@ -382,9 +388,9 @@ export function usedProviderNames(choice: ProviderChoice): string[] {
 export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   const used = usedProviderNames(choice);
   // Only a provider with no key wiring of its own (Claude) consumes authSecrets. Codex/Cursor bring their
-  // own key; Zai/OpenRouter/customs own the Anthropic transport with theirs. So a Codex-only review needs
+  // own key; Zai/OpenRouter/customs own the Claude CLI transport with theirs. So a Codex-only review needs
   // no Anthropic credential at all (#391) — before, every non-transport-owner demanded one.
-  // Sibling of selectAgents' injectAnthropicAuth: that one answers "may the Anthropic auth be layered in"
+  // Sibling of selectAgents' injectClaudeCliAuth: that one answers "may the Anthropic auth be layered in"
   // (false only for transport owners), this one "is it required at all".
   return used.some((n) => !requiresApiKey(n, choice.customProviders));
 }
@@ -402,11 +408,11 @@ export interface SelectedAgents {
   proxySecrets: ProviderProxySecrets;
   /**
    * Whether the runner should ALSO layer Anthropic authSecrets (CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY)
-   * into the sandbox. False when any used provider owns the Anthropic transport with its own credentials
+   * into the sandbox. False when any used provider owns the Claude CLI transport with its own credentials
    * (Zai) — a stray Anthropic key would make the Claude CLI hit api.anthropic.com instead of that
    * provider's endpoint. True otherwise (Claude uses it; Codex/Cursor ignore it harmlessly).
    */
-  injectAnthropicAuth: boolean;
+  injectClaudeCliAuth: boolean;
 }
 
 /**
@@ -422,7 +428,7 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
   // Two distinct providers sharing one transport slot collide in a single sandbox (shared env namespace,
   // e.g. one ANTHROPIC_BASE_URL — Claude, zai, openrouter, meridian and customs all drive the claude CLI
   // through it). Every pair among implementer, reviewer and implementer-fallback must differ in slot:
-  // claude+zai (both 'anthropic') is the case this rejects.
+  // claude+zai (both 'claude-cli') is the case this rejects.
   const fallback = choice.fallbackProvider;
   const roles: Array<[string, string]> = [
     ...(review !== undefined ? [['cross-provider review', review] as [string, string]] : []),
@@ -458,16 +464,16 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
     }
   }
 
-  // Under --llm-proxy, a provider that owns the Anthropic transport (zai) is served by the PRIMARY sidecar,
+  // Under --llm-proxy, a provider that owns the Claude CLI transport (zai) is served by the PRIMARY sidecar,
   // whose upstream follows --provider only. So such a provider must BE the implementer; as a reviewer-only
   // it has no sidecar and would silently fall back to the implementer's Anthropic upstream + credential.
-  if (opts.proxyMode === true && fallback !== undefined && specOf(fallback).ownsAnthropicTransport === true) {
+  if (opts.proxyMode === true && fallback !== undefined && specOf(fallback).ownsClaudeCliTransport === true) {
     throw new AgentError(
       `Implementer fallback "${fallback}" owns the primary sidecar's transport and cannot be a fallback under --llm-proxy; ` +
         `pick a provider on another transport (e.g. codex) or run without --llm-proxy.`,
     );
   }
-  if (opts.proxyMode === true && review !== undefined && review !== provider && specOf(review).ownsAnthropicTransport === true) {
+  if (opts.proxyMode === true && review !== undefined && review !== provider && specOf(review).ownsClaudeCliTransport === true) {
     throw new AgentError(
       `Cross-provider review with "${review}" under --llm-proxy needs "${review}" as the implementer too ` +
         `(--provider ${review}): it owns the primary sidecar, whose upstream follows --provider. ` +
@@ -543,6 +549,6 @@ export function selectAgents(
     ...(choice.fallbackProvider !== undefined ? { fallbackAgent: makeProvider(choice.fallbackProvider, customs) } : {}),
     secrets: sandboxSecrets,
     proxySecrets,
-    injectAnthropicAuth: !used.some((name) => resolveSpec(name, customs).ownsAnthropicTransport === true),
+    injectClaudeCliAuth: !used.some((name) => resolveSpec(name, customs).ownsClaudeCliTransport === true),
   };
 }

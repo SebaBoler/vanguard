@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { anthropicTransportKeyEnv, assertProvidersResolvable, needsAnthropicAuth, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { claudeCliKeyEnv, assertProvidersResolvable, needsAnthropicAuth, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
 import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';
@@ -258,7 +258,7 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
   // Reported concisely as 'missing' so the preflight summary stays one line.
   let llmAuthPresent: boolean;
   try {
-    const keyEnvs = cmd.provider !== undefined ? anthropicTransportKeyEnv(cmd.provider, customs) : undefined;
+    const keyEnvs = cmd.provider !== undefined ? claudeCliKeyEnv(cmd.provider, customs) : undefined;
     if (keyEnvs !== undefined) {
       llmAuthPresent = keyEnvs.some((name) => hasEnv(env, name));
     } else {

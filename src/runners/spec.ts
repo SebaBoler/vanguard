@@ -70,14 +70,14 @@ function defaultSandboxFactory(
   deps: RunSpecGeneratorDeps,
   secrets: Record<string, string>,
   openaiProxy: LlmProxyDep | undefined,
-  injectAnthropicAuth: boolean,
+  injectClaudeCliAuth: boolean,
 ): IsolatedSandboxProvider {
   const env = llmProxySandboxEnv(deps.proxyUrl, deps.llmProxy, openaiProxy);
   return new DockerSandboxProvider({
     image: sandboxImage(),
     // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
     secrets: {
-      ...(deps.llmProxy === undefined && deps.auth !== undefined && injectAnthropicAuth ? authSecrets(deps.auth) : {}),
+      ...(deps.llmProxy === undefined && deps.auth !== undefined && injectClaudeCliAuth ? authSecrets(deps.auth) : {}),
       ...secrets,
     },
     ...sandboxResourceLimits(),
@@ -119,13 +119,13 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   let proxySecrets: ProviderProxySecrets = {};
   // Whether the runner should layer Anthropic authSecrets into the sandbox. Defaults to true (the
   // injected-agent test path mimics a Claude run); set from selectAgents when it runs.
-  let injectAnthropicAuth = true;
+  let injectClaudeCliAuth = true;
   if (agent === undefined) {
     const selected = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
     agent = selected.agent;
     secrets = { ...selected.secrets, ...secrets };
     proxySecrets = selected.proxySecrets;
-    injectAnthropicAuth = selected.injectAnthropicAuth;
+    injectClaudeCliAuth = selected.injectClaudeCliAuth;
   }
   if (agent === undefined) throw new VanguardError('No agent available for the spec pass');
 
@@ -136,7 +136,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
     ...(deps.network !== undefined ? { network: deps.network } : {}),
   });
   try {
-    const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
+    const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectClaudeCliAuth)))(secrets);
 
     // Fetch the base up front so the spec is researched against origin's view of the branch, not a
     // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.

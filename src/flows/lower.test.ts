@@ -69,7 +69,7 @@ test('rejects an unknown provider override', async () => {
 // (latent trap for `provider = "zai"` before S6), so lowering rejects it loudly.
 test('rejects a stage pinned to a transport-owning provider (zai) with a named error', async () => {
   await expect(lowerFlow(doc([{ name: 'planner', overrides: { provider: 'zai' } }]), { repoPath: REPO })).rejects.toThrow(
-    /stage "planner" pins provider "zai".*owns the Anthropic transport/s,
+    /stage "planner" pins provider "zai".*owns the Claude CLI transport/s,
   );
 });
 
@@ -79,7 +79,7 @@ test('rejects a stage pinned to a custom provider; allows a cross-slot pin (code
   ];
   await expect(
     lowerFlow(doc([{ name: 'planner', overrides: { provider: 'my-proxy' } }]), { repoPath: REPO, customProviders: customs }),
-  ).rejects.toThrow(/owns the Anthropic transport/);
+  ).rejects.toThrow(/owns the Claude CLI transport/);
   const stages = await lowerFlow(doc([{ name: 'planner', overrides: { provider: 'codex' } }]), { repoPath: REPO });
   expect(stages[0]?.provider?.name).toBe('codex');
 });
