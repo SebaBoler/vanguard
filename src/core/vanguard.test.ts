@@ -372,7 +372,7 @@ describe('vanguard.run', () => {
           return { finalText: 'done', turns: 1, sessionId: 's1' };
         },
       };
-      const ctx = await prepareContext({ taskId: `cap-${name}`, localRepoPath: repo, sandbox }, { worktrees: wm });
+      const ctx = await prepareContext({ taskId: `cap-${name.replace(/[^a-z0-9]/gi, '-')}`, localRepoPath: repo, sandbox }, { worktrees: wm });
       await runAgent(ctx, { promptTemplate: 'p', agent });
       await disposeContext(ctx);
       expect(captureAttempted).toBe(true);
