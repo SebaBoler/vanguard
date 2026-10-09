@@ -38,6 +38,7 @@ describe('githubAdapter', () => {
     const comment = calls.find((c) => c[0] === 'issue' && c[1] === 'comment' && c[2] === '7');
     expect(comment?.at(-1)).toContain('blocked publish');
     expect(comment?.at(-1)).toContain('KEY=ab****');
+    expect(comment?.at(-1)).toContain('re-apply the trigger label'); // how a human releases the hold
   });
 
   it('signalSecretBlock never throws: a failed label create still attempts the add and the comment', async () => {

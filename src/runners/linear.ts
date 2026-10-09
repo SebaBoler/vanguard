@@ -51,6 +51,9 @@ function linearStages(): PipelineStage[] {
   return [{ ...implementer, promptTemplate: readAndImplement }, ...base.slice(1)];
 }
 
+/** Appended to the block comment: the issue was left claimed so the watch would not re-run it. */
+const LINEAR_RESUME_HINT = 'To retry once the secret is out of the change: move the issue back to its trigger state (it was left in the claimed state so the watch would not re-run it).';
+
 /**
  * @internal Exported for unit tests; production callers use runLinearIssue. `gitlabProject` is set
  * when origin is on gitlab.com or GITLAB_HOST: the draft MR, verdict note and failure labels then go
@@ -82,9 +85,10 @@ export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, 
       await linkLinearIssue(task.id, prUrl);
     },
     async signalSecretBlock(_issueRef: string, task: Task, block: SecretBlock) {
-      // Linear uses workflow states, not labels; the comment is the primary signal.
+      // Linear uses workflow states, not labels; the comment is the only signal, so it must also
+      // say how to release the hold (the watch leaves the issue in its claimed state on purpose).
       try {
-        await commentLinearIssue(task.id, renderSecretBlockComment(block));
+        await commentLinearIssue(task.id, `${renderSecretBlockComment(block)}\n\n${LINEAR_RESUME_HINT}`);
       } catch { /* best-effort */ }
     },
   };

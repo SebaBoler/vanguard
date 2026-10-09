@@ -9,6 +9,8 @@ import { isWhiteLabel } from './source-adapter.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { failureReason, formatFailureComment } from '../core/errors.js';
+import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
+import { GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
 import type { RunLinearIssueDeps } from './linear.js';
 import type { RunGithubIssueDeps } from './github.js';
@@ -185,8 +187,9 @@ export async function watchOnce(primitives: WatchPrimitives, opts: WatchOnceOpti
       try {
         const { prUrl, parked, secretBlocked } = await primitives.runOne(item.id);
         if (secretBlocked === true) {
-          await primitives.onSecretBlocked?.(item.id);
+          // Log first: if the hold edit below throws, the failure comment must not be the only record.
           operatorLog(opts, `${phase} ${item.id}: secret blocked -> held for a human`);
+          await primitives.onSecretBlocked?.(item.id);
           return { id: item.id, kind: 'secretBlocked' };
         }
         if (prUrl === undefined) {
@@ -638,9 +641,24 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
   const fetcher = new GitHubTaskFetcher(repo, opts.gh);
   const needsInfoLabel = opts.needsInfoLabel;
   const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
+  // Ready issues still carrying the hold label from an earlier secret block: a human re-triggered
+  // them, so the claim clears it too. Only for issues seen with the label — a blind `--remove-label`
+  // makes `gh issue edit` fail in a repo that never created it.
+  const heldBefore = new Set<string>();
   return {
-    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
-    claim: (id) => editGithubLabels(repo, id, { remove: [opts.label], add: [opts.claimedLabel] }, opts.gh),
+    listReady: async () => {
+      const tasks = await fetcher.list({ labels: agentLabels });
+      heldBefore.clear();
+      for (const task of tasks) if (task.labels.includes(GITHUB_SECRET_BLOCKED_LABEL)) heldBefore.add(task.id);
+      return tasks.map((task) => ({ id: task.id }));
+    },
+    claim: (id) =>
+      editGithubLabels(
+        repo,
+        id,
+        { remove: heldBefore.has(id) ? [opts.label, GITHUB_SECRET_BLOCKED_LABEL] : [opts.label], add: [opts.claimedLabel] },
+        opts.gh,
+      ),
     runOne:
       needsInfoLabel === undefined
         ? (id) => runGithubIssue(id, opts.deps)
@@ -655,13 +673,18 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         commentGithubIssue(repo, id, NO_CHANGE_MSG, opts.gh),
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
-    // The trigger label was removed on claim and is not restored: the issue sits on
-    // `vanguard:secret-blocked` (added by the adapter) until a human re-triggers it. A white-label
-    // run signals nothing on the issue (no label, no comment), so there the claimed marker is the
-    // only visible trace of the hold and must stay.
+    // One edit swaps claimed -> secret-blocked, so the claim is never released without the hold
+    // label landing (the adapter pre-created the label and best-effort added it; adding it again is
+    // idempotent). If the edit fails it throws into onFailure and the claimed marker stays. The
+    // trigger label was removed on claim and is not restored: the issue sits on the hold label
+    // until a human re-triggers it. A white-label run signals nothing on the issue, so there the
+    // claimed marker is the only visible trace of the hold and must stay.
     ...(isWhiteLabel(opts.deps)
       ? {}
-      : { onSecretBlocked: (id: string) => editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh) }),
+      : {
+          onSecretBlocked: (id: string) =>
+            editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [GITHUB_SECRET_BLOCKED_LABEL] }, opts.gh),
+        }),
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
@@ -900,12 +923,25 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
   const fetcher = new GitLabTaskFetcher(project, glab);
   const needsInfoLabel = opts.needsInfoLabel;
   const agentLabels = opts.ownerLabel !== undefined ? [opts.ownerLabel, opts.label] : [opts.label];
+  // Ready issues still carrying the hold label from an earlier secret block (re-triggered by a
+  // human): the claim clears it too. See githubIssueWatchPrimitives.
+  const heldBefore = new Set<string>();
   return {
-    listReady: async () => (await fetcher.list({ labels: agentLabels })).map((task) => ({ id: task.id })),
+    listReady: async () => {
+      const tasks = await fetcher.list({ labels: agentLabels });
+      heldBefore.clear();
+      for (const task of tasks) if (task.labels.includes(GITLAB_SECRET_BLOCKED_LABEL)) heldBefore.add(task.id);
+      return tasks.map((task) => ({ id: task.id }));
+    },
     claim: (id) =>
       // Explicitly remove trigger label so future polls don't pick it up again.
       // GitLab scoped :: only auto-removes within the same scope prefix.
-      editGitlabLabels(project, id, { remove: [opts.label], add: [opts.claimedLabel] }, glab),
+      editGitlabLabels(
+        project,
+        id,
+        { remove: heldBefore.has(id) ? [opts.label, GITLAB_SECRET_BLOCKED_LABEL] : [opts.label], add: [opts.claimedLabel] },
+        glab,
+      ),
     runOne:
       needsInfoLabel === undefined
         ? (id) => runGitlabIssue(id, opts.deps)
@@ -922,12 +958,17 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await commentGitlabIssue(project, id, NO_CHANGE_MSG, glab);
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
-    // Trigger label not restored (removed on claim): the issue sits on `vanguard::secret-blocked`
-    // (added by the adapter) until a human re-triggers it. A white-label run signals nothing on the
-    // issue, so there the claimed marker is the only visible trace of the hold and must stay.
+    // One edit swaps claimed -> secret-blocked so the claim is never released without the hold
+    // label landing; a failing edit throws into onFailure and the claimed marker stays. Trigger
+    // label not restored (removed on claim): the issue sits on the hold label until a human
+    // re-triggers it. A white-label run signals nothing on the issue, so there the claimed marker
+    // is the only visible trace of the hold and must stay.
     ...(isWhiteLabel(opts.deps)
       ? {}
-      : { onSecretBlocked: (id: string) => editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab) }),
+      : {
+          onSecretBlocked: (id: string) =>
+            editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab),
+        }),
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),
   };

@@ -10,7 +10,10 @@ import {
   githubIssueWatchPrimitives,
   gitlabWatchPrimitives,
 } from './watch.js';
-import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL } from '../github-labels.js';
+import { runGithubIssue } from './github.js';
+import { runGitlabIssue } from './gitlab.js';
+import { runLinearIssue } from './linear.js';
+import { GITHUB_CLAIMED_LABEL, GITHUB_REVIEW_LABEL, GITHUB_SPEC_CLAIMED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { SpecWatchPrimitives, WatchPrimitives, WatchGitlabOptions } from './watch.js';
 import type { RunGithubIssueResult } from './github.js';
 import type { RunGitlabIssueResult } from './gitlab.js';
@@ -120,6 +123,10 @@ describe('watchOnce', () => {
     expectTypeOf<RunGithubIssueResult>().toHaveProperty('secretBlocked');
     expectTypeOf<RunGitlabIssueResult>().toHaveProperty('secretBlocked');
     expectTypeOf<RunLinearIssueResult>().toHaveProperty('secretBlocked');
+    // ...and the real seams, so a re-narrowed signature on the function itself cannot slip through.
+    expectTypeOf(runGithubIssue).returns.resolves.toHaveProperty('secretBlocked');
+    expectTypeOf(runGitlabIssue).returns.resolves.toHaveProperty('secretBlocked');
+    expectTypeOf(runLinearIssue).returns.resolves.toHaveProperty('secretBlocked');
   });
 
   it('does not call onNoChange when runOne reports the outcome is already parked', async () => {
@@ -1002,13 +1009,42 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     const calls = (gh as ReturnType<typeof vi.fn>).mock.calls.map(([args]) => args as string[]);
     expect(calls.some((args) => args[0] === 'issue' && args[1] === 'comment')).toBe(false);
     const edits = calls.filter((args) => args[0] === 'issue' && args[1] === 'edit');
-    // claim: trigger -> running; secret block: running removed, nothing added back.
+    // claim: trigger -> running; secret block: ONE edit swapping running -> secret-blocked, so the
+    // claim is never released without the hold label; the trigger label is not added back.
     expect(edits).toHaveLength(2);
     const release = edits[1];
     expect(release?.[release.indexOf('--remove-label') + 1]).toBe(GITHUB_CLAIMED_LABEL);
-    expect(release).not.toContain('--add-label');
+    expect(release?.[release.indexOf('--add-label') + 1]).toBe(GITHUB_SECRET_BLOCKED_LABEL);
+    expect(release).not.toContain('ready for agent');
     expect(tick.secretBlocked).toEqual(['1']);
     expect(tick.noChange).toEqual([]);
+  });
+
+  it('claim clears a stale secret-blocked label only on issues listReady saw carrying it', async () => {
+    const gh: GhRunner = vi.fn().mockResolvedValue(
+      JSON.stringify([
+        { number: 1, title: 'retried', body: '', labels: [{ name: 'ready for agent' }, { name: GITHUB_SECRET_BLOCKED_LABEL }] },
+        { number: 2, title: 'fresh', body: '', labels: [{ name: 'ready for agent' }] },
+      ]),
+    );
+    const primitives = githubIssueWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      label: 'ready for agent',
+      claimedLabel: GITHUB_CLAIMED_LABEL,
+      reviewLabel: GITHUB_REVIEW_LABEL,
+      gh,
+    });
+
+    const ready = await primitives.listReady();
+    for (const { id } of ready) await primitives.claim(id);
+
+    const calls = (gh as ReturnType<typeof vi.fn>).mock.calls.map(([args]) => args as string[]);
+    const edits = calls.filter((args) => args[0] === 'issue' && args[1] === 'edit');
+    expect(edits).toHaveLength(2);
+    const removed = (edit: string[] | undefined): string[] =>
+      (edit ?? []).flatMap((arg, i, a) => (arg === '--remove-label' ? [a[i + 1] as string] : []));
+    expect(removed(edits.find((e) => e[2] === '1'))).toEqual(['ready for agent', GITHUB_SECRET_BLOCKED_LABEL]);
+    expect(removed(edits.find((e) => e[2] === '2'))).toEqual(['ready for agent']); // no blind remove
   });
 
   it('white-label: a secret-blocked run keeps the claimed label (nothing else marks the hold)', async () => {
@@ -1190,12 +1226,33 @@ describe('gitlabWatchPrimitives', () => {
 
     expect(calls.some((c) => c[0] === 'issue' && c[1] === 'note')).toBe(false);
     const updates = calls.filter((c) => c[0] === 'issue' && c[1] === 'update');
-    expect(updates).toHaveLength(2); // claim, then release
+    expect(updates).toHaveLength(2); // claim, then ONE swap running -> secret-blocked
     const release = updates[1];
     expect(release?.[release.indexOf('--unlabel') + 1]).toBe('vanguard::running');
-    expect(release).not.toContain('--label');
+    expect(release?.[release.indexOf('--label') + 1]).toBe('vanguard::secret-blocked');
+    expect(release).not.toContain('--label vanguard');
     expect(tick.secretBlocked).toEqual(['g/p#1']);
     expect(tick.noChange).toEqual([]);
+  });
+
+  it('claim clears a stale secret-blocked label only on issues listReady saw carrying it', async () => {
+    const { glab, calls } = makeGlab({
+      'issue:list': JSON.stringify([
+        { iid: 1, title: 'retried', description: null, labels: ['vanguard', 'vanguard::secret-blocked'] },
+        { iid: 2, title: 'fresh', description: null, labels: ['vanguard'] },
+      ]),
+    });
+    const primitives = gitlabWatchPrimitives({ ...makeOpts(), gl: glab });
+
+    const ready = await primitives.listReady();
+    for (const { id } of ready) await primitives.claim(id);
+
+    const updates = calls.filter((c) => c[0] === 'issue' && c[1] === 'update');
+    expect(updates).toHaveLength(2);
+    const unlabelled = (u: string[] | undefined): string[] =>
+      (u ?? []).flatMap((arg, i, a) => (arg === '--unlabel' ? [a[i + 1] as string] : []));
+    expect(unlabelled(updates.find((u) => u[2] === '1'))).toEqual(['vanguard', 'vanguard::secret-blocked']);
+    expect(unlabelled(updates.find((u) => u[2] === '2'))).toEqual(['vanguard']);
   });
 
   it('white-label: a secret-blocked run keeps the claimed label (nothing else marks the hold)', async () => {
