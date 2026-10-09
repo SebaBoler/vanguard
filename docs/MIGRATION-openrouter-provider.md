@@ -29,7 +29,7 @@ they can't drift.
 
 ## New constraints (rejected at dispatch with a clear message)
 
-- **openrouter can't share a run with another Anthropic-transport provider** (`claude`, `zai`) — they all
+- **openrouter can't share a run with another Claude-CLI-transport provider** (`claude`, `zai`) — they all
   drive the shared `ANTHROPIC_*` transport slot, so they can't coexist. Use one of them, or a non-Anthropic
   reviewer.
 - **openrouter as review-only under `--llm-proxy`** requires openrouter as the implementer too (it owns the

@@ -522,7 +522,7 @@ function githubWatch(overrides: Partial<WatchCommand> = {}): WatchCommand {
 }
 
 describe('runPreflight provider combo check', () => {
-  it('fails provider combo when claude implements and zai reviews (shared anthropic transport)', async () => {
+  it('fails provider combo when claude implements and zai reviews (shared claude-cli transport)', async () => {
     const report = await runPreflight(
       githubWatch({ provider: 'claude', reviewProvider: 'zai' }),
       {

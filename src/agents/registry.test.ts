@@ -287,7 +287,7 @@ describe('selectAgents', () => {
     expect(() => selectAgents({ reviewProvider: 'zai' }, env)).toThrow(/cannot mix "claude" and "zai"/);
   });
 
-  it('rejects mixing openrouter with other anthropic-transport providers', () => {
+  it('rejects mixing openrouter with other claude-cli-transport providers', () => {
     const env = { OPENROUTER_API_KEY: 'or-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     expect(() => selectAgents({ provider: 'claude', reviewProvider: 'openrouter' }, env)).toThrow(
       /cannot mix "claude" and "openrouter"/,
@@ -325,7 +325,7 @@ describe('selectAgents', () => {
 });
 
 describe('validateProviderChoice', () => {
-  it('throws on transport collision: claude + zai both own the anthropic transport', () => {
+  it('throws on transport collision: claude + zai both own the claude-cli transport', () => {
     expect(() => validateProviderChoice({ provider: 'claude', reviewProvider: 'zai' })).toThrow(
       /cannot mix "claude" and "zai"/,
     );
@@ -380,7 +380,7 @@ describe('implementer fallback provider', () => {
 
   it('rejects a fallback that collides with the review provider, or equals the implementer', () => {
     expect(() => validateProviderChoice({ provider: 'claude', reviewProvider: 'codex', fallbackProvider: 'codex' })).not.toThrow(); // same provider may serve both roles
-    expect(() => validateProviderChoice({ provider: 'codex', reviewProvider: 'claude', fallbackProvider: 'openrouter' })).toThrow(/share the anthropic transport/);
+    expect(() => validateProviderChoice({ provider: 'codex', reviewProvider: 'claude', fallbackProvider: 'openrouter' })).toThrow(/share the claude-cli transport/);
     expect(() => validateProviderChoice({ provider: 'claude', fallbackProvider: 'claude' })).toThrow(/is the implementer itself/);
   });
 

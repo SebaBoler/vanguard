@@ -35,7 +35,7 @@ files are, but the subscription auth and the outbound Anthropic traffic should o
 
 ## New constraint (rejected at dispatch with a clear message)
 
-- **`meridian` cannot run under `--llm-proxy`** (`directOnly`): it owns the Anthropic transport but
+- **`meridian` cannot run under `--llm-proxy`** (`directOnly`): it owns the Claude CLI transport but
   exposes no upstream a trusted sidecar could target (it carries only a base URL and authenticates on
   its own host), so `--llm-proxy` would fall the sidecar back to `api.anthropic.com`. Run it in direct
   mode. Under `--egress`, add the Meridian host to the egress allowlist (`src/sandbox/egress-allow.mjs`)

@@ -64,7 +64,7 @@ exist and are load-bearing:
   (`appconfig.rs:42-46` serializes only known struct fields); that window must not exist while PR A
   is the only authoring path.
 - Generalizing the stale zai literals on the run path: `preflight.ts:226` llm-auth check (via
-  `anthropicTransportKeyEnv`, fixing openrouter/meridian too) and `runners/spec.ts:176` — the haiku
+  `claudeCliKeyEnv`, fixing openrouter/meridian too) and `runners/spec.ts:176` — the haiku
   override must not apply to providers that force their own model (a GLM endpoint asked for `haiku`
   fails). The registry exports a named helper for this: `forcedProviderModel(name, customs):
   string | undefined` (a `forcedModel` field on `ProviderSpec` — set for zai and synthesized
@@ -76,7 +76,7 @@ exist and are load-bearing:
 - **Keyless custom providers (`keyEnv` optional).** Cut in round 2: the motivating case is keyed;
   keyless-single-URL is exactly what meridian already does; and keyless was the only part of the
   registry diff that *changed* semantics (`providerSecrets` const-secrets branch,
-  `anthropicTransportKeyEnv` no longer meaning "owns transport") instead of adding to them — it also
+  `claudeCliKeyEnv` no longer meaning "owns transport") instead of adding to them — it also
   silently broke the generalized preflight llm-auth check (a keyless custom would demand an Anthropic
   credential it never consumes). With `keyEnv` required, a synthesized custom is a pure zai clone and
   the registry change is purely additive. Escape hatch needing zero code: export a dummy-valued env
@@ -89,12 +89,12 @@ exist and are load-bearing:
   customs are **direct-only**, rejected at dispatch *before sandbox spin-up* (§6 gate 2). Security
   posture equals running zai without `--llm-proxy`, today's default. Trigger: someone wants a custom
   endpoint with the key held out of the sandbox.
-- **Non-Anthropic transports.** Customs drive the `claude` CLI against Anthropic-Messages-compatible
+- **Non-Claude CLI transports.** Customs drive the `claude` CLI against Anthropic-Messages-compatible
   endpoints only. Codex already has `OPENAI_BASE_URL` passthrough. Trigger: a real
   second-transport case.
 - **Customs on review commands and as `--review-provider`.** Built-in-only gates stay (also a
   security boundary — §2). A custom reviewer would additionally always collide with the implementer
-  on the 'anthropic' transport. Trigger: demand + a trust-model decision.
+  on the 'claude-cli' transport. Trigger: demand + a trust-model decision.
 - **Flow-stage transport rerouting.** Stage pins to transport-owning providers are *rejected* (§6
   gate 4), not implemented — per-stage sandbox transport env is real work. Trigger: demand.
 - **Meridian egress retrofit** (its host via the same allowlist threading). Trigger: first
@@ -186,10 +186,10 @@ export interface ProviderChoice {
   `ProviderSpec` synthesized from a healthy custom entry, else `AgentError` — broken entry ⇒ its
   recorded `error`; unknown name ⇒ list of built-ins + healthy custom names.
 - Registry functions that resolve names gain the optional customs and pass them down:
-  `makeProvider`, `requiresApiKey`, `anthropicTransportKeyEnv`, `providerSecrets`, plus the new
+  `makeProvider`, `requiresApiKey`, `claudeCliKeyEnv`, `providerSecrets`, plus the new
   `forcedProviderModel` (§3); `needsAnthropicAuth`, `validateProviderChoice`, `selectAgents` read
   them off the choice itself. `agentAuthFromEnv` passes `choice.customProviders` through.
-  `anthropicTransportKeyEnv(name, customs) !== undefined` keeps meaning "owns the Anthropic
+  `claudeCliKeyEnv(name, customs) !== undefined` keeps meaning "owns the Claude CLI
   transport" (all customs are keyed — §3).
 
 ### Synthesized spec (a generalized zai)
@@ -200,7 +200,7 @@ export interface ProviderChoice {
   impossible). Two *behavioral* name consumers exist and both default correctly, pinned by tests:
   `skill-registry.ts:20-24` `providerFamily` → 'claude' family (right — customs drive the claude
   CLI); `vanguard.ts:315` `CLAUDE_SESSION_PROVIDERS` miss → no session capture (§3 deferral).
-- `transport: 'anthropic'`, `ownsAnthropicTransport: true` (Anthropic authSecrets suppression —
+- `transport: 'claude-cli'`, `ownsClaudeCliTransport: true` (Anthropic authSecrets suppression —
   existing mechanism, holds on both CLI and sidecar paths via `selectAgents`), `directOnly: true`,
   `forcedModel: spec.model`.
 - `key: { hostEnv: [spec.keyEnv], toSandboxSecrets: k => ({ ANTHROPIC_BASE_URL: spec.baseUrl,

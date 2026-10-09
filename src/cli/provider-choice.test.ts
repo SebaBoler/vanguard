@@ -40,7 +40,7 @@ describe('loadProviderChoice (the S6 dispatch entry block)', () => {
       /direct-mode only/,
     );
     await expect(loadProviderChoice({ repoPath, provider: 'my-proxy', reviewProvider: 'claude' })).rejects.toThrow(
-      /share the anthropic transport/,
+      /share the claude-cli transport/,
     );
   });
 
