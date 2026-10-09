@@ -483,7 +483,7 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
  * Dispatch entry points call this first so the failure precedes every side effect.
  */
 export function assertProvidersResolvable(choice: ProviderChoice): void {
-  for (const name of [choice.provider ?? 'claude', ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])]) {
+  for (const name of usedProviderNames(choice)) {
     resolveSpec(name, choice.customProviders);
   }
 }
@@ -532,11 +532,7 @@ export function selectAgents(
 ): SelectedAgents {
   const provider = choice.provider ?? 'claude';
   const customs = choice.customProviders;
-  const used = [
-    provider,
-    ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : []),
-    ...(choice.fallbackProvider !== undefined ? [choice.fallbackProvider] : []),
-  ];
+  const used = usedProviderNames(choice);
 
   validateProviderChoice(choice, opts);
 
