@@ -769,11 +769,36 @@ describe('vanguard.run base resolution (#429)', () => {
   it('fails loudly when the start cannot be resolved instead of landing on a default', async () => {
     const { clone } = await originAndStaleClone();
     const wm = new WorktreeManager(clone);
+    // A fresh reuse cut from a base this clone does not carry fails where it always did (the cut).
     await expect(
       prepareContext({ taskId: 'start-missing', localRepoPath: clone, baseBranch: 'no-such-branch', start: 'reuse', sandbox: makeSandbox().sandbox }, { worktrees: wm }),
-    ).rejects.toThrow(/Cannot resolve the start commit for start-missing: no-such-branch/);
+    ).rejects.toThrow(/Failed to create worktree for start-missing/);
     await expect(
       prepareContext({ taskId: 'start-nohead', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'no-such-branch' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
     ).rejects.toThrow(/no-such-branch/);
+    await expect(
+      prepareContext({ taskId: 'start-unsafe', localRepoPath: clone, baseBranch: '--upload-pack=x', start: { prHead: 'feature' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+    ).rejects.toThrow(/cannot start with "-"/);
+  });
+
+  it('a reuse start still resumes a run branch when the base has no local branch (tracking ref, then the branch tip)', async () => {
+    const { origin, clone } = await originAndStaleClone();
+    // `release` exists on origin and as a tracking ref here, but was never checked out locally.
+    await execa('git', ['branch', 'release', 'main'], { cwd: origin });
+    await execa('git', ['fetch', '-q', 'origin', 'release'], { cwd: clone });
+    const wm = new WorktreeManager(clone, undefined, () => 'r1');
+    const { logger, entries } = captureLogger();
+
+    const first = await prepareContext({ taskId: 'resume', localRepoPath: clone, baseBranch: 'release', start: 'reuse', sandbox: makeSandbox().sandbox, logger }, { worktrees: wm });
+    await disposeContext(first);
+    expect(first.startRef).toBe(await sha(clone, 'refs/remotes/origin/release'));
+
+    // The base gone entirely: the existing run branch is still picked up, measured from its own tip, and says so.
+    await execa('git', ['branch', '-D', '-r', 'origin/release'], { cwd: clone });
+    const resumed = await prepareContext({ taskId: 'resume', localRepoPath: clone, baseBranch: 'release', start: 'reuse', sandbox: makeSandbox().sandbox, logger }, { worktrees: wm });
+    await disposeContext(resumed);
+    expect(resumed.branch).toBe(first.branch);
+    expect(resumed.startRef).toBe(await sha(clone, `refs/heads/${first.branch}`));
+    expect(entries.some((e) => e.msg.includes('release is not a commit here'))).toBe(true);
   });
 });

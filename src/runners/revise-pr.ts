@@ -18,6 +18,7 @@ import {
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { baseBranchOrDefault } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
@@ -107,8 +108,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   /** Injected CommandRunner for git push (pushToExistingBranch). */
   _pushRunner?: CommandRunner;
   /**
-   * Start the worktree from this local branch instead of the PR head on origin (no fetch).
-   * Use in tests to point at a local branch instead of origin/<headRefName>.
+   * Start the worktree from this branch (a 'base' start that keeps a local copy that is ahead) instead
+   * of fetching the PR head. Use in tests, on a repo without an origin, to point at a local branch.
    */
   _baseBranch?: string;
 }
@@ -238,7 +239,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         // for the same-repo caveat). Tests point it at a local branch instead, which has no origin.
         ...(deps._baseBranch !== undefined
           ? { baseBranch: deps._baseBranch, start: 'base' as const, keepLocalIfAhead: true }
-          : { baseBranch: pr.baseRefName, start: { prHead: pr.headRefName } }),
+          : { baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`), start: { prHead: pr.headRefName } }),
       },
       { ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
     );

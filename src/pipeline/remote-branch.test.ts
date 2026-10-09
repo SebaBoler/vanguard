@@ -103,7 +103,7 @@ describe('publishForReview', () => {
     expect(calls).toEqual([
       ['ls-remote', '--exit-code', '--heads', '--end-of-options', 'origin', 'chore/vanguard-pub2-r2'],
       ['fetch', '--end-of-options', 'origin', 'main'],
-      ['rev-list', '--count', `${ctx.startRef}..FETCH_HEAD`],
+      ['rev-list', '--count', 'HEAD..FETCH_HEAD'],
       ['-c', 'user.name=Bot', '-c', 'user.email=bot@x', 'rebase', '--no-verify', 'FETCH_HEAD'],
       ['rev-parse', 'refs/heads/chore/vanguard-pub2-r2'],
       ['push', '--no-verify', '-u', 'origin', 'chore/vanguard-pub2-r2'],
@@ -273,7 +273,7 @@ describe('pushToExistingBranch', () => {
 
 describe('rebaseOntoRemoteBase', () => {
   const identity = ['-c', 'user.name=Vanguard', '-c', 'user.email=vanguard@local'];
-  const opts = { remote: 'origin', base: 'main', branch: 'b', startRef: 'start0' };
+  const opts = { remote: 'origin', base: 'main', branch: 'b' };
   /** Runner stub for a branch that does not exist on the remote yet (ls-remote exits 2). */
   const stub = (calls: string[][], answer: (args: string[]) => string | Error = () => ''): ((f: string, a: string[]) => Promise<string>) =>
     async (_file, args) => {
@@ -317,7 +317,7 @@ describe('rebaseOntoRemoteBase', () => {
     const calls: string[][] = [];
     const lines: string[] = [];
     expect(await rebaseOntoRemoteBase(stub(calls, (a) => (a[0] === 'rev-list' ? '1' : '')), '/wt', { ...opts, log: (l) => lines.push(l) })).toBe(true);
-    expect(calls[2]).toEqual(['rev-list', '--count', 'start0..FETCH_HEAD']);
+    expect(calls[2]).toEqual(['rev-list', '--count', 'HEAD..FETCH_HEAD']);
     expect(calls[3]).toEqual([...identity, 'rebase', '--no-verify', 'FETCH_HEAD']);
     expect(lines[0]).toMatch(/rebased onto origin\/main \(1 new commit/);
   });

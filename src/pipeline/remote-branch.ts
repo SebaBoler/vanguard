@@ -106,22 +106,22 @@ export interface RebaseOntoRemoteBaseOptions {
   base: string;
   /** The task branch; the rebase is skipped when it already exists on the remote. */
   branch: string;
-  /** The commit the run started from (RunContext.startRef): the base "moved" when it has commits past it. */
-  startRef: string;
   authorName?: string;
   authorEmail?: string;
   log?: (line: string) => void;
 }
 
 /**
- * Rebase the task branch onto the remote base when the base moved during the run. The worktree is cut
- * from `startRef` (the base as origin had it when the run began, or the local copy), so a commit that
- * lands on the remote base mid-run — typically a Dependabot workflow bump — leaves the branch behind.
- * GitHub compares a NEW branch's workflow files against the default branch, so a stale
+ * Rebase the task branch onto the remote base when the branch is behind it. The worktree is cut from
+ * RunContext.startRef (the base as origin had it when the run began, or the local copy), so a commit
+ * that lands on the remote base mid-run — typically a Dependabot workflow bump — leaves the branch
+ * behind. GitHub compares a NEW branch's workflow files against the default branch, so a stale
  * `.github/workflows/*` is then rejected as a workflow update the token may not make (#423), even
  * though the agent never touched those files. Never worse than pushing as-is: every git failure here
  * is logged and the push proceeds unchanged (only the stale-workflow case is then still rejected by
- * GitHub, exactly as before). Compares against FETCH_HEAD, which `git fetch <remote> <base>` always
+ * GitHub, exactly as before). Compares HEAD, not startRef, against FETCH_HEAD: a reused branch was
+ * cut from an older base than the one its run resolved, and it is the branch's own distance that
+ * decides whether the push would be stale. FETCH_HEAD is what `git fetch <remote> <base>` always
  * writes (a single-branch clone creates no `refs/remotes/<remote>/<base>` for another base). Returns
  * true when the branch was rebased.
  */
@@ -145,9 +145,8 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   }
   let behind: string;
   try {
-    // Commits on the base since the run started. Last non-empty line: a stray warning ahead of the
-    // count must not disable the fix.
-    behind = (await run('git', ['rev-list', '--count', `${opts.startRef}..FETCH_HEAD`], cwd)).trim().split('\n').at(-1) ?? '';
+    // Last non-empty line: a stray warning ahead of the count must not disable the fix.
+    behind = (await run('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD'], cwd)).trim().split('\n').at(-1) ?? '';
   } catch (cause) {
     log(`publish: could not compare the branch with ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
@@ -191,13 +190,12 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
   const remote = opts.remote ?? 'origin';
-  // The base and the start commit come from the context: the same decision the worktree was cut on.
+  // The base comes from the context: the same branch the worktree was prepared for, no default here.
   const base = ctx.baseBranch;
   const rebased = await rebaseOntoRemoteBase(run, ctx.worktreePath, {
     remote,
     base,
     branch: ctx.branch,
-    startRef: ctx.startRef,
     log: (line) => ctx.log.info({ branch: ctx.branch }, line),
     ...(opts.authorName !== undefined ? { authorName: opts.authorName } : {}),
     ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),

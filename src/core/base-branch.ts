@@ -25,6 +25,16 @@ export function assertSafeBaseBranch(base: string): void {
 /** The base a run targets when no `--base` is given. Every default goes through this name, never a bare literal. */
 export const DEFAULT_BASE_BRANCH = 'main';
 
+/**
+ * A base taken from a PR/MR record, or the default when the API left it out. The fallback is announced:
+ * a review that silently reads the wrong branch is the failure this module exists to prevent.
+ */
+export function baseBranchOrDefault(base: string, what: string): string {
+  if (base !== '') return base;
+  console.warn(`vanguard: ${what} carries no base branch — reviewing against ${DEFAULT_BASE_BRANCH}`);
+  return DEFAULT_BASE_BRANCH;
+}
+
 export interface ResolveRemoteBaseRefOptions {
   logger?: VanguardLogger;
   /** Log-line prefix naming the pass ('spec', 'worktree'). */

@@ -140,27 +140,37 @@ async function resolveHome(sandbox: IsolatedSandboxProvider): Promise<string> {
   return home;
 }
 
+/** `git rev-parse` of `ref` as a commit SHA, or '' when it names no commit (or no such ref). */
+async function revParseCommit(cwd: string, ref: string): Promise<string> {
+  return (await execa('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd, reject: false })).stdout.trim();
+}
+
 /**
  * Resolve PrepareOptions.start to the SHA the task starts from. Decided once, here, so the worktree
  * cut, the closing-keyword scan and the pre-push rebase cannot disagree, and no caller lands on a
  * default base by leaving it out. A SHA, not a ref: a concurrent run's fetch cannot move it and a
- * same-named tag cannot shadow it.
+ * same-named tag cannot shadow it. Returns undefined only for a 'reuse' start whose base names no
+ * commit here: the base is then unused when an existing run branch is picked up (prepareContext
+ * measures from that branch instead), and a fresh cut fails in WorktreeManager.create as it always did.
  */
-async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promise<string> {
+async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promise<string | undefined> {
   const { localRepoPath: cwd, baseBranch, start } = opts;
+  // ctx.baseBranch feeds a fetch and the PR/MR target later; validate it here, whatever the start kind.
+  assertSafeBaseBranch(baseBranch);
   let ref: string;
   let what: string;
   if (start === 'base') {
     ref = await resolveRemoteBaseRef(cwd, baseBranch, { logger: log, ...(opts.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: opts.keepLocalIfAhead } : {}) });
     what = baseBranch;
   } else if (start === 'reuse') {
-    // The local base, never fetched: a reused branch keeps its own history. The full ref when the
-    // branch exists, so a same-named tag cannot shadow it (same rule as resolveRemoteBaseRef).
-    assertSafeBaseBranch(baseBranch);
-    const localRef = `refs/heads/${baseBranch}`;
-    const hasLocal = (await execa('git', ['rev-parse', '--verify', '--quiet', localRef], { cwd, reject: false })).exitCode === 0;
-    ref = hasLocal ? localRef : baseBranch;
-    what = baseBranch;
+    // The base as this clone has it, never fetched: a reused branch keeps its own history. The local
+    // branch first (the full ref, so a same-named tag cannot shadow it), then the tracking ref a
+    // single-branch clone may hold instead, then whatever git makes of the bare name.
+    for (const candidate of [`refs/heads/${baseBranch}`, `refs/remotes/origin/${baseBranch}`, baseBranch]) {
+      const sha = await revParseCommit(cwd, candidate);
+      if (sha !== '') return sha;
+    }
+    return undefined;
   } else {
     // The PR head as it is on origin, so a revision continues the PR, not the base. Same-repo PRs
     // only: a fork PR's head is not on origin, so a same-named origin branch, or nothing, is fetched
@@ -171,7 +181,7 @@ async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promi
     ref = 'FETCH_HEAD';
     what = `origin/${start.prHead}`;
   }
-  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd, reject: false })).stdout.trim();
+  const sha = await revParseCommit(cwd, ref);
   if (sha === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: ${what} (${ref}) is not a commit in ${cwd}`);
   return sha;
 }
@@ -181,12 +191,19 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
-  const startRef = await resolveStartRef(opts, log);
-  const wt = await wm.create(opts.taskId, startRef, {
+  let startRef = await resolveStartRef(opts, log);
+  const wt = await wm.create(opts.taskId, startRef ?? opts.baseBranch, {
     ...(opts.start === 'reuse' ? { reuse: true } : {}),
     ...(opts.branchPrefix !== undefined ? { branchPrefix: opts.branchPrefix } : {}),
     ...(opts.branchId !== undefined ? { branchId: opts.branchId } : {}),
   });
+  if (startRef === undefined) {
+    // A reused branch in a clone that does not carry the base at all: the branch's own tip is the only
+    // baseline there is (new commits are measured from it; nothing older is on the base either way).
+    startRef = await revParseCommit(wt.path, 'HEAD');
+    if (startRef === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: ${opts.baseBranch} is not a commit in ${opts.localRepoPath} and ${wt.branch} has no head`);
+    log.warn({ taskId: opts.taskId, baseBranch: opts.baseBranch, startRef }, `reuse: ${opts.baseBranch} is not a commit here — measuring from the tip of ${wt.branch}`);
+  }
   // Acquire a host concurrency slot before booting the sandbox, so a fan-out can't start more
   // sandboxes than the host can hold (blocks until a slot frees).
   await acquireSandboxSlot(opts.sandbox);
