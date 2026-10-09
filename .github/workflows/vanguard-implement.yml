@@ -46,6 +46,8 @@ jobs:
       spec-model: opus
       review-provider: codex
       escalate-model: claude-fable-5-1
+      # If Claude is down or out of plan, the implementer retries once on the Codex subscription.
+      fallback-provider: codex
       decision-probe: true
       persist-metrics: true
     secrets:

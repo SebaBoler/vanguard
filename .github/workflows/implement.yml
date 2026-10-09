@@ -41,6 +41,14 @@ on:
         description: 'Reviewer model (--review-model). Empty = CLI default.'
         type: string
         default: ''
+      fallback-provider:
+        description: 'Provider the implementer retries on when the primary one fails (--fallback-provider); must sit on a different transport, e.g. codex for a claude implementer. Empty = off.'
+        type: string
+        default: ''
+      fallback-model:
+        description: 'Model for the fallback implementer (--fallback-model). Empty = that provider default.'
+        type: string
+        default: ''
       escalate-model:
         description: 'Model the run escalates to after repeated failures (--escalate-model). Empty = off (the CLI default); pass a model of the implementation provider.'
         type: string
@@ -183,6 +191,8 @@ jobs:
           IN_REVIEW_PROVIDER: ${{ inputs.review-provider }}
           IN_REVIEW_MODEL: ${{ inputs.review-model }}
           IN_ESCALATE_MODEL: ${{ inputs.escalate-model }}
+          IN_FALLBACK_PROVIDER: ${{ inputs.fallback-provider }}
+          IN_FALLBACK_MODEL: ${{ inputs.fallback-model }}
           IN_CONFORMANCE: ${{ inputs.conformance }}
           IN_CONFORMANCE_MODEL: ${{ inputs.conformance-model }}
           IN_MAX_TASKS: ${{ inputs.max-tasks }}
@@ -198,6 +208,8 @@ jobs:
           [ -n "$IN_REVIEW_PROVIDER" ] && args+=(--review-provider "$IN_REVIEW_PROVIDER")
           [ -n "$IN_REVIEW_MODEL" ] && args+=(--review-model "$IN_REVIEW_MODEL")
           [ -n "$IN_ESCALATE_MODEL" ] && args+=(--escalate-model "$IN_ESCALATE_MODEL")
+          [ -n "$IN_FALLBACK_PROVIDER" ] && args+=(--fallback-provider "$IN_FALLBACK_PROVIDER")
+          [ -n "$IN_FALLBACK_MODEL" ] && args+=(--fallback-model "$IN_FALLBACK_MODEL")
           [ "$IN_CONFORMANCE" = "true" ] && args+=(--conformance)
           [ -n "$IN_CONFORMANCE_MODEL" ] && args+=(--conformance-model "$IN_CONFORMANCE_MODEL")
           [ -n "$IN_MAX_TASKS" ] && args+=(--max-tasks "$IN_MAX_TASKS")

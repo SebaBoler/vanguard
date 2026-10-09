@@ -353,6 +353,13 @@ export interface ProviderChoice {
   /** When set, run only the review stage on this provider (cross-provider review). Built-ins only. */
   reviewProvider?: string;
   /**
+   * When set, the implementer stage retries on this provider after the primary one throws an
+   * AgentError (outage, usage limit, revoked credential). Built-ins only; must sit on a different
+   * transport slot than the implementer (see Transport). The repair loop then resumes on whichever
+   * provider actually ran the stage.
+   */
+  fallbackProvider?: string;
+  /**
    * Repo customs (S6), loaded ONCE per entry point from the TARGET repo (cmd.repoPath /
    * params.repoPath) and carried with the choice — registry functions never do IO.
    */
@@ -378,6 +385,8 @@ export interface SelectedAgents {
   agent: AgentProvider;
   /** Present only when reviewProvider was set; pass to withStageProvider to route the review stage. */
   reviewAgent?: AgentProvider;
+  /** Present only when fallbackProvider was set; the implementer stage's fallback (withStageFallback). */
+  fallbackAgent?: AgentProvider;
   /** Sandbox-safe secrets injected into the sandbox env. */
   secrets: Record<string, string>;
   /** Real provider keys held by trusted sidecars (proxy mode); never injected into the sandbox. */
@@ -402,20 +411,36 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
   const specOf = (name: string): ProviderSpec => resolveSpec(name, customs);
 
   // Two distinct providers sharing one transport slot collide in a single sandbox (shared env namespace,
-  // e.g. one ANTHROPIC_BASE_URL). Only the implement + review stages can differ, so a single pairwise
-  // check suffices: claude+zai (both 'anthropic') is the case this rejects.
-  if (review !== undefined && review !== provider && specOf(review).transport === specOf(provider).transport) {
-    const names = [provider, review].sort().map((n) => `"${n}"`).join(' and ');
+  // e.g. one ANTHROPIC_BASE_URL — Claude, zai, openrouter, meridian and customs all drive the claude CLI
+  // through it). Every pair among implementer, reviewer and implementer-fallback must differ in slot:
+  // claude+zai (both 'anthropic') is the case this rejects.
+  const fallback = choice.fallbackProvider;
+  const roles: Array<[string, string]> = [
+    ...(review !== undefined ? [['cross-provider review', review] as [string, string]] : []),
+    ...(fallback !== undefined ? [['implementer fallback', fallback] as [string, string]] : []),
+  ];
+  for (const [role, other] of roles) {
+    if (other !== provider && specOf(other).transport === specOf(provider).transport) {
+      const names = [provider, other].sort().map((n) => `"${n}"`).join(' and ');
+      throw new AgentError(
+        `${role.charAt(0).toUpperCase()}${role.slice(1)} cannot mix ${names}: they share the ${specOf(provider).transport} transport and ` +
+          `collide in one sandbox. Use the same provider, or pick providers on different transports.`,
+      );
+    }
+  }
+  if (review !== undefined && fallback !== undefined && review !== fallback && specOf(review).transport === specOf(fallback).transport) {
     throw new AgentError(
-      `Cross-provider review cannot mix ${names}: they share the ${specOf(provider).transport} transport and ` +
-        `collide in one sandbox. Use the same provider for both stages, or pick providers on different transports.`,
+      `Implementer fallback "${fallback}" and review provider "${review}" share the ${specOf(review).transport} transport and collide in one sandbox.`,
     );
+  }
+  if (fallback !== undefined && fallback === provider) {
+    throw new AgentError(`Implementer fallback "${fallback}" is the implementer itself; pick a different provider or drop --fallback-provider.`);
   }
 
   // A direct-only provider (meridian, customs) has no upstream a sidecar could target, so --llm-proxy
   // would silently fall the sidecar back to api.anthropic.com. Reject the combination outright.
   if (opts.proxyMode === true) {
-    const directOnly = [provider, ...(review !== undefined ? [review] : [])].find((n) => specOf(n).directOnly === true);
+    const directOnly = [provider, ...(review !== undefined ? [review] : []), ...(fallback !== undefined ? [fallback] : [])].find((n) => specOf(n).directOnly === true);
     if (directOnly !== undefined) {
       throw new AgentError(
         `Provider "${directOnly}" is direct-mode only and cannot run under --llm-proxy: it authenticates ` +
@@ -427,6 +452,12 @@ export function validateProviderChoice(choice: ProviderChoice, opts: ProviderSec
   // Under --llm-proxy, a provider that owns the Anthropic transport (zai) is served by the PRIMARY sidecar,
   // whose upstream follows --provider only. So such a provider must BE the implementer; as a reviewer-only
   // it has no sidecar and would silently fall back to the implementer's Anthropic upstream + credential.
+  if (opts.proxyMode === true && fallback !== undefined && specOf(fallback).ownsAnthropicTransport === true) {
+    throw new AgentError(
+      `Implementer fallback "${fallback}" owns the primary sidecar's transport and cannot be a fallback under --llm-proxy; ` +
+        `pick a provider on another transport (e.g. codex) or run without --llm-proxy.`,
+    );
+  }
   if (opts.proxyMode === true && review !== undefined && review !== provider && specOf(review).ownsAnthropicTransport === true) {
     throw new AgentError(
       `Cross-provider review with "${review}" under --llm-proxy needs "${review}" as the implementer too ` +
@@ -492,7 +523,11 @@ export function selectAgents(
 ): SelectedAgents {
   const provider = choice.provider ?? 'claude';
   const customs = choice.customProviders;
-  const used = [provider, ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : [])];
+  const used = [
+    provider,
+    ...(choice.reviewProvider !== undefined ? [choice.reviewProvider] : []),
+    ...(choice.fallbackProvider !== undefined ? [choice.fallbackProvider] : []),
+  ];
 
   validateProviderChoice(choice, opts);
 
@@ -500,6 +535,7 @@ export function selectAgents(
   return {
     agent: makeProvider(provider, customs),
     ...(choice.reviewProvider !== undefined ? { reviewAgent: makeProvider(choice.reviewProvider, customs) } : {}),
+    ...(choice.fallbackProvider !== undefined ? { fallbackAgent: makeProvider(choice.fallbackProvider, customs) } : {}),
     secrets: sandboxSecrets,
     proxySecrets,
     injectAnthropicAuth: !used.some((name) => resolveSpec(name, customs).ownsAnthropicTransport === true),

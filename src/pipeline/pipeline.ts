@@ -357,8 +357,8 @@ export async function runBudgetedStages(
     } catch (err) {
       if (err instanceof AgentError && stage.fallback !== undefined) {
         ctx.log.warn(
-          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name },
-          'review provider unavailable — downgrading to planning provider',
+          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: err.message },
+          `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;
         effectiveModel = stage.fallback.model;
@@ -642,7 +642,7 @@ export function withStageModelExcept(stages: PipelineStage[], model: string, exc
 export function withStageFallback(
   stages: PipelineStage[],
   fallback: { provider: AgentProvider; model?: string },
-  stageName = STAGE.REVIEWER,
+  stageName: StageName = STAGE.REVIEWER,
 ): PipelineStage[] {
   return stages.map((stage) => (stage.name === stageName ? { ...stage, fallback } : stage));
 }

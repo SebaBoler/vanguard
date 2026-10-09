@@ -9,7 +9,7 @@ import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe
 import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
 import { VanguardError } from '../core/errors.js';
 import { decisionDiffScorer } from '../evals/decision-judge.js';
-import { runStages, assembleReviewPipeline, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
+import { runStages, assembleReviewPipeline, withStageFallback, sandboxComplete, withStageMaxTurns, withStageResumeUntilComplete, STAGE } from '../pipeline/pipeline.js';
 import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
@@ -46,6 +46,8 @@ import type { SkillRegistry } from '../context/skill-registry.js';
 export interface RunOptions extends ProviderChoice {
   providerModel?: string;
   reviewModel?: string;
+  /** Model for the implementer fallback provider (ProviderChoice.fallbackProvider); undefined = its default. */
+  fallbackModel?: string;
   /** Model for gate repairs after the first failed one; undefined = keep the implementer model. */
   escalateModel?: string;
   /** How --fork variants are scored; 'decision' needs decision-model credentials (fails fast without). */
@@ -102,6 +104,8 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
+    ...(cmd.fallbackProvider !== undefined ? { fallbackProvider: cmd.fallbackProvider } : {}),
+    ...(cmd.fallbackModel !== undefined ? { fallbackModel: cmd.fallbackModel } : {}),
     // Loaded repo customs must survive this copy or selectAgents sees a bare name (S6).
     ...(cmd.customProviders !== undefined ? { customProviders: cmd.customProviders } : {}),
     ...(cmd.providerModel !== undefined ? { providerModel: cmd.providerModel } : {}),
@@ -406,11 +410,20 @@ export async function runSourcedIssue(
       if (labelModel !== undefined) {
         console.log(`vanguard: ${task.id} pins the implementer model to ${labelModel} via label (overrides --provider-model)`);
       }
-      const pipeline = assembleReviewPipeline(scopedStages, agents, {
+      let pipeline = assembleReviewPipeline(scopedStages, agents, {
         ...deps,
         ...(labelModel !== undefined ? { providerModel: labelModel } : {}),
         ...(providerForcedModel !== undefined ? { providerForcedModel } : {}),
       });
+      // Implementer fallback: on an AgentError from the primary provider (outage, usage limit, revoked
+      // credential) runStages retries the stage once on this provider — same as the reviewer's fallback.
+      if (agents.fallbackAgent !== undefined) {
+        pipeline = withStageFallback(
+          pipeline,
+          { provider: agents.fallbackAgent, ...(deps.fallbackModel !== undefined ? { model: deps.fallbackModel } : {}) },
+          STAGE.IMPLEMENTER,
+        );
+      }
       const probe = await probePromise;
       if (probe !== undefined && deps.signal?.aborted !== true) {
         await persistDecisionProbe(deps.repoPath, adapter.taskId(task), probe).catch(() => undefined);
@@ -492,7 +505,8 @@ export async function runSourcedIssue(
             ].filter((part): part is string => part !== undefined).join('\n\n');
             return { pass, feedback };
           },
-          agent: agents.agent,
+          // Resume on the provider that actually ran the stage: after a fallback the session belongs to it.
+          agent: agents.fallbackAgent !== undefined && outcomes[implementerIdx]?.providerName === agents.fallbackAgent.name ? agents.fallbackAgent : agents.agent,
           outcomes,
           pipeline,
           // NOTE: with an explicit --max-repair-iterations N, an incomplete implementer can be resumed up

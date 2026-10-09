@@ -119,6 +119,16 @@ describe('parseCli', () => {
     expect(cmd.kind === 'run' && cmd.reviewProvider).toBe('codex');
   });
 
+  it('parses --fallback-provider / --fallback-model on run and watch, and rejects an unknown one or a model without a provider', () => {
+    const run = parseCli(['run', '--linear', 'TES-1', '--provider', 'claude', '--fallback-provider', 'codex', '--fallback-model', 'gpt-5.6-sol'], '/work');
+    expect(run.kind === 'run' && run.fallbackProvider).toBe('codex');
+    expect(run.kind === 'run' && run.fallbackModel).toBe('gpt-5.6-sol');
+    const watch = parseCli(['watch', '--source', 'github', '--github-repo', 'o/r', '--fallback-provider', 'codex'], '/work');
+    expect(watch.kind === 'watch' && watch.fallbackProvider).toBe('codex');
+    expect(parseCli(['run', '--linear', 'TES-1', '--fallback-provider', 'bogus'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('Unknown fallback-provider "bogus"') });
+    expect(parseCli(['run', '--linear', 'TES-1', '--fallback-model', 'x'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('--fallback-model needs --fallback-provider') });
+  });
+
   it('parses provider flags on watch too', () => {
     const cmd = parseCli(['watch', '--label', 'vanguard', '--provider', 'codex'], '/work');
     expect(cmd.kind === 'watch' && cmd.provider).toBe('codex');

@@ -109,6 +109,7 @@ vi.mock('../core/decision-model.js', () => ({
   decisionModelMissing: () => 'set CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_AUTH_TOKEN (Workers AI) or VANGUARD_DECISION_URL.',
   DECISION_MODEL_DEFAULT: 'clef-flash',
 }));
+import { selectAgents } from '../agents/registry.js';
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
@@ -267,6 +268,22 @@ describe('runSourcedIssue', () => {
     // assembleReviewPipeline appends the conformance stage when deps.conformance is true.
     const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
     expect(assembled.some((s) => s.name === 'conformance')).toBe(true);
+  });
+
+  it('--fallback-provider puts a fallback on the implementer stage only, with --fallback-model', async () => {
+    vi.mocked(selectAgents).mockReturnValueOnce({
+      agent: { name: 'claude' },
+      fallbackAgent: { name: 'codex' },
+      secrets: {},
+      proxySecrets: {},
+      injectAnthropicAuth: false,
+    } as never);
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', fallbackProvider: 'codex', fallbackModel: 'gpt-5.6-sol' }, adapter);
+    const assembled = runStages.mock.calls[0]?.[1] as PipelineStage[];
+    const implementer = assembled.find((st) => st.name === 'implementer');
+    expect(implementer?.fallback).toEqual({ provider: { name: 'codex' }, model: 'gpt-5.6-sol' });
+    expect(assembled.filter((st) => st.name !== 'implementer').every((st) => st.fallback === undefined)).toBe(true);
   });
 
   it('a vanguard:model=<m> label pins the implementer model for that task, over --provider-model', async () => {
