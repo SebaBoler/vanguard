@@ -9,7 +9,7 @@ import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { CustomProviderEntry } from '../agents/registry.js';
+import type { ProviderChoice } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, ProofFailureKind } from './source-adapter.js';
@@ -78,18 +78,10 @@ export async function runGithubProject(
 }
 
 /** Read the run dependencies from the environment (+ flag overrides), resolving the repo slug from origin. */
-export async function githubDepsFromEnv(
-  repoPath: string,
-  repoSlug?: string,
-  provider?: string,
-  reviewProvider?: string,
-  customProviders?: readonly CustomProviderEntry[],
-): Promise<RunGithubIssueDeps> {
-  const auth = agentAuthFromEnv({
-    ...(provider !== undefined ? { provider } : {}),
-    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-    ...(customProviders !== undefined ? { customProviders } : {}),
-  });
+export async function githubDepsFromEnv(repoPath: string, repoSlug?: string, choice: ProviderChoice = {}): Promise<RunGithubIssueDeps> {
+  // The whole choice, so every provider that may run (reviewer, implementer fallback) is counted
+  // when deciding whether the Anthropic credential must be injected.
+  const auth = agentAuthFromEnv(choice);
   const slug = repoSlug ?? process.env.GITHUB_REPO ?? (await detectRepoSlug(repoPath));
   return { ...(auth !== undefined ? { auth } : {}), repoPath, repoSlug: slug };
 }

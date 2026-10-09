@@ -10,7 +10,7 @@ import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITLAB_VERIFY_FAILED_LABEL, GITLAB_VISUAL_PROOF_FAILED_LABEL, GITLAB_SECRET_BLOCKED_LABEL } from '../gitlab-labels.js';
 import type { Task } from '../tasks/fetcher.js';
-import type { CustomProviderEntry } from '../agents/registry.js';
+import type { ProviderChoice } from '../agents/registry.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { RunIssueDeps, SourceAdapter, PublishVerdictInput, ProofFailureKind } from './source-adapter.js';
@@ -208,21 +208,12 @@ export async function knownGitlabProjectFromOrigin(repoPath: string): Promise<st
 }
 
 /** Assemble `RunGitlabIssueDeps` from environment + CLI flags (mirrors `githubDepsFromEnv`). */
-export async function gitlabDepsFromEnv(
-  repoPath: string,
-  project: string | undefined,
-  provider?: string,
-  reviewProvider?: string,
-  customProviders?: readonly CustomProviderEntry[],
-): Promise<RunGitlabIssueDeps> {
+export async function gitlabDepsFromEnv(repoPath: string, project: string | undefined, choice: ProviderChoice = {}): Promise<RunGitlabIssueDeps> {
   // Resolve auth first (mirrors githubDepsFromEnv order), so a missing-credential error surfaces
   // before git-remote detection. Without this, deps.auth is undefined and runSourcedIssue injects
-  // no token into the sandbox — `run --gitlab` agents fail "Not logged in".
-  const auth = agentAuthFromEnv({
-    ...(provider !== undefined ? { provider } : {}),
-    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-    ...(customProviders !== undefined ? { customProviders } : {}),
-  });
+  // no token into the sandbox — `run --gitlab` agents fail "Not logged in". The whole choice, so a
+  // claude fallback behind a codex implementer gets its credential too.
+  const auth = agentAuthFromEnv(choice);
   let resolvedProject = project;
   if (resolvedProject === undefined) {
     const { stdout } = await execa('git', ['remote', 'get-url', 'origin'], { cwd: repoPath });
@@ -236,7 +227,7 @@ export async function gitlabDepsFromEnv(
     ...(auth !== undefined ? { auth } : {}),
     repoPath,
     project: resolvedProject,
-    ...(provider !== undefined ? { provider } : {}),
-    ...(reviewProvider !== undefined ? { reviewProvider } : {}),
+    ...(choice.provider !== undefined ? { provider: choice.provider } : {}),
+    ...(choice.reviewProvider !== undefined ? { reviewProvider: choice.reviewProvider } : {}),
   };
 }

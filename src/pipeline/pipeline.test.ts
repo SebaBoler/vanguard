@@ -216,6 +216,62 @@ describe('runBudgetedStages', () => {
     await disposeContext(ctx);
   });
 
+  it('implementer fallback: starts fresh on the fallback CLI, carries no primary model, owns the session afterwards', async () => {
+    const wm = new WorktreeManager(repo);
+    const primaryInputs: AgentRunInput[] = [];
+    const fallbackInputs: AgentRunInput[] = [];
+    const reviewerInputs: AgentRunInput[] = [];
+    // The primary's first call is the implementer (the planner runs on the fallback); it throws. The
+    // second is the reviewer.
+    const primary: AgentProvider = {
+      name: 'claude',
+      async *run(input: AgentRunInput): AsyncGenerator<AgentTurn, AgentRunOutput, void> {
+        if (primaryInputs.length === 0) {
+          primaryInputs.push(input);
+          throw new AgentError('usage limit reached');
+        }
+        reviewerInputs.push(input);
+        yield { text: 'reviewing' };
+        return { finalText: 'ok', turns: 1, sessionId: 'claude-review' };
+      },
+    };
+    const fallback = recordingAgent(fallbackInputs);
+    const ctx = await prepareContext({ taskId: 'impl-fallback', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const stages = withStageFallback(
+      [
+        { name: 'planner', promptTemplate: 'plan', provider: fallback },
+        { name: 'implementer', promptTemplate: 'implement', model: 'claude-sonnet-5' },
+        // A flow may chain the reviewer onto the implementer's session; after a fallback that session
+        // belongs to another CLI, so the primary must start fresh rather than resume a foreign id.
+        { name: 'reviewer', promptTemplate: 'review', resumePrevious: true },
+      ],
+      { provider: fallback },
+      STAGE.IMPLEMENTER,
+    );
+
+    const result = await runBudgetedStages(ctx, stages, { agent: primary, maxCostUsd: 1 });
+
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.outcomes.map((o) => [o.name, o.providerName, o.model])).toEqual([
+        ['planner', 'rec', undefined],
+        ['implementer', 'rec', undefined],
+        ['reviewer', 'claude', undefined],
+      ]);
+    }
+    expect(primaryInputs).toHaveLength(1);
+    expect(primaryInputs[0]?.model).toBe('claude-sonnet-5');
+    // The planner ran on the fallback CLI, so its session was never the primary's to resume either.
+    expect(primaryInputs[0]?.resumeSessionId).toBeUndefined();
+    // The fallback attempt starts a fresh session (never resumes anything the failed primary touched)
+    // and carries no model from the primary's provider.
+    expect(fallbackInputs).toHaveLength(2);
+    expect(fallbackInputs[1]?.resumeSessionId).toBeUndefined();
+    expect(fallbackInputs[1]?.model).toBeUndefined();
+    expect(reviewerInputs[0]?.resumeSessionId).toBeUndefined();
+    await disposeContext(ctx);
+  });
+
   it('emits ordered stage + cost events when onEvent is set', async () => {
     const wm = new WorktreeManager(repo);
     const ctx = await prepareContext({ taskId: 'ev', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });

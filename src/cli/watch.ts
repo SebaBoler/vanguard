@@ -176,7 +176,7 @@ export async function watchLinearSource(
 }
 
 export async function buildGithubDeps(cmd: WatchCommand, auth: AgentAuth | undefined, ctx: SandboxContext) {
-  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd.provider, cmd.reviewProvider, cmd.customProviders);
+  const deps = await githubDepsFromEnv(cmd.repoPath, cmd.repoSlug, cmd);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
     deps.proxyUrl = ctx.proxyUrl;
@@ -288,7 +288,7 @@ export async function watchGitlabSource(
   ctx: SandboxContext,
   signal: AbortSignal,
 ): Promise<void> {
-  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd.provider, cmd.reviewProvider, cmd.customProviders);
+  const deps = await gitlabDepsFromEnv(cmd.repoPath, cmd.project, cmd);
   if (auth !== undefined) deps.auth = auth;
   if (ctx.proxyUrl !== undefined && ctx.network !== undefined) {
     deps.proxyUrl = ctx.proxyUrl;

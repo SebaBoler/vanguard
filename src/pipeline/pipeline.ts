@@ -256,6 +256,9 @@ export async function runBudgetedStages(
   let previous: RunResult | undefined;
   let prevName = '';
   let sessionId: string | undefined;
+  // The provider that produced `sessionId`: a session is only resumable on the CLI that opened it, so
+  // after an implementer fallback a resumePrevious stage on the primary agent starts fresh instead.
+  let sessionOwner: string | undefined;
   let spentUsd = 0;
   const emit = opts.onEvent ?? ((): void => {});
   let index = 0;
@@ -265,8 +268,8 @@ export async function runBudgetedStages(
       return makeFrozenRun(ctx, 'budget_exceeded', spentUsd, outcomes);
     }
     emit({ type: 'stage-start', name: stage.name, index, of });
-    const resume = stage.resumePrevious ?? true;
     const agent = stage.provider ?? opts.agent;
+    const resume = (stage.resumePrevious ?? true) && sessionOwner === agent.name;
 
     // Per-stage effective cap: fraction → floor → min(remainingGlobal).
     // Global always wins (Math.min) so tiny-budget runs never spend past their limit.
@@ -314,7 +317,10 @@ export async function runBudgetedStages(
       });
       previous = result;
       prevName = stage.name;
-      if (result.sessionId !== undefined) sessionId = result.sessionId;
+      if (result.sessionId !== undefined) {
+        sessionId = result.sessionId;
+        sessionOwner = agent.name;
+      }
       spentUsd = roundUsd(spentUsd + forkStageCost);
       emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
       emit({ type: 'cost', usdSpent: spentUsd });
@@ -358,8 +364,10 @@ export async function runBudgetedStages(
     } catch (err) {
       if (err instanceof AgentError && stage.fallback !== undefined) {
         // AgentError carries the CLI's raw stderr; an auth failure may echo the credential it was given.
+        // Redacted AND cut to the first line: the secret patterns know common token shapes, not every
+        // vendor's, and the first line is where the CLI states why it stopped.
         ctx.log.warn(
-          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: redactTokens(err.message) },
+          { stage: stage.name, from: agent.name, to: stage.fallback.provider.name, reason: redactTokens(err.message.split('\n')[0] ?? '').slice(0, 200) },
           `${stage.name} provider unavailable — falling back to ${stage.fallback.provider.name}`,
         );
         effectiveAgent = stage.fallback.provider;
@@ -417,7 +425,10 @@ export async function runBudgetedStages(
     });
     previous = result;
     prevName = stage.name;
-    if (result.sessionId !== undefined) sessionId = result.sessionId;
+    if (result.sessionId !== undefined) {
+      sessionId = result.sessionId;
+      sessionOwner = effectiveAgent.name;
+    }
     spentUsd = roundUsd(spentUsd + stageCost);
     emit({ type: 'stage-end', name: stage.name, index, of, outcome: result.completed ? 'completed' : result.exitReason });
     emit({ type: 'cost', usdSpent: spentUsd });
