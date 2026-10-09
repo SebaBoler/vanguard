@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/SebaBoler/vanguard/compare/v1.2.0...v1.3.0) (2026-10-09)
+
+
+### Features
+
+* --fallback-provider — the implementer retries on another provider when its own fails ([#453](https://github.com/SebaBoler/vanguard/issues/453)) ([474974a](https://github.com/SebaBoler/vanguard/commit/474974a4ba9c091c5a4ad97d2e4f73b251cf64a7))
+* Flow editor: project switch discards unsaved flow edits without a confirm (SebaBoler/vanguard[#339](https://github.com/SebaBoler/vanguard/issues/339)) ([#435](https://github.com/SebaBoler/vanguard/issues/435)) ([009c860](https://github.com/SebaBoler/vanguard/commit/009c860610c0fc9d91fc4a88813c7c37189df10a))
+
+
+### Bug Fixes
+
+* **codex:** pass the prompt on stdin, not argv ([#454](https://github.com/SebaBoler/vanguard/issues/454)) ([9c88b41](https://github.com/SebaBoler/vanguard/commit/9c88b413c1c9974e3cc2cf68f4598d83651fc28c))
+* retry the base fetch when a concurrent fetch holds the ref lock ([#434](https://github.com/SebaBoler/vanguard/issues/434)) ([#438](https://github.com/SebaBoler/vanguard/issues/438)) ([026d2ff](https://github.com/SebaBoler/vanguard/commit/026d2ffdee957d047386a10edaf981252a87c6e9))
+* **review:** omit generated files from the review diff ([#455](https://github.com/SebaBoler/vanguard/issues/455)) ([f98f1b1](https://github.com/SebaBoler/vanguard/commit/f98f1b123429b3b73faa58a6294b1555619ae2fc))
+* **security:** revise-pr scans the revision diff for secrets before commit and push ([#440](https://github.com/SebaBoler/vanguard/issues/440)) ([9d64f06](https://github.com/SebaBoler/vanguard/commit/9d64f069c183f7efa7f9022a0caa7bbe2c66441e))
+
 ## [1.2.0](https://github.com/SebaBoler/vanguard/compare/v1.1.1...v1.2.0) (2026-10-08)
 
 
