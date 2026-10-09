@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { runAgent } from '../core/vanguard.js';
-import { roundUsd } from './budget.js';
+import { roundUsd } from '../core/usd.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
 import type { RunResult } from '../core/types.js';
 import type { EvalVerdict } from '../evals/types.js';
