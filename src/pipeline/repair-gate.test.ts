@@ -85,4 +85,12 @@ describe('repairUntilGreen', () => {
     expect(run.mock.calls[0]![1]['signal']).toBe(signal);
     expect(run.mock.calls[1]![1]['resumeSessionId']).toBe('sess-next');
   });
+
+  it('without an implementer stage in the pipeline the repair runs on runAgent defaults (no turn cap, no USD cap)', async () => {
+    const run = stubRun(() => result());
+    await repairUntilGreen(ctx, { label: 't', gate: gateRedThenGreen(1), agent, outcomes: outcomesWith('m'), pipeline: [], maxIterations: 1, run, log: () => {} });
+    const input = run.mock.calls[0]![1];
+    expect(input).not.toHaveProperty('maxTurns');
+    expect(input).not.toHaveProperty('maxBudgetUsd');
+  });
 });

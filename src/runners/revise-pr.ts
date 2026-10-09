@@ -23,6 +23,7 @@ import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
 import { repairUntilGreen } from '../pipeline/repair-gate.js';
+import { persistStageOutcomes } from '../core/run-record.js';
 import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
@@ -296,6 +297,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           log,
         });
       }
+      // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
+      // the outcomes are persisted — the first delivery does this in runSourcedIssue.
+      await persistStageOutcomes(deps.repoPath, outcomes);
       const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.

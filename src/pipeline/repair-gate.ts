@@ -67,6 +67,8 @@ export async function repairUntilGreen<G extends GateResult>(ctx: RunContext, op
   // is fixed for the duration.
   const implementerIdx = opts.outcomes.findIndex((o) => o.name === STAGE.IMPLEMENTER);
   let resumeSessionId = implementerIdx !== -1 ? opts.outcomes[implementerIdx]?.result.sessionId : undefined;
+  // Without an implementer stage in the pipeline there is no turn cap or cost fraction to inherit:
+  // each repair then runs on runAgent's defaults (6 turns, no USD cap). Every shipped flow has one.
   const stage = opts.pipeline.find((s) => s.name === STAGE.IMPLEMENTER);
   // A resumed repair inherits the implementer's own turn cap — runAgent's default (6) is useless for
   // finishing work that already exhausted 30 turns.
