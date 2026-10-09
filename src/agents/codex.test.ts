@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CodexProvider } from './codex.js';
-import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
+import type { IsolatedSandboxProvider, ExecOptions, ExecResult } from '../sandbox/provider.js';
 import type { AgentRunInput, AgentRunOutput } from './provider.js';
 
 function fakeSandbox(stdout: string, exitCode: number = 0): IsolatedSandboxProvider {
@@ -9,13 +9,14 @@ function fakeSandbox(stdout: string, exitCode: number = 0): IsolatedSandboxProvi
   } as unknown as IsolatedSandboxProvider;
 }
 
-function capturingSandbox(): { sandbox: IsolatedSandboxProvider; captured: { command: string } } {
-  const captured = { command: '' };
+function capturingSandbox(): { sandbox: IsolatedSandboxProvider; captured: { command: string; options: ExecOptions } } {
+  const captured: { command: string; options: ExecOptions } = { command: '', options: {} };
   return {
     captured,
     sandbox: {
-      exec: async (command: string): Promise<ExecResult> => {
+      exec: async (command: string, options: ExecOptions = {}): Promise<ExecResult> => {
         captured.command = command;
+        captured.options = options;
         return { stdout: cannedJsonl, stderr: '', exitCode: 0 };
       },
     } as unknown as IsolatedSandboxProvider,
@@ -180,6 +181,19 @@ describe('CodexProvider', () => {
     // the other two modes remain reachable in the same single command
     expect(setup).toContain('elif [ -n "${VANGUARD_OPENAI_BASE_URL:-}" ]; then');
     expect(setup).toContain('codex login --with-api-key');
+  });
+
+  it('feeds the prompt on stdin (`-` arg), never on argv', async () => {
+    // A PR-review prompt embeds the diff and can exceed MAX_ARG_STRLEN (128 KiB) as a single argv string.
+    const prompt = `review this diff\n${'+ line of diff\n'.repeat(20_000)}`;
+    const { sandbox, captured } = capturingSandbox();
+    const gen = new CodexProvider().run({ prompt, sandbox, workdir: '/workspace', home: '/root' });
+    for await (const turn of gen) void turn;
+    expect(captured.command.endsWith(" '-'")).toBe(true);
+    expect(captured.command).not.toContain('review this diff');
+    expect(captured.command).not.toContain('line of diff');
+    expect(captured.command.length).toBeLessThan(200);
+    expect(captured.options.input).toBe(prompt);
   });
 
   it('includes -m flag when model is specified', async () => {
