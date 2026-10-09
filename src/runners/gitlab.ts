@@ -24,9 +24,6 @@ export interface RunGitlabIssueDeps extends RunIssueDeps {
 /** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld MR is not read as "no changes". */
 export type RunGitlabIssueResult = RunIssueResult;
 
-/** Appended to the block note: how a human releases the hold on a label-driven source. */
-const RESUME_HINT = 'To retry once the secret is out of the change: re-apply the trigger label (the running label was cleared).';
-
 /** @internal Exported for unit tests; production callers use runGitlabIssue. */
 export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): SourceAdapter {
   return {
@@ -51,8 +48,8 @@ export function gitlabAdapter(deps: RunGitlabIssueDeps, glab?: GlabRunner): Sour
         .catch(() => undefined)
         .then(() => editGitlabLabels(deps.project, issueRef, { add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab))
         .catch(() => undefined);
-      const note = `${renderSecretBlockComment(block)}\n\n${RESUME_HINT}`;
-      await Promise.all([label, commentGitlabIssue(deps.project, issueRef, note, glab).catch(() => undefined)]);
+      // No recovery procedure here (the watch primitive that holds the issue posts the resume line).
+      await Promise.all([label, commentGitlabIssue(deps.project, issueRef, renderSecretBlockComment(block), glab).catch(() => undefined)]);
     },
   };
 }

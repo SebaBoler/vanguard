@@ -203,7 +203,7 @@ describe('gitlabAdapter', () => {
     const note = calls.find((c) => c[0] === 'issue' && c[1] === 'note');
     expect(note?.at(-1)).toContain('blocked publish');
     expect(note?.at(-1)).toContain('KEY=ab****');
-    expect(note?.at(-1)).toContain('re-apply the trigger label'); // how a human releases the hold
+    expect(note?.at(-1)).not.toContain('trigger label'); // the release step is per watch source, posted by the primitive
   });
 
   it('signalSecretBlock still adds the label and notes when label creation fails', async () => {

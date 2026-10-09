@@ -129,6 +129,31 @@ describe('watchOnce', () => {
     expectTypeOf(runLinearIssue).returns.resolves.toHaveProperty('secretBlocked');
   });
 
+  it('a rejecting onSecretBlocked is reported as a failure and never reverts the claim', async () => {
+    const onNoChange = vi.fn(async () => {});
+    const onFailure = vi.fn(async () => {});
+    const primitives: WatchPrimitives = {
+      listReady: async () => [{ id: 'A' }],
+      claim: async () => {},
+      runOne: async () => ({ secretBlocked: true }),
+      review: async () => {},
+      onNoChange,
+      onSecretBlocked: async () => {
+        throw new Error('label API down');
+      },
+      onFailure,
+    };
+    const logs: string[] = [];
+
+    const tick = await watchOnce(primitives, { log: (msg) => logs.push(msg) });
+
+    expect(tick.failed).toEqual(['A']);
+    expect(tick.secretBlocked).toEqual([]);
+    expect(onFailure).toHaveBeenCalledWith('A', expect.any(Error));
+    expect(onNoChange).not.toHaveBeenCalled(); // the claim is never reverted to the trigger
+    expect(logs).toContain('watch A: secret blocked -> held for a human'); // logged before the edit, so the block is on record
+  });
+
   it('does not call onNoChange when runOne reports the outcome is already parked', async () => {
     const calls: string[] = [];
     const primitives: WatchPrimitives = {
@@ -857,10 +882,51 @@ describe('githubProjectWatchPrimitives', () => {
 
     // Claimed (opt_inprogress) but never moved back to Todo (opt_todo) — a revert would re-list it next poll.
     expect(ghCalls.some((a) => a[1] === 'item-edit' && a.includes('opt_todo'))).toBe(false);
-    expect(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'comment')).toBe(false);
+    const comments = ghCalls.filter((a) => a[0] === 'issue' && a[1] === 'comment');
+    expect(comments).toHaveLength(1);
+    const hold = comments[0]?.[comments[0].indexOf('--body') + 1] ?? '';
+    expect(hold).not.toContain('no changes');
+    expect(hold).toContain('stays in "In Progress"');
+    expect(hold).toContain('move it back to "Todo"'); // Projects has no trigger label to re-apply
     expect(ghCalls.some((a) => a[1] === 'item-edit' && a.includes('opt_inprogress'))).toBe(true);
     expect(tick.secretBlocked).toEqual(['owner/repo#1']);
     expect(tick.noChange).toEqual([]);
+  });
+
+  it('claim clears a stale secret-blocked label only on items listReady saw carrying it', async () => {
+    const ghCalls: string[][] = [];
+    const itemList = JSON.stringify({
+      items: [
+        { id: 'PVTI_1', status: 'Todo', content: { type: 'Issue', number: 1, repository: 'owner/repo', labels: ['vanguard', GITHUB_SECRET_BLOCKED_LABEL] } },
+        { id: 'PVTI_2', status: 'Todo', content: { type: 'Issue', number: 2, repository: 'owner/repo', labels: ['vanguard'] } },
+      ],
+    });
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'project' && args[1] === 'item-list') return itemList;
+      if (args[0] === 'project' && args[1] === 'view') return PROJECT_VIEW;
+      if (args[0] === 'project' && args[1] === 'field-list') return FIELD_LIST;
+      return '';
+    };
+    const primitives = githubProjectWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'test' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      projectNumber: 1,
+      label: 'vanguard',
+      triggerStatus: 'Todo',
+      claimedStatus: 'In Progress',
+      reviewStatus: 'In Review',
+      gh,
+    });
+
+    const ready = await primitives.listReady();
+    expect(ready.map((r) => r.id)).toEqual(['owner/repo#1', 'owner/repo#2']);
+    for (const { id } of ready) await primitives.claim(id);
+
+    const labelEdits = ghCalls.filter((a) => a[0] === 'issue' && a[1] === 'edit');
+    expect(labelEdits).toHaveLength(1); // only the re-triggered item
+    expect(labelEdits[0]?.[2]).toBe('1');
+    expect(labelEdits[0]?.[labelEdits[0].indexOf('--remove-label') + 1]).toBe(GITHUB_SECRET_BLOCKED_LABEL);
+    expect(ghCalls.filter((a) => a[1] === 'item-edit' && a.includes('opt_inprogress'))).toHaveLength(2); // both claimed
   });
 
   it('onNoChange comments and reverts status to the trigger status', async () => {
@@ -1007,7 +1073,12 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     );
 
     const calls = (gh as ReturnType<typeof vi.fn>).mock.calls.map(([args]) => args as string[]);
-    expect(calls.some((args) => args[0] === 'issue' && args[1] === 'comment')).toBe(false);
+    const comments = calls.filter((args) => args[0] === 'issue' && args[1] === 'comment');
+    expect(comments).toHaveLength(1); // the hold comment, not the no-change one
+    const hold = comments[0]?.[comments[0].indexOf('--body') + 1] ?? '';
+    expect(hold).not.toContain('no changes');
+    expect(hold).toContain('secret scan');
+    expect(hold).toContain('re-apply the `ready for agent` label'); // the configured trigger label
     const edits = calls.filter((args) => args[0] === 'issue' && args[1] === 'edit');
     // claim: trigger -> running; secret block: ONE edit swapping running -> secret-blocked, so the
     // claim is never released without the hold label; the trigger label is not added back.
@@ -1047,7 +1118,7 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     expect(removed(edits.find((e) => e[2] === '2'))).toEqual(['ready for agent']); // no blind remove
   });
 
-  it('white-label: a secret-blocked run keeps the claimed label (nothing else marks the hold)', async () => {
+  it('white-label: the hold is still labelled and explained (the claim label is already the watch\'s own marker)', async () => {
     const gh = makeGhSpy();
     const primitives = githubIssueWatchPrimitives({
       deps: { auth: { type: 'api', apiKey: 'k' } as never, repoPath: '/tmp', repoSlug: 'owner/repo', commitAuthor: { name: 'Dev', email: 'dev@example.com' } },
@@ -1064,9 +1135,12 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
 
     const calls = (gh as ReturnType<typeof vi.fn>).mock.calls.map(([args]) => args as string[]);
     const edits = calls.filter((args) => args[0] === 'issue' && args[1] === 'edit');
-    expect(edits).toHaveLength(1); // the claim only — the running label is the hold's only trace
-    expect(edits[0]).toContain(GITHUB_CLAIMED_LABEL);
-    expect(calls.some((args) => args[0] === 'issue' && args[1] === 'comment')).toBe(false);
+    expect(edits).toHaveLength(2); // claim, then the swap running -> secret-blocked
+    expect(edits[1]?.[edits[1].indexOf('--add-label') + 1]).toBe(GITHUB_SECRET_BLOCKED_LABEL);
+    // The white-label adapter posts no findings, so this is the human's only signal.
+    const comments = calls.filter((args) => args[0] === 'issue' && args[1] === 'comment');
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.[comments[0].indexOf('--body') + 1]).toContain('re-apply the `ready for agent` label');
     expect(tick.secretBlocked).toEqual(['1']);
   });
 
@@ -1119,7 +1193,11 @@ describe('linearWatchPrimitives', () => {
 
     const updates = calls.filter((a) => a[0] === 'issue' && a[1] === 'update');
     expect(updates).toEqual([['issue', 'update', 'ENG-1', '--state', 'In Progress']]); // claim only; never back to Todo
-    expect(calls.some((a) => a[0] === 'issue' && a[1] === 'comment')).toBe(false);
+    const comments = calls.filter((a) => a[0] === 'issue' && a[1] === 'comment');
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.join(' ')).not.toContain('no changes');
+    expect(comments[0]?.join(' ')).toContain('stays in "In Progress"');
+    expect(comments[0]?.join(' ')).toContain('move it back to "Todo"');
     expect(tick.secretBlocked).toEqual(['ENG-1']);
     expect(tick.noChange).toEqual([]);
   });
@@ -1224,7 +1302,10 @@ describe('gitlabWatchPrimitives', () => {
       { concurrency: 1 },
     );
 
-    expect(calls.some((c) => c[0] === 'issue' && c[1] === 'note')).toBe(false);
+    const notes = calls.filter((c) => c[0] === 'issue' && c[1] === 'note');
+    expect(notes).toHaveLength(1); // the hold note, not the no-change one
+    expect(notes[0]?.join(' ')).not.toContain('no changes');
+    expect(notes[0]?.join(' ')).toContain('re-apply the `vanguard` label'); // the configured trigger label
     const updates = calls.filter((c) => c[0] === 'issue' && c[1] === 'update');
     expect(updates).toHaveLength(2); // claim, then ONE swap running -> secret-blocked
     const release = updates[1];
@@ -1255,7 +1336,7 @@ describe('gitlabWatchPrimitives', () => {
     expect(unlabelled(updates.find((u) => u[2] === '2'))).toEqual(['vanguard']);
   });
 
-  it('white-label: a secret-blocked run keeps the claimed label (nothing else marks the hold)', async () => {
+  it('white-label: the hold is still labelled and explained (the claim label is already the watch\'s own marker)', async () => {
     const { glab, calls } = makeGlab();
     const opts = makeOpts();
     const primitives = gitlabWatchPrimitives({
@@ -1270,9 +1351,11 @@ describe('gitlabWatchPrimitives', () => {
     );
 
     const updates = calls.filter((c) => c[0] === 'issue' && c[1] === 'update');
-    expect(updates).toHaveLength(1); // the claim only
-    expect(updates[0]).toContain('vanguard::running');
-    expect(calls.some((c) => c[0] === 'issue' && c[1] === 'note')).toBe(false);
+    expect(updates).toHaveLength(2); // claim, then the swap running -> secret-blocked
+    expect(updates[1]?.[updates[1].indexOf('--label') + 1]).toBe('vanguard::secret-blocked');
+    const notes = calls.filter((c) => c[0] === 'issue' && c[1] === 'note');
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.join(' ')).toContain('re-apply the `vanguard` label');
     expect(tick.secretBlocked).toEqual(['g/p#1']);
   });
 

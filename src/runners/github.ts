@@ -23,9 +23,6 @@ export interface RunGithubIssueDeps extends RunIssueDeps {
 /** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld PR is not read as "no changes". */
 export type RunGithubIssueResult = RunIssueResult;
 
-/** Appended to the block comment: how a human releases the hold on a label-driven source. */
-const RESUME_HINT = 'To retry once the secret is out of the change: re-apply the trigger label (the running label was cleared).';
-
 /**
  * @internal Exported for unit tests; production callers use runGithubIssue. Only `signalSecretBlock`
  * goes through the injected `gh`; `prepare`, `linkPr` and `addFailureLabel` still reach the real CLI.
@@ -55,8 +52,9 @@ export function githubAdapter(deps: RunGithubIssueDeps, gh: GhRunner = defaultGh
         .catch(() => undefined)
         .then(() => editGithubLabels(deps.repoSlug, issueRef, { add: [GITHUB_SECRET_BLOCKED_LABEL] }, gh))
         .catch(() => undefined);
-      const comment = `${renderSecretBlockComment(block)}\n\n${RESUME_HINT}`;
-      await Promise.all([label, commentGithubIssue(deps.repoSlug, issueRef, comment, gh).catch(() => undefined)]);
+      // No recovery procedure here: this adapter also serves one-shot `vanguard run` and Projects,
+      // whose release steps differ. The watch primitive that holds the issue posts the resume line.
+      await Promise.all([label, commentGithubIssue(deps.repoSlug, issueRef, renderSecretBlockComment(block), gh).catch(() => undefined)]);
     },
   };
 }
