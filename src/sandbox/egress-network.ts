@@ -63,7 +63,7 @@ export async function startEgressEnclave(
     });
     return { network, proxyUrl: `http://${proxy}:${PROXY_PORT}`, destroy: sidecar.destroy };
   } catch (cause) {
-    await docker(['network', 'rm', network]);
+    // startSidecar's teardown already removed the proxy container and (via alsoDestroy) the network.
     throw new SandboxError(`Failed to start egress enclave ${id}`, { cause });
   }
 }

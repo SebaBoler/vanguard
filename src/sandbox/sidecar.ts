@@ -64,9 +64,14 @@ export async function startSidecar(spec: SidecarSpec): Promise<Sidecar> {
   // must follow the same CI-pinned override as the main sandbox.
   const image = spec.image ?? sandboxImage();
   const { name } = spec;
+  // alsoDestroy runs even when `rm -f` itself throws (a dead docker daemon): the caller's resource must
+  // not leak behind a container that could not be removed.
   const teardown = async (): Promise<void> => {
-    await docker(['rm', '-f', name]);
-    await spec.alsoDestroy?.();
+    try {
+      await docker(['rm', '-f', name]);
+    } finally {
+      await spec.alsoDestroy?.();
+    }
   };
   const must = async (args: string[], opts?: { input?: string }): Promise<void> => {
     const result = await docker(args, opts);

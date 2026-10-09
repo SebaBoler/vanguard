@@ -44,6 +44,21 @@ describe('startSidecar', () => {
     });
   }
 
+  it('secret mode fails closed when the secret write (exec -i) exits non-zero: no exec -d, container removed', async () => {
+    const calls: Call[] = [];
+    await expect(startSidecar({ ...base, docker: stubDocker(calls, 'exec -i'), secret: { path: '/tmp/s', body: 'x' } })).rejects.toThrow(/Failed to start sidecar/);
+    expect(calls.some((c) => c.args[0] === 'exec' && c.args[1] === '-d')).toBe(false);
+    expect(calls.at(-1)!.args).toEqual(['rm', '-f', 'vg-x-1']);
+  });
+
+  it('runs alsoDestroy even when rm -f throws', async () => {
+    let also = 0;
+    const docker = async (args: string[]) => { if (args[0] === 'rm') throw new Error('daemon gone'); return { exitCode: 0, stdout: '', stderr: '' }; };
+    const s = await startSidecar({ ...base, docker, alsoDestroy: async () => { also += 1; } });
+    await expect(s.destroy()).rejects.toThrow(/daemon gone/);
+    expect(also).toBe(1);
+  });
+
   it('secret mode fails closed on a non-zero exec -d (the process never started)', async () => {
     const calls: Call[] = [];
     await expect(startSidecar({ ...base, docker: stubDocker(calls, 'exec -d'), secret: { path: '/tmp/s', body: 'x' } })).rejects.toThrow(/Failed to start sidecar/);

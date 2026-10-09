@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_EGRESS_ALLOWLIST } from './egress-allow.mjs';
 import { llmProxyEgressAllowlist } from './egress-proxy.js';
 
+const enclaveDestroy = vi.fn(async (): Promise<void> => {});
 const startEgressEnclave = vi.fn(async (_opts?: { allowlist?: readonly string[] }) => ({
   proxyUrl: 'http://vg-proxy:3128',
   network: 'vg-egr-test',
-  destroy: async (): Promise<void> => {},
+  destroy: enclaveDestroy,
 }));
 vi.mock('./egress-network.js', () => ({
   startEgressEnclave: (opts?: { allowlist?: readonly string[] }): Promise<unknown> => startEgressEnclave(opts),
 }));
+const startLlmProxy = vi.fn(async (_opts?: { upstream?: string }) => ({ url: 'http://vg-llm:8088', nonce: 'n', host: 'vg-llm', destroy: async (): Promise<void> => {} }));
 vi.mock('./llm-proxy.js', () => ({
-  startLlmProxy: vi.fn(async () => ({ url: 'http://vg-llm:8088', nonce: 'n', host: 'vg-llm', destroy: async (): Promise<void> => {} })),
+  startLlmProxy: (opts?: { upstream?: string }): Promise<unknown> => startLlmProxy(opts),
 }));
 
 const { startSandboxContext } = await import('./sandbox-context.js');
@@ -46,5 +48,14 @@ describe('startSandboxContext extraEgressHosts (S6)', () => {
   it('neither flag: no enclave at all', async () => {
     await startSandboxContext({ egress: false, llmProxy: false, extraEgressHosts: ['llm.example.com'] });
     expect(startEgressEnclave).not.toHaveBeenCalled();
+  });
+});
+
+describe('startSandboxContext tears the enclave down when the LLM proxy fails to start', () => {
+  it('destroys the enclave (network + egress proxy) and rethrows', async () => {
+    enclaveDestroy.mockClear();
+    startLlmProxy.mockRejectedValueOnce(new Error('docker cp failed'));
+    await expect(startSandboxContext({ egress: true, llmProxy: true, auth: { mode: 'subscription', token: 't' } })).rejects.toThrow(/docker cp failed/);
+    expect(enclaveDestroy).toHaveBeenCalledTimes(1);
   });
 });
