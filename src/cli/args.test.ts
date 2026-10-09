@@ -263,6 +263,8 @@ describe('parseCli', () => {
     // Absent flags leave no key on either command.
     const bareRun = parseCli(['run', '--github', 'o/r#1'], '/work');
     const bareWatch = parseCli(['watch', '--source', 'github', '--label', 'vanguard'], '/work');
+    expect(bareRun.kind).toBe('run');
+    expect(bareWatch.kind).toBe('watch');
     for (const key of [...Object.keys(expected), 'plan']) {
       expect(key in bareRun).toBe(false);
       expect(key in bareWatch).toBe(false);
@@ -310,8 +312,14 @@ describe('parseCli', () => {
   });
 
   it('documents the shared flags under both run and watch, and the run-only ones under run only', () => {
-    const watchBlock = USAGE.slice(USAGE.indexOf('watch options (trigger'), USAGE.indexOf('run options (exactly one source)'));
-    const runBlock = USAGE.slice(USAGE.indexOf('run options (exactly one source)'), USAGE.indexOf('review-pr options:'));
+    const watchStart = USAGE.indexOf('watch options (trigger');
+    const runStart = USAGE.indexOf('run options (exactly one source)');
+    const runEnd = USAGE.indexOf('review-pr options:');
+    expect(watchStart).toBeGreaterThan(-1);
+    expect(runStart).toBeGreaterThan(watchStart);
+    expect(runEnd).toBeGreaterThan(runStart);
+    const watchBlock = USAGE.slice(watchStart, runStart);
+    const runBlock = USAGE.slice(runStart, runEnd);
     for (const flag of ['--fallback-provider <name>', '--conformance-model <m>', '--max-repair-iterations <n>', '--base <branch>', '--max-turns <n>']) {
       expect(runBlock).toContain(flag);
       expect(watchBlock).toContain(flag);

@@ -214,7 +214,8 @@ export type Command =
       specClaimedState?: string;
       /** (loop-v1) Run only the spec pass each tick; the agent pass is skipped (no list, claim or run). */
       specOnly?: boolean;
-    } & RunOptions)
+      // customProviders stays: dispatch loads the repo customs onto the command (watch.ts); only RunOnlyKey is excluded.
+    } & Omit<RunOptions, RunOnlyKey>)
   | {
       kind: 'review-mr';
       iid: number;
@@ -1032,7 +1033,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     // The single-task flags (RunOnlyKey + --fork): on watch each would be a silent no-op or a spurious failure.
     if (values['fork-scorer'] !== undefined) return fail(`--fork-scorer applies to \`run --fork <n>\` only; ${commandKind} does not fork.`);
     if (values.fork !== undefined) return fail(`--fork applies to run only; ${commandKind} does not fork.`);
-    if (values['spec-file'] !== undefined) return fail('--spec-file applies to a single-issue run only (watch reads every ticket from the tracker; doctor claims none).');
+    if (values['spec-file'] !== undefined) return fail(`--spec-file applies to a single-issue run only; ${commandKind} has no single issue to attach it to.`);
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
