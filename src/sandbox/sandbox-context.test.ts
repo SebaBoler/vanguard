@@ -59,3 +59,22 @@ describe('startSandboxContext tears the enclave down when the LLM proxy fails to
     expect(enclaveDestroy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('startSandboxContext llm-proxy upstream follows the provider table', () => {
+  beforeEach(() => startLlmProxy.mockClear());
+  const auth = { mode: 'subscription' as const, token: 't' };
+
+  it('zai and openrouter hand the sidecar their own upstream', async () => {
+    for (const provider of ['zai', 'openrouter']) {
+      await startSandboxContext({ egress: true, llmProxy: true, auth, provider });
+      expect(startLlmProxy).toHaveBeenLastCalledWith(expect.objectContaining({ upstream: provider }));
+    }
+  });
+
+  it('claude, meridian and an unknown custom name leave the sidecar on api.anthropic.com', async () => {
+    for (const provider of ['claude', 'meridian', 'custom:acme-gateway', undefined]) {
+      await startSandboxContext({ egress: true, llmProxy: true, auth, ...(provider !== undefined ? { provider } : {}) });
+      expect(startLlmProxy).toHaveBeenLastCalledWith(expect.not.objectContaining({ upstream: expect.anything() }));
+    }
+  });
+});

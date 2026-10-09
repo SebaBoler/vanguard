@@ -1,6 +1,7 @@
 import { readdir, stat, readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { agentFamily } from '../agents/provider.js';
 import { VanguardError } from '../core/errors.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 
@@ -17,10 +18,10 @@ interface SkillMeta {
 
 type SkillEntry = { id: string; hostPath: string; meta: SkillMeta };
 
+/** Skill directory family for an adapter: the registry's trait, folded to the three skill layouts. */
 function providerFamily(agentName: string | undefined): 'claude' | 'codex' | 'cursor' {
-  if (agentName === 'codex') return 'codex';
-  if (agentName === 'cursor') return 'cursor';
-  return 'claude';
+  const family = agentFamily(agentName);
+  return family === 'codex' || family === 'cursor' ? family : 'claude';
 }
 
 /**
@@ -157,7 +158,7 @@ async function prepareSkillEntries(skills: Record<string, string>, sandbox: Isol
   return entries;
 }
 
-/** Inject all skills for the claude/zai family: copy each into ~/.claude/skills/<id>. */
+/** Inject all skills for the claude-cli family: copy each into ~/.claude/skills/<id>. */
 async function injectClaude(skills: Record<string, string>, sandbox: IsolatedSandboxProvider, home: string): Promise<void> {
   await Promise.all(
     Object.entries(skills).map(([id, hostPath]) => sandbox.copyIn(hostPath, `${home}/.claude/skills/${id}`)),
@@ -247,7 +248,7 @@ export class SkillRegistry {
   /**
    * Inject ALL registered skills in a provider-aware way for the union of implementer and reviewer
    * provider families:
-   * - claude-code / zai / default → ~/.claude/skills/<id> (auto-discovered by the claude CLI)
+   * - claude-cli family (claude-code, zai, openrouter, meridian, customs) → ~/.claude/skills/<id> (auto-discovered by the claude CLI)
    * - codex → $CODEX_HOME/AGENTS.md (pointer index) + .vanguard/skills/<id> bodies
    * - cursor → .cursor/rules/<id>.mdc per skill + .vanguard/skills/<id> bodies
    *

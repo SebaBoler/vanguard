@@ -5,7 +5,7 @@ import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
 import { hasTerminationSignal } from '../structured/extract.js';
 import { captureSession, restoreSession, sessionPath } from '../agents/session-store.js';
-import { cacheEfficiency } from '../agents/provider.js';
+import { agentFamily, cacheEfficiency } from '../agents/provider.js';
 import { stageMetric } from './run-metric.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
@@ -18,8 +18,6 @@ import type { AgentProvider, AgentUsage } from '../agents/provider.js';
 import type { VanguardLogger } from './logger.js';
 
 const WORKDIR = '/workspace';
-/** Providers that drive the `claude` CLI and therefore write a resumable session jsonl to ~/.claude/projects. */
-const CLAUDE_SESSION_PROVIDERS = new Set(['claude-code', 'zai']);
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TURNS = 6;
 // Skip on copy-back: .git (a linked worktree's .git is a file pointer; copying it corrupts the
@@ -373,7 +371,7 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
     // the claude-CLI providers write there; codex/cursor report a session id but no jsonl, so skip them
     // entirely (no failed copy, no noise). For a claude-family provider the copy should succeed — if it
     // does not, that is a real signal, so log at warn (still non-fatal: capture is an optimization).
-    if (sessionId !== undefined && CLAUDE_SESSION_PROVIDERS.has(input.agent.name)) {
+    if (sessionId !== undefined && agentFamily(input.agent.name) === 'claude-cli') {
       const hostDir = join(ctx.localRepoPath, '.vanguard', 'sessions', ctx.taskId);
       await mkdir(hostDir, { recursive: true });
       try {
