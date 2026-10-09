@@ -12,7 +12,7 @@ import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
 import { SandboxError, WorkflowGuardError, WorktreeError } from './errors.js';
-import { DEFAULT_BASE_BRANCH, assertSafeBaseBranch, resolveRemoteBaseRef } from './base-branch.js';
+import { DEFAULT_BASE_BRANCH, assertSafeBaseBranch, redactGitError, resolveRemoteBaseRef } from './base-branch.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
@@ -177,7 +177,10 @@ async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promi
     // instead. The head ref name is author-controlled: --end-of-options keeps a "-"-led name from
     // parsing as a git option, and the full refs/heads/ source keeps a "+"-led name (legal in git)
     // from reading as a force refspec.
-    await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${start.prHead}`], { cwd });
+    // No credential prompt from a daemon and a bounded wait, as in resolveRemoteBaseRef; the failure is
+    // reported masked, never as raw git stderr.
+    const fetch = await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${start.prHead}`], { cwd, reject: false, env: { GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
+    if (fetch.exitCode !== 0) throw new WorktreeError(`Cannot fetch origin/${start.prHead} for ${opts.taskId}: ${redactGitError(fetch)}`);
     ref = 'FETCH_HEAD';
     what = `origin/${start.prHead}`;
   }
