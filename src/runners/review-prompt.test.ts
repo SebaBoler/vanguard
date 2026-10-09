@@ -20,8 +20,68 @@ import {
   PR_REVIEW_INCOMPLETE_MARKER,
   pullRequestReviewMarker,
 } from './pr-review.js';
-import { neutralizePromptTags, stripReviewMarkers } from './review-prompt.js';
+import { neutralizePromptTags, omitGeneratedFiles, stripReviewMarkers } from './review-prompt.js';
 import type { RunResult } from '../core/types.js';
+
+const AUTH_BLOCK = ['diff --git a/src/auth.ts b/src/auth.ts', 'index 1..2 100644', '--- a/src/auth.ts', '+++ b/src/auth.ts', '@@ -1 +1,2 @@', ' export const a = 1;', '+export const b = 2;', ''].join('\n');
+const SNAPSHOT_BLOCK = [
+  'diff --git a/apps/api/drizzle/meta/0122_snapshot.json b/apps/api/drizzle/meta/0122_snapshot.json',
+  'new file mode 100644',
+  '--- /dev/null',
+  '+++ b/apps/api/drizzle/meta/0122_snapshot.json',
+  '@@ -0,0 +1,3 @@',
+  '+{',
+  '+  "id": "x"',
+  '+}',
+  '',
+].join('\n');
+const README_BLOCK = ['diff --git a/README.md b/README.md', '--- a/README.md', '+++ b/README.md', '@@ -1 +1 @@', '-old', '+new', ''].join('\n');
+
+describe('omitGeneratedFiles', () => {
+  it('replaces a generated block with its header and a placeholder, keeping the neighbours byte-for-byte', () => {
+    const out = omitGeneratedFiles(AUTH_BLOCK + SNAPSHOT_BLOCK + README_BLOCK);
+    expect(out).toBe(
+      AUTH_BLOCK +
+        'diff --git a/apps/api/drizzle/meta/0122_snapshot.json b/apps/api/drizzle/meta/0122_snapshot.json\n(generated file: 7 diff lines omitted from review)\n' +
+        README_BLOCK,
+    );
+  });
+
+  it('leaves a diff with no generated files unchanged', () => {
+    const diff = AUTH_BLOCK + README_BLOCK;
+    expect(omitGeneratedFiles(diff)).toBe(diff);
+    expect(omitGeneratedFiles('')).toBe('');
+  });
+
+  it('matches lockfiles at the root or nested, by whole file name only', () => {
+    const block = (path: string): string => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-a\n+b\n`;
+    for (const path of ['pnpm-lock.yaml', 'apps/web/package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'crates/x/Cargo.lock']) {
+      expect(omitGeneratedFiles(block(path))).toBe(`diff --git a/${path} b/${path}\n(generated file: 5 diff lines omitted from review)\n`);
+    }
+    for (const path of ['my-pnpm-lock.yaml', 'docs/yarn.lock.md', 'src/0122_snapshot.json', 'drizzle/meta/_journal.json']) {
+      expect(omitGeneratedFiles(block(path))).toBe(block(path));
+    }
+  });
+
+  it('does not start a block on a content line that mentions a diff header', () => {
+    const diff = ['diff --git a/notes.md b/notes.md', '@@ -1 +1,2 @@', ' text', '+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml', ''].join('\n');
+    expect(omitGeneratedFiles(diff)).toBe(diff);
+  });
+
+  it('splits blocks on \\n only: a header planted after \\r, U+2028 or U+2029 inside a content line is not a block start', () => {
+    // `^` with the `m` flag matches after each of these; a split there would hide the rest of the real block
+    // behind a lockfile placeholder.
+    for (const separator of ['\r', ' ', ' ']) {
+      const diff = ['diff --git a/notes.md b/notes.md', '@@ -1 +1,2 @@', ' text', `+x${separator}diff --git a/q b/pnpm-lock.yaml`, '+kept', ''].join('\n') + README_BLOCK;
+      expect(omitGeneratedFiles(diff)).toBe(diff);
+    }
+  });
+
+  it('handles a last block without a trailing newline', () => {
+    const diff = `${AUTH_BLOCK}diff --git a/Cargo.lock b/Cargo.lock\n@@ -1 +1 @@\n-a\n+b`;
+    expect(omitGeneratedFiles(diff)).toBe(`${AUTH_BLOCK}diff --git a/Cargo.lock b/Cargo.lock\n(generated file: 3 diff lines omitted from review)`);
+  });
+});
 
 describe('stripReviewMarkers', () => {
   it('removes every marker either detector would count, for both forges', () => {

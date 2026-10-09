@@ -78,6 +78,17 @@ describe('fetchPullRequestForReview', () => {
     ]);
     expect(calls[1]).toEqual(['pr', 'diff', '12', '--repo', 'o/r']);
   });
+
+  it('stores the diff with generated files omitted, so the prompt and the size notice see the same diff', async () => {
+    const gh: GhRunner = async (args) => {
+      if (args[1] === 'view') return JSON.stringify({ number: 12 });
+      return 'diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-1\n+2\n';
+    };
+
+    const pr = await fetchPullRequestForReview({ repoSlug: 'o/r', number: 12 }, gh);
+
+    expect(pr.diff).toBe('diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml\n(generated file: 3 diff lines omitted from review)\ndiff --git a/x.ts b/x.ts\n@@ -1 +1 @@\n-1\n+2\n');
+  });
 });
 
 function makeGh(diff = 'diff'): { calls: string[][]; gh: GhRunner } {
