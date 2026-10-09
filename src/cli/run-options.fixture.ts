@@ -1,11 +1,16 @@
+import type { Exhaustive, SharedRunOptions } from './args.js';
+
 /**
  * Every shared RunOptions flag set to a non-default value. The run/watch deps-threading tests assert
  * each per-source builder carries this whole object through `pickRunOptions`, so a dropped spread is
- * caught — a guard the type system cannot give, since RunOptions' fields are all optional.
+ * caught — a guard the type system cannot give, since RunOptions' fields are all optional. The
+ * `satisfies` keeps this list itself complete: a new shared field without a value here fails to compile.
  */
 export const RUN_OPTIONS = {
   provider: 'codex',
   reviewProvider: 'cursor',
+  fallbackProvider: 'claude',
+  fallbackModel: 'claude-sonnet-5-5',
   providerModel: 'gpt-5',
   reviewModel: 'claude-opus',
   noSimplify: true,
@@ -22,4 +27,4 @@ export const RUN_OPTIONS = {
   maxTurns: 80,
   maxRepairIterations: 5,
   escalateModel: 'claude-fable-5',
-} as const;
+} as const satisfies Exhaustive<SharedRunOptions>;

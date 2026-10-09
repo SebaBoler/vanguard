@@ -128,8 +128,6 @@ export type Command =
       reviewModel?: string;
       /** Model for gate repairs after the first one failed (reactive escalation); default: stay on the implementer model. */
       escalateModel?: string;
-      /** How --fork variants are scored: an LLM verdict (default) or a decision model (clef via Cloudflare or VANGUARD_DECISION_URL). */
-      forkScorer?: 'llm' | 'decision';
       verifyCmd?: string;
       specModel?: string;
       specLabel?: string;
@@ -292,6 +290,61 @@ const CUSTOM_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 function parseForkScorer(raw: unknown): 'llm' | 'decision' | undefined | null {
   if (raw === undefined) return undefined;
   return raw === 'llm' || raw === 'decision' ? raw : null;
+}
+
+/**
+ * RunOptions keys only `run` sets: one spec file describes one task, and fork variants need one
+ * implementer stage. watch processes every ready ticket per poll and never forks, so it rejects them.
+ */
+type RunOnlyKey = 'forkScorer' | 'specFile';
+
+/**
+ * The RunOptions run and watch read off the same flags. `customProviders` is loaded from the target
+ * repo at dispatch (provider-choice.ts), never parsed.
+ */
+export type SharedRunOptions = Omit<RunOptions, RunOnlyKey | 'customProviders'>;
+
+/**
+ * Every key of T, present or not — so a RunOptions field added without a line in parseRunOptions
+ * is a type error, not a flag one subcommand silently drops.
+ */
+export type Exhaustive<T> = { readonly [K in keyof T]-?: T[K] | undefined };
+
+/** Drop the undefined entries: an absent flag leaves no key on the command (callers test with `in`). */
+function present<T extends object>(exhaustive: Exhaustive<T>): T {
+  return Object.fromEntries(Object.entries(exhaustive).filter(([, value]) => value !== undefined)) as T;
+}
+
+/**
+ * Shared flags other commands validate too (provider gates, --commit-author, --flow/--plan, the
+ * turn caps): parseCli checks them once, before any subcommand branch, and hands the results in.
+ */
+type CheckedRunFlags = Exhaustive<
+  Pick<SharedRunOptions, 'provider' | 'reviewProvider' | 'fallbackProvider' | 'fallbackModel' | 'commitAuthor' | 'flow' | 'maxTurns' | 'maxRepairIterations'>
+>;
+
+/** The one CLI → RunOptions mapping, used by run and watch so the two cannot drift. */
+function parseRunOptions(values: Record<string, string | boolean | undefined>, checked: CheckedRunFlags): SharedRunOptions {
+  return present<SharedRunOptions>({
+    provider: checked.provider,
+    reviewProvider: checked.reviewProvider,
+    fallbackProvider: checked.fallbackProvider,
+    fallbackModel: checked.fallbackModel,
+    providerModel: typeof values['provider-model'] === 'string' ? values['provider-model'] : undefined,
+    reviewModel: typeof values['review-model'] === 'string' ? values['review-model'] : undefined,
+    escalateModel: typeof values['escalate-model'] === 'string' ? values['escalate-model'] : undefined,
+    noSimplify: values['no-simplify'] === true ? true : undefined,
+    verifyCmd: typeof values.verify === 'string' ? values.verify : undefined,
+    visualProofCmd: typeof values['visual-proof'] === 'string' ? values['visual-proof'] : undefined,
+    conformance: values.conformance === true ? true : undefined,
+    conformanceModel: typeof values['conformance-model'] === 'string' ? values['conformance-model'] : undefined,
+    commitAuthor: checked.commitAuthor,
+    plan: values.plan === true ? true : undefined,
+    flow: checked.flow,
+    baseBranch: typeof values.base === 'string' ? values.base : undefined,
+    maxTurns: checked.maxTurns,
+    maxRepairIterations: checked.maxRepairIterations,
+  });
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -547,6 +600,17 @@ export function parseCli(argv: string[], cwd: string): Command {
   // 0/negative/non-numeric are rejected at parse (no override set), same semantics as parseLimit.
   const maxTurns = parseLimit(values['max-turns']);
   const maxRepairIterations = parseLimit(values['max-repair-iterations']);
+
+  const runOptions = parseRunOptions(values, {
+    provider,
+    reviewProvider,
+    fallbackProvider,
+    fallbackModel,
+    commitAuthor,
+    flow: flowRaw,
+    maxTurns,
+    maxRepairIterations,
+  });
 
   if (positionals[0] === 'stats') {
     return {
@@ -830,6 +894,11 @@ export function parseCli(argv: string[], cwd: string): Command {
     // forkAndSelect runs every variant on the primary agent and returns before the stage fallback is
     // consulted, so the flag would be accepted and silently never fire.
     if (fallbackProvider !== undefined && Number.isFinite(forkN) && forkN >= 2) return fail('--fallback-provider does not apply to --fork variants; drop one of them.');
+    // The single-task RunOptions (see RunOnlyKey): typed exhaustively so a new run-only field lands here.
+    const runOnly = present<Pick<RunOptions, RunOnlyKey>>({
+      forkScorer,
+      specFile: typeof values['spec-file'] === 'string' ? values['spec-file'] : undefined,
+    });
     return {
       kind: 'run',
       source: picked[0],
@@ -846,26 +915,8 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
       ...(typeof values['gitlab-project'] === 'string' && picked[0] === 'gitlab' ? { project: values['gitlab-project'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
-      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
-      ...(fallbackModel !== undefined ? { fallbackModel } : {}),
-      ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
-      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
-      ...(forkScorer !== undefined ? { forkScorer } : {}),
-      ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
-      ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
-      ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
-      ...(values.conformance === true ? { conformance: true } : {}),
-      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
-      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
-      ...(values.plan === true ? { plan: true } : {}),
-      ...(flowRaw !== undefined ? { flow: flowRaw } : {}),
-      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
-      ...(maxTurns !== undefined ? { maxTurns } : {}),
-      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
-      ...(typeof values['spec-file'] === 'string' ? { specFile: values['spec-file'] } : {}),
+      ...runOptions,
+      ...runOnly,
     };
   }
 
@@ -981,8 +1032,10 @@ export function parseCli(argv: string[], cwd: string): Command {
     if (values['max-tasks'] !== undefined && maxTasks === undefined) {
       return fail(`--max-tasks needs a positive integer, got "${String(values['max-tasks'])}".`);
     }
-    // watch has no --fork, so a fork scorer there could only be a silent no-op or a spurious failure.
-    if (values['fork-scorer'] !== undefined) return fail('--fork-scorer applies to `run --fork <n>` only; watch does not fork.');
+    // The single-task flags (RunOnlyKey + --fork): on watch each would be a silent no-op or a spurious failure.
+    if (values['fork-scorer'] !== undefined) return fail(`--fork-scorer applies to \`run --fork <n>\` only; ${commandKind} does not fork.`);
+    if (values.fork !== undefined) return fail(`--fork applies to run only; ${commandKind} does not fork.`);
+    if (values['spec-file'] !== undefined) return fail(`--spec-file applies to a single-issue run only; one spec file cannot describe every ticket ${commandKind} picks up.`);
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
@@ -998,21 +1051,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
-      ...(provider !== undefined ? { provider } : {}),
-      ...(reviewProvider !== undefined ? { reviewProvider } : {}),
-      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
-      ...(fallbackModel !== undefined ? { fallbackModel } : {}),
-      ...(typeof values['provider-model'] === 'string' ? { providerModel: values['provider-model'] } : {}),
-      ...(typeof values['review-model'] === 'string' ? { reviewModel: values['review-model'] } : {}),
-      ...(typeof values['escalate-model'] === 'string' ? { escalateModel: values['escalate-model'] } : {}),
-      ...(values['no-simplify'] === true ? { noSimplify: true } : {}),
-      ...(typeof values.verify === 'string' ? { verifyCmd: values.verify } : {}),
-      ...(commitAuthor !== undefined ? { commitAuthor } : {}),
-      ...(values.plan === true ? { plan: true } : {}),
-      ...(flowRaw !== undefined ? { flow: flowRaw } : {}),
-      ...(typeof values.base === 'string' ? { baseBranch: values.base } : {}),
-      ...(maxTurns !== undefined ? { maxTurns } : {}),
-      ...(maxRepairIterations !== undefined ? { maxRepairIterations } : {}),
+      ...runOptions,
       ...(proxyMode ? { llmProxy: true } : {}),
       // Loop v1 fields (omitted when not supplied, preserving existing behaviour when absent).
       ...(typeof values['spec-model'] === 'string' ? { specModel: values['spec-model'] } : {}),
@@ -1029,15 +1068,14 @@ export function parseCli(argv: string[], cwd: string): Command {
     };
 
     if (commandKind === 'doctor') {
-      return { kind: 'doctor', ...common, ...(values.fix === true ? { fix: true } : {}) };
+      // Preflight never runs a stage: the proof/conformance knobs stay off the doctor command.
+      const { visualProofCmd: _visualProofCmd, conformance: _conformance, conformanceModel: _conformanceModel, ...checks } = common;
+      return { kind: 'doctor', ...checks, ...(values.fix === true ? { fix: true } : {}) };
     }
 
     return {
       kind: 'watch',
       ...common,
-      ...(typeof values['visual-proof'] === 'string' ? { visualProofCmd: values['visual-proof'] } : {}),
-      ...(values.conformance === true ? { conformance: true } : {}),
-      ...(typeof values['conformance-model'] === 'string' ? { conformanceModel: values['conformance-model'] } : {}),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
       once: values.once === true,
@@ -1047,6 +1085,27 @@ export function parseCli(argv: string[], cwd: string): Command {
 
   return { kind: 'help' };
 }
+
+/** Option lines run and watch print verbatim — one source, so the two usage blocks cannot drift either. */
+const SHARED_RUN_OPTIONS_USAGE = `    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
+                           run/watch/doctor also accept a custom provider name from the repo's
+                           .vanguard/app.json customProviders (S6) — direct mode only.
+    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
+    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
+    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
+    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
+    --review-model <m>       Model for the review stage (default: provider's default)
+    --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
+                             model has failed (default: stay on the implementer model)
+    --no-simplify            Skip the simplifier stage (lean: implement -> review only)
+    --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
+    --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
+    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
+    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
+    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
+    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
+    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)`;
 
 export const USAGE = `vanguard <command>
 
@@ -1094,29 +1153,9 @@ Commands:
                            state name "Spec", needs-info state "Needs Info"). For GitHub, a repo-only
                            watch without --label also uses the routing-label defaults.
     --skills <dir> --repo <path> --concurrency <n> --egress   (as for run)
-    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
-                           run/watch/doctor also accept a custom provider name from the repo's
-                           .vanguard/app.json customProviders (S6) — direct mode only.
-    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
-    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
-    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
-    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default)
-    --review-model <m>       Model for the review stage (default: provider's default)
-    --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
-                             model has failed (default: stay on the implementer model)
-    --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
-                             decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
-    --no-simplify            Skip the simplifier stage (lean: implement -> review only)
-    --verify <cmd>           Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
-    --visual-proof <cmd>     Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
-    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
-    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+${SHARED_RUN_OPTIONS_USAGE}
     --base <branch>          Base branch to branch off and target the PR at; also the loop-v1 spec pass's research baseline (default: main)
-    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
-    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
     --max-turns <n>            Override the implementer (or loop-v1 spec pass's tech-spec) stage turn cap (default: 30; opt-in, higher cost)
-    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
     Note (project): Status option names must match the project's Status field exactly.
       Resolve field and option IDs with: gh project field-list <number> --owner <owner> --format json
 
@@ -1190,29 +1229,13 @@ Commands:
     --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
-    --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider that runs every stage (default: claude)
-                           run/watch/doctor also accept a custom provider name from the repo's
-                           .vanguard/app.json customProviders (S6) — direct mode only.
-    --review-provider <claude|codex|cursor|zai|openrouter|meridian>   Run only the review stage on this provider (cross-provider review)
-    --fallback-provider <name>  Retry on this provider when the primary one fails (outage, limit, revoked credential) — the implementer and every other stage on its provider; must sit on a different transport (e.g. codex for a claude implementer)
-    --fallback-model <model>    Model for every stage that fell back (default: that provider's default)
-    --provider-model <m>     Model for the implementer/simplifier stages (default: provider's default; zai -> glm-5.2)
-    --review-model <m>       Model for the review stage (default: provider's default)
-    --escalate-model <m>     Model for the 2nd and later gate repairs, once a repair on the implementer
-                             model has failed (default: stay on the implementer model)
-    --no-simplify            Skip the simplifier stage (lean: implement -> review only)
-    --fork <n>             Run the implementer as n variants (n>=2) and keep the best-scored diff
-    --verify <cmd>         Verification command for Proof of Work (overrides VANGUARD_VERIFY_CMD and auto-detect)
-    --visual-proof <cmd>   Visual proof command for UI artifacts (overrides VANGUARD_VISUAL_PROOF_CMD)
-    --conformance            Run the conformance pass (planner-tier model checks diff against spec; opt-in)
-    --conformance-model <m>  Model for the conformance stage (default: same as implementer; 'opus' for planner-tier)
-    --commit-author <a>      Git author for the commit, "Name <email>" (also enables white-label mode: feat/<n> branch, no Vanguard branding/review comment)
+${SHARED_RUN_OPTIONS_USAGE}
     --base <branch>          Base branch to branch off and target the PR at (default: main)
-    --plan                   Add a dedicated planning stage first (opus, high effort) before implement/review
-    --flow <name>            Run a named workflow (e.g. flow-b: plan -> implement -> adversary -> repair). --plan == --flow plan
     --max-turns <n>            Override the implementer stage turn cap (default: 30; opt-in, higher cost)
-    --max-repair-iterations <n> Override the conformance/verify repair loop-back cap (default: 2)
-    --spec-file <file>         Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
+    --fork <n>               Run the implementer as n variants (n>=2) and keep the best-scored diff
+    --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
+                             decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
+    --spec-file <file>       Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
   review-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
