@@ -74,6 +74,11 @@ interface ProviderSpec {
    */
   directOnly?: boolean;
   /**
+   * Which upstream the trusted LLM-proxy sidecar must target when this provider rides the primary
+   * Anthropic transport under --llm-proxy (absent = api.anthropic.com).
+   */
+  upstream?: 'zai' | 'openrouter';
+  /**
    * Model the provider forces when the run doesn't pick one (zai's glm default; a custom entry's
    * `model`). Consumed by forcedProviderModel so callers like the spec generator don't hand a
    * Claude-only model (haiku) to an endpoint that doesn't serve it.
@@ -131,6 +136,7 @@ const PROVIDERS = {
     factory: () => new ZaiProvider(),
     transport: 'anthropic',
     ownsAnthropicTransport: true,
+    upstream: 'zai',
     forcedModel: ZAI_DEFAULT_MODEL,
     key: {
       hostEnv: ['ZAI_API_KEY'],
@@ -143,6 +149,7 @@ const PROVIDERS = {
     factory: () => new OpenRouterProvider(),
     transport: 'anthropic',
     ownsAnthropicTransport: true,
+    upstream: 'openrouter',
     // OpenRouter expects dotted slugs, so a Claude-only name like spec's `haiku` must not reach it.
     forcedModel: OPENROUTER_DEFAULT_MODEL,
     key: {
@@ -176,6 +183,16 @@ export type ProviderName = keyof typeof PROVIDERS;
 
 /** Repo-configured customs, re-exported so choice-carrying callers need one import. */
 export type { CustomProviderEntry } from './custom.js';
+
+/**
+ * Upstream the primary LLM-proxy sidecar targets for a REGISTRY key (`'claude'`, `'zai'`, … — what the
+ * user types as --provider), not an adapter name; Anthropic unless the table says otherwise.
+ */
+export function providerUpstream(providerName: string | undefined): 'anthropic' | 'zai' | 'openrouter' {
+  if (providerName === undefined || !isProviderName(providerName)) return 'anthropic';
+  const spec: ProviderSpec = PROVIDERS[providerName];
+  return spec.upstream ?? 'anthropic';
+}
 
 /** Narrow an arbitrary string to a BUILT-IN provider name. Customs resolve via resolveSpec instead. */
 export function isProviderName(value: string): value is ProviderName {
