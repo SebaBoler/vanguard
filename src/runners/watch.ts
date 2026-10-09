@@ -5,6 +5,7 @@ import { runLinearIssue } from './linear.js';
 import { runGithubIssue } from './github.js';
 import { runGitlabIssue } from './gitlab.js';
 import { runSpecGenerator } from './spec.js';
+import { isWhiteLabel } from './source-adapter.js';
 import { assessTaskReadiness, isVanguardSpec, SPEC_TAG } from '../tasks/triage.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { failureReason, formatFailureComment } from '../core/errors.js';
@@ -345,6 +346,8 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
       ),
     // No onSecretBlocked: Linear has no blocked state to move to and reverting to the trigger state
     // would re-list the issue next poll. It stays claimed; the adapter's masked comment is the signal.
+    // Holding is only safe while `claimedState` (a state NAME) does not resolve to the `triggerState`
+    // TYPE that listReady filters on — the same assumption the claim itself and onFailure rest on.
     onFailure: (id, error) => commentLinearIssue(id, formatFailureComment('Vanguard run failed', error), opts.linear),
   };
 }
@@ -653,8 +656,12 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
     // The trigger label was removed on claim and is not restored: the issue sits on
-    // `vanguard:secret-blocked` (added by the adapter) until a human re-triggers it.
-    onSecretBlocked: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
+    // `vanguard:secret-blocked` (added by the adapter) until a human re-triggers it. A white-label
+    // run signals nothing on the issue (no label, no comment), so there the claimed marker is the
+    // only visible trace of the hold and must stay.
+    ...(isWhiteLabel(opts.deps)
+      ? {}
+      : { onSecretBlocked: (id: string) => editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh) }),
     onFailure: (id, error) => commentGithubIssue(repo, id, formatFailureComment('Vanguard run failed', error), opts.gh),
   };
 }
@@ -916,8 +923,11 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
     // Trigger label not restored (removed on claim): the issue sits on `vanguard::secret-blocked`
-    // (added by the adapter) until a human re-triggers it.
-    onSecretBlocked: (id) => editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab),
+    // (added by the adapter) until a human re-triggers it. A white-label run signals nothing on the
+    // issue, so there the claimed marker is the only visible trace of the hold and must stay.
+    ...(isWhiteLabel(opts.deps)
+      ? {}
+      : { onSecretBlocked: (id: string) => editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab) }),
     onFailure: (id, error) =>
       commentGitlabIssue(project, id, formatFailureComment('Vanguard run failed', error), glab),
   };

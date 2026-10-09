@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { GitHubTaskFetcher, linkPullRequest, addPrFailureLabel, editGithubLabels, commentGithubIssue } from '../tasks/github.js';
+import { GitHubTaskFetcher, linkPullRequest, addPrFailureLabel, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
 import { GitHubProjectFetcher } from '../tasks/github-project.js';
 import { implementReviewSimplifyStages } from '../pipeline/pipeline.js';
 import { publishReviewVerdict } from '../pipeline/review-publish.js';
@@ -9,6 +9,7 @@ import { runSourcedIssue } from './source-adapter.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { GITHUB_VERIFY_FAILED_LABEL, GITHUB_VISUAL_PROOF_FAILED_LABEL, GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import type { Task } from '../tasks/fetcher.js';
+import type { GhRunner } from '../tasks/github.js';
 import type { ProviderChoice } from '../agents/registry.js';
 import type { FanOutOutcome } from '../pipeline/fan-out.js';
 import type { SecretBlock } from '../core/secret-scan.js';
@@ -22,7 +23,8 @@ export interface RunGithubIssueDeps extends RunIssueDeps {
 /** The shared run result, unnarrowed: `secretBlocked` must reach the watch loop so a withheld PR is not read as "no changes". */
 export type RunGithubIssueResult = RunIssueResult;
 
-function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
+/** @internal Exported for unit tests; production callers use runGithubIssue. */
+export function githubAdapter(deps: RunGithubIssueDeps, gh: GhRunner = defaultGhRunner): SourceAdapter {
   return {
     async prepare(issueRef: string) {
       const task = await new GitHubTaskFetcher(deps.repoSlug).fetch(issueRef);
@@ -40,10 +42,14 @@ function githubAdapter(deps: RunGithubIssueDeps): SourceAdapter {
       await linkPullRequest(deps.repoSlug, issueRef, prUrl);
     },
     async signalSecretBlock(issueRef: string, _task: Task, block: SecretBlock) {
-      await Promise.all([
-        editGithubLabels(deps.repoSlug, issueRef, { add: [GITHUB_SECRET_BLOCKED_LABEL] }).catch(() => undefined),
-        commentGithubIssue(deps.repoSlug, issueRef, renderSecretBlockComment(block)).catch(() => undefined),
-      ]);
+      // `gh issue edit --add-label` fails on a repo that never created the label, which would leave
+      // the held issue with no Vanguard label at all. Ensure it first (the same pre-step as
+      // addPrFailureLabel and the revise path); every step stays best-effort.
+      const label = gh(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', deps.repoSlug, '--force'])
+        .catch(() => undefined)
+        .then(() => editGithubLabels(deps.repoSlug, issueRef, { add: [GITHUB_SECRET_BLOCKED_LABEL] }, gh))
+        .catch(() => undefined);
+      await Promise.all([label, commentGithubIssue(deps.repoSlug, issueRef, renderSecretBlockComment(block), gh).catch(() => undefined)]);
     },
   };
 }
