@@ -94,7 +94,7 @@ async function runDefaultMrReviewer(
     const sandbox = new DockerSandboxProvider({
       image: sandboxImage(),
       secrets: {
-        ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectClaudeCliAuth ? authSecrets(auth) : {}),
+        ...(sandboxContext.llmProxy === undefined && auth !== undefined && agents.injectAnthropicAuth ? authSecrets(auth) : {}),
         ...agents.secrets,
       },
       ...sandboxResourceLimits(),

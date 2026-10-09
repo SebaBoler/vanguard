@@ -203,7 +203,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'codex' }, env);
     expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
     expect(selected.proxySecrets).toEqual({});
-    expect(selected.injectClaudeCliAuth).toBe(true);
+    expect(selected.injectAnthropicAuth).toBe(true);
   });
 
   it('holds the codex key in proxySecrets and out of the sandbox in proxy mode', () => {
@@ -220,7 +220,7 @@ describe('selectAgents', () => {
       ANTHROPIC_BASE_URL: 'https://api.z.ai/api/coding/paas/v4',
       ANTHROPIC_AUTH_TOKEN: 'z-key',
     });
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
     expect(selected.proxySecrets).toEqual({});
   });
 
@@ -229,7 +229,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'zai' }, env, { proxyMode: true });
     expect(selected.secrets).toEqual({});
     expect(selected.proxySecrets).toEqual({});
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
   });
 
   it('keeps the OpenRouter key out of the sandbox in proxy mode (delivered to the primary sidecar via auth)', () => {
@@ -237,7 +237,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'openrouter' }, env, { proxyMode: true });
     expect(selected.secrets).toEqual({});
     expect(selected.proxySecrets).toEqual({});
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
   });
 
   it('injects Meridian transport secrets and suppresses Anthropic auth', () => {
@@ -247,7 +247,7 @@ describe('selectAgents', () => {
       ANTHROPIC_BASE_URL: 'http://192.168.1.10:3456',
       ANTHROPIC_AUTH_TOKEN: 'meridian',
     });
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
     expect(selected.proxySecrets).toEqual({});
   });
 
@@ -261,7 +261,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
     // Without this, ANTHROPIC_API_KEY would be injected and the zai reviewer's Claude CLI would
     // prefer it over z.ai's ANTHROPIC_AUTH_TOKEN, hitting api.anthropic.com instead of z.ai.
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
     expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
     expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
     expect(selected.secrets.ANTHROPIC_BASE_URL).toBe('https://api.z.ai/api/coding/paas/v4');
@@ -270,7 +270,7 @@ describe('selectAgents', () => {
   it('suppresses Anthropic auth when zai IMPLEMENTS and cursor reviews', () => {
     const env = { CURSOR_API_KEY: 'u-key', ZAI_API_KEY: 'z-key' } as NodeJS.ProcessEnv;
     const selected = selectAgents({ provider: 'zai', reviewProvider: 'cursor' }, env);
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
     expect(selected.secrets.CURSOR_API_KEY).toBe('u-key');
     expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
   });
@@ -312,7 +312,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'codex', reviewProvider: 'zai' }, env);
     expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
     expect(selected.secrets.ANTHROPIC_AUTH_TOKEN).toBe('z-key');
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
   });
 
   it('allows zai-implements + codex-reviews under --llm-proxy (zai owns the primary sidecar)', () => {
@@ -320,7 +320,7 @@ describe('selectAgents', () => {
     const selected = selectAgents({ provider: 'zai', reviewProvider: 'codex' }, env, { proxyMode: true });
     expect(selected.proxySecrets.codex).toBe('c-key'); // codex gets its secondary sidecar
     expect(selected.secrets).toEqual({}); // zai key withheld (primary sidecar via auth)
-    expect(selected.injectClaudeCliAuth).toBe(false);
+    expect(selected.injectAnthropicAuth).toBe(false);
   });
 });
 
@@ -370,7 +370,7 @@ describe('implementer fallback provider', () => {
     expect(selected.agent.name).toBe('claude-code');
     expect(selected.fallbackAgent?.name).toBe('codex');
     expect(selected.secrets.OPENAI_API_KEY).toBe('c-key');
-    expect(selected.injectClaudeCliAuth).toBe(true);
+    expect(selected.injectAnthropicAuth).toBe(true);
   });
 
   it('rejects a fallback on the implementer\'s transport slot (claude → openrouter both drive the claude CLI via ANTHROPIC_BASE_URL)', () => {

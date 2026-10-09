@@ -111,7 +111,7 @@ vi.mock('../core/decision-model.js', () => ({
 }));
 import { selectAgents } from '../agents/registry.js';
 vi.mock('../agents/registry.js', () => ({
-  selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectClaudeCliAuth: false })),
+  selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
 }));
 const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
@@ -276,7 +276,7 @@ describe('runSourcedIssue', () => {
       fallbackAgent: { name: 'codex' },
       secrets: {},
       proxySecrets: {},
-      injectClaudeCliAuth: false,
+      injectAnthropicAuth: false,
     } as never);
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo', fallbackProvider: 'codex', fallbackModel: 'gpt-5.6-sol' }, adapter);
@@ -294,7 +294,7 @@ describe('runSourcedIssue', () => {
       fallbackAgent: { name: 'codex' },
       secrets: {},
       proxySecrets: {},
-      injectClaudeCliAuth: false,
+      injectAnthropicAuth: false,
     } as never);
     runStages.mockResolvedValueOnce([
       { ...stageOutcome('implementer', 'sess-1'), providerName: 'codex', model: 'gpt-5.6-sol' },

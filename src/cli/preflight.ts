@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { authFromEnv } from '../agents/auth.js';
-import { claudeCliKeyEnv, assertProvidersResolvable, needsAnthropicAuth, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
+import { assertProvidersResolvable, claudeCliKeyEnv, needsAnthropicAuth, providerSecrets, requiresApiKey, validateProviderChoice } from '../agents/registry.js';
 import { loadCustomProviders } from '../agents/custom.js';
 import { SANDBOX_CLAUDE_VERSION, isOlderVersion, sandboxImage } from '../sandbox/docker.js';
 import { isKnownGitlabRemote, parseGitlabProjectFromRemote, redactRemote, remoteHostname } from '../runners/gitlab.js';

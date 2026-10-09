@@ -189,7 +189,7 @@ export interface ProviderChoice {
   `makeProvider`, `requiresApiKey`, `claudeCliKeyEnv`, `providerSecrets`, plus the new
   `forcedProviderModel` (§3); `needsAnthropicAuth`, `validateProviderChoice`, `selectAgents` read
   them off the choice itself. `agentAuthFromEnv` passes `choice.customProviders` through.
-  `claudeCliKeyEnv(name, customs) !== undefined` keeps meaning "owns the Anthropic
+  `claudeCliKeyEnv(name, customs) !== undefined` keeps meaning "owns the Claude CLI
   transport" (all customs are keyed — §3).
 
 ### Synthesized spec (a generalized zai)
@@ -200,7 +200,7 @@ export interface ProviderChoice {
   impossible). Two *behavioral* name consumers exist and both default correctly, pinned by tests:
   `skill-registry.ts:20-24` `providerFamily` → 'claude' family (right — customs drive the claude
   CLI); `vanguard.ts:315` `CLAUDE_SESSION_PROVIDERS` miss → no session capture (§3 deferral).
-- `transport: 'anthropic'`, `ownsClaudeCliTransport: true` (Anthropic authSecrets suppression —
+- `transport: 'claude-cli'`, `ownsClaudeCliTransport: true` (Anthropic authSecrets suppression —
   existing mechanism, holds on both CLI and sidecar paths via `selectAgents`), `directOnly: true`,
   `forcedModel: spec.model`.
 - `key: { hostEnv: [spec.keyEnv], toSandboxSecrets: k => ({ ANTHROPIC_BASE_URL: spec.baseUrl,

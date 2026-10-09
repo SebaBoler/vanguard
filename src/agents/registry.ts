@@ -23,11 +23,7 @@ export interface ProviderProxySecrets {
 /**
  * The transport "slot" a provider drives inside the sandbox — the env namespace its CLI authenticates
  * through. Two DIFFERENT providers sharing one slot cannot run in the same sandbox: their env vars
- * collide (a sandbox env holds one ANTHROPIC_BASE_URL, one OPENAI_API_KEY, …). Claude and Zai both
- * drive the `claude` CLI via ANTHROPIC_*, so both occupy the 'claude-cli' slot and cannot be paired.
- */
-/**
- * Which CLI/endpoint slot a provider occupies in one sandbox env. 'claude-cli' is every provider that
+ * collide (a sandbox env holds one ANTHROPIC_BASE_URL, one OPENAI_API_KEY, …). 'claude-cli' is every provider that
  * drives the `claude` CLI — claude itself, and zai/openrouter/meridian/customs, which point that CLI at
  * their own gateway through ANTHROPIC_BASE_URL (the CLI's endpoint variable, not a statement about the
  * vendor behind it). Two of them cannot share an env: the variable holds one URL.
@@ -261,7 +257,7 @@ export function requiresApiKey(name: string, customs?: readonly CustomProviderEn
 }
 
 /**
- * Host env var(s) an Claude-CLI-transport-owning provider (zai, openrouter, customs) reads its key
+ * Host env var(s) a Claude-CLI-transport-owning provider (zai, openrouter, customs) reads its key
  * from, in priority order; undefined for providers that don't own the transport (they use Anthropic
  * authSecrets instead). Lets callers like agentAuthFromEnv resolve a primary-sidecar credential
  * generically instead of hardcoding a per-provider branch.
@@ -390,7 +386,7 @@ export function needsAnthropicAuth(choice: ProviderChoice): boolean {
   // Only a provider with no key wiring of its own (Claude) consumes authSecrets. Codex/Cursor bring their
   // own key; Zai/OpenRouter/customs own the Claude CLI transport with theirs. So a Codex-only review needs
   // no Anthropic credential at all (#391) — before, every non-transport-owner demanded one.
-  // Sibling of selectAgents' injectClaudeCliAuth: that one answers "may the Anthropic auth be layered in"
+  // Sibling of selectAgents' injectAnthropicAuth: that one answers "may the Anthropic auth be layered in"
   // (false only for transport owners), this one "is it required at all".
   return used.some((n) => !requiresApiKey(n, choice.customProviders));
 }
@@ -412,7 +408,7 @@ export interface SelectedAgents {
    * (Zai) — a stray Anthropic key would make the Claude CLI hit api.anthropic.com instead of that
    * provider's endpoint. True otherwise (Claude uses it; Codex/Cursor ignore it harmlessly).
    */
-  injectClaudeCliAuth: boolean;
+  injectAnthropicAuth: boolean;
 }
 
 /**
@@ -549,6 +545,6 @@ export function selectAgents(
     ...(choice.fallbackProvider !== undefined ? { fallbackAgent: makeProvider(choice.fallbackProvider, customs) } : {}),
     secrets: sandboxSecrets,
     proxySecrets,
-    injectClaudeCliAuth: !used.some((name) => resolveSpec(name, customs).ownsClaudeCliTransport === true),
+    injectAnthropicAuth: !used.some((name) => resolveSpec(name, customs).ownsClaudeCliTransport === true),
   };
 }

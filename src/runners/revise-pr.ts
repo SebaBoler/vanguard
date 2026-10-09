@@ -200,7 +200,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           agent: deps._agent,
           secrets: {},
           proxySecrets: {},
-          injectClaudeCliAuth: true,
+          injectAnthropicAuth: true,
         }
       : selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
 
@@ -215,7 +215,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       new DockerSandboxProvider({
         image: sandboxImage(),
         secrets: {
-          ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectClaudeCliAuth
+          ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth
             ? authSecrets(deps.auth)
             : {}),
           ...agents.secrets,

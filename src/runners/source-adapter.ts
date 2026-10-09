@@ -355,7 +355,7 @@ export async function runSourcedIssue(
       image: sandboxImage(),
       // In llm-proxy mode the real Claude secret stays in the sidecar — the sandbox gets only the nonce.
       secrets: {
-        ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectClaudeCliAuth ? authSecrets(deps.auth) : {}),
+        ...(deps.llmProxy === undefined && deps.auth !== undefined && agents.injectAnthropicAuth ? authSecrets(deps.auth) : {}),
         ...(adapter.secrets ?? {}),
         ...agents.secrets,
       },
