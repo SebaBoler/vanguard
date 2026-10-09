@@ -6,7 +6,7 @@ import { buildXmlPrompt } from '../context/xml-prompt.js';
 import { extractJson } from '../structured/extract.js';
 import { verdictSchema } from '../evals/judges.js';
 import { AgentError } from '../core/errors.js';
-import { roundUsd } from './budget.js';
+import { roundUsd } from '../core/usd.js';
 import type { RunContext } from '../core/vanguard.js';
 import type { ReasoningEffort, RunResult } from '../core/types.js';
 import type { AgentProvider } from '../agents/provider.js';

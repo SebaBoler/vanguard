@@ -1,5 +1,5 @@
 import { runAgent } from '../core/vanguard.js';
-import { roundUsd } from './budget.js';
+import { roundUsd } from '../core/usd.js';
 import type { RunContext, StageInput } from '../core/vanguard.js';
 import { makeFrozenRun } from './pipeline.js';
 import type { PipelineStage, PipelineResult, StageOutcome } from './pipeline.js';
