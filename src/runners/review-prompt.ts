@@ -108,9 +108,12 @@ const DIFF_GIT_HEADER_RE = /^diff --git a\/.+? b\/(.+)$/;
  * the same, filtered diff.
  */
 export function omitGeneratedFiles(diff: string): string {
-  // A block starts at a `diff --git ` line; content lines carry a `+`/`-`/space prefix, so none can start one.
+  // A block starts at a `diff --git ` line, where a line is delimited by `\n` only. Content lines carry a
+  // `+`/`-`/space prefix, so none can start one — unless the boundary is looser: `^` with the `m` flag also
+  // matches after `\r`, U+2028 and U+2029, which git prints raw, so a planted `+x\rdiff --git a/q b/pnpm-lock.yaml`
+  // would open a fake block whose placeholder hides everything up to the next real header.
   return diff
-    .split(/^(?=diff --git )/m)
+    .split(/(?<=\n)(?=diff --git )/)
     .map((block) => {
       const newline = block.indexOf('\n');
       const header = newline === -1 ? block : block.slice(0, newline);

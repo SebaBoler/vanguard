@@ -68,6 +68,15 @@ describe('omitGeneratedFiles', () => {
     expect(omitGeneratedFiles(diff)).toBe(diff);
   });
 
+  it('splits blocks on \\n only: a header planted after \\r, U+2028 or U+2029 inside a content line is not a block start', () => {
+    // `^` with the `m` flag matches after each of these; a split there would hide the rest of the real block
+    // behind a lockfile placeholder.
+    for (const separator of ['\r', ' ', ' ']) {
+      const diff = ['diff --git a/notes.md b/notes.md', '@@ -1 +1,2 @@', ' text', `+x${separator}diff --git a/q b/pnpm-lock.yaml`, '+kept', ''].join('\n') + README_BLOCK;
+      expect(omitGeneratedFiles(diff)).toBe(diff);
+    }
+  });
+
   it('handles a last block without a trailing newline', () => {
     const diff = `${AUTH_BLOCK}diff --git a/Cargo.lock b/Cargo.lock\n@@ -1 +1 @@\n-a\n+b`;
     expect(omitGeneratedFiles(diff)).toBe(`${AUTH_BLOCK}diff --git a/Cargo.lock b/Cargo.lock\n(generated file: 3 diff lines omitted from review)`);
