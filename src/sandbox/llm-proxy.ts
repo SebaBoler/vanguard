@@ -1,11 +1,12 @@
-import { execa } from 'execa';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { SandboxError } from '../core/errors.js';
-import { sandboxImage } from './docker.js';
-import { ownerLabelArgs, sidecarMemoryArgs } from './limits.js';
+import { startSidecar } from './sidecar.js';
+import type { DockerRunner } from './sidecar.js';
 import type { ProviderProxySecrets } from '../agents/registry.js';
 import type { Upstream } from './llm-proxy-rewrite.mjs';
+
+export type { DockerRunner } from './sidecar.js';
 
 const PROXY_PORT = 8088;
 const SECRET_FILE = '/tmp/llm-proxy-secret';
@@ -14,21 +15,6 @@ const PROXY_SCRIPT = fileURLToPath(new URL('./llm-proxy-server.mjs', import.meta
 // Shared pure logic the server imports via a relative `./llm-proxy-rewrite.mjs`; cp'd into the SAME
 // /tmp dir so that relative import resolves inside the container.
 const PROXY_LOGIC = fileURLToPath(new URL('./llm-proxy-rewrite.mjs', import.meta.url));
-
-/** Injectable docker runner so the host orchestration is testable without touching real docker. */
-export type DockerRunner = (
-  args: string[],
-  opts?: { input?: string },
-) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-
-/** Default runner: execa-based docker invocation (reject:false so the caller inspects exitCode). */
-const defaultDocker: DockerRunner = async (args, opts) => {
-  const result = await execa('docker', args, {
-    reject: false,
-    ...(opts?.input !== undefined ? { input: opts.input } : {}),
-  });
-  return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
-};
 
 export interface LlmProxy {
   /** Proxy URL reachable from inside the internal network (by container name). */
@@ -66,47 +52,31 @@ export async function startLlmProxy(opts: {
   image?: string;
   docker?: DockerRunner;
 }): Promise<LlmProxy> {
-  const docker = opts.docker ?? defaultDocker;
-  // The sidecar runs a small node script inside the sandbox image itself (no dedicated proxy
-  // image), so it must follow the same CI-pinned override as the main sandbox.
-  const image = opts.image ?? sandboxImage();
   const upstream: Upstream = opts.upstream ?? 'anthropic';
   const id = randomUUID().slice(0, 8);
   const name = `vg-llm-${id}`;
   const nonce = randomUUID().replace(/-/g, '');
-
-  // The existing reapContainers (label vanguard.runId) already reaps this sidecar on gc — no gc change.
-  const teardown = async (): Promise<void> => {
-    await docker(['rm', '-f', name]);
-  };
-
   try {
-    // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
-    await docker(['run', '-d', '--name', name, '--label', `vanguard.runId=${id}`, ...ownerLabelArgs(), ...sidecarMemoryArgs(), image, 'sleep', 'infinity']);
-    await docker(['network', 'connect', opts.network, name]);
-    await docker(['cp', PROXY_SCRIPT, `${name}:/tmp/llm-proxy.mjs`]);
-    // The shared logic must sit next to the server so its relative import resolves.
-    await docker(['cp', PROXY_LOGIC, `${name}:/tmp/llm-proxy-rewrite.mjs`]);
-    // Write the secret file via stdin (umask 077) so the secret never appears in argv or docker inspect.
-    const secretBody = `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\nUPSTREAM=${upstream}\n`;
-    const write = await docker(['exec', '-i', name, 'sh', '-c', `umask 077; cat > ${SECRET_FILE}`], { input: secretBody });
-    if (write.exitCode !== 0) {
-      throw new SandboxError(`Failed to write llm proxy secret: ${write.stderr}`);
-    }
-    await docker([
-      'exec',
-      '-d',
-      '-e',
-      `LLM_PROXY_SECRET_FILE=${SECRET_FILE}`,
-      '-e',
-      `PORT=${PROXY_PORT}`,
+    // The existing reapContainers (label vanguard.runId) already reaps this sidecar on gc — no gc change.
+    const sidecar = await startSidecar({
       name,
-      'node',
-      '/tmp/llm-proxy.mjs',
-    ]);
-    return { url: `http://${name}:${PROXY_PORT}`, nonce, host: name, destroy: teardown };
+      runId: id,
+      ...(opts.docker !== undefined ? { docker: opts.docker } : {}),
+      ...(opts.image !== undefined ? { image: opts.image } : {}),
+      // Sidecar on the default bridge (has internet), then also joined to the internal enclave network.
+      network: opts.network,
+      files: [
+        { src: PROXY_SCRIPT, dest: '/tmp/llm-proxy.mjs' },
+        // The shared logic must sit next to the server so its relative import resolves.
+        { src: PROXY_LOGIC, dest: '/tmp/llm-proxy-rewrite.mjs' },
+      ],
+      // The real secret reaches the sidecar ONLY via stdin into an in-RAM file (umask 077).
+      secret: { path: SECRET_FILE, body: `MODE=${opts.auth.mode}\nSECRET=${opts.auth.secret}\nNONCE=${nonce}\nUPSTREAM=${upstream}\n` },
+      env: { LLM_PROXY_SECRET_FILE: SECRET_FILE, PORT: String(PROXY_PORT) },
+      cmd: ['node', '/tmp/llm-proxy.mjs'],
+    });
+    return { url: `http://${name}:${PROXY_PORT}`, nonce, host: name, destroy: sidecar.destroy };
   } catch (cause) {
-    await teardown();
     throw new SandboxError(`Failed to start llm proxy ${id}`, { cause });
   }
 }
