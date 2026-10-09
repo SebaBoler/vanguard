@@ -271,13 +271,13 @@ describe('parseCli', () => {
 
   it('rejects the run-only flags on watch and doctor instead of ignoring them', () => {
     for (const command of ['watch', 'doctor']) {
-      const base = [command, '--label', 'vanguard'];
-      expect(parseCli([...base, '--spec-file', 's.md'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining(`every ticket ${command} picks up`) });
+      const base = [command, '--source', 'linear', '--label', 'vanguard'];
+      expect(parseCli([...base, '--spec-file', 's.md'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('--spec-file applies to a single-issue run only') });
       expect(parseCli([...base, '--fork', '3'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining(`--fork applies to run only; ${command} does not fork`) });
       expect(parseCli([...base, '--fork-scorer', 'llm'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining(`${command} does not fork`) });
-      // The same flags are fine on run.
-      expect(parseCli(['run', '--github', 'o/r#1', '--spec-file', 's.md', '--fork', '3', '--fork-scorer', 'llm'], '/work')).toMatchObject({ kind: 'run', specFile: 's.md', forkN: 3, forkScorer: 'llm' });
     }
+    // The same flags are fine on run.
+    expect(parseCli(['run', '--github', 'o/r#1', '--spec-file', 's.md', '--fork', '3', '--fork-scorer', 'llm'], '/work')).toMatchObject({ kind: 'run', specFile: 's.md', forkN: 3, forkScorer: 'llm' });
   });
 
   it('documents the shared flags under both run and watch, and the run-only ones under run only', () => {

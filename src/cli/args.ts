@@ -1035,7 +1035,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     // The single-task flags (RunOnlyKey + --fork): on watch each would be a silent no-op or a spurious failure.
     if (values['fork-scorer'] !== undefined) return fail(`--fork-scorer applies to \`run --fork <n>\` only; ${commandKind} does not fork.`);
     if (values.fork !== undefined) return fail(`--fork applies to run only; ${commandKind} does not fork.`);
-    if (values['spec-file'] !== undefined) return fail(`--spec-file applies to a single-issue run only; one spec file cannot describe every ticket ${commandKind} picks up.`);
+    if (values['spec-file'] !== undefined) return fail('--spec-file applies to a single-issue run only (watch reads every ticket from the tracker; doctor claims none).');
     type WatchCommon = Omit<Extract<Command, { kind: 'watch' }>, 'kind' | 'concurrency' | 'intervalMs' | 'once' | 'egress'>;
     const common: WatchCommon = {
       source,
@@ -1389,6 +1389,7 @@ ${SHARED_RUN_OPTIONS_USAGE}
 
   doctor options:
     Uses the same source/routing flags as watch, but only runs AFK preflight checks and exits.
+    Like watch, it rejects the run-only flags --fork, --fork-scorer and --spec-file.
     Add --spec-only to check a spec-only loop-v1 watch: it skips the checks that only guard publishing.
     Example (GitHub): vanguard doctor --source github --github-repo owner/repo
     Example (Linear): vanguard doctor --loop-v1 --label vanguard --skills ./skills
