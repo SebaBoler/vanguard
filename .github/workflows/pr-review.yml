@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       fallback-provider:
-        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted: a fallback whose credential is missing is disabled with a warning (never a red job); any other preflight failure, e.g. an unknown provider name, fails the run. The retry runs without the event hint, so a head the first attempt already reviewed is skipped instead of reviewed twice.'
+        description: 'Provider to retry the review with when the first attempt exits non-zero (e.g. Codex limit or bad model). Empty = no fallback. Preflighted: a fallback whose credential is missing is disabled with a warning (never a red job); any other preflight failure, e.g. an unknown provider name, fails the run. The retry keeps the event hint, so the just-labeled PR is found even when the label search lags; a head the first attempt already reviewed no longer carries the trigger label and is skipped.'
         type: string
         default: ''
       fallback-model:
