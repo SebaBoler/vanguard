@@ -1,5 +1,6 @@
 import { cp, lstat, mkdir, readFile, readdir, readlink, rm } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { execa } from 'execa';
 import { WorktreeManager } from '../worktree/manager.js';
 import { SkillRegistry } from '../context/skill-registry.js';
 import { renderPrompt } from '../context/prompt-engine.js';
@@ -10,8 +11,8 @@ import { stageMetric } from './run-metric.js';
 import { createLogger } from './logger.js';
 import { installSignalCleanup, trackSandbox, untrackSandbox } from './cleanup.js';
 import { acquireSandboxSlot, releaseSandboxSlot } from './concurrency.js';
-import { SandboxError, WorkflowGuardError } from './errors.js';
-import { resolveRemoteBaseRef } from './base-branch.js';
+import { SandboxError, WorkflowGuardError, WorktreeError } from './errors.js';
+import { DEFAULT_BASE_BRANCH, assertSafeBaseBranch, resolveRemoteBaseRef } from './base-branch.js';
 import type { RunOptions, RunResult, ExitReason, ReasoningEffort } from './types.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider, AgentUsage } from '../agents/provider.js';
@@ -49,11 +50,23 @@ const WORKFLOW_PATH = /(^|[\\/])\.github[\\/]workflows([\\/]|$)|(^|[\\/])\.githu
 const CI_DIR_NAME = /(^|[\\/])\.git(hub|lab)$/i;
 const IN_CI_DIR = /(^|[\\/])\.git(hub|lab)[\\/]/i;
 
+/**
+ * Which commit a task starts from. `'base'`: origin's copy of `baseBranch` when it is ahead of the
+ * local one (see resolveRemoteBaseRef; the local copy when it is kept). `'reuse'`: an existing run
+ * branch keeps its own history, and the local `baseBranch` is only the baseline a fresh branch is cut
+ * from and new commits are measured against. `{ prHead }`: that branch as it is on origin (revise-pr).
+ */
+export type TaskStart = 'base' | 'reuse' | { prHead: string };
+
 export interface PrepareOptions {
   taskId: string;
   localRepoPath: string;
-  baseBranch?: string;
-  reuse?: boolean;
+  /** The branch the task is for: the cut point of a 'base'/'reuse' start, and what the PR/MR targets. */
+  baseBranch: string;
+  /** Which commit the task starts from. Resolved once, here, and recorded as RunContext.startRef. */
+  start: TaskStart;
+  /** 'base' only: keep a local base that is ahead of/diverged from origin (default: outside CI only). See resolveRemoteBaseRef. */
+  keepLocalIfAhead?: boolean;
   /** Override the run branch prefix (white-label mode: e.g. `feat/`). Default VANGUARD_BRANCH_PREFIX. */
   branchPrefix?: string;
   /** Override the run branch/path id (white-label mode: bare issue number). Default taskId. */
@@ -76,6 +89,10 @@ export interface RunContext {
   branch: string;
   home: string;
   localRepoPath: string;
+  /** The branch the task is for (PrepareOptions.baseBranch): the pre-push rebase fetches it and the PR/MR targets it. */
+  baseBranch: string;
+  /** The commit the task started from, as a SHA. The worktree cut, the closing-keyword scan and the pre-push rebase all measure from it. */
+  startRef: string;
   wm: WorktreeManager;
   log: VanguardLogger;
   /** CI config files the agent added or edited in the sandbox, which copy-back dropped. The PR/MR description or revision summary lists them. */
@@ -123,13 +140,50 @@ async function resolveHome(sandbox: IsolatedSandboxProvider): Promise<string> {
   return home;
 }
 
+/**
+ * Resolve PrepareOptions.start to the SHA the task starts from. Decided once, here, so the worktree
+ * cut, the closing-keyword scan and the pre-push rebase cannot disagree, and no caller lands on a
+ * default base by leaving it out. A SHA, not a ref: a concurrent run's fetch cannot move it and a
+ * same-named tag cannot shadow it.
+ */
+async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promise<string> {
+  const { localRepoPath: cwd, baseBranch, start } = opts;
+  let ref: string;
+  let what: string;
+  if (start === 'base') {
+    ref = await resolveRemoteBaseRef(cwd, baseBranch, { logger: log, ...(opts.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: opts.keepLocalIfAhead } : {}) });
+    what = baseBranch;
+  } else if (start === 'reuse') {
+    // The local base, never fetched: a reused branch keeps its own history. The full ref when the
+    // branch exists, so a same-named tag cannot shadow it (same rule as resolveRemoteBaseRef).
+    assertSafeBaseBranch(baseBranch);
+    const localRef = `refs/heads/${baseBranch}`;
+    const hasLocal = (await execa('git', ['rev-parse', '--verify', '--quiet', localRef], { cwd, reject: false })).exitCode === 0;
+    ref = hasLocal ? localRef : baseBranch;
+    what = baseBranch;
+  } else {
+    // The PR head as it is on origin, so a revision continues the PR, not the base. Same-repo PRs
+    // only: a fork PR's head is not on origin, so a same-named origin branch, or nothing, is fetched
+    // instead. The head ref name is author-controlled: --end-of-options keeps a "-"-led name from
+    // parsing as a git option, and the full refs/heads/ source keeps a "+"-led name (legal in git)
+    // from reading as a force refspec.
+    await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${start.prHead}`], { cwd });
+    ref = 'FETCH_HEAD';
+    what = `origin/${start.prHead}`;
+  }
+  const sha = (await execa('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd, reject: false })).stdout.trim();
+  if (sha === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: ${what} (${ref}) is not a commit in ${cwd}`);
+  return sha;
+}
+
 /** Provision worktree + sandbox + skills for one task. Caller owns disposeContext(). */
 export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): Promise<RunContext> {
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
   const skills = deps.skills ?? new SkillRegistry({});
-  const wt = await wm.create(opts.taskId, opts.baseBranch ?? 'main', {
-    ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
+  const startRef = await resolveStartRef(opts, log);
+  const wt = await wm.create(opts.taskId, startRef, {
+    ...(opts.start === 'reuse' ? { reuse: true } : {}),
     ...(opts.branchPrefix !== undefined ? { branchPrefix: opts.branchPrefix } : {}),
     ...(opts.branchId !== undefined ? { branchId: opts.branchId } : {}),
   });
@@ -152,10 +206,13 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
       branch: wt.branch,
       home,
       localRepoPath: opts.localRepoPath,
+      baseBranch: opts.baseBranch,
+      startRef,
       wm,
       log,
     };
-    ctx.log.info({ taskId: opts.taskId }, 'run start');
+    // The one place the start commit is announced: everything downstream reads ctx.startRef.
+    ctx.log.info({ taskId: opts.taskId, baseBranch: opts.baseBranch, startRef }, 'run start');
     return ctx;
   } catch (error) {
     // Provisioning failed: untrack, free the slot, and tear down so nothing is orphaned.
@@ -434,22 +491,17 @@ export async function disposeContext(ctx: RunContext, opts: { keep?: boolean } =
 
 /** Single-stage convenience: prepare -> one agent run -> dispose. */
 export async function run(opts: RunOptions, deps: RunDeps = {}): Promise<RunResult> {
-  // Cut from origin's copy of the base when it is ahead of the local one, so the sandbox, verification
-  // and review see the tree the PR will land on (#423). A reused branch keeps its own history.
-  const baseBranch = opts.reuse === true
-    ? opts.baseBranch
-    : await resolveRemoteBaseRef(opts.localRepoPath, opts.baseBranch ?? 'main', {
-        ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
-        ...(opts.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: opts.keepLocalIfAhead } : {}),
-      });
   const ctx = await prepareContext(
     {
       taskId: opts.taskId,
       localRepoPath: opts.localRepoPath,
       sandbox: opts.sandbox,
       agentName: opts.agent.name,
-      ...(baseBranch !== undefined ? { baseBranch } : {}),
-      ...(opts.reuse !== undefined ? { reuse: opts.reuse } : {}),
+      // Cut from origin's copy of the base when it is ahead of the local one, so the sandbox, verification
+      // and review see the tree the PR will land on (#423). A reused branch keeps its own history.
+      baseBranch: opts.baseBranch ?? DEFAULT_BASE_BRANCH,
+      start: opts.reuse === true ? 'reuse' : 'base',
+      ...(opts.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: opts.keepLocalIfAhead } : {}),
       ...(opts.skills !== undefined ? { skills: opts.skills } : {}),
       ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     },

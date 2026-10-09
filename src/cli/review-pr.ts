@@ -112,7 +112,8 @@ async function runDefaultReviewer(
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
     });
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    // The reviewer reads the tree the change lands on: the PR's base as origin has it.
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch: pr.baseRefName, start: 'base' });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {

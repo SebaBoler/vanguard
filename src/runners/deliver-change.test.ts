@@ -43,7 +43,7 @@ function makeSandbox(content?: string): IsolatedSandboxProvider {
 }
 
 async function withWork(content: string | undefined, run: (ctx: Awaited<ReturnType<typeof prepareContext>>) => Promise<void>): Promise<void> {
-  const ctx = await prepareContext({ taskId: 'dc', localRepoPath: repo, sandbox: makeSandbox(content) }, { worktrees: new WorktreeManager(repo) });
+  const ctx = await prepareContext({ taskId: 'dc', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox(content) }, { worktrees: new WorktreeManager(repo) });
   try {
     // Simulate the stage sync: write what the sandbox "produced" into the worktree.
     if (content !== undefined) await writeFile(join(ctx.worktreePath, 'feature.txt'), content);
@@ -111,7 +111,7 @@ describe('deliverChange', () => {
       const r = await deliverChange(ctx, {
         taskId: 'o/r#7',
         commitMessage: 'feat: thing\n\nCloses #7',
-        closingKeywordBase: 'main',
+        closingKeywordScan: true,
         target: {
           kind: 'new-pr',
           title: 'thing (o/r#7)',

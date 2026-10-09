@@ -102,7 +102,8 @@ async function runDefaultMrReviewer(
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
     });
     const taskId = `mr-review-${mr.project.replace(/[^a-zA-Z0-9]/g, '-')}-${mr.iid}`;
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    // The reviewer reads the tree the change lands on: the MR's target branch as origin has it.
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch: mr.targetBranch, start: 'base' });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {

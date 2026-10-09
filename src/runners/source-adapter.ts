@@ -3,7 +3,7 @@ import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { selectAgents, forcedProviderModel } from '../agents/registry.js';
-import { resolveRemoteBaseRef } from '../core/base-branch.js';
+import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
 import { decisionModelConfig, decisionEgressAllowed, decisionModelMissing, DECISION_MODEL_DEFAULT, type DecisionModelConfig } from '../core/decision-model.js';
@@ -379,12 +379,6 @@ export async function runSourcedIssue(
       config: decisionProbeConfig(process.env, { whiteLabel }),
       ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
     });
-    // Cut from origin's copy of the base when it is ahead of the local one (on Actions the checkout is
-    // the event SHA and main may already have moved), so the sandbox, verification and review see the
-    // tree the PR will land on (#423). A reused branch keeps its own history.
-    const baseRef = deps.reuse === true
-      ? (deps.baseBranch ?? 'main')
-      : await resolveRemoteBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: deps.keepLocalIfAhead } : {});
     const ctx = await prepareContext(
       {
         taskId: adapter.taskId(task),
@@ -393,8 +387,12 @@ export async function runSourcedIssue(
         agentName: agents.agent.name,
         ...(agents.reviewAgent !== undefined ? { reviewAgentName: agents.reviewAgent.name } : {}),
         ...(agents.fallbackAgent !== undefined ? { fallbackAgentName: agents.fallbackAgent.name } : {}),
-        ...(deps.reuse !== undefined ? { reuse: deps.reuse } : {}),
-        baseBranch: baseRef,
+        // Cut from origin's copy of the base when it is ahead of the local one (on Actions the checkout is
+        // the event SHA and main may already have moved), so the sandbox, verification and review see the
+        // tree the PR will land on (#423). A reused branch keeps its own history.
+        baseBranch: deps.baseBranch ?? DEFAULT_BASE_BRANCH,
+        start: deps.reuse === true ? 'reuse' : 'base',
+        ...(deps.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: deps.keepLocalIfAhead } : {}),
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
       },
       skills !== undefined ? { skills } : {},
@@ -562,12 +560,11 @@ export async function runSourcedIssue(
           ? conventionalCommitMessage(task.title, adapter.taskId(task))
           : `feat: ${task.title} (${task.id})`,
         ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
-        ...(partial ? { closingKeywordBase: baseRef } : {}),
+        ...(partial ? { closingKeywordScan: true } : {}),
         target: {
           kind: 'new-pr',
           title: `${task.title} (${task.id})`,
           draft: true,
-          ...(deps.baseBranch !== undefined ? { baseBranch: deps.baseBranch } : {}),
           ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
           body: ({ commitLeaks }) => whiteLabel
             ? baseBody

@@ -18,7 +18,6 @@ const defaultRunner: CommandRunner = async (file: string, args: string[], cwd: s
 export interface PublishOptions {
   title: string;
   body?: string;
-  baseBranch?: string;
   /** Git identity for the pre-push rebase (same default as commitStage). */
   authorName?: string;
   authorEmail?: string;
@@ -107,6 +106,8 @@ export interface RebaseOntoRemoteBaseOptions {
   base: string;
   /** The task branch; the rebase is skipped when it already exists on the remote. */
   branch: string;
+  /** The commit the run started from (RunContext.startRef): the base "moved" when it has commits past it. */
+  startRef: string;
   authorName?: string;
   authorEmail?: string;
   log?: (line: string) => void;
@@ -114,14 +115,15 @@ export interface RebaseOntoRemoteBaseOptions {
 
 /**
  * Rebase the task branch onto the remote base when the base moved during the run. The worktree is cut
- * from the LOCAL base (on Actions: the event SHA), so a commit that lands on the remote base mid-run —
- * typically a Dependabot workflow bump — leaves the branch behind. GitHub compares a NEW branch's
- * workflow files against the default branch, so a stale `.github/workflows/*` is then rejected as a
- * workflow update the token may not make (#423), even though the agent never touched those files.
- * Never worse than pushing as-is: every git failure here is logged and the push proceeds unchanged
- * (only the stale-workflow case is then still rejected by GitHub, exactly as before). Compares against
- * FETCH_HEAD, which `git fetch <remote> <base>` always writes (a single-branch clone creates no
- * `refs/remotes/<remote>/<base>` for another base). Returns true when the branch was rebased.
+ * from `startRef` (the base as origin had it when the run began, or the local copy), so a commit that
+ * lands on the remote base mid-run — typically a Dependabot workflow bump — leaves the branch behind.
+ * GitHub compares a NEW branch's workflow files against the default branch, so a stale
+ * `.github/workflows/*` is then rejected as a workflow update the token may not make (#423), even
+ * though the agent never touched those files. Never worse than pushing as-is: every git failure here
+ * is logged and the push proceeds unchanged (only the stale-workflow case is then still rejected by
+ * GitHub, exactly as before). Compares against FETCH_HEAD, which `git fetch <remote> <base>` always
+ * writes (a single-branch clone creates no `refs/remotes/<remote>/<base>` for another base). Returns
+ * true when the branch was rebased.
  */
 export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts: RebaseOntoRemoteBaseOptions): Promise<boolean> {
   assertSafeBaseBranch(opts.base);   // `main:refs/heads/x` or `+main` would make the fetch a writing refspec
@@ -143,8 +145,9 @@ export async function rebaseOntoRemoteBase(run: CommandRunner, cwd: string, opts
   }
   let behind: string;
   try {
-    // Last non-empty line: a stray warning ahead of the count must not disable the fix.
-    behind = (await run('git', ['rev-list', '--count', 'HEAD..FETCH_HEAD'], cwd)).trim().split('\n').at(-1) ?? '';
+    // Commits on the base since the run started. Last non-empty line: a stray warning ahead of the
+    // count must not disable the fix.
+    behind = (await run('git', ['rev-list', '--count', `${opts.startRef}..FETCH_HEAD`], cwd)).trim().split('\n').at(-1) ?? '';
   } catch (cause) {
     log(`publish: could not compare the branch with ${target}, pushing as-is (${errorMessage(cause)})`);
     return false;
@@ -188,11 +191,13 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
   // rejects Vanguard's `vanguard/…` branch prefix). The remote enforces no such rule; this is a local
   // husky gate, redundant with Vanguard's own review + the PR's CI.
   const remote = opts.remote ?? 'origin';
-  const base = opts.baseBranch ?? 'main';
+  // The base and the start commit come from the context: the same decision the worktree was cut on.
+  const base = ctx.baseBranch;
   const rebased = await rebaseOntoRemoteBase(run, ctx.worktreePath, {
     remote,
     base,
     branch: ctx.branch,
+    startRef: ctx.startRef,
     log: (line) => ctx.log.info({ branch: ctx.branch }, line),
     ...(opts.authorName !== undefined ? { authorName: opts.authorName } : {}),
     ...(opts.authorEmail !== undefined ? { authorEmail: opts.authorEmail } : {}),
@@ -212,7 +217,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
     args = [
       'mr', 'create',
       '--source-branch', ctx.branch,
-      '--target-branch', opts.baseBranch ?? 'main',
+      '--target-branch', base,
       '--title', opts.title,
       '--description', neutralizeQuickActions(body),
     ];
@@ -221,7 +226,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
     args = [
       'pr', 'create',
       '--head', ctx.branch,
-      '--base', opts.baseBranch ?? 'main',
+      '--base', base,
       '--title', opts.title,
       '--body', body,
     ];

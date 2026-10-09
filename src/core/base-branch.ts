@@ -22,6 +22,9 @@ export function assertSafeBaseBranch(base: string): void {
   }
 }
 
+/** The base a run targets when no `--base` is given. Every default goes through this name, never a bare literal. */
+export const DEFAULT_BASE_BRANCH = 'main';
+
 export interface ResolveRemoteBaseRefOptions {
   logger?: VanguardLogger;
   /** Log-line prefix naming the pass ('spec', 'worktree'). */
