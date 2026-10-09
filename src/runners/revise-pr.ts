@@ -32,13 +32,13 @@ import type { VerificationResult } from '../pipeline/verify.js';
 import {
   implementReviewSimplifyStages,
   runStages,
-  droppedCiPathsNote,
   withStageProvider,
   withStageModel,
   withStageModelExcept,
   withStageFallback,
   STAGE,
 } from '../pipeline/pipeline.js';
+import { droppedCiPathsNote } from '../pipeline/remote-branch.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -51,7 +51,7 @@ import { WorktreeManager } from '../worktree/manager.js';
 import { VanguardError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
-import type { CommandRunner } from '../pipeline/pipeline.js';
+import type { CommandRunner } from '../pipeline/remote-branch.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, SelectedAgents } from '../agents/registry.js';

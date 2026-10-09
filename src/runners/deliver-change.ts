@@ -1,12 +1,11 @@
-// Imported through the pipeline.js shim on purpose: source-adapter.test.ts mocks '../pipeline/pipeline.js' and
-// relies on this module hitting the same mock. Re-point that mock when the shim goes (see pipeline.ts).
-import { commitStage, publishForReview, pushToExistingBranch } from '../pipeline/pipeline.js';
+import { commitStage } from '../pipeline/pipeline.js';
+import { publishForReview, pushToExistingBranch } from '../pipeline/remote-branch.js';
 import { scanForSecrets } from '../core/secret-scan.js';
 import { scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { CommitClosingLeak } from '../pipeline/conformance-gate.js';
 import type { RunContext } from '../core/vanguard.js';
-import type { CommandRunner, PublishOptions } from '../pipeline/pipeline.js';
+import type { CommandRunner, PublishOptions } from '../pipeline/remote-branch.js';
 
 /**
  * Deliver a reviewed change: the one place that turns a finished worktree into something on the
