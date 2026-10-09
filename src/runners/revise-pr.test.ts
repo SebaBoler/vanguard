@@ -1079,12 +1079,12 @@ describe('runRevisePullRequest — revise-pass verification', () => {
 });
 
 // ---------------------------------------------------------------------------
-// pushToExistingBranch (pipeline function)
+// pushToExistingBranch (remote-branch function)
 // ---------------------------------------------------------------------------
 
 describe('pushToExistingBranch', () => {
   it('calls git push origin HEAD:<prHeadRef> in the worktree path', async () => {
-    const { pushToExistingBranch } = await import('../pipeline/pipeline.js');
+    const { pushToExistingBranch } = await import('../pipeline/remote-branch.js');
     const calls: Array<{ file: string; args: string[]; cwd: string }> = [];
     const runner = async (file: string, args: string[], cwd: string): Promise<string> => {
       calls.push({ file, args, cwd });
@@ -1110,7 +1110,7 @@ describe('pushToExistingBranch', () => {
   });
 
   it('respects a custom remote', async () => {
-    const { pushToExistingBranch } = await import('../pipeline/pipeline.js');
+    const { pushToExistingBranch } = await import('../pipeline/remote-branch.js');
     const calls: Array<{ file: string; args: string[] }> = [];
     const runner = async (file: string, args: string[]): Promise<string> => {
       calls.push({ file, args });

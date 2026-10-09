@@ -167,6 +167,12 @@ vi.mock('../pipeline/pipeline.js', async (importActual) => {
     ...actual,
     runStages: (...args: unknown[]) => runStages(...(args as [])),
     commitStage: (...args: unknown[]) => commitStage(...(args as [])),
+  };
+});
+vi.mock('../pipeline/remote-branch.js', async (importActual) => {
+  const actual = await importActual<typeof import('../pipeline/remote-branch.js')>();
+  return {
+    ...actual,
     publishForReview: (...args: unknown[]) => publishForReview(...(args as [])),
   };
 });
