@@ -1,4 +1,4 @@
-export { run, prepareContext, runAgent, disposeContext, type RunDeps, type RunContext, type PrepareOptions, type StageInput } from './core/vanguard.js';
+export { run, prepareContext, runAgent, disposeContext, type RunDeps, type RunContext, type PrepareOptions, type TaskStart, type StageInput } from './core/vanguard.js';
 export * as vanguard from './core/vanguard.js';
 export type { RunOptions, RunResult, ReasoningEffort, ExitReason } from './core/types.js';
 export type {
@@ -54,13 +54,15 @@ export type { GhRunner, GitHubIssue, GitHubLabel } from './tasks/github.js';
 export { GitHubProjectFetcher } from './tasks/github-project.js';
 export type { GitHubProjectFetcherOptions } from './tasks/github-project.js';
 export { linkPullRequest } from './tasks/github.js';
-export { runStages, runBudgetedStages, implementReviewSimplifyStages, generateEvaluateRepairStages, fastStages, planImplementReviewStages, defaultSystemPrompt, commitStage, publishForReview } from './pipeline/pipeline.js';
+export { runStages, runBudgetedStages, implementReviewSimplifyStages, generateEvaluateRepairStages, fastStages, planImplementReviewStages, defaultSystemPrompt, commitStage } from './pipeline/pipeline.js';
+export { publishForReview } from './pipeline/remote-branch.js';
 export { extractFindings, findingsSchema } from './structured/findings.js';
 export type { Findings, Finding } from './structured/findings.js';
 export { adversarySystemPrompt, planImplementAdversaryStages } from './pipeline/pipeline.js';
 export { buildXmlPrompt } from './context/xml-prompt.js';
 export type { XmlPromptSections } from './context/xml-prompt.js';
-export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome, PublishOptions, PublishOutcome, CommandRunner } from './pipeline/pipeline.js';
+export type { PipelineStage, StageOutcome, RunStagesOptions, CommitOptions, CommitOutcome } from './pipeline/pipeline.js';
+export type { PublishOptions, PublishOutcome, CommandRunner } from './pipeline/remote-branch.js';
 export type { FrozenRun, PipelineResult } from './pipeline/pipeline.js';
 export { runJudgedRepair } from './pipeline/judged-repair.js';
 export type { JudgedRepairOptions } from './pipeline/judged-repair.js';
