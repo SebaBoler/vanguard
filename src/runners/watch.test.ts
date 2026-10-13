@@ -927,6 +927,39 @@ describe('githubProjectWatchPrimitives', () => {
     expect(labelEdits[0]?.[2]).toBe('1');
     expect(labelEdits[0]?.[labelEdits[0].indexOf('--remove-label') + 1]).toBe(GITHUB_SECRET_BLOCKED_LABEL);
     expect(ghCalls.filter((a) => a[1] === 'item-edit' && a.includes('opt_inprogress'))).toHaveLength(2); // both claimed
+    expect(labelEdits[0]?.[labelEdits[0].indexOf('--repo') + 1]).toBe('owner/repo'); // the issue's own repo, not the watch's
+  });
+
+  it('claim survives a failing stale-label cleanup: the item is claimed and run, not read as taken', async () => {
+    const itemList = JSON.stringify({
+      items: [{ id: 'PVTI_1', status: 'Todo', content: { type: 'Issue', number: 7, repository: 'other/repo', labels: ['vanguard', GITHUB_SECRET_BLOCKED_LABEL] } }],
+    });
+    const ghCalls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      ghCalls.push(args);
+      if (args[0] === 'project' && args[1] === 'item-list') return itemList;
+      if (args[0] === 'project' && args[1] === 'view') return PROJECT_VIEW;
+      if (args[0] === 'project' && args[1] === 'field-list') return FIELD_LIST;
+      if (args[0] === 'issue' && args[1] === 'edit') throw new Error('HTTP 502');
+      return '';
+    };
+    const primitives = githubProjectWatchPrimitives({
+      deps: { auth: { type: 'api', apiKey: 'test' } as never, repoPath: '/tmp', repoSlug: 'owner/repo' },
+      projectNumber: 1,
+      label: 'vanguard',
+      triggerStatus: 'Todo',
+      claimedStatus: 'In Progress',
+      reviewStatus: 'In Review',
+      gh,
+    });
+
+    const ran: string[] = [];
+    const tick = await watchOnce({ ...primitives, runOne: async (id) => { ran.push(id); return { prUrl: 'pr/7' }; } }, { concurrency: 1 });
+
+    expect(ran).toEqual(['other/repo#7']);
+    expect(tick.skipped).toEqual([]);
+    const cleanup = ghCalls.find((a) => a[0] === 'issue' && a[1] === 'edit');
+    expect(cleanup?.[cleanup.indexOf('--repo') + 1]).toBe('other/repo'); // the board item's repo, not the watch's
   });
 
   it('onNoChange comments and reverts status to the trigger status', async () => {
@@ -1137,6 +1170,11 @@ describe('githubIssueWatchPrimitives ownerLabel', () => {
     const edits = calls.filter((args) => args[0] === 'issue' && args[1] === 'edit');
     expect(edits).toHaveLength(2); // claim, then the swap running -> secret-blocked
     expect(edits[1]?.[edits[1].indexOf('--add-label') + 1]).toBe(GITHUB_SECRET_BLOCKED_LABEL);
+    // The white-label adapter never pre-created the label (it posts no findings), and
+    // `gh issue edit --add-label` fails on an unknown label: the primitive ensures it before the swap.
+    const created = calls.findIndex((args) => args[0] === 'label' && args[1] === 'create' && args[2] === GITHUB_SECRET_BLOCKED_LABEL);
+    expect(created).toBeGreaterThan(-1);
+    expect(created).toBeLessThan(calls.indexOf(edits[1] as string[]));
     // The white-label adapter posts no findings, so this is the human's only signal.
     const comments = calls.filter((args) => args[0] === 'issue' && args[1] === 'comment');
     expect(comments).toHaveLength(1);
@@ -1353,6 +1391,11 @@ describe('gitlabWatchPrimitives', () => {
     const updates = calls.filter((c) => c[0] === 'issue' && c[1] === 'update');
     expect(updates).toHaveLength(2); // claim, then the swap running -> secret-blocked
     expect(updates[1]?.[updates[1].indexOf('--label') + 1]).toBe('vanguard::secret-blocked');
+    // `glab issue update --label` is a silent no-op on an unknown label while `--unlabel` in the
+    // same call lands; the primitive ensures the label before the swap (the white-label adapter never did).
+    const created = calls.findIndex((c) => c[0] === 'label' && c[1] === 'create' && c.includes('vanguard::secret-blocked'));
+    expect(created).toBeGreaterThan(-1);
+    expect(created).toBeLessThan(calls.indexOf(updates[1] as string[]));
     const notes = calls.filter((c) => c[0] === 'issue' && c[1] === 'note');
     expect(notes).toHaveLength(1);
     expect(notes[0]?.join(' ')).toContain('re-apply the `vanguard` label');

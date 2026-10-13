@@ -194,15 +194,6 @@ export interface SourceAdapter {
   linkPr(issueRef: string, task: Task, prUrl: string): Promise<void>;
 }
 
-/**
- * White-label mode: a commit author is supplied, so the run must leave no Vanguard trace in the
- * client repo (no branded comments, no secret-blocked label, plain PR body). One definition for
- * runSourcedIssue and the watch primitives that must agree with it.
- */
-export function isWhiteLabel(deps: Pick<RunIssueDeps, 'commitAuthor'>): boolean {
-  return deps.commitAuthor !== undefined;
-}
-
 /** Shared result shape for all source-backed issue runners. */
 export interface RunIssueResult {
   task: Task;
@@ -348,7 +339,7 @@ export async function runSourcedIssue(
   // White-label mode (triggered by --commit-author): the PR is delivered as a plain, human-looking PR.
   // Branch becomes `feat/<issue-number>-<hash>`, the "by Vanguard" attribution and the Vanguard review
   // comment / issue link-back are suppressed. Off by default — everything stays branded as Vanguard.
-  const whiteLabel = isWhiteLabel(deps);
+  const whiteLabel = deps.commitAuthor !== undefined;
 
   const agents = selectAgents(deps, process.env, { proxyMode: deps.llmProxy !== undefined });
 

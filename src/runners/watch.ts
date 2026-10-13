@@ -691,12 +691,15 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
         editGithubLabels(repo, id, { remove: [opts.claimedLabel] }, opts.gh),
       ),
     // One edit swaps claimed -> secret-blocked, so the claim is never released without the hold
-    // label landing (the adapter pre-created the label and best-effort added it; adding it again is
-    // idempotent). If the edit fails it throws into onFailure and the claimed marker stays. The
-    // trigger label was removed on claim and is not restored; the comment names the label to
-    // re-apply. Same in white-label mode: the claim label is already the watch's own marker, and a
-    // white-label adapter posts no findings, so this comment is the human's only signal.
+    // label landing. `gh issue edit --add-label` fails on a label the repo never created, and the
+    // adapter only pre-creates it when it posts findings (not in white-label mode), so ensure it
+    // here first (best-effort, the same pre-step as addPrFailureLabel). If the swap fails it throws
+    // into onFailure and the claimed marker stays. The trigger label was removed on claim and is
+    // not restored; the comment names the label to re-apply. Same in white-label mode: the claim
+    // label is already the watch's own marker, and a white-label adapter posts no findings, so this
+    // comment is the human's only signal.
     onSecretBlocked: async (id) => {
+      await (opts.gh ?? defaultGhRunner)(['label', 'create', GITHUB_SECRET_BLOCKED_LABEL, '--repo', repo, '--force']).catch(() => undefined);
       await editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [GITHUB_SECRET_BLOCKED_LABEL] }, opts.gh);
       await commentGithubIssue(
         repo,
@@ -897,9 +900,14 @@ export function githubProjectWatchPrimitives(opts: WatchGithubProjectOptions): W
     },
     // A re-triggered item (moved back to the trigger status by a human) sheds the hold label from
     // its earlier secret block; only for items listReady saw carrying it (see githubIssueWatchPrimitives).
+    // The cleanup is cosmetic and runs after the status move, so it must not throw: claimGate reads
+    // any throw as "already claimed" and the item would sit in the claimed status with no run and
+    // no comment. The edit goes to the issue's own repo — a board can hold issues from other repos.
     claim: async (id) => {
       await setStatus(id, opts.claimedStatus);
-      if (heldBefore.has(id)) await editGithubLabels(repo, id, { remove: [GITHUB_SECRET_BLOCKED_LABEL] }, gh);
+      if (heldBefore.has(id)) {
+        await editGithubLabels(id.slice(0, id.indexOf('#')), id, { remove: [GITHUB_SECRET_BLOCKED_LABEL] }, gh).catch(() => undefined);
+      }
     },
     runOne: (id) => runGithubIssue(id, opts.deps),
     review: (id) => setStatus(id, opts.reviewStatus),
@@ -995,10 +1003,14 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel] }, glab);
     },
     // One edit swaps claimed -> secret-blocked so the claim is never released without the hold
-    // label landing; a failing edit throws into onFailure and the claimed marker stays. Trigger
-    // label not restored (removed on claim); the note names the label to re-apply. Same in
-    // white-label mode (see githubIssueWatchPrimitives).
+    // label landing. `glab issue update --label` is a silent no-op on a project lacking the label
+    // (the `--unlabel` in the same call still lands, releasing the claim with no hold), and the
+    // adapter only pre-creates it when it posts findings (not in white-label mode), so ensure it
+    // here first (best-effort, as addMrFailureLabel does). A failing swap throws into onFailure
+    // and the claimed marker stays. Trigger label not restored (removed on claim); the note names
+    // the label to re-apply. Same in white-label mode (see githubIssueWatchPrimitives).
     onSecretBlocked: async (id) => {
+      await glab(['label', 'create', '--repo', project, '--name', GITLAB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
       await editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [GITLAB_SECRET_BLOCKED_LABEL] }, glab);
       await commentGitlabIssue(
         project,
