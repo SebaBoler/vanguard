@@ -47,7 +47,7 @@ function sandbox(auth: AgentAuth): DockerSandboxProvider {
 
 async function scenarioAdversary(auth: AgentAuth): Promise<void> {
   const repo = await freshRepo();
-  const ctx = await prepareContext({ taskId: 'adv', localRepoPath: repo, sandbox: sandbox(auth) });
+  const ctx = await prepareContext({ taskId: 'adv', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: sandbox(auth) });
   try {
     const implementer: PipelineStage = {
       name: 'implementer',
@@ -81,7 +81,7 @@ async function scenarioAdversary(auth: AgentAuth): Promise<void> {
 
 async function scenarioHitl(auth: AgentAuth): Promise<void> {
   const repo = await freshRepo();
-  const ctx = await prepareContext({ taskId: 'hitl', localRepoPath: repo, sandbox: sandbox(auth) });
+  const ctx = await prepareContext({ taskId: 'hitl', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: sandbox(auth) });
   try {
     const generate: PipelineStage = {
       name: 'generator',
@@ -114,7 +114,7 @@ async function scenarioHitl(auth: AgentAuth): Promise<void> {
 
 async function scenarioBudget(auth: AgentAuth): Promise<void> {
   const repo = await freshRepo();
-  const ctx = await prepareContext({ taskId: 'budget', localRepoPath: repo, sandbox: sandbox(auth) });
+  const ctx = await prepareContext({ taskId: 'budget', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: sandbox(auth) });
   try {
     const step = (name: string, file: string): PipelineStage => ({
       name,

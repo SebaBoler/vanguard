@@ -15,7 +15,7 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
   disposeContext: vi.fn(async () => undefined),
 }));
 
-import { runAgent } from '../core/vanguard.js';
+import { prepareContext, runAgent } from '../core/vanguard.js';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +102,35 @@ describe('reviewPrCommand', () => {
       'review-pr o/r#12: posted -> pr review',
       'review-pr o/r#12: done',
     ]);
+  });
+
+  it('the default reviewer prepares the worktree on the PR base as origin has it, and says so when the PR carries none (#446)', async () => {
+    const prev = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      vi.mocked(prepareContext).mockClear();
+      const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+      vi.mocked(runAgent).mockResolvedValue({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+      const cmd: Extract<Command, { kind: 'review-pr' }> = { kind: 'review-pr', prRef: '12', repoSlug: 'o/r', repoPath: '/repo', egress: false };
+      // The injected runner hands the default reviewer a PR against `release`, then one with no base at all.
+      for (const baseRefName of ['release', '']) {
+        await reviewPrCommand(cmd, {
+          reviewPullRequest: async (_ref, deps) => {
+            await deps.reviewer({ ...fakeResult().pr, baseRefName }, { isRetry: false });
+            return fakeResult();
+          },
+          log: () => undefined,
+        });
+      }
+      const prepared = vi.mocked(prepareContext).mock.calls.map(([opts]) => [opts.baseBranch, opts.start]);
+      expect(prepared).toEqual([['release', 'base'], ['main', 'base']]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('PR o/r#12 carries no base branch'));
+    } finally {
+      warn.mockRestore();
+      if (prev === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = prev;
+    }
   });
 
   it('--out writes the review to a file and tells the runner not to publish (no PR comment)', async () => {

@@ -73,7 +73,7 @@ function judgeReject(times: number): Judge {
 describe('runJudgedRepair', () => {
   it('freezes to needs_human after 3 consecutive rejects, leaving a shell command', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'h1', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'h1', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runJudgedRepair(ctx, { agent: agentReturning('done'), generate, repair, judge: judgeReject(99) });
     expect(result.status).toBe('frozen');
     if (result.status === 'frozen') {
@@ -86,7 +86,7 @@ describe('runJudgedRepair', () => {
 
   it('completes when the judge passes within the reject budget', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'h2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'h2', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runJudgedRepair(ctx, { agent: agentReturning('done'), generate, repair, judge: judgeReject(1) });
     expect(result.status).toBe('completed');
     await disposeContext(ctx);
@@ -94,7 +94,7 @@ describe('runJudgedRepair', () => {
 
   it('freezes to budget_exceeded instead of completing when the judge still rejects', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'h-budget', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'h-budget', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runJudgedRepair(ctx, {
       agent: agentReturning('done', 0.5),
       generate,

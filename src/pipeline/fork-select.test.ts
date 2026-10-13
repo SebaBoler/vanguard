@@ -117,7 +117,7 @@ async function withCtx(
   fn: (ctx: RunContext) => Promise<void>,
 ): Promise<void> {
   const wm = new WorktreeManager(repo);
-  const ctx = await prepareContext({ taskId, localRepoPath: repo, sandbox }, { worktrees: wm });
+  const ctx = await prepareContext({ taskId, localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
   try {
     await fn(ctx);
   } finally {

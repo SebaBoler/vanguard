@@ -121,18 +121,15 @@ const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
 const { runAgent } = vi.hoisted(() => ({ runAgent: vi.fn() }));
 
 // The agent pass resolves the base against origin before cutting the worktree; keep it a pure pass-through here.
-vi.mock('../core/base-branch.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../core/base-branch.js')>()),
-  // Production returns the remote tip's SHA; a recognisable stand-in keeps the assertions honest.
-  resolveRemoteBaseRef: vi.fn(async (_repo: string, base: string) => `0000sha-${base}`),
-}));
 import { prepareContext } from '../core/vanguard.js';
-import { resolveRemoteBaseRef } from '../core/base-branch.js';
 vi.mock('../core/vanguard.js', () => ({
   prepareContext: vi.fn(async () => ({
     taskId: 'gl-1',
     sandbox: {},
     worktreePath: '/wt',
+    baseBranch: 'main',
+    // Production records the SHA the worktree was cut from; a recognisable stand-in keeps the assertions honest.
+    startRef: '0000sha',
     wm: { diff: wmDiff, commitMessages: wmCommitMessages },
   })),
   disposeContext: vi.fn(async () => {}),
@@ -228,16 +225,15 @@ describe('runSourcedIssue', () => {
     scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
 
-  it('cuts the worktree from the resolved remote base (#429) and skips resolution on --reuse', async () => {
+  it('starts from the remote base (#429), or from the reused branch on --reuse, and says which (#446)', async () => {
     const adapter = fakeAdapter([], STAGES);
-    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'develop' }, adapter);
-    expect(vi.mocked(resolveRemoteBaseRef)).toHaveBeenCalledWith('/repo', 'develop', {});
-    expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ baseBranch: '0000sha-develop' }));
+    await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'develop', keepLocalIfAhead: false }, adapter);
+    expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ baseBranch: 'develop', start: 'base', keepLocalIfAhead: false }));
 
-    vi.mocked(resolveRemoteBaseRef).mockClear();
     await runSourcedIssue('group/project#1', { repoPath: '/repo', reuse: true }, fakeAdapter([], STAGES));
-    expect(vi.mocked(resolveRemoteBaseRef)).not.toHaveBeenCalled();
-    expect(vi.mocked(prepareContext).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ baseBranch: 'main', reuse: true }));
+    const reused = vi.mocked(prepareContext).mock.calls.at(-1)?.[0];
+    expect(reused).toEqual(expect.objectContaining({ baseBranch: 'main', start: 'reuse' }));
+    expect(reused).not.toHaveProperty('keepLocalIfAhead');
   });
 
   it('passes the pushed (possibly rebased) head to publishVerdict, not the SHA commitStage returned (#423)', async () => {
@@ -586,12 +582,12 @@ describe('runSourcedIssue', () => {
     expect(msg.replace('feat: ', '')).not.toMatch(/[A-Z]/); // fully lower-case → passes commitlint subject-case
   });
 
-  it('--base targets the PR at the given base branch', async () => {
+  it('--base is the branch the context is prepared for (the PR targets it via ctx.baseBranch)', async () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'dev' }, adapter);
 
-    const publishOpts = publishForReview.mock.calls[0]?.[1] as { baseBranch?: string };
-    expect(publishOpts.baseBranch).toBe('dev');
+    expect(vi.mocked(prepareContext).mock.calls[0]?.[0]).toEqual(expect.objectContaining({ baseBranch: 'dev' }));
+    expect(publishForReview.mock.calls[0]?.[1]).not.toHaveProperty('baseBranch');
   });
 
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
@@ -901,13 +897,13 @@ describe('runSourcedIssue', () => {
     expect(body).toContain(`\`Closes ${task.id}\``);
   });
 
-  it('scans commit messages from the run base branch, not main', async () => {
+  it('scans commit messages from the start commit recorded on the context, not main', async () => {
     vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
     vi.mocked(runVerification).mockResolvedValueOnce({ passed: false } as never);
 
     await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'master' }, fakeAdapter([], STAGES));
 
-    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', '0000sha-master'); // the resolved remote base, same commit the worktree was cut from
+    expect(wmCommitMessages).toHaveBeenCalledWith('/wt', '0000sha'); // ctx.startRef: the very commit the worktree was cut from
   });
 
   it('omits the commit-leak warning on a full green pass', async () => {
