@@ -1,5 +1,6 @@
 import { describe, it, expect, assert } from 'vitest';
-import { parseCli } from './args.js';
+import { parseCli, USAGE } from './args.js';
+import type { SharedRunOptions } from './args.js';
 
 describe('parseCli', () => {
   it('defaults gc to cwd, 6h, no remote, not dry-run', () => {
@@ -220,6 +221,113 @@ describe('parseCli', () => {
     expect(bad.kind === 'error' && bad.message).toMatch(/--fork-scorer expects llm or decision/);
     const noFork = parseCli(['run', '--linear', 'TES-1', '--fork-scorer', 'decision'], '/work');
     expect(noFork.kind === 'error' && noFork.message).toMatch(/only applies with --fork/);
+  });
+
+  it('parses the shared RunOptions flags identically on run and watch (one parseRunOptions)', () => {
+    const shared = [
+      '--provider', 'codex', '--review-provider', 'claude', '--fallback-provider', 'cursor', '--fallback-model', 'cursor-fast',
+      '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
+      '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
+      '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
+    ];
+    // Required<>: a RunOptions field added without an entry here fails to compile, as it does in parseRunOptions.
+    // --plan is asserted separately because it excludes --flow.
+    const expected: Required<Omit<SharedRunOptions, 'plan'>> = {
+      provider: 'codex',
+      reviewProvider: 'claude',
+      fallbackProvider: 'cursor',
+      fallbackModel: 'cursor-fast',
+      providerModel: 'gpt-5',
+      reviewModel: 'claude-opus',
+      escalateModel: 'claude-fable-5',
+      noSimplify: true,
+      verifyCmd: 'pnpm test',
+      visualProofCmd: 'pnpm shot',
+      conformance: true,
+      conformanceModel: 'opus',
+      commitAuthor: { name: 'Seba', email: 'seba@example.com' },
+      flow: 'flow-b',
+      baseBranch: 'dev',
+      maxTurns: 80,
+      maxRepairIterations: 5,
+    };
+    const run = parseCli(['run', '--github', 'o/r#1', ...shared], '/work');
+    const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', ...shared], '/work');
+    expect(run).toMatchObject({ kind: 'run', ...expected });
+    expect(watch).toMatchObject({ kind: 'watch', ...expected });
+    for (const key of Object.keys(expected)) {
+      expect(watch[key as keyof typeof watch]).toEqual(run[key as keyof typeof run]);
+    }
+    expect(parseCli(['run', '--github', 'o/r#1', '--plan'], '/work')).toMatchObject({ kind: 'run', plan: true });
+    expect(parseCli(['watch', '--source', 'github', '--label', 'vanguard', '--plan'], '/work')).toMatchObject({ kind: 'watch', plan: true });
+    // Absent flags leave no key on either command.
+    const bareRun = parseCli(['run', '--github', 'o/r#1'], '/work');
+    const bareWatch = parseCli(['watch', '--source', 'github', '--label', 'vanguard'], '/work');
+    expect(bareRun.kind).toBe('run');
+    expect(bareWatch.kind).toBe('watch');
+    for (const key of [...Object.keys(expected), 'plan']) {
+      expect(key in bareRun).toBe(false);
+      expect(key in bareWatch).toBe(false);
+    }
+  });
+
+  it('carries every shared flag onto doctor except the stage-only three', () => {
+    const argv = [
+      'doctor', '--source', 'github', '--label', 'vanguard',
+      '--provider', 'codex', '--review-provider', 'claude', '--fallback-provider', 'cursor', '--fallback-model', 'cursor-fast',
+      '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
+      '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
+      '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
+    ];
+    const doctor = parseCli(argv, '/work');
+    expect(doctor).toMatchObject({
+      kind: 'doctor',
+      provider: 'codex',
+      reviewProvider: 'claude',
+      fallbackProvider: 'cursor',
+      fallbackModel: 'cursor-fast',
+      providerModel: 'gpt-5',
+      reviewModel: 'claude-opus',
+      escalateModel: 'claude-fable-5',
+      noSimplify: true,
+      verifyCmd: 'pnpm test',
+      commitAuthor: { name: 'Seba', email: 'seba@example.com' },
+      flow: 'flow-b',
+      baseBranch: 'dev',
+      maxTurns: 80,
+      maxRepairIterations: 5,
+    });
+    for (const key of ['visualProofCmd', 'conformance', 'conformanceModel']) expect(key in doctor).toBe(false);
+  });
+
+  it('rejects the run-only flags on watch and doctor instead of ignoring them', () => {
+    for (const command of ['watch', 'doctor']) {
+      const base = [command, '--source', 'linear', '--label', 'vanguard'];
+      expect(parseCli([...base, '--spec-file', 's.md'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining('--spec-file applies to a single-issue run only') });
+      expect(parseCli([...base, '--fork', '3'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining(`--fork applies to run only; ${command} does not fork`) });
+      expect(parseCli([...base, '--fork-scorer', 'llm'], '/work')).toMatchObject({ kind: 'error', message: expect.stringContaining(`${command} does not fork`) });
+    }
+    // The same flags are fine on run.
+    expect(parseCli(['run', '--github', 'o/r#1', '--spec-file', 's.md', '--fork', '3', '--fork-scorer', 'llm'], '/work')).toMatchObject({ kind: 'run', specFile: 's.md', forkN: 3, forkScorer: 'llm' });
+  });
+
+  it('documents the shared flags under both run and watch, and the run-only ones under run only', () => {
+    const watchStart = USAGE.indexOf('watch options (trigger');
+    const runStart = USAGE.indexOf('run options (exactly one source)');
+    const runEnd = USAGE.indexOf('review-pr options:');
+    expect(watchStart).toBeGreaterThan(-1);
+    expect(runStart).toBeGreaterThan(watchStart);
+    expect(runEnd).toBeGreaterThan(runStart);
+    const watchBlock = USAGE.slice(watchStart, runStart);
+    const runBlock = USAGE.slice(runStart, runEnd);
+    for (const flag of ['--fallback-provider <name>', '--conformance-model <m>', '--max-repair-iterations <n>', '--base <branch>', '--max-turns <n>']) {
+      expect(runBlock).toContain(flag);
+      expect(watchBlock).toContain(flag);
+    }
+    for (const flag of ['--fork <n>', '--fork-scorer <llm|decision>', '--spec-file <file>']) {
+      expect(runBlock).toContain(flag);
+      expect(watchBlock).not.toContain(flag);
+    }
   });
 
   it('parses --provider-model and --review-model on run', () => {
