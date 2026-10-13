@@ -186,6 +186,42 @@ describe('gitlabAdapter', () => {
     expect(adapter.closeIssueOnMerge).toBe(true);
   });
 
+  it('signalSecretBlock creates the secret-blocked label before adding it, and posts the masked note', async () => {
+    const { calls, glab } = makeGlab();
+    const adapter = gitlabAdapter(makeDeps(), glab);
+    const task = { id: 'group/project#7', title: 't', description: '', labels: [], children: [], comments: [] };
+
+    await adapter.signalSecretBlock('group/project#7', task, {
+      reason: 'findings',
+      findings: [{ file: '.env', patternName: 'generic-api-key', masked: 'KEY=ab****' }],
+    });
+
+    const create = calls.findIndex((c) => c[0] === 'label' && c[1] === 'create' && c.includes('vanguard::secret-blocked'));
+    const add = calls.findIndex((c) => c[0] === 'issue' && c[1] === 'update' && c.includes('vanguard::secret-blocked'));
+    expect(create).toBeGreaterThan(-1);
+    expect(add).toBeGreaterThan(create); // the add would be a silent no-op without the label
+    const note = calls.find((c) => c[0] === 'issue' && c[1] === 'note');
+    expect(note?.at(-1)).toContain('blocked publish');
+    expect(note?.at(-1)).toContain('KEY=ab****');
+    expect(note?.at(-1)).not.toContain('trigger label'); // the release step is per watch source, posted by the primitive
+  });
+
+  it('signalSecretBlock still adds the label and notes when label creation fails', async () => {
+    const calls: string[][] = [];
+    const glab: GlabRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'label') throw new Error('403');
+      return '{}';
+    };
+    const adapter = gitlabAdapter(makeDeps(), glab);
+    const task = { id: 'group/project#7', title: 't', description: '', labels: [], children: [], comments: [] };
+
+    await expect(adapter.signalSecretBlock('group/project#7', task, { reason: 'scan-error', message: 'gitleaks missing' })).resolves.toBeUndefined();
+
+    expect(calls.some((c) => c[0] === 'issue' && c[1] === 'update' && c.includes('vanguard::secret-blocked'))).toBe(true);
+    expect(calls.some((c) => c[0] === 'issue' && c[1] === 'note')).toBe(true);
+  });
+
   it('publishVerdict throws when reviewerOutcome is missing', async () => {
     const adapter = gitlabAdapter(makeDeps());
     await expect(
