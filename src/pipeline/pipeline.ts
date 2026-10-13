@@ -1041,22 +1041,3 @@ export function techSpecStage(opts?: { model?: string; maxTurns?: number }): Pip
     },
   ];
 }
-
-// The git write path (push, rebase, publish) lives in remote-branch.ts. Re-exported for compatibility
-// only — import from './remote-branch.js' in new code; this shim goes once source-adapter, revise-pr
-// and index.ts import it directly (follow-up to #441).
-export {
-  pushAuthConfigArgs,
-  pushToExistingBranch,
-  droppedCiPathsNote,
-  rebaseOntoRemoteBase,
-  rebasedNote,
-  publishForReview,
-} from './remote-branch.js';
-export type {
-  CommandRunner,
-  PublishOptions,
-  PublishOutcome,
-  PushToExistingBranchOptions,
-  RebaseOntoRemoteBaseOptions,
-} from './remote-branch.js';

@@ -1,6 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { execa } from 'execa';
 import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview, commentPullRequest } from './pr-review.js';
 import {
   fetchPullRequestFeedback,
@@ -19,6 +18,7 @@ import {
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
+import { baseBranchOrDefault } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
@@ -32,13 +32,13 @@ import type { VerificationResult } from '../pipeline/verify.js';
 import {
   implementReviewSimplifyStages,
   runStages,
-  droppedCiPathsNote,
   withStageProvider,
   withStageModel,
   withStageModelExcept,
   withStageFallback,
   STAGE,
 } from '../pipeline/pipeline.js';
+import { droppedCiPathsNote } from '../pipeline/remote-branch.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
@@ -51,7 +51,7 @@ import { WorktreeManager } from '../worktree/manager.js';
 import { VanguardError } from '../core/errors.js';
 import type { GhRunner } from '../tasks/github.js';
 import type { PullRequestForReview } from './pr-review.js';
-import type { CommandRunner } from '../pipeline/pipeline.js';
+import type { CommandRunner } from '../pipeline/remote-branch.js';
 import type { LlmProxyDep } from '../sandbox/llm-proxy.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, SelectedAgents } from '../agents/registry.js';
@@ -108,8 +108,8 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
   /** Injected CommandRunner for git push (pushToExistingBranch). */
   _pushRunner?: CommandRunner;
   /**
-   * Override the baseBranch passed to prepareContext. When set, the git fetch step is skipped.
-   * Use in tests to point at a local branch instead of origin/<headRefName>.
+   * Start the worktree from this branch (a 'base' start that keeps a local copy that is ahead) instead
+   * of fetching the PR head. Use in tests, on a repo without an origin, to point at a local branch.
    */
   _baseBranch?: string;
 }
@@ -225,23 +225,22 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         ...(deps.network !== undefined ? { network: deps.network } : {}),
       });
 
-    // Fetch the PR branch from origin so the worktree starts from the PR head, not main. This holds
-    // for a same-repo PR only: a fork PR's head is not on origin, so a same-named origin branch, or
-    // nothing, is fetched instead. The head ref name is author-controlled: --end-of-options keeps a
-    // "-"-led name from parsing as a git option, and the full refs/heads/ source keeps a "+"-led name
-    // (legal in git) from reading as a force refspec.
-    let baseBranch: string;
-    if (deps._baseBranch !== undefined) {
-      baseBranch = deps._baseBranch;
-    } else {
-      if (pr.headRefName === '') throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
-      await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${pr.headRefName}`], { cwd: deps.repoPath });
-      baseBranch = 'FETCH_HEAD';
+    if (deps._baseBranch === undefined && pr.headRefName === '') {
+      throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
     }
-
     const taskId = `revise-pr-${target.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${target.number}`;
     const ctx = await prepareContext(
-      { taskId, localRepoPath: deps.repoPath, sandbox, baseBranch, agentName: agents.agent.name },
+      {
+        taskId,
+        localRepoPath: deps.repoPath,
+        sandbox,
+        agentName: agents.agent.name,
+        // The worktree starts from the PR head as fetched from origin, not the base (see prepareContext
+        // for the same-repo caveat). Tests point it at a local branch instead, which has no origin.
+        ...(deps._baseBranch !== undefined
+          ? { baseBranch: deps._baseBranch, start: 'base' as const, keepLocalIfAhead: true }
+          : { baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`), start: { prHead: pr.headRefName } }),
+      },
       { ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
     );
     try {
