@@ -16,7 +16,7 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
 }));
 
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
-import { runAgent } from '../core/vanguard.js';
+import { prepareContext, runAgent } from '../core/vanguard.js';
 import { mergeRequestReviewMarker, reviewMergeRequest } from '../runners/mr-review.js';
 import { reviewMrCommand } from './review-mr.js';
 import type { GlabRunner } from '../tasks/gitlab.js';
@@ -86,6 +86,34 @@ describe('reviewMrCommand', () => {
     expect(startSandboxContext).toHaveBeenCalledTimes(1);
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(calls.filter((c) => c[0] === 'mr' && c[1] === 'note')).toHaveLength(1);
+  });
+
+  it('prepares the worktree on the MR target branch as origin has it, and says so when the MR carries none (#446)', async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    vi.mocked(startSandboxContext).mockResolvedValue({ destroy: async () => undefined } as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      vi.mocked(prepareContext).mockClear();
+      const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+      vi.mocked(runAgent).mockResolvedValue({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+      for (const targetBranch of ['release', undefined]) {
+        const glab: GlabRunner = async (args) => {
+          if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890', ...(targetBranch !== undefined ? { target_branch: targetBranch } : {}) });
+          if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
+          if (args[0] === 'api') return '[]';
+          return '';
+        };
+        await reviewMrCommand(
+          { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: '/repo', egress: true },
+          { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+        );
+      }
+      const prepared = vi.mocked(prepareContext).mock.calls.map(([opts]) => [opts.baseBranch, opts.start]);
+      expect(prepared).toEqual([['release', 'base'], ['main', 'base']]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('MR g/p!5 carries no base branch'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('--max-turns sets the first attempt cap and 1.5x for the retry', async () => {

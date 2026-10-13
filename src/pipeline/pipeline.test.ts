@@ -89,7 +89,7 @@ describe('runStages', () => {
   it('runs stages, chains the session, and feeds the previous diff forward', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'p1', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'p1', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const outcomes = await runStages(
       ctx,
       [
@@ -111,7 +111,7 @@ describe('runStages', () => {
     const wm = new WorktreeManager(repo);
     const def: AgentRunInput[] = [];
     const review: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'xp', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'xp', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runStages(
       ctx,
       [
@@ -129,7 +129,7 @@ describe('runStages', () => {
 describe('sandboxComplete', () => {
   it('runs the agent one-shot in /tmp and returns its finalText', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'sc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'sc', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     let seen: AgentRunInput | undefined;
     const agent: AgentProvider = {
       name: 'scorer',
@@ -164,7 +164,7 @@ describe('runBudgetedStages', () => {
 
   it('freezes to budget_exceeded before the stage that would exceed the limit', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'bud', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'bud', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.03), maxCostUsd: 0.05 });
     expect(result.status).toBe('frozen');
     if (result.status === 'frozen') {
@@ -178,7 +178,7 @@ describe('runBudgetedStages', () => {
 
   it('completes when under budget', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'bud2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'bud2', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runBudgetedStages(ctx, threeStages, { agent: costingAgent(0.01), maxCostUsd: 1 });
     expect(result.status).toBe('completed');
     if (result.status === 'completed') expect(result.outcomes).toHaveLength(3);
@@ -197,7 +197,7 @@ describe('runBudgetedStages', () => {
       },
     };
     const fallback = recordingAgent(fallbackInputs);
-    const ctx = await prepareContext({ taskId: 'fallback', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'fallback', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages = withStageFallback(
       [{ name: 'reviewer', promptTemplate: 'review', provider: primary, model: 'gpt-5' }],
       { provider: fallback, model: 'sonnet' },
@@ -237,7 +237,7 @@ describe('runBudgetedStages', () => {
       },
     };
     const fallback = recordingAgent(fallbackInputs);
-    const ctx = await prepareContext({ taskId: 'impl-fallback', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'impl-fallback', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages = withStageFallback(
       [
         { name: 'planner', promptTemplate: 'plan', provider: fallback },
@@ -285,7 +285,7 @@ describe('runBudgetedStages', () => {
       },
     };
     const fallback = recordingAgent(fallbackInputs);
-    const ctx = await prepareContext({ taskId: 'latch', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'latch', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages = withPrimaryFallback(
       [
         { name: 'implementer', promptTemplate: 'implement', model: 'claude-sonnet-5' },
@@ -310,7 +310,7 @@ describe('runBudgetedStages', () => {
 
   it('emits ordered stage + cost events when onEvent is set', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'ev', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ev', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const events: RunEvent[] = [];
     await runBudgetedStages(ctx, threeStages, {
       agent: costingAgent(0.01),
@@ -332,7 +332,7 @@ describe('runBudgetedStages', () => {
 describe('commitStage', () => {
   it('commits dirty worktree work onto the branch', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
-    const ctx = await prepareContext({ taskId: 'p2', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'p2', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await writeFile(join(ctx.worktreePath, 'x.txt'), 'data');
     const out = await commitStage(ctx, { message: 'feat: agent work' });
     expect(out.committed).toBe(true);
@@ -344,7 +344,7 @@ describe('commitStage', () => {
 
   it('reports nothing to commit on a clean worktree', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'p3', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'p3', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const out = await commitStage(ctx, { message: 'noop' });
     expect(out.committed).toBe(false);
     await disposeContext(ctx);
@@ -357,7 +357,7 @@ describe('commitStage', () => {
     await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     try {
       const wm = new WorktreeManager(repo, undefined, () => 'r4');
-      const ctx = await prepareContext({ taskId: 'p4', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+      const ctx = await prepareContext({ taskId: 'p4', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
       await writeFile(join(ctx.worktreePath, 'y.txt'), 'data');
       const out = await commitStage(ctx, { message: 'feat: work' });
       expect(out.committed).toBe(true);
@@ -387,7 +387,7 @@ describe('generateEvaluateRepairStages', () => {
         return { finalText: 'RAPORT-' + received.length, turns: 1 };
       },
     };
-    const ctx = await prepareContext({ taskId: 'ger', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ger', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runStages(
       ctx,
       [
@@ -590,7 +590,7 @@ describe('defaultSystemPrompt', () => {
         return { finalText: 'x', turns: 1 };
       },
     };
-    const ctx = await prepareContext({ taskId: 'sp', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'sp', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runStages(ctx, [{ name: 's', promptTemplate: 'p', systemPrompt: 'SYS-XYZ' }], { agent });
     expect(received[0]?.systemPrompt).toBe('SYS-XYZ');
     await disposeContext(ctx);
@@ -619,7 +619,7 @@ describe('runBudgetedStages copyBack', () => {
       shellCommand: (): string => 'docker exec -it vg-fake bash',
     } as unknown as IsolatedSandboxProvider;
 
-    const ctx = await prepareContext({ taskId: 'cb-pipe', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cb-pipe', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     const result = await runBudgetedStages(
       ctx,
       [{ name: 'spec', promptTemplate: 'describe', copyBack: false }],
@@ -695,7 +695,7 @@ describe('techSpecStage', () => {
       shellCommand: (): string => 'docker exec -it vg-fake bash',
     } as unknown as IsolatedSandboxProvider;
 
-    const ctx = await prepareContext({ taskId: 'ts-ro', localRepoPath: repo, sandbox }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ts-ro', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     await runBudgetedStages(ctx, techSpecStage(), { agent: recordingAgent([]), variables: { TITLE: 'T', DESCRIPTION: 'D' } });
     await disposeContext(ctx);
 
@@ -718,7 +718,7 @@ describe('techSpecStage', () => {
       },
     };
 
-    const ctx = await prepareContext({ taskId: 'ts-resume', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'ts-resume', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const outcomes = await runStages(ctx, techSpecStage(), { agent, variables: { TITLE: 'T', DESCRIPTION: 'D' } });
     await disposeContext(ctx);
 
@@ -780,7 +780,7 @@ describe('runBudgetedStages fork option', () => {
     };
 
     const ctx = await prepareContext(
-      { taskId: 'fork-impl', localRepoPath: repo, sandbox: makeSandbox() },
+      { taskId: 'fork-impl', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() },
       { worktrees: wm },
     );
     const result = await runBudgetedStages(
@@ -816,7 +816,7 @@ describe('runBudgetedStages fork option', () => {
       const score = scoreCall++ === 0 ? 0.9 : 0.3;
       return `<verdict>{"passed":true,"score":${score},"reason":"ok"}</verdict>`;
     };
-    const ctx = await prepareContext({ taskId: 'fork-merge', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'fork-merge', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const result = await runBudgetedStages(ctx, [{ name: 'implementer', promptTemplate: 'x' }], { agent, fork: { n: 2, complete } });
     await disposeContext(ctx);
     expect(result.status).toBe('completed');
@@ -1061,7 +1061,7 @@ describe('per-stage budget cap', () => {
   it('effectiveCap uses fraction when set (no floor): fraction * maxCostUsd', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-frac', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-frac', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runBudgetedStages(
       ctx,
       [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.4 }],
@@ -1075,7 +1075,7 @@ describe('per-stage budget cap', () => {
   it('effectiveCap applies floor when floor exceeds fraction result', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-floor', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-floor', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runBudgetedStages(
       ctx,
       [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.1, stageCostFloorUsd: 0.5 }],
@@ -1089,7 +1089,7 @@ describe('per-stage budget cap', () => {
   it('global always wins: floor is capped by remainingGlobal when global is tiny', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-tiny-global', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-tiny-global', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runBudgetedStages(
       ctx,
       [{ name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, stageCostFloorUsd: 10.0 }],
@@ -1103,7 +1103,7 @@ describe('per-stage budget cap', () => {
   it('stages without new fields get effectiveCap = remaining global (back-compat)', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-compat', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-compat', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     await runBudgetedStages(
       ctx,
       [{ name: 'a', promptTemplate: 'a' }],
@@ -1117,7 +1117,7 @@ describe('per-stage budget cap', () => {
   it('continue policy: implementer at cap, reviewer still runs, result completed', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-continue', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-continue', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages: PipelineStage[] = [
       { name: 'implementer', promptTemplate: 'impl', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
       { name: 'reviewer', promptTemplate: 'review' },
@@ -1136,7 +1136,7 @@ describe('per-stage budget cap', () => {
 
   it('freeze policy: stage at cap returns frozen with outcomes so far', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'cap-freeze', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-freeze', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages: PipelineStage[] = [
       { name: 'a', promptTemplate: 'a', stageCostFraction: 0.3, onStageBudgetExceeded: 'freeze' },
       { name: 'b', promptTemplate: 'b' },
@@ -1161,7 +1161,7 @@ describe('per-stage budget cap', () => {
 
   it('global backstop freezes regardless of per-stage continue policy', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'cap-global-wins', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-global-wins', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages: PipelineStage[] = [
       { name: 'a', promptTemplate: 'a', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
       { name: 'b', promptTemplate: 'b', stageCostFraction: 0.5, onStageBudgetExceeded: 'continue' },
@@ -1189,7 +1189,7 @@ describe('per-stage budget cap', () => {
   it('skip policy: stage at cap proceeds like continue (next stage runs)', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-skip', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages: PipelineStage[] = [
       { name: 'simplifier', promptTemplate: 'simplify', stageCostFraction: 0.1, onStageBudgetExceeded: 'skip' },
       { name: 'reviewer', promptTemplate: 'review' },
@@ -1204,7 +1204,7 @@ describe('per-stage budget cap', () => {
   it('provider-ignored cap: orchestrator post-stage check still applies continue policy', async () => {
     // Simulates Codex/Cursor ignoring maxBudgetUsd: the agent returns costUsd above the cap.
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'cap-advisory', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-advisory', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     const stages: PipelineStage[] = [
       { name: 'a', promptTemplate: 'a', stageCostFraction: 0.2, onStageBudgetExceeded: 'continue' },
       { name: 'b', promptTemplate: 'b' },
@@ -1224,7 +1224,7 @@ describe('per-stage budget cap', () => {
 
   it('resumeUntilComplete: per-stage cap stops resumes when aggregate cost exceeds cap', async () => {
     const wm = new WorktreeManager(repo);
-    const ctx = await prepareContext({ taskId: 'cap-resume', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-resume', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     // effectiveCap = $1.0 * 0.3 = $0.3. Each call costs $0.15.
     // Primary: stageCost = $0.15. Resume 1: stageCost = $0.30.
     // Resume 2 condition: stageCost ($0.30) < effectiveCap ($0.30)? No → loop stops.
@@ -1250,7 +1250,7 @@ describe('per-stage budget cap', () => {
   it('PREVIOUS_STAGE_TRUNCATED is true when prior stage exited non-completed', async () => {
     const wm = new WorktreeManager(repo);
     const received: AgentRunInput[] = [];
-    const ctx = await prepareContext({ taskId: 'cap-trunc', localRepoPath: repo, sandbox: makeSandbox() }, { worktrees: wm });
+    const ctx = await prepareContext({ taskId: 'cap-trunc', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
     // Stage 'a': maxTurns:1, agent returns turns=1 → exitReason='maxTurns' (not 'completed').
     // Stage 'b': should see PREVIOUS_STAGE_TRUNCATED='true'.
     const agent: AgentProvider = {

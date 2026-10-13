@@ -22,7 +22,7 @@ import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
 import type { VanguardLogger } from '../core/logger.js';
-import { resolveRemoteBaseRef } from '../core/base-branch.js';
+import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -87,15 +87,6 @@ function defaultSandboxFactory(
 }
 
 /**
- * Resolve the ref the spec's research worktree is cut from: origin's copy of `base` when it is
- * ahead of the local one, so the spec is written against the branch as it exists on the remote.
- * See resolveRemoteBaseRef.
- */
-export async function resolveSpecBaseRef(repoPath: string, base: string, logger?: VanguardLogger, keepLocalIfAhead?: boolean): Promise<string> {
-  return resolveRemoteBaseRef(repoPath, base, { label: 'spec', ...(logger !== undefined ? { logger } : {}), ...(keepLocalIfAhead !== undefined ? { keepLocalIfAhead } : {}) });
-}
-
-/**
  * Run the read-only SPEC pass for one task: fetch it, research the codebase in an isolated sandbox via
  * the tech-spec stage, and return the generated technical specification markdown. This is the front
  * half of Loop v1 — it NEVER commits, pushes, or opens a PR (no publishForReview / commitStage call
@@ -138,11 +129,6 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
-    // Fetch the base up front so the spec is researched against origin's view of the branch, not a
-    // stale local checkout (see resolveSpecBaseRef). Always set — defaults to a fetched `main`.
-    // The spec is written against the branch as it exists on the remote, never a local copy that is
-    // ahead of it (the very reason a spec diverges from a branch someone else is actively pushing to).
-    const baseBranch = await resolveSpecBaseRef(deps.repoPath, deps.baseBranch ?? 'main', deps.logger, false);
     const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
     const ctx = await prepareContext(
       {
@@ -150,7 +136,11 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         localRepoPath: deps.repoPath,
         sandbox,
         agentName: agent.name,
-        baseBranch,
+        // The spec is researched against origin's view of the base, never a local copy that is ahead of
+        // it (the very reason a spec diverges from a branch someone else is actively pushing to).
+        baseBranch: deps.baseBranch ?? DEFAULT_BASE_BRANCH,
+        start: 'base',
+        keepLocalIfAhead: false,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
       deps.contextDeps ?? {},

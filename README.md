@@ -178,7 +178,7 @@ CLAUDE_CODE_OAUTH_TOKEN=$(op read "op://Personal/Claude OAuth/credential") \
 
 ```ts
 const task = await fetcher.fetch('123');
-const ctx = await prepareContext({ taskId: task.id, localRepoPath, sandbox });
+const ctx = await prepareContext({ taskId: task.id, localRepoPath, baseBranch: 'main', start: 'base', sandbox });
 try {
   await runStages(ctx, implementReviewSimplifyStages(), { agent, variables: taskToVariables(task) });
   const commit = await commitStage(ctx, { message: `feat: ${task.title}` });

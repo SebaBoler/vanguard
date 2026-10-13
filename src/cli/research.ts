@@ -6,6 +6,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { runResearch } from '../runners/research.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
@@ -87,7 +88,8 @@ async function runDefaultResearcher(
       ...(sandboxContext.network !== undefined ? { network: sandboxContext.network } : {}),
     });
     const taskId = `research-${cmd.issueRef.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name });
+    // research has no --base: the codebase is read at the default base as origin has it, like every other run.
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch: DEFAULT_BASE_BRANCH, start: 'base' });
     try {
       const result = await runAgent(ctx, {
         stageName: 'research',
