@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/SebaBoler/vanguard/compare/v1.4.0...v1.4.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **verify:** detect check-types as the typecheck step ([#465](https://github.com/SebaBoler/vanguard/issues/465)) ([2656072](https://github.com/SebaBoler/vanguard/commit/265607230105536a46a73605d181637bb5442c0c))
+
 ## [1.4.0](https://github.com/SebaBoler/vanguard/compare/v1.3.0...v1.4.0) (2026-10-13)
 
 
