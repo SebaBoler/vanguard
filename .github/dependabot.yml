@@ -34,6 +34,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: 'deps'
+    # The @tauri-apps/* JS halves must move in lockstep with their Rust crates in src-tauri/Cargo.lock,
+    # which Dependabot does not watch; bump both by hand.
+    ignore:
+      - dependency-name: '@tauri-apps/*'
     groups:
       desktop-dependencies:
         update-types:
