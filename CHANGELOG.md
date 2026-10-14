@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/SebaBoler/vanguard/compare/v1.3.0...v1.4.0) (2026-10-13)
+
+
+### Bug Fixes
+
+* **cli:** watch and doctor reject --fork and --spec-file instead of ignoring them; one parseRunOptions for run and watch ([#459](https://github.com/SebaBoler/vanguard/issues/459)) ([80b3589](https://github.com/SebaBoler/vanguard/commit/80b35893fdf7486911a86ad135dd4788663979ca))
+* **watch:** hold a secret-blocked run for a human instead of reverting the claim ([#460](https://github.com/SebaBoler/vanguard/issues/460)) ([2aa7a35](https://github.com/SebaBoler/vanguard/commit/2aa7a35589b84d6eca07c954369c844ee129df94))
+
 ## [1.3.0](https://github.com/SebaBoler/vanguard/compare/v1.2.0...v1.3.0) (2026-10-09)
 
 

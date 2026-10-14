@@ -16,12 +16,15 @@ const WORKDIR = '/workspace';
 /** Marker files that indicate a Python project driven by pytest. */
 const PYTHON_MARKERS = ['pyproject.toml', 'pytest.ini', 'setup.cfg'];
 
+/** Type-check script names, in precedence order. */
+const TYPECHECK_SCRIPTS = ['typecheck', 'check-types', 'type-check'];
+
 /**
  * Resolve the verification command. Precedence: explicit cmd (CLI flag) > VANGUARD_VERIFY_CMD env >
  * auto-detect from the worktree package.json > auto-detect Python (pytest) markers > undefined
  * (skip Proof of Work entirely — the caller must render that skip visibly, not drop it silently).
  * JS auto-detect: if package.json has a `test` script, build "<pm> install --frozen-lockfile && <pm>
- * run typecheck && <pm> test", including typecheck only when that script exists; pm from the
+ * run typecheck && <pm> test", including the first of typecheck/check-types/type-check that exists; pm from the
  * `packageManager` field (pnpm/yarn/npm), default npm. Python auto-detect: pyproject.toml/pytest.ini/
  * setup.cfg present -> "pytest".
  */
@@ -47,7 +50,9 @@ export async function resolveVerifyCommand(
       const field = pkg.packageManager ?? '';
       const pm = field.startsWith('pnpm') ? 'pnpm' : field.startsWith('yarn') ? 'yarn' : 'npm';
       const parts = [`${pm} install --frozen-lockfile`];
-      if (scripts.typecheck !== undefined) parts.push(`${pm} run typecheck`);
+      // Turborepo-style monorepos name it check-types; without this the gate never type-checks them.
+      const typecheck = TYPECHECK_SCRIPTS.find((name) => scripts[name] !== undefined);
+      if (typecheck !== undefined) parts.push(`${pm} run ${typecheck}`);
       parts.push(`${pm} test`);
       return parts.join(' && ');
     } catch {
