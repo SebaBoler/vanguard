@@ -67,6 +67,30 @@ describe('resolveVerifyCommand', () => {
     expect(result).toBe('pnpm install --frozen-lockfile && pnpm run typecheck && pnpm test');
   });
 
+  it('auto-detects check-types (Turborepo convention) as the typecheck step', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({
+        scripts: { test: 'turbo run test', 'check-types': 'turbo run check-types' },
+        packageManager: 'pnpm@9.15.9',
+      }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: {} });
+    expect(result).toBe('pnpm install --frozen-lockfile && pnpm run check-types && pnpm test');
+  });
+
+  it('prefers typecheck over check-types when both exist', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({
+        scripts: { test: 'vitest', typecheck: 'tsc --noEmit', 'check-types': 'tsc -b' },
+        packageManager: 'pnpm@9.15.9',
+      }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: {} });
+    expect(result).toBe('pnpm install --frozen-lockfile && pnpm run typecheck && pnpm test');
+  });
+
   it('auto-detects pnpm command without typecheck script', async () => {
     await writeFile(
       join(tmpDir, 'package.json'),
