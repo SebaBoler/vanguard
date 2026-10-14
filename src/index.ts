@@ -43,6 +43,7 @@ export {
   githubProjectWatchPrimitives,
   type WatchPrimitives,
   type WatchTick,
+  type WatchRunOutcome,
   type WatchLinearOptions,
   type WatchGithubOptions,
   type WatchGithubProjectOptions,
