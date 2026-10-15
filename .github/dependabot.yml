@@ -22,6 +22,28 @@ updates:
           - 'minor'
           - 'patch'
 
+  # apps/desktop is its own pnpm project with its own lockfile (see ci.yml); without this entry its
+  # advisories surface as alerts but never as PRs.
+  - package-ecosystem: 'npm'
+    directory: '/apps/desktop'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '08:15'
+      timezone: 'Europe/Warsaw'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'deps'
+    # The @tauri-apps/* JS halves must move in lockstep with their Rust crates in src-tauri/Cargo.lock,
+    # which Dependabot does not watch; bump both by hand.
+    ignore:
+      - dependency-name: '@tauri-apps/*'
+    groups:
+      desktop-dependencies:
+        update-types:
+          - 'minor'
+          - 'patch'
+
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:

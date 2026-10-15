@@ -15,6 +15,13 @@ pnpm install
 pnpm build       # compile TypeScript → dist/
 ```
 
+`pnpm.overrides` in `package.json` forces `@modelcontextprotocol/sdk` (a peer of `@anthropic-ai/claude-agent-sdk`
+that pnpm auto-installs; nothing in `src/` imports it) onto a patched release: the vulnerable
+`express`/`hono`/`fast-uri`/`ip-address` chain hangs off it, and neither a direct bump nor Dependabot's
+grouped updates reach an auto-installed peer. When the agent SDK widens that peer range (e.g. to `^2`),
+move the override with it; `pnpm audit` reports the state. `apps/desktop` keeps its own overrides in
+`apps/desktop/pnpm-workspace.yaml`, bounded to the advisory's major.
+
 ## Sandbox image
 
 Build the sandbox image (Node 24, Git, Claude CLI) with:
