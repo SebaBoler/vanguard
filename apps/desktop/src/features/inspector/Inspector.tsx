@@ -79,9 +79,11 @@ export function Inspector({
   const runGen = useRef(0); // bumped per launch; a settled apiCreateRun from an older run is dropped
   const [repoOk, setRepoOk] = useState(true); // cached: is `project` a git work tree? (fails a run at click)
 
-  const openRef = useRef<{ taskId: string; timestamp: string } | null>(null);
+  // Repo root the open detail was read from: the project, or a CI run's record cache (Remote screen).
+  const detailRoot = useRef(project);
+  const openRef = useRef<{ root: string; taskId: string; timestamp: string } | null>(null);
   useEffect(() => {
-    openRef.current = detail ? { taskId: detail.taskId, timestamp: detail.timestamp } : null;
+    openRef.current = detail ? { root: detailRoot.current, taskId: detail.taskId, timestamp: detail.timestamp } : null;
   }, [detail]);
 
   // Rail navigation drops any open drill-down.
@@ -134,7 +136,7 @@ export function Inspector({
       setActive(a);
       setTick((t) => t + 1);
       const o = openRef.current;
-      if (o) setDetail(await readRun(project, o.taskId, o.timestamp));
+      if (o) setDetail(await readRun(o.root, o.taskId, o.timestamp));
     } catch {
       // transient mid-write; next event resyncs
     }
@@ -290,10 +292,11 @@ export function Inspector({
       });
   };
 
-  const open = async (r: RunSummary): Promise<void> => {
+  const open = async (r: RunSummary, root = project): Promise<void> => {
     setError(null);
     try {
-      setDetail(await readRun(project, r.taskId, r.timestamp));
+      detailRoot.current = root;
+      setDetail(await readRun(root, r.taskId, r.timestamp));
     } catch (e) {
       setError(String(e));
     }
@@ -422,7 +425,7 @@ export function Inspector({
         <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} />
       ) : screen === 'remote' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <RemoteRuns project={project} />
+          <RemoteRuns project={project} onOpenRun={(cachePath, r) => void open(r, cachePath)} />
         </div>
       ) : screen === 'fleet' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">

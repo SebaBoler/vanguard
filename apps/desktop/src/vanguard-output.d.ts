@@ -89,6 +89,15 @@ export interface RemoteRun {
   createdAt: string;
   event: string;
   url: string;
+  /** The run's record artifact is already in the local cache (opens without `gh`). */
+  cached: boolean;
+}
+
+/** A CI run's downloaded `vanguard-runs` artifact, parsed like a local `.vanguard/runs`. */
+export interface RemoteRecords {
+  /** Cache dir laid out like a repo root — pass it to `readRun` as `repoPath`. */
+  cachePath: string;
+  runs: RunSummary[];
 }
 
 export interface Project {

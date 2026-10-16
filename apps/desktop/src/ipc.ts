@@ -6,6 +6,7 @@ import type {
   ActiveRun,
   SessionRead,
   RemoteRun,
+  RemoteRecords,
   AppConfig,
 } from './vanguard-output';
 import type { BoardTask } from './wire';
@@ -55,6 +56,12 @@ export function writeAppConfig(repoPath: string, config: AppConfig): Promise<voi
 
 export function listRemoteRuns(repoPath: string): Promise<RemoteRun[]> {
   return invoke<RemoteRun[]>('list_remote_runs', { repoPath });
+}
+
+/** Pull a CI run's record artifact into the app's cache (once) and group it into run summaries;
+ *  open one with `readRun(records.cachePath, …)`. */
+export function downloadRunRecords(repoPath: string, runId: number): Promise<RemoteRecords> {
+  return invoke<RemoteRecords>('download_run_records', { repoPath, runId });
 }
 
 /** Board read path (S9): served by core over the sidecar query pipe; capped drives the banner. */

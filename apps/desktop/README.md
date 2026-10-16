@@ -62,7 +62,11 @@ the test immediately.
   markdown + tool calls + tokens), before their record even lands.
 - **Launch (P1)** — a **New run** form (presets: Run issue / Watch fleet / GitLab MR) spawns a command in
   the project dir inheriting your env; streamed output panel + **Kill**. The launched run then shows live.
-- **Remote runs (P4 slice)** — a Local/Remote toggle lists GitHub Actions runs via `gh run list`.
+- **Remote runs (P4 slice)** — lists GitHub Actions runs via `gh run list`. **Fetch records** pulls a run's
+  `vanguard-runs` artifact (`gh run download`) into the app config dir under
+  `remote-runs/<owner-repo>/<run-id>/` and expands it into the same run rows as local runs; a row opens the
+  same Overview / Diff / Transcript inspector. Already-downloaded runs carry a **cached** marker and open
+  without `gh`. Needs the workflow's `upload-run-records` input on.
 - **Per-project screens** (Inspector sub-nav) — **Runs · Board · Fleet · Remote · Workflow · Settings**:
   - **Task board** — tasks from the configured source (`linear`/`gh`) bucketed into lifecycle columns;
     card → **Task/spec detail** (source spec + run history + New Run). Best-effort (auth-dependent).
@@ -88,7 +92,7 @@ shapes (kept decoupled from Vanguard's build, per the design spec §4).
 | `watch.rs` | `notify` watcher per project → debounced `vanguard:changed` events |
 | `spawn.rs` | Launch/kill runs (`sh -c` in the project dir, inherits env); stream output events |
 | `spec.rs` | Best-effort fetch of a Task's source issue (`gh`/`linear`) |
-| `remote.rs` | List GitHub Actions runs (`gh run list`) |
+| `remote.rs` | List GitHub Actions runs (`gh run list`); pull a run's record artifact into the local cache |
 
 **React (`src/`)** — `App` (left-rail shell + ⌘K + theme), `features/dashboard`, `features/inspector`
 (run list/detail/live/remote/launch/spec), `components/` (reusable `Markdown` / `CodeBlock` / `Callout` /
@@ -111,7 +115,6 @@ Full-product design in `../../design/brief.md`; rendered mockups in `../../docs/
   round-trip (spec §13) awaits the format spike ("spike both").
 - **Task board / spec fetch** — best-effort via CLI (`gh`/`linear`); needs live verification against
   authed sources + refined state→column mapping.
-- **Remote depth** — live log tail (`glab ci trace`), artifact-download-into-inspector, GitHub↔GitLab
-  parity (spec §14).
+- **Remote depth** — live log tail (`glab ci trace`), GitHub↔GitLab parity (spec §14).
 - **Shell** — the design puts the per-project screens in the left rail (project switcher); the build
   hosts them as an Inspector sub-nav. Cosmetic alignment to the mockups is pending.
