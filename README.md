@@ -61,6 +61,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 - [Fork-and-select](#fork-and-select)
 - [Security](#security) · [Host LLM proxy](#host-llm-proxy)
 - [Development](#development)
+- [Hub](#hub)
 - [Autonomous loop](#autonomous-loop) · [Loop v1 (two-pass)](#loop-v1--two-pass-autonomous-pipeline) · [External PR review](#external-pr-review) · [Implement issues via GitHub Actions](#implement-issues-via-github-actions)
 - [Cost & limits](#cost--limits)
 - [Retrospective memory](#retrospective-memory)
