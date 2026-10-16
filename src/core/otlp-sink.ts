@@ -46,6 +46,15 @@ function parseHeaderList(raw: string): Record<string, string> {
   return headers;
 }
 
+/** True when the URL's path is Langfuse's OTLP endpoint (base or traces URL) — a path check, not a substring one. */
+function langfusePath(endpoint: string): boolean {
+  try {
+    return /\/api\/public\/otel(\/v1\/traces)?$/.test(new URL(endpoint).pathname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the exporter from the host env; undefined = disabled (the default).
  *
@@ -69,7 +78,7 @@ export function otlpSinkConfig(env: NodeJS.ProcessEnv = process.env): OtlpSinkCo
   const headers = parseHeaderList(env['VANGUARD_OTLP_HEADERS'] ?? env['OTEL_EXPORTER_OTLP_HEADERS'] ?? '');
   const pk = env['LANGFUSE_PUBLIC_KEY'];
   const sk = env['LANGFUSE_SECRET_KEY'];
-  const langfuseShaped = own !== undefined || endpoint.includes('/api/public/otel');
+  const langfuseShaped = own !== undefined || langfusePath(endpoint);
   if (langfuseShaped && pk !== undefined && pk !== '' && sk !== undefined && sk !== '') {
     headers['Authorization'] ??= `Basic ${Buffer.from(`${pk}:${sk}`).toString('base64')}`;
     headers['x-langfuse-ingestion-version'] ??= LANGFUSE_INGESTION_VERSION;

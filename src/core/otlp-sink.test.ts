@@ -57,8 +57,11 @@ describe('otlpSinkConfig', () => {
   it('never sends Langfuse keys to a generic OTEL endpoint, and never overrides an explicit Authorization', () => {
     // A host-wide OTEL_EXPORTER_OTLP_ENDPOINT (e.g. Claude Code telemetry) must not receive the Langfuse pair.
     expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
-    // ...unless the path is Langfuse's.
+    // ...unless the path is Langfuse's — the path itself, not a substring anywhere in the URL.
     expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })?.headers).toHaveProperty('Authorization');
+    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel/v1/traces', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })?.headers).toHaveProperty('Authorization');
+    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/?x=/api/public/otel', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
+    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://evil.example/api/public/otel.attacker/x', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
     expect(otlpSinkConfig({ ...LANGFUSE, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer tok' })?.headers).toEqual({ Authorization: 'Bearer tok', 'x-langfuse-ingestion-version': '4' });
   });
 
