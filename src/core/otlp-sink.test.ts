@@ -54,6 +54,14 @@ describe('otlpSinkConfig', () => {
     });
   });
 
+  it('never sends Langfuse keys to a generic OTEL endpoint, and never overrides an explicit Authorization', () => {
+    // A host-wide OTEL_EXPORTER_OTLP_ENDPOINT (e.g. Claude Code telemetry) must not receive the Langfuse pair.
+    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })).toBeUndefined();
+    // ...unless the path is Langfuse's.
+    expect(otlpSinkConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://lf.example/api/public/otel', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' })?.headers).toHaveProperty('Authorization');
+    expect(otlpSinkConfig({ ...LANGFUSE, OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer tok' })?.headers).toEqual({ Authorization: 'Bearer tok', 'x-langfuse-ingestion-version': '4' });
+  });
+
   it('accepts the OTel k=v header list, prefers VANGUARD_* over OTEL_*, and keeps an explicit /v1/traces', () => {
     expect(
       otlpSinkConfig({
@@ -152,9 +160,10 @@ describe('exportRunTrace', () => {
   it('never throws on a failed export and reports it once per process', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const boom = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
-    await expect(exportRunTrace(run, { env: LANGFUSE, fetchImpl: boom })).resolves.toBeUndefined();
-    await expect(exportRunTrace(run, { env: LANGFUSE, fetchImpl: fakeFetch(401) })).resolves.toBeUndefined();
+    const env = { ...LANGFUSE, VANGUARD_OTLP_ENDPOINT: 'https://user:secret@lf.example/api/public/otel' };
+    await expect(exportRunTrace(run, { env, fetchImpl: boom })).resolves.toBeUndefined();
+    await expect(exportRunTrace(run, { env, fetchImpl: fakeFetch(401) })).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledTimes(1);
-    expect(error.mock.calls[0]![0]).toMatch(/otlp trace export .* failed \(non-fatal, reported once\): ECONNREFUSED/);
+    expect(error.mock.calls[0]![0]).toBe('otlp trace export to https://lf.example/api/public/otel/v1/traces failed (non-fatal, reported once): ECONNREFUSED');
   });
 });

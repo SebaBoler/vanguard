@@ -53,20 +53,25 @@ function parseHeaderList(raw: string): Record<string, string> {
  * (`https://<langfuse>/api/public/otel` for Langfuse); `/v1/traces` is appended unless already there.
  * Auth, one of:
  * - LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY → `Authorization: Basic base64(pk:sk)` plus the
- *   `x-langfuse-ingestion-version: 4` header Langfuse v4 needs for real-time ingestion;
+ *   `x-langfuse-ingestion-version: 4` header Langfuse v4 needs for real-time ingestion — attached only
+ *   to a Langfuse-shaped endpoint (VANGUARD_OTLP_ENDPOINT, or a path containing `/api/public/otel`),
+ *   so a generic OTEL_EXPORTER_OTLP_ENDPOINT on the host never receives Langfuse keys, and never over
+ *   an Authorization the header list already carries;
  * - VANGUARD_OTLP_HEADERS, else OTEL_EXPORTER_OTLP_HEADERS — the OTel `k=v,k2=v2` list, which must
  *   carry an `Authorization` entry.
  * An endpoint without auth stays off: OTEL_EXPORTER_OTLP_* are generic names other tooling on the host
  * (Claude Code's own telemetry) may export, and that must not silently start shipping run data.
  */
 export function otlpSinkConfig(env: NodeJS.ProcessEnv = process.env): OtlpSinkConfig | undefined {
-  const endpoint = (env['VANGUARD_OTLP_ENDPOINT'] ?? env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? '').trim().replace(/\/+$/, '');
+  const own = env['VANGUARD_OTLP_ENDPOINT'];
+  const endpoint = (own ?? env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? '').trim().replace(/\/+$/, '');
   if (endpoint === '') return undefined;
   const headers = parseHeaderList(env['VANGUARD_OTLP_HEADERS'] ?? env['OTEL_EXPORTER_OTLP_HEADERS'] ?? '');
   const pk = env['LANGFUSE_PUBLIC_KEY'];
   const sk = env['LANGFUSE_SECRET_KEY'];
-  if (pk !== undefined && pk !== '' && sk !== undefined && sk !== '') {
-    headers['Authorization'] = `Basic ${Buffer.from(`${pk}:${sk}`).toString('base64')}`;
+  const langfuseShaped = own !== undefined || endpoint.includes('/api/public/otel');
+  if (langfuseShaped && pk !== undefined && pk !== '' && sk !== undefined && sk !== '') {
+    headers['Authorization'] ??= `Basic ${Buffer.from(`${pk}:${sk}`).toString('base64')}`;
     headers['x-langfuse-ingestion-version'] ??= LANGFUSE_INGESTION_VERSION;
   }
   if (!Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) return undefined;
@@ -155,6 +160,16 @@ export function buildTracePayload(run: RunTrace): Record<string, unknown> {
 
 let warned = false;
 
+/** Origin + path only: an operator may have put credentials or a token in the URL's userinfo/query. */
+function redactUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return '<invalid url>';
+  }
+}
+
 /**
  * POST one run's trace to the configured sink; no-op when none is configured. Best-effort: a failure
  * (network, non-2xx, 10s timeout) is reported once per process on stderr and never thrown.
@@ -178,6 +193,6 @@ export async function exportRunTrace(
     if (warned) return;
     warned = true;
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`otlp trace export to ${config.url} failed (non-fatal, reported once): ${message}`);
+    console.error(`otlp trace export to ${redactUrl(config.url)} failed (non-fatal, reported once): ${message}`);
   }
 }
