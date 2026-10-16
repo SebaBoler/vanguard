@@ -9,6 +9,7 @@ import {
   VERDICT_INSTRUCTION,
   VERDICT_WITHOUT_COMPLETION_NOTE,
   diffLineCount,
+  extractReviewVerdict,
   neutralizePromptTags,
   omitGeneratedFiles,
   outputTail,
@@ -17,6 +18,7 @@ import {
   VERDICT_CONTRADICTION_LOG,
   verdictContradictsFindings,
 } from './review-prompt.js';
+import type { ReviewVerdict } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -61,6 +63,8 @@ export interface ReviewPullRequestDeps {
 export interface ReviewPullRequestResult {
   pr: PullRequestForReview;
   commentBody: string;
+  /** The stated verdict line; absent when the reviewer completed without stating one. */
+  verdict?: ReviewVerdict;
 }
 
 interface GhPullRequestView {
@@ -369,5 +373,6 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
   if (verdictContradictsFindings(outcome.text)) {
     deps.log?.(`review-pr ${id}: ${VERDICT_CONTRADICTION_LOG} — ${deps.publish !== false ? 'posted as written' : 'not posted (publish disabled)'}`);
   }
-  return { pr, commentBody };
+  const verdict = extractReviewVerdict(outcome.text);
+  return { pr, commentBody, ...(verdict !== undefined ? { verdict } : {}) };
 }
