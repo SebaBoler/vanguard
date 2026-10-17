@@ -5,6 +5,7 @@
 
 ### Features
 
+* **hub:** Vanguard Hub slice 1 — `vanguard hub` serves the Inspector screens in a browser over HTTP + SSE against a real `.vanguard/` directory, with a Docker image for self-hosting ([#472](https://github.com/SebaBoler/vanguard/issues/472)): hub modules ([#473](https://github.com/SebaBoler/vanguard/pull/473)) ([35c14b6](https://github.com/SebaBoler/vanguard/commit/35c14b6)), server entrypoint and CLI ([#479](https://github.com/SebaBoler/vanguard/pull/479)) ([0cba718](https://github.com/SebaBoler/vanguard/commit/0cba718)), browser transport and hub-mode UI in `apps/desktop` ([#480](https://github.com/SebaBoler/vanguard/pull/480)) ([fdc2df9](https://github.com/SebaBoler/vanguard/commit/fdc2df9))
 * **ci:** write run summary to GITHUB_STEP_SUMMARY ([#469](https://github.com/SebaBoler/vanguard/issues/469)) ([ab83663](https://github.com/SebaBoler/vanguard/commit/ab836633ecb9622ff9edc74b8b2ff0adfed7fdd5))
 * **desktop:** pull CI run records into the Inspector ([#470](https://github.com/SebaBoler/vanguard/issues/470)) ([0206248](https://github.com/SebaBoler/vanguard/commit/0206248890f3c5e20c094f6735f6f3be5ed1ecce))
 * **metrics:** opt-in OTLP trace export for Langfuse ([#471](https://github.com/SebaBoler/vanguard/issues/471)) ([4e3bd43](https://github.com/SebaBoler/vanguard/commit/4e3bd434a02e4c37cfef206c0becd5f2c9035c3c))
