@@ -95,7 +95,8 @@ describe('persistRunRecord', () => {
 
   it('masks finalText in run.json; the .diff stays byte-faithful (the publish gate owns diff secrets)', async () => {
     const token = `glpat-${'B'.repeat(24)}`;
-    const diff = `+GITLAB_TOKEN=${token}\n+  password: process.env.DB_PASSWORD,\n`;
+    // Ordinary code that redactTokens would mangle (`password: process.env…` → `[REDACTED]`) but the gate passes.
+    const diff = `+  password: process.env.DB_PASSWORD,\n+  const pushToken = opts.pushToken.value;\n`;
     const file = await persistRunRecord(
       repo,
       { ...result, finalText: `Added the deploy key ${token} to config`, diff },
@@ -104,7 +105,6 @@ describe('persistRunRecord', () => {
     const record = JSON.parse(await readFile(file, 'utf8'));
     expect(record.finalText).not.toContain(token);
     expect(record.finalText).toContain('[REDACTED-GL]');
-    // Ordinary code must survive untouched: redactTokens would turn `password: process.env…` into `[REDACTED]`.
     expect(await readFile(file.replace(/\.json$/, '.diff'), 'utf8')).toBe(diff);
   });
 
