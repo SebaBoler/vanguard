@@ -175,6 +175,17 @@ describe('fetchRemoteRun', () => {
     await expect(fetchRemoteRun(repo, 104, exec)).rejects.toThrow(/docs\/hub\.md/);
   });
 
+  it('T-34b the live gh wording "no valid artifacts found to download" is the same actionable BadRequestError', async () => {
+    const exec: Exec = async (file, args) => {
+      if (file === 'gh' && args[0] === 'run' && args[1] === 'download') {
+        throw Object.assign(new Error('Command failed with exit code 1'), { stderr: 'no valid artifacts found to download' });
+      }
+      throw new Error(`unexpected exec call: ${file} ${args.join(' ')}`);
+    };
+    await expect(fetchRemoteRun(repo, 105, exec)).rejects.toBeInstanceOf(BadRequestError);
+    await expect(fetchRemoteRun(repo, 105, exec)).rejects.toThrow(/has no "vanguard-runs" artifact/);
+  });
+
   it('T-35 replaces a previously-cached import atomically, and seeds .gitignore exactly once', async () => {
     const makeExec = (taskId: string, timestamp: string): Exec => async (file, args) => {
       if (file === 'gh' && args[0] === 'run' && args[1] === 'download') {

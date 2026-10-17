@@ -217,7 +217,8 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
     const message = error instanceof Error ? error.message : String(error);
     const stderr = (error as { stderr?: unknown }).stderr;
     const text = typeof stderr === 'string' && stderr.trim() !== '' ? stderr : message;
-    if (/no artifact|not found/i.test(text)) {
+    // gh wording seen live: "no valid artifacts found to download" (run without the artifact or still in progress).
+    if (/no (?:valid )?artifacts?|not found/i.test(text)) {
       throw new BadRequestError(
         `CI run ${runId} has no "vanguard-runs" artifact — the workflow must upload .vanguard/runs (see docs/hub.md § CI run import)`,
       );
