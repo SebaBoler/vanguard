@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
+import { exportRunTrace } from './otlp-sink.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -144,19 +145,38 @@ export async function persistVisualProof(
   return file;
 }
 
-/** Persist one record per pipeline stage under a shared timestamp (the per-task AFK trace). */
+export interface PersistStageOptions {
+  /** The PR opened for this run, if any. */
+  prUrl?: string;
+  /** Flow and provider names of the run, recorded on the exported trace (see otlp-sink). */
+  flow?: string;
+  provider?: string;
+}
+
+/**
+ * Persist one record per pipeline stage under a shared timestamp (the per-task AFK trace), then mirror
+ * the run as one OTLP trace when an exporter is configured (opt-in, best-effort — see otlp-sink).
+ */
 export async function persistStageOutcomes(
   localRepoPath: string,
   outcomes: ReadonlyArray<{ name: string; result: RunResult; model?: string }>,
-  prUrl?: string,
+  opts: PersistStageOptions = {},
 ): Promise<void> {
   const timestamp = new Date().toISOString();
   for (const outcome of outcomes) {
     await persistRunRecord(localRepoPath, outcome.result, {
       timestamp,
       label: outcome.name,
-      ...(prUrl !== undefined ? { prUrl } : {}),
+      ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
       ...(outcome.model !== undefined ? { requestedModel: outcome.model } : {}),
     });
   }
+  const first = outcomes[0];
+  if (first === undefined) return;
+  await exportRunTrace({
+    taskId: first.result.taskId,
+    timestamp,
+    stages: outcomes.map((o) => stageMetric(o.result, o.name, o.model !== undefined ? { requestedModel: o.model } : undefined)),
+    ...opts,
+  });
 }

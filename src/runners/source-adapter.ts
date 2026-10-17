@@ -17,6 +17,8 @@ import { authSecrets } from '../agents/auth.js';
 import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
+import { appendStepSummary } from '../core/step-summary.js';
+import type { StepSummary, StepSummaryExit } from '../core/step-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback, proofBlock, verifySkippedBlock } from '../pipeline/verify.js';
@@ -397,6 +399,21 @@ export async function runSourcedIssue(
       },
       skills !== undefined ? { skills } : {},
     );
+    let outcomes: StageOutcome[] = [];
+    // On Actions each run leaves one block in the job's Summary tab, built from the same outcomes as
+    // the run record + metrics.jsonl so the two never disagree. No GITHUB_STEP_SUMMARY ⇒ no-op.
+    const stepSummary = (exit: StepSummaryExit, extra: Pick<StepSummary, 'prUrl' | 'error'> = {}): Promise<void> => {
+      const model = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.model ?? labelModel ?? deps.providerModel;
+      return appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
+        taskId: task.id,
+        flow: flow ?? 'default',
+        provider: agents.agent.name,
+        ...(model !== undefined ? { model } : {}),
+        outcomes,
+        exit,
+        ...extra,
+      });
+    };
     try {
       const turnScoped = deps.maxTurns !== undefined ? withStageMaxTurns(baseStages, deps.maxTurns) : baseStages;
       // --max-repair-iterations also drives auto-resume of an incomplete implementer (not just the gate
@@ -441,14 +458,14 @@ export async function runSourcedIssue(
           `--conformance needs a flow with a reviewer stage (its verdict rides on the review comment); flow "${flow ?? 'default'}" has none`,
         );
       }
+      const runMeta = { flow: flow ?? 'default', provider: agents.agent.name };
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
-        flow: flow ?? 'default',
-        provider: agents.agent.name,
+        ...runMeta,
         stages: pipeline.map((s) => s.name),
       });
-      const outcomes = await runStages(ctx, pipeline, {
+      outcomes = await runStages(ctx, pipeline, {
         agent: agents.agent,
         variables: {
           ...taskToVariables(task),
@@ -577,7 +594,8 @@ export async function runSourcedIssue(
         },
       });
       if (delivery.kind === 'secret-blocked') {
-        await persistStageOutcomes(deps.repoPath, outcomes);
+        await persistStageOutcomes(deps.repoPath, outcomes, runMeta);
+        await stepSummary('secret-blocked');
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr + run record.
         if (!whiteLabel) await adapter.signalSecretBlock(issueRef, task, delivery.block);
@@ -585,7 +603,8 @@ export async function runSourcedIssue(
         return { task, secretBlocked: true };
       }
       if (delivery.kind === 'no-changes') {
-        await persistStageOutcomes(deps.repoPath, outcomes);
+        await persistStageOutcomes(deps.repoPath, outcomes, runMeta);
+        await stepSummary('no-changes');
         deps.onEvent?.({ type: 'run-end' });
         return { task };
       }
@@ -611,12 +630,16 @@ export async function runSourcedIssue(
           ...(deps.reviewGate === true ? { gate: true } : {}),
         });
       }
-      await persistStageOutcomes(deps.repoPath, outcomes, pr.prUrl);
+      await persistStageOutcomes(deps.repoPath, outcomes, { ...runMeta, prUrl: pr.prUrl });
+      await stepSummary(verificationFailed ? 'verify-failed' : 'completed', { prUrl: pr.prUrl });
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
       deps.onEvent?.({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };
+    } catch (error) {
+      await stepSummary('error', { error: String(error) });
+      throw error;
     } finally {
       await refreshRetrospectiveMemory(deps.repoPath).catch((err: unknown) => {
         console.error('retrospective memory refresh failed (non-fatal):', err);

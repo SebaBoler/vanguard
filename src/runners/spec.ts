@@ -5,7 +5,7 @@ import { forcedProviderModel, selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistRunRecord } from '../core/run-record.js';
+import { persistStageOutcomes } from '../core/run-record.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -162,13 +162,16 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       if (specOutcome === undefined) {
         throw new VanguardError(`Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id}`);
       }
+      // Persisted under the 'spec' label (not the stage's library name) so `vanguard stats` keys it as before.
+      const persistSpec = (): Promise<void> =>
+        persistStageOutcomes(deps.repoPath, [{ ...specOutcome, name: 'spec' }], { flow: 'spec', provider: agent.name });
       // Lenient extraction recovers a spec whose closing tag was lost to a truncated stream (common
       // through a corp MITM proxy). A genuinely empty result yields undefined below.
       const extracted = extractTagLenient(specOutcome.result.finalText, SPEC_TAG);
       if (extracted === undefined) {
         // Persist the failed run BEFORE throwing so its transcript/cost survive for diagnosis instead
         // of being discarded (best-effort: a persist failure must not mask the real error).
-        await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' }).catch(() => {});
+        await persistSpec().catch(() => {});
         throw new VanguardError(
           `Tech-spec stage produced no <${SPEC_TAG}> block for ${task.id} ` +
             `(exitReason: ${specOutcome.result.exitReason}, turns: ${specOutcome.result.turns}). Re-run the spec.`,
@@ -183,7 +186,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       const spec = extracted.text;
 
       // techSpecStage always returns exactly one stage; persist that single outcome.
-      await persistRunRecord(deps.repoPath, specOutcome.result, { label: 'spec' });
+      await persistSpec();
 
       // Carry the manifest verbatim inside the returned spec so watch.ts's <tech_spec> wrapper still
       // lands it in the posted comment — parseSpecManifest regexes for the tag anywhere in the comment

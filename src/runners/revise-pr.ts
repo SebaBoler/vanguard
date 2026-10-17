@@ -24,6 +24,9 @@ import { resolveVerifyCommand, runVerification, renderVerificationFeedback } fro
 import { reviewRequestBody } from './review-body.js';
 import { repairUntilGreen } from '../pipeline/repair-gate.js';
 import { persistStageOutcomes } from '../core/run-record.js';
+import { appendStepSummary } from '../core/step-summary.js';
+import type { StepSummary, StepSummaryExit } from '../core/step-summary.js';
+import type { StageOutcome } from '../pipeline/pipeline.js';
 import { GITHUB_SECRET_BLOCKED_LABEL } from '../github-labels.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
 import { deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
@@ -243,6 +246,21 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       },
       { ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
     );
+    let outcomes: StageOutcome[] = [];
+    // One block per revision in the Actions job's Summary tab (no GITHUB_STEP_SUMMARY ⇒ no-op).
+    const stepSummary = (exit: StepSummaryExit, extra: Pick<StepSummary, 'error'> = {}): Promise<void> => {
+      const model = outcomes.find((o) => o.name === STAGE.IMPLEMENTER)?.result.model ?? deps.providerModel;
+      return appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
+        taskId: `${target.repoSlug}#${target.number}`,
+        flow: 'revise-pr',
+        provider: agents.agent.name,
+        ...(model !== undefined ? { model } : {}),
+        outcomes,
+        exit,
+        prUrl: pr.url,
+        ...extra,
+      });
+    };
     try {
       const allStages = implementReviewSimplifyStages();
       const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== STAGE.SIMPLIFIER) : allStages;
@@ -270,7 +288,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       );
 
       log(`revise-pr ${target.repoSlug}#${target.number}: agent -> implementing`);
-      const outcomes = await runStages(ctx, pipeline, { agent: agents.agent, variables });
+      outcomes = await runStages(ctx, pipeline, { agent: agents.agent, variables });
 
       // Run the resolved verification command after applying changes and before pushing, with one
       // bounded repair iteration on red — reusing renderVerificationFeedback and the same resume
@@ -298,7 +316,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
       // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
       // the outcomes are persisted — the first delivery does this in runSourcedIssue.
-      await persistStageOutcomes(deps.repoPath, outcomes);
+      await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name });
       const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
@@ -331,6 +349,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
             await gh(['pr', 'edit', String(target.number), '--repo', target.repoSlug, '--add-label', GITHUB_SECRET_BLOCKED_LABEL]).catch(() => undefined);
           }
         }
+        await stepSummary('secret-blocked');
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
       }
 
@@ -357,6 +376,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         await mkdir(dirname(deps.out), { recursive: true });
         await writeFile(deps.out, preview, 'utf8');
         log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
+        await stepSummary(verificationFailed ? 'verify-failed' : 'completed');
         return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
       }
 
@@ -382,6 +402,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
       if (delivery.kind === 'no-changes') {
         log(`revise-pr ${target.repoSlug}#${target.number}: no changes — skipping push`);
+        await stepSummary('no-changes');
         return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
       if (delivery.kind !== 'delivered-push') throw new VanguardError(`unexpected delivery outcome ${delivery.kind} for an existing-branch target`);
@@ -446,6 +467,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
 
       await handBackPrLabels(gh, target.repoSlug, target.number, log);
 
+      await stepSummary(verificationFailed ? 'verify-failed' : 'completed');
       return {
         pr,
         addressed: actionable.length,
@@ -453,6 +475,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         pushed: true,
         undrafted: true,
       };
+    } catch (error) {
+      await stepSummary('error', { error: String(error) });
+      throw error;
     } finally {
       await disposeContext(ctx);
     }

@@ -78,7 +78,7 @@ pub struct RunDetail {
     pub proof: Option<Proof>,
 }
 
-fn runs_dir(repo_path: &Path) -> std::path::PathBuf {
+pub fn runs_dir(repo_path: &Path) -> std::path::PathBuf {
     repo_path.join(".vanguard").join("runs")
 }
 

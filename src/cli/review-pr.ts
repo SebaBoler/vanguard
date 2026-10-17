@@ -12,6 +12,9 @@ import { baseBranchOrDefault } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { buildPullRequestReviewPrompt, PullRequestReviewIncompleteError, reviewPullRequest } from '../runners/pr-review.js';
+import { appendStepSummary } from '../core/step-summary.js';
+import type { StepSummary, StepSummaryExit } from '../core/step-summary.js';
+import type { SummaryOutcome } from '../core/run-summary.js';
 import type { SandboxContext } from '../sandbox/sandbox-context.js';
 import type { AgentAuth } from '../agents/auth.js';
 import type { PullRequestForReview, PullRequestReviewAttempt, PullRequestReviewOutcome, PullRequestReviewer, ReviewPullRequestDeps, ReviewPullRequestResult } from '../runners/pr-review.js';
@@ -33,9 +36,29 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
   const runReview = deps.reviewPullRequest ?? reviewPullRequest;
   const toFile = cmd.out !== undefined;
 
+  // On Actions each review leaves one block in the job's Summary tab (no GITHUB_STEP_SUMMARY ⇒ no-op).
+  // The default reviewer records its agent calls here; an injected one records nothing.
+  const outcomes: SummaryOutcome[] = [];
+  const stepSummary = (taskId: string, exit: StepSummaryExit, extra: Pick<StepSummary, 'prUrl' | 'verdict' | 'error'> = {}): Promise<void> => {
+    const model = outcomes.at(-1)?.result.model ?? cmd.reviewModel;
+    return appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
+      taskId,
+      flow: 'pr-review',
+      provider: cmd.provider ?? 'claude',
+      ...(model !== undefined ? { model } : {}),
+      outcomes,
+      exit,
+      ...extra,
+    });
+  };
+
   // --out routes the review to a local file and suppresses the PR comment — a no-trace review for
   // client repos (nothing is posted to the tracker). Default posts the comment, as before.
   const deliver = async (result: ReviewPullRequestResult): Promise<void> => {
+    await stepSummary(`${result.pr.repoSlug}#${result.pr.number}`, 'completed', {
+      prUrl: result.pr.url,
+      ...(result.verdict !== undefined ? { verdict: result.verdict } : {}),
+    });
     if (cmd.out !== undefined) {
       await mkdir(dirname(cmd.out), { recursive: true });
       await writeFile(cmd.out, result.commentBody, 'utf8');
@@ -56,6 +79,8 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
         }),
       );
     } catch (error) {
+      const pr = error instanceof PullRequestReviewIncompleteError ? error.pr : undefined;
+      await stepSummary(pr !== undefined ? `${pr.repoSlug}#${pr.number}` : cmd.prRef, 'error', { error: String(error) });
       // --out callers still get the incomplete notice on disk; the rethrow keeps the exit code truthful.
       if (cmd.out !== undefined && error instanceof PullRequestReviewIncompleteError) {
         await mkdir(dirname(cmd.out), { recursive: true });
@@ -79,7 +104,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
   });
   try {
-    await runAndDeliver((pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts));
+    await runAndDeliver((pr, opts) => runDefaultReviewer(pr, cmd, auth, sandboxContext, opts, outcomes));
   } finally {
     await sandboxContext.destroy();
   }
@@ -91,6 +116,7 @@ async function runDefaultReviewer(
   auth: AgentAuth | undefined,
   sandboxContext: SandboxContext,
   opts: PullRequestReviewAttempt,
+  outcomes: SummaryOutcome[],
 ): Promise<PullRequestReviewOutcome> {
   const agents = selectAgents(cmd, process.env, { proxyMode: sandboxContext.llmProxy !== undefined });
 
@@ -128,6 +154,7 @@ async function runDefaultReviewer(
         copyBack: false,
         ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}),
       });
+      outcomes.push({ name: opts.isRetry ? 'pr-review-retry' : 'pr-review', result, ...(cmd.reviewModel !== undefined ? { model: cmd.reviewModel } : {}) });
       return { text: result.finalText, completed: result.completed };
     } finally {
       await disposeContext(ctx);
