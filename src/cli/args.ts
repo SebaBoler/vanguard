@@ -274,6 +274,7 @@ export type Command =
     }
   | { kind: 'sidecar' }
   | { kind: 'complete' }
+  | { kind: 'hub'; repoPath: string; host: string; port: number; uiDir?: string; open: boolean }
   | { kind: 'help' }
   | { kind: 'error'; message: string };
 
@@ -362,6 +363,10 @@ const DEFAULT_PR_REVIEWING_LABEL = 'vanguard:reviewing';
 const DEFAULT_PR_REVIEWED_LABEL = 'vanguard:reviewed';
 const DEFAULT_GITLAB_MR_REVIEWING_LABEL = 'vanguard::reviewing';
 const DEFAULT_GITLAB_MR_REVIEWED_LABEL = 'vanguard::reviewed';
+/** VANGUARD_HUB_HOST default (spec §2.10) — loopback-only, so a fresh install binds nothing reachable off-box. */
+const DEFAULT_HUB_HOST = '127.0.0.1';
+/** VANGUARD_HUB_PORT default (spec §2.10). */
+const DEFAULT_HUB_PORT = 7777;
 
 function fail(message: string): Command {
   return { kind: 'error', message };
@@ -512,6 +517,11 @@ export function parseCli(argv: string[], cwd: string): Command {
         // eval --suggest
         suggest: { type: 'boolean' },
         out: { type: 'string' },
+        // hub
+        port: { type: 'string' },
+        host: { type: 'string' },
+        'ui-dir': { type: 'string' },
+        'no-open': { type: 'boolean' },
         help: { type: 'boolean' },
       },
     });
@@ -646,6 +656,33 @@ export function parseCli(argv: string[], cwd: string): Command {
       dryRun: values['dry-run'] === true,
       abandoned: values.abandoned === true,
       ...(typeof values.remote === 'string' ? { remoteRepo: values.remote } : {}),
+    };
+  }
+
+  if (positionals[0] === 'hub') {
+    const hostRaw = typeof values.host === 'string' ? values.host : process.env.VANGUARD_HUB_HOST;
+    const host = hostRaw !== undefined && hostRaw.trim() !== '' ? hostRaw : DEFAULT_HUB_HOST;
+
+    const portRaw = typeof values.port === 'string' ? values.port : undefined;
+    let port: number;
+    if (portRaw !== undefined) {
+      const parsed = Number(portRaw);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+        return fail(`--port expects an integer between 1 and 65535, got "${portRaw}".`);
+      }
+      port = parsed;
+    } else {
+      const envPort = Number(process.env.VANGUARD_HUB_PORT);
+      port = Number.isInteger(envPort) && envPort >= 1 && envPort <= 65535 ? envPort : DEFAULT_HUB_PORT;
+    }
+
+    return {
+      kind: 'hub',
+      repoPath,
+      host,
+      port,
+      ...(typeof values['ui-dir'] === 'string' ? { uiDir: values['ui-dir'] } : {}),
+      open: values['no-open'] !== true,
     };
   }
 
@@ -1128,6 +1165,7 @@ Commands:
   eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
          remote chore/vanguard-* branches.
+  hub    Serve the Inspector UI over HTTP/SSE (node:http), backed by a real .vanguard/ directory.
 
   watch options (trigger = state/label + label):
     --source <linear|github|project|gitlab>  Task source (default: linear)
