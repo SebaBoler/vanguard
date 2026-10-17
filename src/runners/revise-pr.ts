@@ -322,7 +322,8 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       try {
         revisionDiff = await ctx.wm.diff(ctx.worktreePath);
       } catch (err) {
-        await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name });
+        // Nothing is known about the content on this path (the scan never ran): keep the payloads off disk.
+        await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name, omitDiff: true });
         throw err;
       }
       const whiteLabel = deps.commitAuthor !== undefined;

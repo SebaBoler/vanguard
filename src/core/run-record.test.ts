@@ -116,14 +116,15 @@ describe('persistRunRecord', () => {
     expect(files.some((f) => f.endsWith('.diff') || f.endsWith('.bundle'))).toBe(false);
   });
 
-  it('omitDiff writes the JSON but no .diff and no .bundle (secret-blocked runs)', () =>
+  it('omitDiff writes the JSON but no .diff, no .bundle and no transcript (secret-blocked runs)', () =>
     withWorktree(async (wt) => {
       await execa('git', ['init', '-b', 'main'], { cwd: wt });
       await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
-      const file = await persistRunRecord(repo, { ...result, worktreePath: wt }, { timestamp: TS, omitDiff: true });
+      const file = await persistRunRecord(repo, { ...result, worktreePath: wt, transcript: '{"type":"result"}\n' }, { timestamp: TS, omitDiff: true });
       await expect(access(file)).resolves.toBeUndefined();
       await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();
     }),
   );
 
@@ -143,6 +144,19 @@ describe('persistRunRecord', () => {
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
     }),
   );
+
+  it('persistVerification masks credential material in outputTail', async () => {
+    const token = `ghp_${'C'.repeat(36)}`;
+    const file = await persistVerification(
+      repo,
+      'TES-1',
+      { command: 'pnpm test', exitCode: 1, passed: false, sha256: 'abc', outputTail: `Error: bad token ${token}` },
+      { timestamp: TS },
+    );
+    const proof = JSON.parse(await readFile(file, 'utf8'));
+    expect(proof.outputTail).not.toContain(token);
+    expect(proof.outputTail).toContain('[REDACTED-GH]');
+  });
 
   it('persistVerification writes proof.json and metric line', async () => {
     const verResult = {
@@ -257,7 +271,7 @@ describe('persistRunRecord', () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     try {
-      await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { prUrl: 'https://pr/1', flow: 'default', provider: 'claude', omitDiff: true });
+      await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { prUrl: 'https://pr/1', flow: 'default', provider: 'claude' });
     } finally {
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();
@@ -265,7 +279,6 @@ describe('persistRunRecord', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://lf.example/api/public/otel/v1/traces');
-    // omitDiff above exercises the persist/trace split; buildTracePayload names its fields, so no body assertion can pin it.
     const spans = (JSON.parse(init.body as string) as { resourceSpans: { scopeSpans: { spans: { name: string }[] }[] }[] }).resourceSpans[0]!.scopeSpans[0]!.spans;
     expect(spans.map((s) => s.name)).toEqual(['TES-1', 'implementer', 'reviewer']);
     // The metric lines on disk are untouched by the mirror.

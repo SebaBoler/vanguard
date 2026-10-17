@@ -19,8 +19,10 @@ export interface PersistOptions {
   /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
   requestedModel?: string;
   /**
-   * Leave the `.diff` and `.bundle` off disk. Set for secret-blocked runs: their diff holds the very
-   * secret the scan caught, and the run record may be uploaded as a CI artifact (`upload-run-records`).
+   * Leave the `.diff`, `.bundle` and `.transcript.log` off disk; only the JSON record and the metric
+   * line are written. Set for secret-blocked runs (and for a revise round whose diff could not be
+   * captured): the payloads hold the very secret the scan caught, and the run record may be uploaded
+   * as a CI artifact (`upload-run-records`).
    */
   omitDiff?: boolean;
 }
@@ -57,8 +59,10 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   // diff viewer and a human reconstructing the run read, and on a shipped run they hold nothing the
   // pushed PR does not. Residual gap, shared with the publish gate: scanForSecrets exempts test paths
   // (isTestPath), so a credential under tests/ is in the diff exactly as it is in the PR.
-  if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
   if (!opts.omitDiff) {
+    // A secret-blocked run skips the transcript too: the tool call that wrote the secret is in it, and
+    // the scan catches shapes (entropy) that the pattern-based masking cannot.
+    if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
     if (diff) await writeFile(`${base}.diff`, diff);
     const bundlePath = `${base}.bundle`;
     try {
