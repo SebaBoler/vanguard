@@ -459,6 +459,10 @@ export async function runSourcedIssue(
         );
       }
       const runMeta = { flow: flow ?? 'default', provider: agents.agent.name };
+      // One timestamp for the whole run: proof.json, visual-proof.json and every stage record share
+      // this prefix so the hub/desktop readers can match a run's proof to its stage records by name.
+      const runTimestamp = new Date().toISOString();
+      const stageMeta = { ...runMeta, timestamp: runTimestamp };
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
@@ -551,8 +555,10 @@ export async function runSourcedIssue(
         deps.visualProofCmd !== undefined ? { cmd: deps.visualProofCmd } : {},
       );
 
-      if (verification !== undefined) await persistVerification(deps.repoPath, ctx.taskId, verification);
-      if (visualProof !== undefined) await persistVisualProof(deps.repoPath, ctx.taskId, visualProof);
+      await Promise.all([
+        verification !== undefined ? persistVerification(deps.repoPath, ctx.taskId, verification, { timestamp: runTimestamp }) : undefined,
+        visualProof !== undefined ? persistVisualProof(deps.repoPath, ctx.taskId, visualProof, { timestamp: runTimestamp }) : undefined,
+      ]);
 
       // Verification participates in the Closes/Part-of decision alongside conformance: a red result
       // forces the declared-partial path even when conformance itself passed.
@@ -595,7 +601,7 @@ export async function runSourcedIssue(
       });
       if (delivery.kind === 'secret-blocked') {
         // The blocked diff holds the secret the scan caught: keep it (and the bundle) off disk.
-        await persistStageOutcomes(deps.repoPath, outcomes, { ...runMeta, omitDiff: true });
+        await persistStageOutcomes(deps.repoPath, outcomes, { ...stageMeta, omitDiff: true });
         await stepSummary('secret-blocked');
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr + run record.
@@ -604,7 +610,7 @@ export async function runSourcedIssue(
         return { task, secretBlocked: true };
       }
       if (delivery.kind === 'no-changes') {
-        await persistStageOutcomes(deps.repoPath, outcomes, runMeta);
+        await persistStageOutcomes(deps.repoPath, outcomes, stageMeta);
         await stepSummary('no-changes');
         deps.onEvent?.({ type: 'run-end' });
         return { task };
@@ -631,7 +637,7 @@ export async function runSourcedIssue(
           ...(deps.reviewGate === true ? { gate: true } : {}),
         });
       }
-      await persistStageOutcomes(deps.repoPath, outcomes, { ...runMeta, prUrl: pr.prUrl });
+      await persistStageOutcomes(deps.repoPath, outcomes, { ...stageMeta, prUrl: pr.prUrl });
       await stepSummary(verificationFailed ? 'verify-failed' : 'completed', { prUrl: pr.prUrl });
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');

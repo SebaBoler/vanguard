@@ -154,6 +154,116 @@ describe('readRunDetail', () => {
     await expect(readRunDetail(runsRoot, 'a/b', 'x')).rejects.toBeInstanceOf(BadRequestError);
     await expect(readRunDetail(runsRoot, '', 'x')).rejects.toBeInstanceOf(BadRequestError);
   });
+
+  it('T-11 falls back to the closest earlier proof.json (gh-477: proof stamped ~7s before the stage records)', async () => {
+    const runsRoot = join(tmp, '.vanguard', 'runs');
+    const taskId = 'gh-SebaBoler-vanguard-477';
+    const dir = join(runsRoot, taskId);
+    await write(
+      join(dir, '2026-10-17T17-57-17-534Z-implementer.json'),
+      JSON.stringify({
+        taskId,
+        completed: true,
+        exitReason: 'completed',
+        turns: 5,
+        worktreePath: '/tmp/wt',
+        worktreePreserved: false,
+        finalText: 'done',
+        timestamp: '2026-10-17T17:57:17.534Z',
+        stage: 'implementer',
+      }),
+    );
+    await write(
+      join(dir, '2026-10-17T17-57-10-100Z.proof.json'),
+      JSON.stringify({ command: 'pnpm test', exitCode: 0, passed: true, sha256: 'feedface', outputTail: 'all good' }),
+    );
+    const detail = await readRunDetail(runsRoot, taskId, '2026-10-17T17:57:17.534Z');
+    expect(detail.proof?.passed).toBe(true);
+    expect(detail.proof?.sha256).toBe('feedface');
+  });
+
+  it('T-12 prefers the exact-timestamp proof.json over an older fallback when both exist', async () => {
+    const runsRoot = join(tmp, '.vanguard', 'runs');
+    const taskId = 'gh-both-proofs';
+    const dir = join(runsRoot, taskId);
+    await write(
+      join(dir, '2026-10-17T17-57-17-534Z-implementer.json'),
+      JSON.stringify({
+        taskId,
+        completed: true,
+        exitReason: 'completed',
+        turns: 5,
+        worktreePath: '/tmp/wt',
+        worktreePreserved: false,
+        finalText: 'done',
+        timestamp: '2026-10-17T17:57:17.534Z',
+        stage: 'implementer',
+      }),
+    );
+    await write(
+      join(dir, '2026-10-17T17-57-10-100Z.proof.json'),
+      JSON.stringify({ command: 'pnpm test', exitCode: 1, passed: false, sha256: 'stale', outputTail: 'old' }),
+    );
+    await write(
+      join(dir, '2026-10-17T17-57-17-534Z.proof.json'),
+      JSON.stringify({ command: 'pnpm test', exitCode: 0, passed: true, sha256: 'exact', outputTail: 'fresh' }),
+    );
+    const detail = await readRunDetail(runsRoot, taskId, '2026-10-17T17:57:17.534Z');
+    expect(detail.proof?.sha256).toBe('exact');
+  });
+
+  it('T-13 does not fall back to a proof more than 10 minutes before the stage timestamp', async () => {
+    const runsRoot = join(tmp, '.vanguard', 'runs');
+    const taskId = 'gh-too-old';
+    const dir = join(runsRoot, taskId);
+    await write(
+      join(dir, '2026-10-17T17-57-17-534Z-implementer.json'),
+      JSON.stringify({
+        taskId,
+        completed: true,
+        exitReason: 'completed',
+        turns: 5,
+        worktreePath: '/tmp/wt',
+        worktreePreserved: false,
+        finalText: 'done',
+        timestamp: '2026-10-17T17:57:17.534Z',
+        stage: 'implementer',
+      }),
+    );
+    await write(
+      join(dir, '2026-10-17T17-40-00-000Z.proof.json'),
+      JSON.stringify({ command: 'pnpm test', exitCode: 0, passed: true, sha256: 'tooold', outputTail: 'old' }),
+    );
+    const detail = await readRunDetail(runsRoot, taskId, '2026-10-17T17:57:17.534Z');
+    expect(detail.proof).toBeUndefined();
+  });
+
+  it('T-14 falls back to the closest earlier visual-proof.json the same way as proof.json', async () => {
+    const runsRoot = join(tmp, '.vanguard', 'runs');
+    const taskId = 'gh-visual-477';
+    const dir = join(runsRoot, taskId);
+    await write(
+      join(dir, '2026-10-17T17-57-17-534Z-implementer.json'),
+      JSON.stringify({
+        taskId,
+        completed: true,
+        exitReason: 'completed',
+        turns: 5,
+        worktreePath: '/tmp/wt',
+        worktreePreserved: false,
+        finalText: 'done',
+        timestamp: '2026-10-17T17:57:17.534Z',
+        stage: 'implementer',
+      }),
+    );
+    await write(
+      join(dir, '2026-10-17T17-57-10-100Z.visual-proof.json'),
+      JSON.stringify({ command: 'pnpm visual-proof', exitCode: 0, passed: true, sha256: 'vp', outputTail: 'ok', artifacts: [] }),
+    );
+    const detail = await readRunDetail(runsRoot, taskId, '2026-10-17T17:57:17.534Z');
+    expect(detail.visualProof?.passed).toBe(true);
+    expect(detail.visualProof?.sha256).toBe('vp');
+  });
 });
 
 describe('runsFingerprint', () => {

@@ -290,6 +290,20 @@ describe('persistRunRecord', () => {
     expect(JSON.parse(metrics[1]!)).not.toHaveProperty('requestedModel');
   });
 
+  it('persistStageOutcomes and persistVerification share one timestamp prefix when given the same `timestamp`', async () => {
+    const verResult = { command: 'pnpm test', exitCode: 0, passed: true, sha256: 'deadbeef'.repeat(8), outputTail: 'all good' };
+    const proofFile = await persistVerification(repo, 'TES-1', verResult, { timestamp: TS });
+    await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { timestamp: TS });
+
+    const taskDir = join(repo, '.vanguard', 'runs', 'TES-1');
+    const files = (await readdir(taskDir)).filter((n) => n.endsWith('.json'));
+    const prefix = '2026-06-06T10-00-00-000Z';
+    expect(proofFile).toBe(join(taskDir, `${prefix}.proof.json`));
+    expect(files).toEqual(
+      expect.arrayContaining([`${prefix}.proof.json`, `${prefix}-implementer.json`, `${prefix}-reviewer.json`]),
+    );
+  });
+
   it('persistStageOutcomes mirrors the run as one OTLP trace when an exporter is configured', async () => {
     vi.stubEnv('VANGUARD_OTLP_ENDPOINT', 'https://lf.example/api/public/otel');
     vi.stubEnv('LANGFUSE_PUBLIC_KEY', 'pk');

@@ -38,6 +38,21 @@ export interface Proof {
   outputTail: string;
 }
 
+export interface VisualProofArtifact {
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface VisualProof {
+  command: string;
+  exitCode: number;
+  passed: boolean;
+  sha256: string;
+  outputTail: string;
+  artifacts: VisualProofArtifact[];
+}
+
 export interface RunSummary {
   taskId: string;
   timestamp: string;
@@ -58,6 +73,7 @@ export interface RunDetail {
   timestamp: string;
   stages: StageDetail[];
   proof?: Proof;
+  visualProof?: VisualProof;
 }
 
 /** `<runsRoot>` is the directory directly containing per-task subdirectories. */
@@ -144,6 +160,38 @@ export async function runsFingerprint(runsRoot: string): Promise<number> {
     }
   }
   return fp;
+}
+
+/** Matches the `sanitizeTimestamp()` shape of an ISO timestamp, e.g. `2026-10-17T17-57-10-100Z`. */
+const SANITIZED_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/;
+
+/** Parse a `sanitizeTimestamp()`-shaped prefix back into epoch ms, or undefined if it doesn't match. */
+function parseSanitizedTimestampMs(sanitized: string): number | undefined {
+  const m = SANITIZED_TIMESTAMP_RE.exec(sanitized);
+  if (m === null) return undefined;
+  const [, date, hh, mm, ss, mmm] = m;
+  const ms = Date.parse(`${date}T${hh}:${mm}:${ss}.${mmm}Z`);
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
+/** How far back a proof/visual-proof file may sit from the stage timestamp it's matched to as a fallback. */
+const PROOF_FALLBACK_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Pick the sibling `*<suffix>` file (by name, from a task dir listing) closest to and not later than
+ * `stageMs`, within `PROOF_FALLBACK_WINDOW_MS`. Covers runs persisted before `runSourcedIssue` shared
+ * one timestamp across `persistVerification`/`persistVisualProof` and `persistStageOutcomes`: the proof
+ * file is stamped a few seconds earlier than the stage records and never matches them exactly.
+ */
+function findClosestProofFile(fileNames: readonly string[], suffix: string, stageMs: number): string | undefined {
+  let best: { name: string; ms: number } | undefined;
+  for (const name of fileNames) {
+    if (!name.endsWith(suffix)) continue;
+    const ms = parseSanitizedTimestampMs(name.slice(0, -suffix.length));
+    if (ms === undefined || ms > stageMs || stageMs - ms > PROOF_FALLBACK_WINDOW_MS) continue;
+    if (best === undefined || ms > best.ms) best = { name, ms };
+  }
+  return best?.name;
 }
 
 /** Best-effort parse of a run record file; returns undefined on any read or JSON error. */
@@ -247,18 +295,35 @@ export async function readRunDetail(runsRoot: string, taskId: string, timestamp:
     return sa < sb ? -1 : sa > sb ? 1 : 0;
   });
 
-  const proofPath = join(taskDir, `${sanitizeTimestamp(timestamp)}.proof.json`);
-  let proof: Proof | undefined;
-  try {
-    proof = JSON.parse(await readFile(proofPath, 'utf8')) as Proof;
-  } catch {
-    proof = undefined;
-  }
+  const fileNames = files.map((f) => f.name);
+  const stageMs = Date.parse(timestamp);
+
+  /** Read `<ts><suffix>`, or — if absent — the closest sibling `*<suffix>` file (see findClosestProofFile). */
+  const readProofFile = async <T>(suffix: string): Promise<T | undefined> => {
+    const exactPath = join(taskDir, `${sanitizeTimestamp(timestamp)}${suffix}`);
+    try {
+      return JSON.parse(await readFile(exactPath, 'utf8')) as T;
+    } catch {
+      // fall through to the closest-preceding fallback below
+    }
+    if (Number.isNaN(stageMs)) return undefined;
+    const fallbackName = findClosestProofFile(fileNames, suffix, stageMs);
+    if (fallbackName === undefined) return undefined;
+    try {
+      return JSON.parse(await readFile(join(taskDir, fallbackName), 'utf8')) as T;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const proof = await readProofFile<Proof>('.proof.json');
+  const visualProof = await readProofFile<VisualProof>('.visual-proof.json');
 
   return {
     taskId,
     timestamp,
     stages,
     ...(proof !== undefined ? { proof } : {}),
+    ...(visualProof !== undefined ? { visualProof } : {}),
   };
 }
