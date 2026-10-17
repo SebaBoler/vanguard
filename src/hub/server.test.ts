@@ -137,6 +137,17 @@ describe('hub server', () => {
     expect(await res.json()).toEqual({ result: null });
   });
 
+  test('T-81c a `false` result survives the envelope (api_repo_ok on a path outside the allowlist)', async () => {
+    const res = await fetch(`${baseUrl}/rpc/api_repo_ok`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repoPath: '/definitely/not/allowlisted' }),
+    });
+    expect(res.status).toBe(200);
+    // Pins `result ?? null`: a `result || null` refactor would turn this into `{ result: null }`.
+    expect(await res.json()).toEqual({ result: false });
+  });
+
   test('T-82 an oversized body is rejected with 413', async () => {
     const res = await fetch(`${baseUrl}/rpc/list_runs`, {
       method: 'POST',
