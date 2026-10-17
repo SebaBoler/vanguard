@@ -77,6 +77,10 @@ on:
         description: 'Orphan branch for persisted metrics (--branch). Empty = CLI default (vanguard-metrics).'
         type: string
         default: ''
+      upload-run-records:
+        description: 'Upload `.vanguard/runs/` (run records, token-redacted transcripts, diffs, metrics.jsonl; no git bundles) as a `vanguard-runs` workflow artifact after the run. Secret-blocked runs leave no diff. Off by default (artifacts are readable by anyone who can read the repo).'
+        type: boolean
+        default: false
       max-tasks:
         description: 'Cap how many ready issues one run claims per phase (--max-tasks), so a mislabelled batch cannot flood the runner. Empty = no cap.'
         type: string
@@ -225,3 +229,16 @@ jobs:
           args=(metrics push --repo "$GITHUB_WORKSPACE")
           [ -n "$IN_METRICS_BRANCH" ] && args+=(--branch "$IN_METRICS_BRANCH")
           node .vanguard-src/dist/cli/index.js "${args[@]}"
+
+      - name: Upload run records
+        # Same gate as metrics: only once the loop ran. Artifacts are readable by anyone with read access to the repo.
+        if: ${{ always() && inputs.upload-run-records && contains(fromJSON('["success","failure"]'), steps.loop.conclusion) }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vanguard-runs
+          # Bundles carry the branch's whole history and the PR already holds that content.
+          path: |
+            .vanguard/runs/
+            !.vanguard/runs/**/*.bundle
+          if-no-files-found: ignore
+          retention-days: 14
