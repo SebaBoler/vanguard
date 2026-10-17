@@ -1,8 +1,10 @@
 // Serves the built apps/desktop/dist SPA, injecting the hub marker into index.html so the browser
 // bundle's transport.ts picks the hub (fetch/SSE) branch instead of Tauri's invoke/listen.
-import { readFile, stat } from 'node:fs/promises';
-import { extname, join, normalize, sep } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { extname, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { jsonError } from './json-response.js';
+import { isWithinRoot } from './browse.js';
 
 const HUB_MARKER_SCRIPT = '<script>window.__VANGUARD_HUB__=true</script>';
 
@@ -16,11 +18,6 @@ export function injectHubMarker(html: string): string {
   return html.slice(0, insertAt) + HUB_MARKER_SCRIPT + html.slice(insertAt);
 }
 
-function isSafeRelativePath(p: string): boolean {
-  const normalized = normalize(p);
-  return !normalized.startsWith('..') && !normalized.startsWith(sep) && !normalized.includes(`..${sep}`);
-}
-
 export interface StaticOptions {
   uiDir: string;
 }
@@ -32,31 +29,36 @@ export interface StaticOptions {
  */
 export async function serveStatic(opts: StaticOptions, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  const url = new URL(req.url ?? '/', 'http://hub.local');
-  const rawPath = decodeURIComponent(url.pathname);
-
-  if (!isSafeRelativePath(rawPath)) {
-    res.writeHead(404, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: { message: 'not found', kind: 'bad-request' } }));
+  // Decoded (and query-stripped) once, before any URL-level dot-segment normalization could hide a
+  // literal `..` segment from this check — e.g. a request for `/../etc/passwd` must 404, not get
+  // silently resolved to `/etc/passwd` by a later normalization step.
+  let rawPath: string;
+  try {
+    rawPath = decodeURIComponent((req.url ?? '/').split('?')[0]!);
+    if (rawPath.includes('\0') || rawPath.split(/[\\/]/).includes('..')) throw new Error('invalid path');
+  } catch {
+    jsonError(res, 404, 'not found', 'bad-request');
     return true;
   }
 
   const hasExtension = extname(rawPath) !== '';
-  if (hasExtension && rawPath !== '/') {
+  if (hasExtension && rawPath !== '/index.html') {
     const filePath = join(opts.uiDir, rawPath);
     try {
-      const info = await stat(filePath);
-      if (!info.isFile()) throw new Error('not a file');
-      const body = await readFile(filePath);
+      const root = await realpath(opts.uiDir);
+      const resolved = await realpath(filePath);
+      if (!isWithinRoot(root, resolved)) throw new Error('outside UI directory');
+      // No separate `stat`/isFile check: `readFile` on a directory throws EISDIR, which the catch
+      // below turns into the same 404 a missing or disallowed file gets.
+      const body = await readFile(resolved);
       res.writeHead(200, {
         'content-type': contentType(filePath),
         'cache-control': 'public, max-age=31536000, immutable',
       });
-      res.end(body);
+      res.end(req.method === 'HEAD' ? undefined : body);
       return true;
     } catch {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'not found', kind: 'bad-request' } }));
+      jsonError(res, 404, 'not found', 'bad-request');
       return true;
     }
   }
@@ -66,17 +68,14 @@ export async function serveStatic(opts: StaticOptions, req: IncomingMessage, res
     const raw = await readFile(join(opts.uiDir, 'index.html'), 'utf8');
     const html = injectHubMarker(raw);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(html);
+    res.end(req.method === 'HEAD' ? undefined : html);
     return true;
   } catch {
-    res.writeHead(500, { 'content-type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: {
-          message: `cannot read ${join(opts.uiDir, 'index.html')} — build the desktop app first: pnpm --dir apps/desktop build`,
-          kind: 'internal',
-        },
-      }),
+    jsonError(
+      res,
+      500,
+      `cannot read ${join(opts.uiDir, 'index.html')} — build the desktop app first: pnpm --dir apps/desktop build`,
+      'internal',
     );
     return true;
   }
