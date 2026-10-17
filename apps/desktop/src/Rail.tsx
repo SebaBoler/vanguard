@@ -14,12 +14,13 @@ import { Collapsible, Tooltip, cn } from '@/ui';
 import type { Project, ActiveRun } from './vanguard-output';
 import { relTime } from './time';
 import { RailTip } from './RailTip';
+import { canUseFleet } from './transport';
 
 // 'task' (S10) is reached by intent — the New Task button on the board and Runs toolbars — so it
 // has no NAV entry; the breadcrumb is its location anchor.
 export type Screen = 'dashboard' | 'runs' | 'board' | 'task' | 'fleet' | 'remote' | 'workflow' | 'settings';
 
-const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
+const ALL_NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'runs', label: 'Runs', icon: List },
   { key: 'board', label: 'Task board', icon: Columns3 },
@@ -28,6 +29,8 @@ const NAV: { key: Screen; label: string; icon: LucideIcon }[] = [
   { key: 'workflow', label: 'Workflow', icon: Workflow },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
+// Hub mode drops Fleet from the rail entirely — see canUseFleet().
+const NAV = ALL_NAV.filter((n) => n.key !== 'fleet' || canUseFleet());
 
 export function Rail({
   projects,

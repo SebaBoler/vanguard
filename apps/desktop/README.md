@@ -44,6 +44,40 @@ The app renders with populated fixture data (two projects, three runs with full 
 board tasks, capabilities, flows). Navigate screens by clicking the rail icons exactly as a user would —
 no URL routing needed.
 
+## Hub mode
+
+This same frontend also runs with no Tauri runtime at all, served by `vanguard hub` over plain
+HTTP/SSE (see `../../docs/hub.md`). `src/transport.ts` is the seam: every `invoke`/`listen` call goes
+through `invoke()`/`subscribe()`, which pick Tauri's IPC or the hub's `POST /rpc/<cmd>` + `/events` SSE
+stream, depending on which of these is present, in order:
+
+1. `window.__VANGUARD_HUB__ === true` — the hub injects this marker into `index.html` itself.
+2. `VITE_VANGUARD_HUB === '1'` (a Vite env var) — lets `pnpm dev`'s hot-reloading dev server point at a
+   hub that's already running, instead of the Tauri/mock branch.
+3. Otherwise, Tauri — the branch `vitest` and `dev/mockBackend.ts` always exercise.
+
+**Build the UI and run the hub against a real repo:**
+
+```bash
+pnpm --dir apps/desktop build          # emits apps/desktop/dist, which the hub serves
+vanguard hub --repo /path/to/your/repo # from the repo root; prints the URL it opened
+```
+
+**Point the Vite dev server at an already-running hub** (hot reload, no rebuild per change):
+
+```bash
+vanguard hub --repo /path/to/your/repo --no-open   # start the hub in one terminal
+VITE_VANGUARD_HUB=1 pnpm --dir apps/desktop dev     # in another — http://localhost:1420
+```
+
+**What's absent in hub mode:**
+
+- **Fleet** — dropped from the rail entirely. It spawns shell commands, which would be remote code
+  execution on a reachable server; the hub's RPC dispatcher rejects the underlying commands too.
+- **The native OS folder dialog** — there is no Tauri plugin in a browser. "Add a repo" opens
+  `RepoPicker` instead, a modal that walks the filesystem via `browse_dirs` (confined server-side to
+  the hub's browse root).
+
 **Coverage guard:** `src/dev/mockBackend.test.ts` asserts that every `invoke` command string in
 `src/ipc.ts` has a fixture. A new IPC command added without a matching case in `mockBackend.ts` fails
 the test immediately.

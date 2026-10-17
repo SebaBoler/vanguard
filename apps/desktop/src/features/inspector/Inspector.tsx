@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Chip, cn } from '@/ui';
-import { listen } from '@tauri-apps/api/event';
 import { ArrowLeft, FilePlus, RefreshCw } from 'lucide-react';
+import { canUseFleet, subscribe } from '../../transport';
 import {
   listRuns,
   listActive,
@@ -147,7 +147,7 @@ export function Inspector({
     void watchProject(project)
       .then(() => setWatching(true))
       .catch(() => setWatching(false));
-    const unlisten = listen<string>('vanguard:changed', (e) => {
+    const unlisten = subscribe<string>('vanguard:changed', (e) => {
       if (e.payload === project) void refresh();
     });
     return () => {
@@ -176,7 +176,7 @@ export function Inspector({
   // Subscribe to the typed-run event stream and fold into `typedRun` (reducer drops foreign runIds).
   // Ignore events for a run the user has dismissed, so a late event can't resurrect a closed strip.
   useEffect(() => {
-    const un = listen<{ runId: string; event: RunEvent }>('api:event', (e) => {
+    const un = subscribe<{ runId: string; event: RunEvent }>('api:event', (e) => {
       if (e.payload.runId === dismissedRunId.current) return;
       // repoPath scopes adoption: a foreign project's run can never seed a strip here (S8).
       const type = e.payload.event.type;
@@ -429,7 +429,14 @@ export function Inspector({
         </div>
       ) : screen === 'fleet' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <Fleet project={project} active={active} />
+          {canUseFleet() ? (
+            <Fleet project={project} active={active} />
+          ) : (
+            <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              Fleet is not available in hub mode — it spawns shell commands, which is remote code execution
+              on a reachable server.
+            </div>
+          )}
         </div>
       ) : screen === 'workflow' ? (
         <div className="flex min-h-0 flex-1 flex-col">
