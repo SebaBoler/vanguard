@@ -548,7 +548,7 @@ describe('runSourcedIssue', () => {
     await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', prUrl: MR_URL }]);
+    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', prUrl: MR_URL, timestamp: expect.any(String) }]);
   });
 
   it('white-label (--commit-author): no review comment, no issue link-back, clean PR body', async () => {
@@ -598,7 +598,7 @@ describe('runSourcedIssue', () => {
 
     expect(result.prUrl).toBeUndefined();
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude' }]);
+    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', timestamp: expect.any(String) }]);
     expect(publishForReview).not.toHaveBeenCalled();
     expect(order).toEqual([]);
     expect(resolveAndRunVisualProof).toHaveBeenCalled();
@@ -638,7 +638,7 @@ describe('runSourcedIssue', () => {
     expect(commitStage).not.toHaveBeenCalled();
     expect(publishForReview).not.toHaveBeenCalled();
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', omitDiff: true }]);
+    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', omitDiff: true, timestamp: expect.any(String) }]);
 
     expect(order).toEqual(['signalSecretBlock']);
     expect(adapter.signalSecretBlock).toHaveBeenCalledTimes(1);

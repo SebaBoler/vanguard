@@ -189,6 +189,8 @@ export async function persistVisualProof(
 }
 
 export interface PersistStageOptions {
+  /** ISO timestamp shared across all stage records; defaults to now. Injected for deterministic tests. */
+  timestamp?: string;
   /** The PR opened for this run, if any. */
   prUrl?: string;
   /** Flow and provider names of the run, recorded on the exported trace (see otlp-sink). */
@@ -207,8 +209,8 @@ export async function persistStageOutcomes(
   outcomes: ReadonlyArray<{ name: string; result: RunResult; model?: string }>,
   opts: PersistStageOptions = {},
 ): Promise<void> {
-  const timestamp = new Date().toISOString();
-  const { omitDiff, ...trace } = opts;
+  const { timestamp: optsTimestamp, omitDiff, ...trace } = opts;
+  const timestamp = optsTimestamp ?? new Date().toISOString();
   for (const outcome of outcomes) {
     await persistRunRecord(localRepoPath, outcome.result, {
       timestamp,
