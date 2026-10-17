@@ -16,9 +16,12 @@ function diffOf(files: { path: string; lines: string[] }[]): string {
 }
 
 describe('redactTokens', () => {
-  it('leaves a long `://a:a:a…` run without `@` alone (bounded userinfo quantifiers, no quadratic backtracking)', () => {
-    const pathological = `https://${'a:'.repeat(16000)}`;
+  it('leaves a long `://a:a:a…` run without `@` alone, in linear time (the old userinfo pattern backtracked quadratically)', () => {
+    // 64k chars: the old `[^\s/@]+:[^\s/]*@` took ~2.8 s at 16k and quadruples per doubling; the fix stays under a millisecond.
+    const pathological = `https://${'a:'.repeat(32000)}`;
+    const started = performance.now();
     expect(redactTokens(pathological)).toBe(pathological);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it('redacts JWTs, Bearer headers, and token JSON fields (unchanged from codex.ts)', () => {

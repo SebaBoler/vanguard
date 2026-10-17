@@ -19,10 +19,12 @@ export interface PersistOptions {
   /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
   requestedModel?: string;
   /**
-   * Leave the `.diff`, `.bundle` and `.transcript.log` off disk; only the JSON record and the metric
-   * line are written. Set for secret-blocked runs (and for a revise round whose diff could not be
-   * captured): the payloads hold the very secret the scan caught, and the run record may be uploaded
-   * as a CI artifact (`upload-run-records`).
+   * Leave the `.diff`, `.bundle` and `.transcript.log` off disk and stub `finalText`; only the JSON
+   * record (marked `diffOmitted: 'secret-blocked'`) and the metric line are written. Set for
+   * secret-blocked runs (and for a revise round whose diff could not be captured): the payloads hold
+   * the very secret the scan caught, and the run record may be uploaded as a CI artifact
+   * (`upload-run-records`). Independently of this flag, a stage diff that `scanForSecrets` flags is
+   * withheld with `diffOmitted: 'secret-scan'`.
    */
   omitDiff?: boolean;
 }
@@ -41,34 +43,42 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   await mkdir(taskDir, { recursive: true });
 
   const { diff, transcript, ...meta } = result;
-  // Every free-text field is masked before it reaches disk: the record may leave the job as a CI
-  // artifact, and on a secret-blocked run the agent's closing message tends to quote the change.
+  // Why the diff (and bundle) are withheld, recorded on run.json so the hub and a human can tell
+  // "withheld" from "no diff" or "bundle creation failed":
+  //  - 'secret-blocked': the caller's publish gate fired (opts.omitDiff).
+  //  - 'secret-scan': a stage's diff is the worktree at the end of THAT stage, while the gate scans the
+  //    final diff only — a secret the implementer wrote and the simplifier removed passes the gate yet
+  //    sits in the implementer's record, so every stage diff meets the same scan first. Same residual
+  //    gap as the gate: scanForSecrets exempts test paths (isTestPath).
+  const diffOmitted: 'secret-blocked' | 'secret-scan' | undefined = opts.omitDiff
+    ? 'secret-blocked'
+    : diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0
+      ? 'secret-scan'
+      : undefined;
+  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact). On a
+  // secret-blocked run the closing message tends to quote the change and redactTokens is pattern-only
+  // (a fragment past a token's char class survives), so the text is withheld rather than masked.
   const record = {
     ...meta,
-    finalText: redactTokens(result.finalText),
+    finalText: opts.omitDiff ? '[withheld: secret-blocked run]' : redactTokens(result.finalText),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
+    ...(diffOmitted !== undefined ? { diffOmitted } : {}),
   };
   const suffix = opts.label !== undefined ? `-${opts.label}` : '';
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
-  // The transcript is raw agent output: tool results can echo env or config, so mask known token
-  // shapes (lossy is fine for a log). The diff and the bundle stay faithful: they are what the hub's
-  // diff viewer and a human reconstructing the run read, and on a shipped run they hold nothing the
-  // pushed PR does not. Residual gap, shared with the publish gate: scanForSecrets exempts test paths
-  // (isTestPath), so a credential under tests/ is in the diff exactly as it is in the PR.
-  // A stage's diff is the worktree at the end of THAT stage, while the publish gate scans the final
-  // diff only: a secret the implementer wrote and the simplifier removed passes the gate yet sits in
-  // the implementer's record. So every stage diff meets the same scan before it lands on disk.
-  const diffBlocked = diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0;
   if (!opts.omitDiff) {
-    // A secret-blocked run skips the transcript too: redactTokens is pattern-only, and the tool call
-    // that wrote the secret is in the transcript verbatim — skipping beats trusting the masking.
+    // The transcript is raw agent output: tool results can echo env or config, so mask known token
+    // shapes (lossy is fine for a log). A secret-blocked run skips it entirely: the tool call that
+    // wrote the secret is in there verbatim, and skipping beats trusting pattern-only masking.
     if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
   }
-  if (!opts.omitDiff && !diffBlocked) {
+  if (diffOmitted === undefined) {
+    // Written faithful, not masked: this is what the hub's diff viewer and a human reconstructing the
+    // run read, and redactTokens would mangle ordinary code (`password: process.env.X` → `[REDACTED]`).
     if (diff) await writeFile(`${base}.diff`, diff);
     const bundlePath = `${base}.bundle`;
     try {

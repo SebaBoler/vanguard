@@ -108,32 +108,45 @@ describe('persistRunRecord', () => {
     expect(await readFile(file.replace(/\.json$/, '.diff'), 'utf8')).toBe(diff);
   });
 
-  it('a stage diff the publish gate would block is not written, even without omitDiff', async () => {
-    const token = `ghp_${'D'.repeat(36)}`;
-    const file = await persistRunRecord(
-      repo,
-      { ...result, diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
-      { timestamp: TS },
-    );
-    await expect(access(file)).resolves.toBeUndefined();
-    await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
-    await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
-  });
+  it('a stage diff the publish gate would block is withheld and marked, even without omitDiff', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const token = `ghp_${'D'.repeat(36)}`;
+      const file = await persistRunRecord(
+        repo,
+        { ...result, worktreePath: wt, diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
+        { timestamp: TS },
+      );
+      const record = JSON.parse(await readFile(file, 'utf8'));
+      expect(record.diffOmitted).toBe('secret-scan');
+      expect(record.finalText).toBe('done'); // only the diff is withheld on this path
+      await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+    }),
+  );
 
-  it('persistStageOutcomes propagates omitDiff to every stage record', async () => {
-    await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { omitDiff: true });
-    const dir = join(repo, '.vanguard', 'runs', 'TES-1');
-    const files = (await readdir(dir)).sort();
-    expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(2);
-    expect(files.some((f) => f.endsWith('.diff') || f.endsWith('.bundle'))).toBe(false);
-  });
+  it('persistStageOutcomes propagates omitDiff to every stage record', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const staged = { ...result, worktreePath: wt };
+      await persistStageOutcomes(repo, [{ name: 'implementer', result: staged }, { name: 'reviewer', result: staged }], { omitDiff: true });
+      const dir = join(repo, '.vanguard', 'runs', 'TES-1');
+      const files = (await readdir(dir)).sort();
+      expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(2);
+      expect(files.some((f) => f.endsWith('.diff') || f.endsWith('.bundle'))).toBe(false);
+    }),
+  );
 
   it('omitDiff writes the JSON but no .diff, no .bundle and no transcript (secret-blocked runs)', () =>
     withWorktree(async (wt) => {
       await execa('git', ['init', '-b', 'main'], { cwd: wt });
       await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
       const file = await persistRunRecord(repo, { ...result, worktreePath: wt, transcript: '{"type":"result"}\n' }, { timestamp: TS, omitDiff: true });
-      await expect(access(file)).resolves.toBeUndefined();
+      const record = JSON.parse(await readFile(file, 'utf8'));
+      expect(record.diffOmitted).toBe('secret-blocked');
+      expect(record.finalText).toBe('[withheld: secret-blocked run]');
       await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();
