@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -10,8 +10,11 @@ let root: string;
 
 beforeEach(async () => {
   tmp = await mkdtemp(join(tmpdir(), 'vanguard-hub-browse-'));
-  root = join(tmp, 'root');
-  await mkdir(root, { recursive: true });
+  const unresolvedRoot = join(tmp, 'root');
+  await mkdir(unresolvedRoot, { recursive: true });
+  // `browseDirs` realpath's its root before comparing; realpath here too so assertions match
+  // on platforms (e.g. macOS) where the OS temp dir is itself a symlink.
+  root = await realpath(unresolvedRoot);
 });
 
 afterEach(async () => {
