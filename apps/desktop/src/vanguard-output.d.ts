@@ -98,6 +98,9 @@ export interface RemoteRecords {
   /** Cache dir laid out like a repo root — pass it to `readRun` as `repoPath`. */
   cachePath: string;
   runs: RunSummary[];
+  /** Hub mode only: the records live under `<project>/.vanguard/remote-runs/<id>`, so `cachePath` is
+   * the project itself and `readRun` needs this id to pick the remote root. */
+  remoteRunId?: number;
 }
 
 export interface Project {
@@ -155,6 +158,6 @@ export interface DirListing {
 export interface RemoteImport {
   runId: number;
   taskIds: string[];
-  runs: { taskId: string; timestamp: string }[];
+  runs: RunSummary[];
   cachedAt: string;
 }

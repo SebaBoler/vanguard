@@ -268,7 +268,7 @@ export const dirListing: DirListing = {
 /** A `fetch_remote_run` import of a CI run's `vanguard-runs` artifact. */
 export const remoteImport: RemoteImport = {
   runId: 12345,
-  taskIds: [runs[0].taskId],
-  runs: runs.map((r) => ({ taskId: r.taskId, timestamp: r.timestamp })),
+  taskIds: [...new Set(runs.map((r) => r.taskId))],
+  runs,
   cachedAt: '2026-07-14T08:05:00.000Z',
 };

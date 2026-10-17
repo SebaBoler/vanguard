@@ -1,9 +1,21 @@
 import { useState } from 'react';
 import { Button, Table, Chip, ScrollTable } from '@/ui';
 import { Download } from 'lucide-react';
-import { downloadRunRecords, listRemoteRuns } from '../../ipc';
+import { downloadRunRecords, fetchRemoteRun, listRemoteRuns } from '../../ipc';
+import { isHubMode } from '../../transport';
 import { useAsync } from '../../hooks';
 import type { RemoteRecords, RemoteRun, RunSummary } from '../../vanguard-output';
+
+/**
+ * Tauri keeps a per-run cache dir that stands in for a repo root (`download_run_records`); the hub
+ * imports under the project's own `.vanguard/remote-runs/<id>` (`fetch_remote_run`) and `read_run`
+ * selects that root by `remoteRunId`. Same screen, two backends.
+ */
+async function loadRecords(project: string, runId: number): Promise<RemoteRecords> {
+  if (!isHubMode()) return downloadRunRecords(project, runId);
+  const imported = await fetchRemoteRun(project, runId);
+  return { cachePath: project, runs: imported.runs, remoteRunId: runId };
+}
 
 function when(ts: string): string {
   return ts.replace('T', ' ').slice(0, 16);
@@ -29,8 +41,9 @@ export function RemoteRuns({
   onOpenRun,
 }: {
   project: string;
-  /** Open a downloaded record in the run inspector; `cachePath` stands in for the repo root. */
-  onOpenRun: (cachePath: string, run: RunSummary) => void;
+  /** Open a downloaded record in the run inspector; `cachePath` stands in for the repo root
+   * (hub mode: the project, plus the `remoteRunId` that selects the imported root). */
+  onOpenRun: (cachePath: string, run: RunSummary, remoteRunId?: number) => void;
 }) {
   const { data: runs, error, loading } = useAsync(() => listRemoteRuns(project), [project]);
   const [records, setRecords] = useState<Record<number, Records>>({});
@@ -38,7 +51,7 @@ export function RemoteRuns({
   const fetchRecords = async (id: number): Promise<void> => {
     setRecords((m) => ({ ...m, [id]: { loading: true } }));
     try {
-      const data = await downloadRunRecords(project, id);
+      const data = await loadRecords(project, id);
       setRecords((m) => ({ ...m, [id]: { data } }));
     } catch (e) {
       setRecords((m) => ({ ...m, [id]: { error: String(e) } }));
@@ -114,7 +127,7 @@ export function RemoteRuns({
                         <li key={`${s.taskId}:${s.timestamp}`}>
                           <button
                             type="button"
-                            onClick={() => onOpenRun(rec.data.cachePath, s)}
+                            onClick={() => onOpenRun(rec.data.cachePath, s, rec.data.remoteRunId)}
                             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-left hover:bg-muted"
                           >
                             <span className="font-medium">{s.taskId}</span>

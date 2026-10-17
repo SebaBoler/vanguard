@@ -4,7 +4,7 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BadRequestError } from '../sidecar/sidecar.js';
-import { isRunRecordFile, listRunSummaries, remoteRunsRoot } from './runs.js';
+import { isRunRecordFile, listRunSummaries, remoteRunsRoot, type RunSummary } from './runs.js';
 
 export interface RemoteRun {
   id: number;
@@ -21,7 +21,8 @@ export interface RemoteRun {
 export interface RemoteImport {
   runId: number;
   taskIds: string[];
-  runs: { taskId: string; timestamp: string }[];
+  /** Full summaries, so the Remote screen can list the imported records like local runs. */
+  runs: RunSummary[];
   cachedAt: string;
 }
 
@@ -216,7 +217,8 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
     const message = error instanceof Error ? error.message : String(error);
     const stderr = (error as { stderr?: unknown }).stderr;
     const text = typeof stderr === 'string' && stderr.trim() !== '' ? stderr : message;
-    if (/no artifact|not found/i.test(text)) {
+    // gh wording seen live: "no valid artifacts found to download" (run without the artifact or still in progress).
+    if (/no (?:valid )?artifacts?|not found/i.test(text)) {
       throw new BadRequestError(
         `CI run ${runId} has no "vanguard-runs" artifact — the workflow must upload .vanguard/runs (see docs/hub.md § CI run import)`,
       );
@@ -257,8 +259,7 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
 
   await rm(importDir, { recursive: true, force: true });
 
-  const summaries = await listRunSummaries(remoteRunsRoot(repoPath, runId));
-  const runs = summaries.map((s) => ({ taskId: s.taskId, timestamp: s.timestamp }));
+  const runs = await listRunSummaries(remoteRunsRoot(repoPath, runId));
   const taskIds = [...new Set(runs.map((r) => r.taskId))];
 
   return {

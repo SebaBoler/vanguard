@@ -141,7 +141,9 @@ async function handleRpcRequest(ctx: RpcContext, req: IncomingMessage, res: Serv
 
   try {
     const result = await dispatchRpc(ctx, cmd, body);
-    writeJson(res, 200, result ?? null);
+    // Spec §2.3: success is `{ result }` (null for void commands); apps/desktop/src/transport.ts reads
+    // `body.result`. A bare body here left the UI with `undefined` projects on first paint.
+    writeJson(res, 200, { result: result ?? null });
   } catch (err) {
     const classified = classifyError(err);
     const status = classified.notFound ? 404 : classified.kind === 'bad-request' ? 400 : 500;

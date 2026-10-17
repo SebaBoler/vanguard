@@ -2,10 +2,43 @@ import { test, expect, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { install } from '../../dev/mockBackend';
-import { remoteRuns, runs } from '../../dev/fixtures';
+import { remoteImport, remoteRuns, runs } from '../../dev/fixtures';
 import { RemoteRuns } from './RemoteRuns';
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  vi.unstubAllGlobals();
+  delete window.__VANGUARD_HUB__;
+});
+
+test('hub mode: Fetch records imports via fetch_remote_run and opens the record with its remoteRunId', async () => {
+  window.__VANGUARD_HUB__ = true;
+  const calls: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => {
+      const cmd = url.slice(url.indexOf('/rpc/') + 5);
+      calls.push(cmd);
+      const result = cmd === 'list_remote_runs' ? remoteRuns : cmd === 'fetch_remote_run' ? remoteImport : null;
+      return new Response(JSON.stringify({ result }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  const onOpenRun = vi.fn();
+  render(<RemoteRuns project="/repo" onOpenRun={onOpenRun} />);
+
+  fireEvent.click(await screen.findByRole('button', { name: /fetch records/i }));
+  for (const s of runs) expect(await screen.findByText(s.taskId)).toBeInTheDocument();
+  expect(calls).toContain('fetch_remote_run');
+  expect(calls).not.toContain('download_run_records'); // the Tauri-only command is never sent to the hub
+
+  fireEvent.click(screen.getByText(runs[0].taskId));
+  const uncached = remoteRuns.find((r) => !r.cached)!;
+  expect(onOpenRun).toHaveBeenCalledWith(
+    '/repo',
+    expect.objectContaining({ taskId: runs[0].taskId, timestamp: runs[0].timestamp }),
+    uncached.id,
+  );
+});
 
 test('Fetch records pulls the artifact, expands the row, and opens a record in the inspector', async () => {
   install();
@@ -30,5 +63,6 @@ test('Fetch records pulls the artifact, expands the row, and opens a record in t
   expect(onOpenRun).toHaveBeenCalledWith(
     `/mock/config/remote-runs/org-my-app/${uncached.id}`,
     expect.objectContaining({ taskId: runs[0].taskId, timestamp: runs[0].timestamp }),
+    undefined,
   );
 });

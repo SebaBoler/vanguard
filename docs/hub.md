@@ -21,6 +21,14 @@ This opens a browser at the printed URL.
 Local mode has no authentication — on a VPS put it behind Tailscale or an authenticating reverse proxy,
 never a published port.
 
+## Wire format
+
+The UI talks to the hub with `POST /rpc/<command>` (JSON body = the command's camelCase args, `{}` when
+none) and listens on `GET /events` (SSE). A success answers `200 {"result": <value>}` (`null` for void
+commands, `false` stays `false`); an error answers `400`/`404`/`500 {"error": {"message", "kind"}}` with
+`kind` = `bad-request` or `internal`. `apps/desktop/src/transport.ts` unwraps `result` and rejects with
+`error.message`, so both sides must keep this envelope.
+
 ## Env vars
 
 | Variable | Default |
