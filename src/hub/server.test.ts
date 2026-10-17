@@ -123,7 +123,18 @@ describe('hub server', () => {
     expect(res.status).toBe(200);
     const viaHttp = await res.json();
     const direct = await listRunSummaries(defaultRunsRoot(repo));
-    expect(viaHttp).toEqual(direct);
+    // The `{ result }` envelope is what apps/desktop/src/transport.ts unwraps (spec §2.3).
+    expect(viaHttp).toEqual({ result: direct });
+  });
+
+  test('T-81b a void command answers `{ result: null }`, never a bare body', async () => {
+    const res = await fetch(`${baseUrl}/rpc/unwatch_project`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repoPath: repo }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ result: null });
   });
 
   test('T-82 an oversized body is rejected with 413', async () => {
