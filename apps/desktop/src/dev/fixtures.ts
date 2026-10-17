@@ -187,6 +187,7 @@ export const remoteRuns: RemoteRun[] = [
     createdAt: '2026-07-14T08:00:00.000Z',
     event: 'workflow_dispatch',
     url: 'https://github.com/org/my-app/actions/runs/12345',
+    cached: false,
   },
   {
     id: 12344,
@@ -198,6 +199,7 @@ export const remoteRuns: RemoteRun[] = [
     createdAt: '2026-07-13T14:00:00.000Z',
     event: 'workflow_dispatch',
     url: 'https://github.com/org/my-app/actions/runs/12344',
+    cached: true,
   },
 ];
 
