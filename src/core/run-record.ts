@@ -55,12 +55,12 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
     : diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0
       ? 'secret-scan'
       : undefined;
-  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact). On a
-  // secret-blocked run the closing message tends to quote the change and redactTokens is pattern-only
-  // (a fragment past a token's char class survives), so the text is withheld rather than masked.
+  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact). When
+  // the diff is withheld, so is the text: the closing message tends to quote the change and
+  // redactTokens is pattern-only (a fragment past a token's char class survives).
   const record = {
     ...meta,
-    finalText: opts.omitDiff ? '[withheld: secret-blocked run]' : redactTokens(result.finalText),
+    finalText: diffOmitted !== undefined ? `[withheld: ${diffOmitted}]` : redactTokens(result.finalText),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
@@ -70,13 +70,15 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
-  if (!opts.omitDiff) {
-    // The transcript is raw agent output: tool results can echo env or config, so mask known token
-    // shapes (lossy is fine for a log). A secret-blocked run skips it entirely: the tool call that
-    // wrote the secret is in there verbatim, and skipping beats trusting pattern-only masking.
-    if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
+  if (diffOmitted === 'secret-scan') {
+    // Visible in the job log too, so a scan false positive on a green run does not vanish silently.
+    console.error(`vanguard: run record ${result.taskId}${suffix}: diff, bundle and transcript withheld (secret-scan)`);
   }
   if (diffOmitted === undefined) {
+    // The transcript is raw agent output: tool results can echo env or config, so mask known token
+    // shapes (lossy is fine for a log). When the diff is withheld the transcript is skipped entirely:
+    // the tool call that wrote the secret is in there verbatim, and skipping beats pattern-only masking.
+    if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
     // Written faithful, not masked: this is what the hub's diff viewer and a human reconstructing the
     // run read, and redactTokens would mangle ordinary code (`password: process.env.X` → `[REDACTED]`).
     if (diff) await writeFile(`${base}.diff`, diff);
@@ -168,9 +170,10 @@ export async function persistVisualProof(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.visual-proof.json`;
-  // Not masked: on the failure path `sha256` is computed over `outputTail` itself (visual-proof.ts), so
-  // a masked copy would make the proof unverifiable. The tail is screenshot-tool output, not agent text.
-  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  // Masked like proof.json on the normal path (sha256 is over the full output there). On the failure
+  // path visual-proof.ts hashes `outputTail` itself, so a masked copy would make the proof unverifiable.
+  const stored = result.passed ? { ...result, outputTail: redactTokens(result.outputTail) } : result;
+  await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
 
   const metric = {
     evt: 'visual_proof',

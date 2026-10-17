@@ -115,14 +115,15 @@ describe('persistRunRecord', () => {
       const token = `ghp_${'D'.repeat(36)}`;
       const file = await persistRunRecord(
         repo,
-        { ...result, worktreePath: wt, diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
+        { ...result, worktreePath: wt, transcript: '{"type":"result"}\n', diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
         { timestamp: TS },
       );
       const record = JSON.parse(await readFile(file, 'utf8'));
       expect(record.diffOmitted).toBe('secret-scan');
-      expect(record.finalText).toBe('done'); // only the diff is withheld on this path
+      expect(record.finalText).toBe('[withheld: secret-scan]');
       await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();
     }),
   );
 
@@ -146,7 +147,7 @@ describe('persistRunRecord', () => {
       const file = await persistRunRecord(repo, { ...result, worktreePath: wt, transcript: '{"type":"result"}\n' }, { timestamp: TS, omitDiff: true });
       const record = JSON.parse(await readFile(file, 'utf8'));
       expect(record.diffOmitted).toBe('secret-blocked');
-      expect(record.finalText).toBe('[withheld: secret-blocked run]');
+      expect(record.finalText).toBe('[withheld: secret-blocked]');
       await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
       await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();

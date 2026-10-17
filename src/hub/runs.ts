@@ -26,6 +26,8 @@ export interface RunRecord {
   timestamp: string;
   stage?: string;
   prUrl?: string;
+  /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-record.ts). */
+  diffOmitted?: 'secret-blocked' | 'secret-scan';
 }
 
 export interface Proof {
