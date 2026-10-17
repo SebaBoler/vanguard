@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -80,7 +80,9 @@ async function makeCtx(
 async function tmpRepo(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), 'vanguard-hub-repo-'));
   cleanups.push(repo);
-  return repo;
+  // realpath so assertions built on this path match the allowlist's realpath'd comparisons, even
+  // on platforms (e.g. macOS) where the OS temp dir is itself a symlink.
+  return realpath(repo);
 }
 
 afterEach(() => {
