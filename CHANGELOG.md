@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0](https://github.com/SebaBoler/vanguard/compare/v1.4.2...v1.5.0) (2026-10-17)
+
+
+### Features
+
+* **ci:** write run summary to GITHUB_STEP_SUMMARY ([#469](https://github.com/SebaBoler/vanguard/issues/469)) ([ab83663](https://github.com/SebaBoler/vanguard/commit/ab836633ecb9622ff9edc74b8b2ff0adfed7fdd5))
+* **desktop:** pull CI run records into the Inspector ([#470](https://github.com/SebaBoler/vanguard/issues/470)) ([0206248](https://github.com/SebaBoler/vanguard/commit/0206248890f3c5e20c094f6735f6f3be5ed1ecce))
+* **metrics:** opt-in OTLP trace export for Langfuse ([#471](https://github.com/SebaBoler/vanguard/issues/471)) ([4e3bd43](https://github.com/SebaBoler/vanguard/commit/4e3bd434a02e4c37cfef206c0becd5f2c9035c3c))
+
+
+### Bug Fixes
+
+* **run-record:** redact transcripts, drop diff and bundle for secret-blocked runs ([#478](https://github.com/SebaBoler/vanguard/issues/478)) ([cdf79e0](https://github.com/SebaBoler/vanguard/commit/cdf79e0a4f289413d04af2242d7d1c4373f49186))
+
 ## [1.4.2](https://github.com/SebaBoler/vanguard/compare/v1.4.1...v1.4.2) (2026-10-15)
 
 
