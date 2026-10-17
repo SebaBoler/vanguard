@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { apiCapabilitiesCached, apiListFlows, apiReadFlow, apiWriteFlow, listRuns, readRun } from './ipc';
+import { apiCapabilitiesCached, apiListFlows, apiReadFlow, apiWriteFlow, browseDirs, fetchRemoteRun, listRuns, readRun } from './ipc';
 import type { RunSummary } from './vanguard-output';
 
 afterEach(() => clearMocks());
@@ -46,6 +46,19 @@ test('flow-file wrappers forward camelCase args to their commands (S5)', async (
   expect(calls[0]).toMatchObject({ cmd: 'api_list_flows', args: { repoPath: '/repo' } });
   expect(calls[1]).toMatchObject({ cmd: 'api_read_flow', args: { repoPath: '/repo', file: 'my-flow.hcl' } });
   expect(calls[2]).toMatchObject({ cmd: 'api_write_flow', args: { repoPath: '/repo', file: 'my-flow.hcl', doc } });
+});
+
+test('T-95 browseDirs and fetchRemoteRun call the right command names with camelCase args', async () => {
+  const calls: { cmd: unknown; args: unknown }[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === 'browse_dirs') return { path: '/repo', entries: [] };
+    return { runId: 42, taskIds: [], runs: [], cachedAt: 'now' };
+  });
+  await browseDirs('/repo/sub');
+  await fetchRemoteRun('/repo', 42);
+  expect(calls[0]).toMatchObject({ cmd: 'browse_dirs', args: { path: '/repo/sub' } });
+  expect(calls[1]).toMatchObject({ cmd: 'fetch_remote_run', args: { repoPath: '/repo', runId: 42 } });
 });
 
 test('apiCapabilitiesCached does not pin a rejected promise — a transient failure recovers on the next call', async () => {

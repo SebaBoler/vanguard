@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './transport';
 import type {
   RunSummary,
   RunDetail,
@@ -7,6 +7,8 @@ import type {
   SessionRead,
   RemoteRun,
   RemoteRecords,
+  RemoteImport,
+  DirListing,
   AppConfig,
 } from './vanguard-output';
 import type { BoardTask } from './wire';
@@ -15,8 +17,19 @@ export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return invoke<RunSummary[]>('list_runs', { repoPath });
 }
 
-export function readRun(repoPath: string, taskId: string, timestamp: string): Promise<RunDetail> {
-  return invoke<RunDetail>('read_run', { repoPath, taskId, timestamp });
+export function readRun(repoPath: string, taskId: string, timestamp: string, remoteRunId?: number): Promise<RunDetail> {
+  return invoke<RunDetail>('read_run', { repoPath, taskId, timestamp, remoteRunId });
+}
+
+/** Hub-only: a native-dialog stand-in (src/hub/browse.ts) — lists `path`'s subdirectories, confined
+ * to the hub's browse root, for `RepoPicker`. `path` omitted lists the root itself. */
+export function browseDirs(path?: string): Promise<DirListing> {
+  return invoke<DirListing>('browse_dirs', { path });
+}
+
+/** Hub-only: imports a CI run's `vanguard-runs` artifact server-side (src/hub/remote.ts). */
+export function fetchRemoteRun(repoPath: string, runId: number): Promise<RemoteImport> {
+  return invoke<RemoteImport>('fetch_remote_run', { repoPath, runId });
 }
 
 export function listProjects(): Promise<Project[]> {

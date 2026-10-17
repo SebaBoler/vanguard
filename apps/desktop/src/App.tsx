@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { type Theme } from '@/ui';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TopBar, type Crumb } from './TopBar';
 import { Rail, type Screen } from './Rail';
 import { CommandPalette } from './CommandPalette';
+import { RepoPicker } from './RepoPicker';
 import { TailwindDebugScreens } from './components/TailwindDebugScreens';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
@@ -12,6 +14,7 @@ import { listProjects, addProject, removeProject, listActive } from './ipc';
 import { projectColor, contrastColor } from './color';
 import { createNavGuardRegistry, NavGuardContext } from './navGuard';
 import { ProjectCombobox } from './ProjectCombobox';
+import { isHubMode } from './transport';
 import type { Project, ActiveRun } from './vanguard-output';
 
 function applyTheme(theme: Theme): void {
@@ -102,8 +105,21 @@ export default function App() {
   }, [activeProject]);
 
   // Window close is the third discard path. Tauri/WKWebView does not reliably fire beforeunload
-  // on native close, so onCloseRequested is the primary hook (beforeunload kept as a belt).
+  // on native close, so onCloseRequested is the primary hook (beforeunload kept as a belt) — and
+  // the only hook at all in hub mode, where there is no Tauri window to close.
   useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+      if (navGuard.current.guarded()) {
+        e.preventDefault();
+        e.returnValue = ''; // some WebKit/Chromium builds need returnValue, not just preventDefault
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
     const un = getCurrentWindow().onCloseRequested(async (event) => {
       if (!navGuard.current.confirm()) {
         event.preventDefault();
@@ -118,17 +134,7 @@ export default function App() {
         void getCurrentWindow().destroy();
       }
     });
-    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
-      if (navGuard.current.guarded()) {
-        e.preventDefault();
-        e.returnValue = ''; // some WebKit/Chromium builds need returnValue, not just preventDefault
-      }
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => {
-      void un.then((f) => f());
-      window.removeEventListener('beforeunload', onBeforeUnload);
-    };
+    return () => void un.then((f) => f());
   }, []);
 
   useEffect(() => {
@@ -142,7 +148,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const [showRepoPicker, setShowRepoPicker] = useState(false);
+
   const add = async (): Promise<void> => {
+    // Hub mode has no native OS file dialog (no Tauri plugin in a browser) — RepoPicker (over
+    // browse_dirs) stands in for it.
+    if (isHubMode()) {
+      setShowRepoPicker(true);
+      return;
+    }
     try {
       const dir = await open({ directory: true, title: 'Add a repo (contains .vanguard/)' });
       if (typeof dir === 'string') setProjects(await addProject(dir));
@@ -287,6 +301,15 @@ export default function App() {
           onAddProject={add}
           onToggleTheme={toggleTheme}
           onClose={() => setPalette(false)}
+        />
+      )}
+      {showRepoPicker && (
+        <RepoPicker
+          onAdd={async (path) => {
+            setProjects(await addProject(path));
+            setShowRepoPicker(false);
+          }}
+          onClose={() => setShowRepoPicker(false)}
         />
       )}
       <TailwindDebugScreens />
