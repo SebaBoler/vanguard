@@ -316,7 +316,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
       // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
       // the outcomes are persisted — the first delivery does this in runSourcedIssue.
-      await persistStageOutcomes(deps.repoPath, outcomes);
+      await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name });
       const verificationFailed = verification !== undefined && !verification.passed;
 
       // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.

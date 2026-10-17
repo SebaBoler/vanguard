@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -201,5 +201,27 @@ describe('persistRunRecord', () => {
     const metrics = (await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8')).trim().split('\n');
     expect(JSON.parse(metrics[0]!)).toMatchObject({ model: 'claude-sonnet-4-6', requestedModel: 'claude-fable-5' });
     expect(JSON.parse(metrics[1]!)).not.toHaveProperty('requestedModel');
+  });
+
+  it('persistStageOutcomes mirrors the run as one OTLP trace when an exporter is configured', async () => {
+    vi.stubEnv('VANGUARD_OTLP_ENDPOINT', 'https://lf.example/api/public/otel');
+    vi.stubEnv('LANGFUSE_PUBLIC_KEY', 'pk');
+    vi.stubEnv('LANGFUSE_SECRET_KEY', 'sk');
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { prUrl: 'https://pr/1', flow: 'default', provider: 'claude' });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://lf.example/api/public/otel/v1/traces');
+    const spans = (JSON.parse(init.body as string) as { resourceSpans: { scopeSpans: { spans: { name: string }[] }[] }[] }).resourceSpans[0]!.scopeSpans[0]!.spans;
+    expect(spans.map((s) => s.name)).toEqual(['TES-1', 'implementer', 'reviewer']);
+    // The metric lines on disk are untouched by the mirror.
+    const metrics = (await readFile(join(repo, '.vanguard', 'runs', 'metrics.jsonl'), 'utf8')).trim().split('\n');
+    expect(metrics).toHaveLength(2);
   });
 });
