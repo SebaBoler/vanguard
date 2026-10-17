@@ -38,6 +38,10 @@ const handlers: Record<string, (args: unknown) => unknown> = {
   read_app_config_strict: () => appConfig,
   write_app_config: () => null,
   list_remote_runs: () => remoteRuns,
+  download_run_records: (args) => {
+    const { runId = 12345 } = (args ?? {}) as { runId?: number };
+    return { cachePath: `/mock/config/remote-runs/org-my-app/${runId}`, runs };
+  },
   list_tasks: () => ({ tasks: boardTasks, capped: false }),
   fetch_spec: () => ({ spec: '## Task\n\nFix the login bug when the JWT token expires after inactivity.\n\n**Acceptance criteria:**\n- [ ] Login still works after token refresh\n- [ ] Tests pass\n- [ ] No regressions in the auth flow\n' }),
   list_spawns: () => [],

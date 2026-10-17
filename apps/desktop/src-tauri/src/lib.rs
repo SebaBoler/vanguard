@@ -116,8 +116,18 @@ async fn clear_draft_assets(repo_path: String, id: String) -> Result<(), String>
 }
 
 #[tauri::command]
-async fn list_remote_runs(repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
-    remote::list_remote_runs(Path::new(&repo_path))
+async fn list_remote_runs(app: tauri::AppHandle, repo_path: String) -> Result<Vec<remote::RemoteRun>, String> {
+    remote::list_remote_runs(&config_dir(&app)?, Path::new(&repo_path))
+}
+
+/// Pull a CI run's record artifact into `<app config>/remote-runs/…` and parse it like local runs.
+#[tauri::command]
+async fn download_run_records(
+    app: tauri::AppHandle,
+    repo_path: String,
+    run_id: u64,
+) -> Result<remote::RemoteRecords, String> {
+    remote::download_run_records(&config_dir(&app)?, Path::new(&repo_path), run_id)
 }
 
 /// Board read path (S9): one brain — the transports live in core now. Same command name, new
@@ -192,6 +202,7 @@ pub fn run() {
             write_draft_asset,
             clear_draft_assets,
             list_remote_runs,
+            download_run_records,
             list_tasks,
             fetch_spec,
             spawn_run,
