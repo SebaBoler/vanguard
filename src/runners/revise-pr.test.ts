@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -236,6 +236,10 @@ describe('runRevisePullRequest secret gate', () => {
       spy.mockRestore();
     }
     expect(pushCalls).toEqual([]);
+    // The blocked round still leaves a run record (cost trace), but no .diff / .bundle: the diff holds the secret.
+    const recordFiles = await readdir(join(repo, '.vanguard', 'runs'), { recursive: true });
+    expect(recordFiles.some((f) => f.endsWith('.json'))).toBe(true);
+    expect(recordFiles.some((f) => f.endsWith('.diff') || f.endsWith('.bundle'))).toBe(false);
     // Ordering pin: no branch anywhere in the repo moved past the initial commit — the gate ran before commitStage.
     const mainSha = (await execa('git', ['rev-parse', 'main'], { cwd: repo })).stdout;
     const refs = (await execa('git', ['for-each-ref', '--format=%(objectname)', 'refs/heads'], { cwd: repo })).stdout.split('\n');

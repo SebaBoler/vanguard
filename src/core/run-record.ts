@@ -38,8 +38,11 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   await mkdir(taskDir, { recursive: true });
 
   const { diff, transcript, ...meta } = result;
+  // Every free-text field is masked before it reaches disk: the record may leave the job as a CI
+  // artifact, and on a secret-blocked run the agent's closing message tends to quote the change.
   const record = {
     ...meta,
+    finalText: redactTokens(result.finalText),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
@@ -49,10 +52,11 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
   // The transcript is raw agent output: tool results can echo env or config, so mask known token
-  // shapes before it lands on disk (the record may leave the job as a CI artifact).
+  // shapes. The diff is masked too: the publish gate exempts test paths (isTestPath), so a
+  // credential under tests/ passes it and would otherwise sit raw in the record.
   if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
   if (!opts.omitDiff) {
-    if (diff) await writeFile(`${base}.diff`, diff);
+    if (diff) await writeFile(`${base}.diff`, redactTokens(diff));
     const bundlePath = `${base}.bundle`;
     try {
       await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
