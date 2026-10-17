@@ -4,7 +4,7 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BadRequestError } from '../sidecar/sidecar.js';
-import { isRunRecordFile, listRunSummaries, remoteRunsRoot } from './runs.js';
+import { isRunRecordFile, listRunSummaries, remoteRunsRoot, type RunSummary } from './runs.js';
 
 export interface RemoteRun {
   id: number;
@@ -21,7 +21,8 @@ export interface RemoteRun {
 export interface RemoteImport {
   runId: number;
   taskIds: string[];
-  runs: { taskId: string; timestamp: string }[];
+  /** Full summaries, so the Remote screen can list the imported records like local runs. */
+  runs: RunSummary[];
   cachedAt: string;
 }
 
@@ -257,8 +258,7 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
 
   await rm(importDir, { recursive: true, force: true });
 
-  const summaries = await listRunSummaries(remoteRunsRoot(repoPath, runId));
-  const runs = summaries.map((s) => ({ taskId: s.taskId, timestamp: s.timestamp }));
+  const runs = await listRunSummaries(remoteRunsRoot(repoPath, runId));
   const taskIds = [...new Set(runs.map((r) => r.taskId))];
 
   return {

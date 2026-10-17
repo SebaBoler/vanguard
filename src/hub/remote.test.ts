@@ -108,7 +108,7 @@ describe('fetchRemoteRun', () => {
     const result = await fetchRemoteRun(repo, 101, exec);
     expect(result.runId).toBe(101);
     expect(result.taskIds).toEqual(['task-flat']);
-    expect(result.runs).toEqual([{ taskId: 'task-flat', timestamp: '2026-07-06T19:12:02.000Z' }]);
+    expect(result.runs).toMatchObject([{ taskId: 'task-flat', timestamp: '2026-07-06T19:12:02.000Z', stages: ['implement'] }]);
 
     const summaries = await listRunSummaries(remoteRunsRoot(repo, 101));
     expect(summaries).toHaveLength(1);
@@ -132,7 +132,7 @@ describe('fetchRemoteRun', () => {
 
     const result = await fetchRemoteRun(repo, 102, exec);
     expect(result.taskIds).toEqual(['task-nested']);
-    expect(result.runs).toEqual([{ taskId: 'task-nested', timestamp: '2026-07-06T19:13:02.000Z' }]);
+    expect(result.runs).toMatchObject([{ taskId: 'task-nested', timestamp: '2026-07-06T19:13:02.000Z' }]);
 
     const summaries = await listRunSummaries(remoteRunsRoot(repo, 102));
     expect(summaries).toHaveLength(1);

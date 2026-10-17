@@ -81,9 +81,13 @@ export function Inspector({
 
   // Repo root the open detail was read from: the project, or a CI run's record cache (Remote screen).
   const detailRoot = useRef(project);
-  const openRef = useRef<{ root: string; taskId: string; timestamp: string } | null>(null);
+  // Hub mode: a CI run's records sit under the project's `.vanguard/remote-runs/<id>`; `read_run` picks that root by id.
+  const detailRemoteRunId = useRef<number | undefined>(undefined);
+  const openRef = useRef<{ root: string; taskId: string; timestamp: string; remoteRunId?: number } | null>(null);
   useEffect(() => {
-    openRef.current = detail ? { root: detailRoot.current, taskId: detail.taskId, timestamp: detail.timestamp } : null;
+    openRef.current = detail
+      ? { root: detailRoot.current, taskId: detail.taskId, timestamp: detail.timestamp, remoteRunId: detailRemoteRunId.current }
+      : null;
   }, [detail]);
 
   // Rail navigation drops any open drill-down.
@@ -136,7 +140,7 @@ export function Inspector({
       setActive(a);
       setTick((t) => t + 1);
       const o = openRef.current;
-      if (o) setDetail(await readRun(o.root, o.taskId, o.timestamp));
+      if (o) setDetail(await readRun(o.root, o.taskId, o.timestamp, o.remoteRunId));
     } catch {
       // transient mid-write; next event resyncs
     }
@@ -292,11 +296,12 @@ export function Inspector({
       });
   };
 
-  const open = async (r: RunSummary, root = project): Promise<void> => {
+  const open = async (r: RunSummary, root = project, remoteRunId?: number): Promise<void> => {
     setError(null);
     try {
       detailRoot.current = root;
-      setDetail(await readRun(root, r.taskId, r.timestamp));
+      detailRemoteRunId.current = remoteRunId;
+      setDetail(await readRun(root, r.taskId, r.timestamp, remoteRunId));
     } catch (e) {
       setError(String(e));
     }
@@ -425,7 +430,7 @@ export function Inspector({
         <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} />
       ) : screen === 'remote' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <RemoteRuns project={project} onOpenRun={(cachePath, r) => void open(r, cachePath)} />
+          <RemoteRuns project={project} onOpenRun={(cachePath, r, remoteRunId) => void open(r, cachePath, remoteRunId)} />
         </div>
       ) : screen === 'fleet' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
