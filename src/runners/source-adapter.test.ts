@@ -638,7 +638,7 @@ describe('runSourcedIssue', () => {
     expect(commitStage).not.toHaveBeenCalled();
     expect(publishForReview).not.toHaveBeenCalled();
     expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude' }]);
+    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', omitDiff: true }]);
 
     expect(order).toEqual(['signalSecretBlock']);
     expect(adapter.signalSecretBlock).toHaveBeenCalledTimes(1);

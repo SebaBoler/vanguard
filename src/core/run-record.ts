@@ -4,6 +4,7 @@ import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
+import { redactTokens, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -17,13 +18,23 @@ export interface PersistOptions {
   prUrl?: string;
   /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
   requestedModel?: string;
+  /**
+   * Leave the `.diff`, `.bundle` and `.transcript.log` off disk and stub `finalText`; only the JSON
+   * record (marked `diffOmitted: 'secret-blocked'`) and the metric line are written. Set for
+   * secret-blocked runs (and for a revise round whose diff could not be captured): the payloads hold
+   * the very secret the scan caught, and the run record may be uploaded as a CI artifact
+   * (`upload-run-records`). Independently of this flag, a stage diff that `scanForSecrets` flags is
+   * withheld with `diffOmitted: 'secret-scan'`.
+   */
+  omitDiff?: boolean;
 }
 
 /**
  * Persist a run's metadata to `.vanguard/runs/<taskId>/<ts>[-label].json` and append one compact
- * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. The
- * (potentially large) diff is written to a sibling `.diff` file and omitted from the JSON record.
- * Returns the written JSON path.
+ * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. Free
+ * text in the record (`finalText`, the sibling `.transcript.log`) is token-masked; the (potentially
+ * large) diff goes to a sibling `.diff` file plus a `.bundle` of the worktree HEAD, both skipped under
+ * `omitDiff`. Returns the written JSON path.
  */
 export async function persistRunRecord(localRepoPath: string, result: RunResult, opts: PersistOptions = {}): Promise<string> {
   const timestamp = opts.timestamp ?? new Date().toISOString();
@@ -32,24 +43,52 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   await mkdir(taskDir, { recursive: true });
 
   const { diff, transcript, ...meta } = result;
+  // Why the diff (and bundle) are withheld, recorded on run.json so the hub and a human can tell
+  // "withheld" from "no diff" or "bundle creation failed":
+  //  - 'secret-blocked': the caller's publish gate fired (opts.omitDiff).
+  //  - 'secret-scan': a stage's diff is the worktree at the end of THAT stage, while the gate scans the
+  //    final diff only — a secret the implementer wrote and the simplifier removed passes the gate yet
+  //    sits in the implementer's record, so every stage diff meets the same scan first. Same residual
+  //    gap as the gate: scanForSecrets exempts test paths (isTestPath).
+  const diffOmitted: 'secret-blocked' | 'secret-scan' | undefined = opts.omitDiff
+    ? 'secret-blocked'
+    : diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0
+      ? 'secret-scan'
+      : undefined;
+  // Free text is masked before it reaches disk (the record may leave the job as a CI artifact). When
+  // the diff is withheld, so is the text: the closing message tends to quote the change and
+  // redactTokens is pattern-only (a fragment past a token's char class survives).
   const record = {
     ...meta,
+    finalText: diffOmitted !== undefined ? `[withheld: ${diffOmitted}]` : redactTokens(result.finalText),
     timestamp,
     ...(opts.label !== undefined ? { stage: opts.label } : {}),
     ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
+    ...(diffOmitted !== undefined ? { diffOmitted } : {}),
   };
   const suffix = opts.label !== undefined ? `-${opts.label}` : '';
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
-  if (transcript) await writeFile(`${base}.transcript.log`, transcript);
-  if (diff) await writeFile(`${base}.diff`, diff);
-  const bundlePath = `${base}.bundle`;
-  try {
-    await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
-  } catch {
-    // best-effort: remove any partial file git may have opened before it failed
-    await unlink(bundlePath).catch(() => undefined);
+  if (diffOmitted === 'secret-scan') {
+    // Visible in the job log too, so a scan false positive on a green run does not vanish silently.
+    console.error(`vanguard: run record ${result.taskId}${suffix}: diff, bundle and transcript withheld (secret-scan)`);
+  }
+  if (diffOmitted === undefined) {
+    // The transcript is raw agent output: tool results can echo env or config, so mask known token
+    // shapes (lossy is fine for a log). When the diff is withheld the transcript is skipped entirely:
+    // the tool call that wrote the secret is in there verbatim, and skipping beats pattern-only masking.
+    if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
+    // Written faithful, not masked: this is what the hub's diff viewer and a human reconstructing the
+    // run read, and redactTokens would mangle ordinary code (`password: process.env.X` → `[REDACTED]`).
+    if (diff) await writeFile(`${base}.diff`, diff);
+    const bundlePath = `${base}.bundle`;
+    try {
+      await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
+    } catch {
+      // best-effort: remove any partial file git may have opened before it failed
+      await unlink(bundlePath).catch(() => undefined);
+    }
   }
 
   const metric = {
@@ -84,7 +123,8 @@ export async function persistVerification(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.proof.json`;
-  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  // outputTail is verbatim command output (last ~40 lines): masked like every other free text in the record.
+  await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactTokens(result.outputTail) }, null, 2)}\n`);
 
   const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
@@ -130,7 +170,10 @@ export async function persistVisualProof(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.visual-proof.json`;
-  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  // Masked like proof.json on the normal path (sha256 is over the full output there). On the failure
+  // path visual-proof.ts hashes `outputTail` itself, so a masked copy would make the proof unverifiable.
+  const stored = result.passed ? { ...result, outputTail: redactTokens(result.outputTail) } : result;
+  await writeFile(file, `${JSON.stringify(stored, null, 2)}\n`);
 
   const metric = {
     evt: 'visual_proof',
@@ -151,6 +194,8 @@ export interface PersistStageOptions {
   /** Flow and provider names of the run, recorded on the exported trace (see otlp-sink). */
   flow?: string;
   provider?: string;
+  /** Secret-blocked run: no `.diff`, `.bundle` or `.transcript.log` for any stage (see PersistOptions.omitDiff). */
+  omitDiff?: boolean;
 }
 
 /**
@@ -163,12 +208,14 @@ export async function persistStageOutcomes(
   opts: PersistStageOptions = {},
 ): Promise<void> {
   const timestamp = new Date().toISOString();
+  const { omitDiff, ...trace } = opts;
   for (const outcome of outcomes) {
     await persistRunRecord(localRepoPath, outcome.result, {
       timestamp,
       label: outcome.name,
       ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
       ...(outcome.model !== undefined ? { requestedModel: outcome.model } : {}),
+      ...(omitDiff ? { omitDiff } : {}),
     });
   }
   const first = outcomes[0];
@@ -177,6 +224,6 @@ export async function persistStageOutcomes(
     taskId: first.result.taskId,
     timestamp,
     stages: outcomes.map((o) => stageMetric(o.result, o.name, o.model !== undefined ? { requestedModel: o.model } : undefined)),
-    ...opts,
+    ...trace,
   });
 }

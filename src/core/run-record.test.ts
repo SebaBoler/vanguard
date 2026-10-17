@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readFile, access } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -80,6 +80,80 @@ describe('persistRunRecord', () => {
     expect(log).toBe('{"type":"result"}\n');
   });
 
+  it('masks credential material in transcript.log before it reaches disk', async () => {
+    const token = `ghp_${'A'.repeat(36)}`;
+    const file = await persistRunRecord(
+      repo,
+      { ...result, transcript: `env: GH_TOKEN=${token}\nAuthorization: Bearer abc.def.ghi\n` },
+      { timestamp: TS },
+    );
+    const log = await readFile(file.replace(/\.json$/, '.transcript.log'), 'utf8');
+    expect(log).not.toContain(token);
+    expect(log).toContain('[REDACTED-GH]');
+    expect(log).toContain('Bearer [REDACTED]');
+  });
+
+  it('masks finalText in run.json; the .diff stays byte-faithful (the publish gate owns diff secrets)', async () => {
+    const token = `glpat-${'B'.repeat(24)}`;
+    // Ordinary code that redactTokens would mangle (`password: process.env…` → `[REDACTED]`) but the gate passes.
+    const diff = `+  password: process.env.DB_PASSWORD,\n+  const pushToken = opts.pushToken.value;\n`;
+    const file = await persistRunRecord(
+      repo,
+      { ...result, finalText: `Added the deploy key ${token} to config`, diff },
+      { timestamp: TS },
+    );
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    expect(record.finalText).not.toContain(token);
+    expect(record.finalText).toContain('[REDACTED-GL]');
+    expect(await readFile(file.replace(/\.json$/, '.diff'), 'utf8')).toBe(diff);
+  });
+
+  it('a stage diff the publish gate would block is withheld and marked, even without omitDiff', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const token = `ghp_${'D'.repeat(36)}`;
+      const file = await persistRunRecord(
+        repo,
+        { ...result, worktreePath: wt, transcript: '{"type":"result"}\n', diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
+        { timestamp: TS },
+      );
+      const record = JSON.parse(await readFile(file, 'utf8'));
+      expect(record.diffOmitted).toBe('secret-scan');
+      expect(record.finalText).toBe('[withheld: secret-scan]');
+      await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();
+    }),
+  );
+
+  it('persistStageOutcomes propagates omitDiff to every stage record', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const staged = { ...result, worktreePath: wt };
+      await persistStageOutcomes(repo, [{ name: 'implementer', result: staged }, { name: 'reviewer', result: staged }], { omitDiff: true });
+      const dir = join(repo, '.vanguard', 'runs', 'TES-1');
+      const files = (await readdir(dir)).sort();
+      expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(2);
+      expect(files.some((f) => f.endsWith('.diff') || f.endsWith('.bundle'))).toBe(false);
+    }),
+  );
+
+  it('omitDiff writes the JSON but no .diff, no .bundle and no transcript (secret-blocked runs)', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const file = await persistRunRecord(repo, { ...result, worktreePath: wt, transcript: '{"type":"result"}\n' }, { timestamp: TS, omitDiff: true });
+      const record = JSON.parse(await readFile(file, 'utf8'));
+      expect(record.diffOmitted).toBe('secret-blocked');
+      expect(record.finalText).toBe('[withheld: secret-blocked]');
+      await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.transcript.log'))).rejects.toThrow();
+    }),
+  );
+
   it('writes a git bundle when worktreePath has a commit', () =>
     withWorktree(async (wt) => {
       await execa('git', ['init', '-b', 'main'], { cwd: wt });
@@ -96,6 +170,19 @@ describe('persistRunRecord', () => {
       await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
     }),
   );
+
+  it('persistVerification masks credential material in outputTail', async () => {
+    const token = `ghp_${'C'.repeat(36)}`;
+    const file = await persistVerification(
+      repo,
+      'TES-1',
+      { command: 'pnpm test', exitCode: 1, passed: false, sha256: 'abc', outputTail: `Error: bad token ${token}` },
+      { timestamp: TS },
+    );
+    const proof = JSON.parse(await readFile(file, 'utf8'));
+    expect(proof.outputTail).not.toContain(token);
+    expect(proof.outputTail).toContain('[REDACTED-GH]');
+  });
 
   it('persistVerification writes proof.json and metric line', async () => {
     const verResult = {

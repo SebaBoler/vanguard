@@ -314,13 +314,18 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           log,
         });
       }
-      // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
-      // the outcomes are persisted — the first delivery does this in runSourcedIssue.
-      await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name });
       const verificationFailed = verification !== undefined && !verification.passed;
 
-      // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
-      const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      // Capture round diff BEFORE commit — post-commit git diff HEAD is empty. A git failure here must
+      // not lose the cost trace the persist below exists for: record the outcomes and rethrow.
+      let revisionDiff: string;
+      try {
+        revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      } catch (err) {
+        // Nothing is known about the content on this path (the scan never ran): keep the payloads off disk.
+        await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name, omitDiff: true });
+        throw err;
+      }
       const whiteLabel = deps.commitAuthor !== undefined;
 
       // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
@@ -329,6 +334,14 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
       // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
       const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push');
+      // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
+      // the outcomes are persisted — the first delivery does this in runSourcedIssue. Persisted after
+      // the scan so a blocked round leaves no `.diff` / `.bundle` on disk (the diff holds the secret).
+      await persistStageOutcomes(deps.repoPath, outcomes, {
+        flow: 'revise',
+        provider: agents.agent.name,
+        ...(block !== undefined ? { omitDiff: true } : {}),
+      });
       if (block !== undefined) {
         // --out is a dry-run that touches NEITHER the branch NOR the PR: report the block on stderr only,
         // write no preview (it would carry the raw secret), and leave the labels alone.
