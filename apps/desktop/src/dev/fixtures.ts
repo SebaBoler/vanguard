@@ -7,6 +7,8 @@ import type {
   AppConfig,
   RemoteRun,
   RunRecord,
+  DirListing,
+  RemoteImport,
 } from '../vanguard-output';
 import type {
   Capabilities,
@@ -250,4 +252,23 @@ export const flowDoc: FlowDoc = {
 export const createdTask: CreatedTask = {
   id: 'LINEAR-999',
   url: 'https://linear.app/org/issue/LINEAR-999',
+};
+
+/** RepoPicker (hub mode): one `browse_dirs` page — a mix of plain, git-only and git+.vanguard dirs. */
+export const dirListing: DirListing = {
+  path: '/home/user/projects',
+  parent: '/home/user',
+  entries: [
+    { name: 'my-app', path: '/home/user/projects/my-app', isGitRepo: true, hasVanguard: true },
+    { name: 'api-service', path: '/home/user/projects/api-service', isGitRepo: true, hasVanguard: false },
+    { name: 'scratch', path: '/home/user/projects/scratch', isGitRepo: false, hasVanguard: false },
+  ],
+};
+
+/** A `fetch_remote_run` import of a CI run's `vanguard-runs` artifact. */
+export const remoteImport: RemoteImport = {
+  runId: 12345,
+  taskIds: [runs[0].taskId],
+  runs: runs.map((r) => ({ taskId: r.taskId, timestamp: r.timestamp })),
+  cachedAt: '2026-07-14T08:05:00.000Z',
 };

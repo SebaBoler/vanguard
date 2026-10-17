@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Chip } from '@/ui';
 import { Minus, Plus } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
+import { subscribe as listen } from '../../transport';
 import { spawnRun, killRun, listSpawns, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
 import { useAppConfig } from '../../hooks';
 import { watchCommand } from '../../command';

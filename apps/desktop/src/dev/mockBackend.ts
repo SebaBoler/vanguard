@@ -13,6 +13,8 @@ import {
   repoProviders,
   flowDoc,
   createdTask,
+  dirListing,
+  remoteImport,
 } from './fixtures';
 
 const READ_DRAFT = JSON.stringify({ id: 'draft-001', title: 'Draft task', body: 'Some draft content here.' });
@@ -81,6 +83,11 @@ const handlers: Record<string, (args: unknown) => unknown> = {
   api_run_backlog: () => [],
   api_cancel: () => null,
   api_repo_ok: () => true,
+  // Hub-only commands (apps/desktop never reaches these through Tauri, but the browser dev build —
+  // no Tauri runtime, hub marker absent — still needs a fixture so RepoPicker is drivable via the
+  // mock backend, and so the ipc.ts coverage guard below passes).
+  browse_dirs: () => dirListing,
+  fetch_remote_run: () => remoteImport,
   'plugin:dialog|open': () => '/home/user/projects/new-project',
   'plugin:event|listen': () => 1,
   'plugin:event|unlisten': () => null,

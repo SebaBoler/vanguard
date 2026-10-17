@@ -134,3 +134,27 @@ export interface RunDetail {
   stages: StageDetail[];
   proof?: Proof;
 }
+
+/** Hub-only (src/hub/browse.ts) — one subdirectory offered by `browse_dirs`, standing in for the
+ * native folder dialog Tauri doesn't have in a browser. */
+export interface DirEntry {
+  name: string;
+  path: string;
+  isGitRepo: boolean;
+  hasVanguard: boolean;
+}
+
+/** Hub-only (src/hub/browse.ts) — one `browse_dirs` page: the listed directory plus its children. */
+export interface DirListing {
+  path: string;
+  parent?: string;
+  entries: DirEntry[];
+}
+
+/** Hub-only (src/hub/remote.ts) — a CI run's `vanguard-runs` artifact imported by `fetch_remote_run`. */
+export interface RemoteImport {
+  runId: number;
+  taskIds: string[];
+  runs: { taskId: string; timestamp: string }[];
+  cachedAt: string;
+}
