@@ -24,6 +24,10 @@ on:
         description: 'Keep the model credential in a sidecar proxy, out of the sandbox (--llm-proxy).'
         type: boolean
         default: false
+      upload-run-records:
+        description: 'Upload `.vanguard/runs/` (run records, token-redacted transcripts, diffs, metrics.jsonl; no git bundles) as a `vanguard-runs` workflow artifact after the run. Secret-blocked runs leave no diff. Off by default (artifacts are readable by anyone who can read the repo).'
+        type: boolean
+        default: false
       vanguard-ref:
         description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
         type: string
@@ -127,6 +131,7 @@ jobs:
           printf 'https://x-access-token:%s@github.com/%s\n' "${VANGUARD_PUSH_TOKEN:-$GH_TOKEN}" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/git-credentials"
 
       - name: Revise the PR from review comments
+        id: revise
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
@@ -144,3 +149,16 @@ jobs:
       - name: Remove git credentials
         if: ${{ always() }}
         run: rm -f "$RUNNER_TEMP/git-credentials"
+
+      - name: Upload run records
+        # Only once the revise step ran. Artifacts are readable by anyone with read access to the repo.
+        if: ${{ always() && inputs.upload-run-records && contains(fromJSON('["success","failure"]'), steps.revise.conclusion) }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vanguard-runs
+          # Bundles carry the branch's whole history and the PR already holds that content.
+          path: |
+            .vanguard/runs/
+            !.vanguard/runs/**/*.bundle
+          if-no-files-found: ignore
+          retention-days: 14

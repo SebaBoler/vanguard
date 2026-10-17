@@ -97,6 +97,7 @@ The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, 
 | `decision-probe` | boolean | `false` | opt in to the decision-model probe (see below) |
 | `persist-metrics` | boolean | `false` | push run metrics to an orphan branch (see below) |
 | `metrics-branch` | string | `''` (`vanguard-metrics`) | branch used by `persist-metrics` |
+| `upload-run-records` | boolean | `false` | upload `.vanguard/runs/` as a workflow artifact (see below) |
 | `skills` | string | `.vanguard-src/skills` | skills directory |
 | `max-tasks` | string | `''` (no cap) | `--max-tasks`: cap ready issues claimed per phase in one run |
 | `vanguard-ref` | string | `''` (the workflow's own ref) | Vanguard source ref to build |
@@ -105,12 +106,13 @@ Secrets: `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `CLOUDFLARE_ACCOUNT_ID`, 
 
 Empty model inputs mean "use the CLI default", so the defaults live in one place (the CLI), not duplicated in YAML.
 
-#### `decision-probe` and `persist-metrics` are off by default — on purpose
+#### `decision-probe`, `persist-metrics` and `upload-run-records` are off by default — on purpose
 
 - **`decision-probe`** is the experimental, log-only [difficulty probe](../README.md#models): it asks a decision model how hard the task is and whether the first attempt will pass, logs the answer, and changes nothing about routing. It **sends the issue title, labels, description and comments to Cloudflare Workers AI** from the host, outside the sandbox, `--egress` and `--llm-proxy`. With it off (the default) the Cloudflare secrets are not even exposed to the run, even if you map them. Turn it on only if you accept that, and map `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AUTH_TOKEN`.
 - **`persist-metrics`** pushes the run's `metrics.jsonl` lines to an orphan `vanguard-metrics` branch **in your repo** (`vanguard stats --branch vanguard-metrics` reads it back). That writes a branch into your repository and leaves a trace, which conflicts with white-label or zero-trace setups. Without it, metrics die with the job. It runs after the loop step finished, pass or fail (`always()` plus the step conclusion), but not after a blocked gate or a failed build, and needs the `contents: write` your caller already grants.
+- **`upload-run-records`** uploads the job's `.vanguard/runs/` (per-stage JSON records, agent transcripts, diffs, `metrics.jsonl`) as a `vanguard-runs` workflow artifact kept for 14 days, so a run can be inspected after the job is gone: `gh run download <run-id> -n vanguard-runs`. Artifacts are downloadable by anyone with read access to the repository, which on a public repo means any signed-in GitHub user. Three guards apply regardless: transcripts are written through `redactTokens` (known token shapes masked), a secret-blocked run leaves no `.diff` and no `.bundle` on disk (its diff holds the secret the scan caught), and git bundles are never uploaded (the PR already carries that history). Everything else the agent read or printed is in the transcript. Same gate as `persist-metrics`; `revise.yml` takes the same input.
 
-Vanguard's own callers turn both on; client repos should decide deliberately.
+Vanguard's own callers turn all three on; client repos should decide deliberately.
 
 ### `.github/workflows/vanguard-doctor.yml` — validate before your first issue
 
@@ -187,7 +189,7 @@ Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, pl
 | Workflow | Inputs | Secrets |
 |---|---|---|
 | `research.yml` | `allowed-actors`, `number` (issue number, required), `provider`, `research-model`, `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON` |
-| `revise.yml` | `allowed-actors`, `number` (PR number, required), `provider`, `llm-proxy`, `timeout-minutes` (default 90), `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `VANGUARD_PUSH_TOKEN` |
+| `revise.yml` | `allowed-actors`, `number` (PR number, required), `provider`, `llm-proxy`, `upload-run-records`, `timeout-minutes` (default 90), `vanguard-ref` | `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `VANGUARD_PUSH_TOKEN` |
 
 Inside a called workflow the `inputs` context means the `workflow_call` inputs, not your `workflow_dispatch` ones, so the caller passes the number in: `number: ${{ github.event.issue.number || inputs.issue }}` for research, `number: ${{ github.event.pull_request.number || inputs.pr }}` for revise. Revise runs at most 2 rounds.
 
