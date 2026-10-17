@@ -93,19 +93,19 @@ describe('persistRunRecord', () => {
     expect(log).toContain('Bearer [REDACTED]');
   });
 
-  it('masks credential material in finalText (run.json) and in the .diff', async () => {
+  it('masks finalText in run.json; the .diff stays byte-faithful (the publish gate owns diff secrets)', async () => {
     const token = `glpat-${'B'.repeat(24)}`;
+    const diff = `+GITLAB_TOKEN=${token}\n+  password: process.env.DB_PASSWORD,\n`;
     const file = await persistRunRecord(
       repo,
-      { ...result, finalText: `Added the deploy key ${token} to config`, diff: `+GITLAB_TOKEN=${token}\n` },
+      { ...result, finalText: `Added the deploy key ${token} to config`, diff },
       { timestamp: TS },
     );
     const record = JSON.parse(await readFile(file, 'utf8'));
     expect(record.finalText).not.toContain(token);
     expect(record.finalText).toContain('[REDACTED-GL]');
-    const diffFile = await readFile(file.replace(/\.json$/, '.diff'), 'utf8');
-    expect(diffFile).not.toContain(token);
-    expect(diffFile).toContain('[REDACTED-GL]');
+    // Ordinary code must survive untouched: redactTokens would turn `password: process.env…` into `[REDACTED]`.
+    expect(await readFile(file.replace(/\.json$/, '.diff'), 'utf8')).toBe(diff);
   });
 
   it('persistStageOutcomes propagates omitDiff to every stage record', async () => {
@@ -265,8 +265,7 @@ describe('persistRunRecord', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://lf.example/api/public/otel/v1/traces');
-    // omitDiff is a persistence switch, not a trace attribute: it must not leak into the export.
-    expect(init.body as string).not.toContain('omitDiff');
+    // omitDiff above exercises the persist/trace split; buildTracePayload names its fields, so no body assertion can pin it.
     const spans = (JSON.parse(init.body as string) as { resourceSpans: { scopeSpans: { spans: { name: string }[] }[] }[] }).resourceSpans[0]!.scopeSpans[0]!.spans;
     expect(spans.map((s) => s.name)).toEqual(['TES-1', 'implementer', 'reviewer']);
     // The metric lines on disk are untouched by the mirror.

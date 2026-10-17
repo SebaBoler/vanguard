@@ -16,6 +16,11 @@ function diffOf(files: { path: string; lines: string[] }[]): string {
 }
 
 describe('redactTokens', () => {
+  it('leaves a long `://a:a:a…` run without `@` alone (bounded userinfo quantifiers, no quadratic backtracking)', () => {
+    const pathological = `https://${'a:'.repeat(16000)}`;
+    expect(redactTokens(pathological)).toBe(pathological);
+  });
+
   it('redacts JWTs, Bearer headers, and token JSON fields (unchanged from codex.ts)', () => {
     expect(redactTokens(`got ${FAKE_JWT} here`)).toBe('got [REDACTED-JWT] here');
     expect(redactTokens('Authorization: Bearer sk-abc.DEF_123-xyz')).toBe('Authorization: Bearer [REDACTED]');

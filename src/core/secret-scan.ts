@@ -95,7 +95,9 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // the shape git itself prints in push/fetch errors. Greedy to the last `@` before the path, like
   // redactRemote, so an unencoded `@` in the password cannot leave a fragment. Runs before the bare
   // token patterns so the whole userinfo goes, not just the token inside it.
-  { name: 'url-userinfo', re: /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/]*@/gi, replacement: '$1[REDACTED]@' },
+  // Bounded quantifiers: unbounded `[^\s/@]+:[^\s/]*@` backtracks quadratically on a long `://a:a:a…`
+  // run with no `@` (a base64url query component, say), and redactTokens now runs over whole transcripts.
+  { name: 'url-userinfo', re: /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]{1,256}:[^\s/]{0,512}@/gi, replacement: '$1[REDACTED]@' },
   { name: 'github-token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g, replacement: '[REDACTED-GH]' },
   { name: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED-GL]' },
   { name: 'basic-auth', re: /(Basic\s+)[A-Za-z0-9+/=]{16,}/g, replacement: '$1[REDACTED]' },

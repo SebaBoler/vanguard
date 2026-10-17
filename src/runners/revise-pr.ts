@@ -316,8 +316,15 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       }
       const verificationFailed = verification !== undefined && !verification.passed;
 
-      // Capture round diff BEFORE commit — post-commit git diff HEAD is empty.
-      const revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      // Capture round diff BEFORE commit — post-commit git diff HEAD is empty. A git failure here must
+      // not lose the cost trace the persist below exists for: record the outcomes and rethrow.
+      let revisionDiff: string;
+      try {
+        revisionDiff = await ctx.wm.diff(ctx.worktreePath);
+      } catch (err) {
+        await persistStageOutcomes(deps.repoPath, outcomes, { flow: 'revise', provider: agents.agent.name });
+        throw err;
+      }
       const whiteLabel = deps.commitAuthor !== undefined;
 
       // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach

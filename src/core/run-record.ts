@@ -27,9 +27,10 @@ export interface PersistOptions {
 
 /**
  * Persist a run's metadata to `.vanguard/runs/<taskId>/<ts>[-label].json` and append one compact
- * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. The
- * (potentially large) diff is written to a sibling `.diff` file and omitted from the JSON record.
- * Returns the written JSON path.
+ * metric line to `.vanguard/runs/metrics.jsonl`, so an AFK fleet leaves a cost/usage/exit trace. Free
+ * text in the record (`finalText`, the sibling `.transcript.log`) is token-masked; the (potentially
+ * large) diff goes to a sibling `.diff` file plus a `.bundle` of the worktree HEAD, both skipped under
+ * `omitDiff`. Returns the written JSON path.
  */
 export async function persistRunRecord(localRepoPath: string, result: RunResult, opts: PersistOptions = {}): Promise<string> {
   const timestamp = opts.timestamp ?? new Date().toISOString();
@@ -52,11 +53,13 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
   // The transcript is raw agent output: tool results can echo env or config, so mask known token
-  // shapes. The diff is masked too: the publish gate exempts test paths (isTestPath), so a
-  // credential under tests/ passes it and would otherwise sit raw in the record.
+  // shapes (lossy is fine for a log). The diff and the bundle stay faithful: they are what the hub's
+  // diff viewer and a human reconstructing the run read, and on a shipped run they hold nothing the
+  // pushed PR does not. Residual gap, shared with the publish gate: scanForSecrets exempts test paths
+  // (isTestPath), so a credential under tests/ is in the diff exactly as it is in the PR.
   if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
   if (!opts.omitDiff) {
-    if (diff) await writeFile(`${base}.diff`, redactTokens(diff));
+    if (diff) await writeFile(`${base}.diff`, diff);
     const bundlePath = `${base}.bundle`;
     try {
       await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
@@ -98,7 +101,8 @@ export async function persistVerification(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.proof.json`;
-  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  // outputTail is verbatim command output (last ~40 lines): masked like every other free text in the record.
+  await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactTokens(result.outputTail) }, null, 2)}\n`);
 
   const metric = { evt: 'verify', ts: timestamp, taskId, passed: result.passed, exitCode: result.exitCode, sha256: result.sha256 };
   await appendFile(join(runsDir, 'metrics.jsonl'), `${JSON.stringify(metric)}\n`);
@@ -144,7 +148,8 @@ export async function persistVisualProof(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.visual-proof.json`;
-  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
+  // outputTail is verbatim command output (last ~40 lines): masked like every other free text in the record.
+  await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactTokens(result.outputTail) }, null, 2)}\n`);
 
   const metric = {
     evt: 'visual_proof',
