@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/SebaBoler/vanguard/compare/v1.5.0...v1.6.0) (2026-10-17)
+
+
+### Features
+
+* **ci:** opt-in upload of .vanguard/runs as a workflow artifact ([#481](https://github.com/SebaBoler/vanguard/issues/481)) ([3e9439d](https://github.com/SebaBoler/vanguard/commit/3e9439d8180ea19e6037a59a1d44c28364031cfb))
+
 ## [1.5.0](https://github.com/SebaBoler/vanguard/compare/v1.4.2...v1.5.0) (2026-10-17)
 
 
