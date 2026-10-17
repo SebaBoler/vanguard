@@ -108,6 +108,18 @@ describe('persistRunRecord', () => {
     expect(await readFile(file.replace(/\.json$/, '.diff'), 'utf8')).toBe(diff);
   });
 
+  it('a stage diff the publish gate would block is not written, even without omitDiff', async () => {
+    const token = `ghp_${'D'.repeat(36)}`;
+    const file = await persistRunRecord(
+      repo,
+      { ...result, diff: `--- a/src/config.ts\n+++ b/src/config.ts\n+const token = '${token}';\n` },
+      { timestamp: TS },
+    );
+    await expect(access(file)).resolves.toBeUndefined();
+    await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
+    await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+  });
+
   it('persistStageOutcomes propagates omitDiff to every stage record', async () => {
     await persistStageOutcomes(repo, [{ name: 'implementer', result }, { name: 'reviewer', result }], { omitDiff: true });
     const dir = join(repo, '.vanguard', 'runs', 'TES-1');

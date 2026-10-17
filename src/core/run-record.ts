@@ -4,7 +4,7 @@ import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
-import { redactTokens } from './secret-scan.js';
+import { redactTokens, scanForSecrets } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -59,10 +59,16 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   // diff viewer and a human reconstructing the run read, and on a shipped run they hold nothing the
   // pushed PR does not. Residual gap, shared with the publish gate: scanForSecrets exempts test paths
   // (isTestPath), so a credential under tests/ is in the diff exactly as it is in the PR.
+  // A stage's diff is the worktree at the end of THAT stage, while the publish gate scans the final
+  // diff only: a secret the implementer wrote and the simplifier removed passes the gate yet sits in
+  // the implementer's record. So every stage diff meets the same scan before it lands on disk.
+  const diffBlocked = diff !== undefined && diff !== '' && scanForSecrets(diff).length > 0;
   if (!opts.omitDiff) {
-    // A secret-blocked run skips the transcript too: the tool call that wrote the secret is in it, and
-    // the scan catches shapes (entropy) that the pattern-based masking cannot.
+    // A secret-blocked run skips the transcript too: redactTokens is pattern-only, and the tool call
+    // that wrote the secret is in the transcript verbatim — skipping beats trusting the masking.
     if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
+  }
+  if (!opts.omitDiff && !diffBlocked) {
     if (diff) await writeFile(`${base}.diff`, diff);
     const bundlePath = `${base}.bundle`;
     try {
@@ -152,8 +158,9 @@ export async function persistVisualProof(
 
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}`);
   const file = `${base}.visual-proof.json`;
-  // outputTail is verbatim command output (last ~40 lines): masked like every other free text in the record.
-  await writeFile(file, `${JSON.stringify({ ...result, outputTail: redactTokens(result.outputTail) }, null, 2)}\n`);
+  // Not masked: on the failure path `sha256` is computed over `outputTail` itself (visual-proof.ts), so
+  // a masked copy would make the proof unverifiable. The tail is screenshot-tool output, not agent text.
+  await writeFile(file, `${JSON.stringify(result, null, 2)}\n`);
 
   const metric = {
     evt: 'visual_proof',
@@ -174,7 +181,7 @@ export interface PersistStageOptions {
   /** Flow and provider names of the run, recorded on the exported trace (see otlp-sink). */
   flow?: string;
   provider?: string;
-  /** Secret-blocked run: write no `.diff` / `.bundle` for any stage (see PersistOptions.omitDiff). */
+  /** Secret-blocked run: no `.diff`, `.bundle` or `.transcript.log` for any stage (see PersistOptions.omitDiff). */
   omitDiff?: boolean;
 }
 
