@@ -4,6 +4,7 @@ import { execa } from 'execa';
 import type { RunResult } from './types.js';
 import { stageMetric } from './run-metric.js';
 import { exportRunTrace } from './otlp-sink.js';
+import { redactTokens } from './secret-scan.js';
 import type { VerificationResult } from '../pipeline/verify.js';
 import type { VisualProofResult } from '../pipeline/visual-proof.js';
 import type { DecisionProbeResult } from './decision-probe.js';
@@ -17,6 +18,11 @@ export interface PersistOptions {
   prUrl?: string;
   /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
   requestedModel?: string;
+  /**
+   * Leave the `.diff` and `.bundle` off disk. Set for secret-blocked runs: their diff holds the very
+   * secret the scan caught, and the run record may be uploaded as a CI artifact (`upload-run-records`).
+   */
+  omitDiff?: boolean;
 }
 
 /**
@@ -42,14 +48,18 @@ export async function persistRunRecord(localRepoPath: string, result: RunResult,
   const base = join(taskDir, `${timestamp.replace(/[^0-9A-Za-z]/g, '-')}${suffix}`);
   const file = `${base}.json`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
-  if (transcript) await writeFile(`${base}.transcript.log`, transcript);
-  if (diff) await writeFile(`${base}.diff`, diff);
-  const bundlePath = `${base}.bundle`;
-  try {
-    await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
-  } catch {
-    // best-effort: remove any partial file git may have opened before it failed
-    await unlink(bundlePath).catch(() => undefined);
+  // The transcript is raw agent output: tool results can echo env or config, so mask known token
+  // shapes before it lands on disk (the record may leave the job as a CI artifact).
+  if (transcript) await writeFile(`${base}.transcript.log`, redactTokens(transcript));
+  if (!opts.omitDiff) {
+    if (diff) await writeFile(`${base}.diff`, diff);
+    const bundlePath = `${base}.bundle`;
+    try {
+      await execa('git', ['-C', result.worktreePath, 'bundle', 'create', bundlePath, 'HEAD']);
+    } catch {
+      // best-effort: remove any partial file git may have opened before it failed
+      await unlink(bundlePath).catch(() => undefined);
+    }
   }
 
   const metric = {
@@ -151,6 +161,8 @@ export interface PersistStageOptions {
   /** Flow and provider names of the run, recorded on the exported trace (see otlp-sink). */
   flow?: string;
   provider?: string;
+  /** Secret-blocked run: write no `.diff` / `.bundle` for any stage (see PersistOptions.omitDiff). */
+  omitDiff?: boolean;
 }
 
 /**
@@ -163,12 +175,14 @@ export async function persistStageOutcomes(
   opts: PersistStageOptions = {},
 ): Promise<void> {
   const timestamp = new Date().toISOString();
+  const { omitDiff, ...trace } = opts;
   for (const outcome of outcomes) {
     await persistRunRecord(localRepoPath, outcome.result, {
       timestamp,
       label: outcome.name,
       ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
       ...(outcome.model !== undefined ? { requestedModel: outcome.model } : {}),
+      ...(omitDiff ? { omitDiff } : {}),
     });
   }
   const first = outcomes[0];
@@ -177,6 +191,6 @@ export async function persistStageOutcomes(
     taskId: first.result.taskId,
     timestamp,
     stages: outcomes.map((o) => stageMetric(o.result, o.name, o.model !== undefined ? { requestedModel: o.model } : undefined)),
-    ...opts,
+    ...trace,
   });
 }

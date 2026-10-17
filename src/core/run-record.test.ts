@@ -80,6 +80,30 @@ describe('persistRunRecord', () => {
     expect(log).toBe('{"type":"result"}\n');
   });
 
+  it('masks credential material in transcript.log before it reaches disk', async () => {
+    const token = `ghp_${'A'.repeat(36)}`;
+    const file = await persistRunRecord(
+      repo,
+      { ...result, transcript: `env: GH_TOKEN=${token}\nAuthorization: Bearer abc.def.ghi\n` },
+      { timestamp: TS },
+    );
+    const log = await readFile(file.replace(/\.json$/, '.transcript.log'), 'utf8');
+    expect(log).not.toContain(token);
+    expect(log).toContain('[REDACTED-GH]');
+    expect(log).toContain('Bearer [REDACTED]');
+  });
+
+  it('omitDiff writes the JSON but no .diff and no .bundle (secret-blocked runs)', () =>
+    withWorktree(async (wt) => {
+      await execa('git', ['init', '-b', 'main'], { cwd: wt });
+      await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: wt });
+      const file = await persistRunRecord(repo, { ...result, worktreePath: wt }, { timestamp: TS, omitDiff: true });
+      await expect(access(file)).resolves.toBeUndefined();
+      await expect(access(file.replace(/\.json$/, '.diff'))).rejects.toThrow();
+      await expect(access(file.replace(/\.json$/, '.bundle'))).rejects.toThrow();
+    }),
+  );
+
   it('writes a git bundle when worktreePath has a commit', () =>
     withWorktree(async (wt) => {
       await execa('git', ['init', '-b', 'main'], { cwd: wt });

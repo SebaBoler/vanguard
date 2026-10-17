@@ -594,7 +594,8 @@ export async function runSourcedIssue(
         },
       });
       if (delivery.kind === 'secret-blocked') {
-        await persistStageOutcomes(deps.repoPath, outcomes, runMeta);
+        // The blocked diff holds the secret the scan caught: keep it (and the bundle) off disk.
+        await persistStageOutcomes(deps.repoPath, outcomes, { ...runMeta, omitDiff: true });
         await stepSummary('secret-blocked');
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr + run record.
