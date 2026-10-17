@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/SebaBoler/vanguard/compare/v1.4.1...v1.4.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **deps:** clear every open dependabot alert ([#467](https://github.com/SebaBoler/vanguard/issues/467)) ([28442f2](https://github.com/SebaBoler/vanguard/commit/28442f224a796127ed1a885399572143728e525b))
+
 ## [1.4.1](https://github.com/SebaBoler/vanguard/compare/v1.4.0...v1.4.1) (2026-10-14)
 
 
