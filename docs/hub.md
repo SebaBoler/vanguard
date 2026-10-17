@@ -74,21 +74,24 @@ needs a token with `actions:read` (fine-grained PAT) or classic `repo` scope. Ru
 
 ## CI run import
 
-This repo does not yet upload a `vanguard-runs` artifact — a human must add it. Add a step like this to
-one of this repo's workflows, gated behind a `workflow_dispatch` / `workflow_call` input:
+The reusable `implement.yml` and `revise.yml` workflows take an `upload-run-records` input (boolean,
+off by default). When a caller passes `upload-run-records: true`, the job uploads `.vanguard/runs/` as
+a `vanguard-runs` artifact kept for 14 days, with `**/*.bundle` excluded (git bundles are large and the
+reader ignores them). The step runs under the same gate as `persist-metrics`: only once the run step
+finished, pass or fail. This repo's own callers (`vanguard-implement.yml`, `vanguard-revise.yml`) opt
+in; a client repo adds the input to its thin caller, see `docs/onboarding-another-repo.md` for the
+input table and the "off by default, on purpose" notes.
 
-```yaml
-      - name: Upload run records
-        if: ${{ inputs.upload-run-records }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: vanguard-runs
-          path: .vanguard/runs
-          # exclude *.bundle — git bundles make the artifact large and the reader ignores them anyway
-```
+What the artifact may contain, and what keeps it safe to publish: transcripts and `finalText` go
+through `redactTokens`; a secret-blocked run, or a stage whose diff the secret scan flags, leaves no
+`.diff`, `.bundle` or transcript (`diffOmitted` on the record says why); the scan exempts test paths,
+so a credential added under `tests/` or `*.test.ts` is in the diff exactly as it would be in the PR.
+Artifacts are downloadable by anyone with read access to the repository — on a public repo, any
+signed-in GitHub user.
 
-This snippet is **not applied** in this repo. It must be added by hand to `.github/workflows/*.yml` by
-a human — an agent may never edit workflow files, per `CLAUDE.md`.
+A `vanguard-runs` artifact is missing when the caller never opted in, when the run step did not reach
+`success` or `failure` (blocked actor gate, failed build), or when the run wrote no record at all; the
+empty-artifact case does not arise, because `if-no-files-found: ignore` skips the upload instead.
 
 ## Resource limits
 
