@@ -95,3 +95,23 @@ a human — an agent may never edit workflow files, per `CLAUDE.md`.
 Mirror `docker/compose.yaml`'s `mem_limit: 1024m` pattern. The hub runs agent sandboxes in the same
 process as the HTTP server, so give the container the same RAM headroom, and keep
 `VANGUARD_MAX_SANDBOXES=1` on a small host.
+
+## CLI flags
+
+```
+vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no-open]
+```
+
+| Flag | Overrides | Default |
+|---|---|---|
+| `--repo <path>` | — | cwd; seeded into the project store on startup if it's a git work tree and not already present |
+| `--host <addr>` | `VANGUARD_HUB_HOST` | `127.0.0.1` |
+| `--port <n>` | `VANGUARD_HUB_PORT` | `7777` (1-65535; an invalid explicit `--port` is a startup error) |
+| `--ui-dir <dir>` | `VANGUARD_HUB_UI_DIR` | `<pkg>/apps/desktop/dist` |
+| `--no-open` | — | opens the printed URL in a browser unless passed |
+
+A missing or unbuilt `--ui-dir` fails at startup, naming `pnpm --dir apps/desktop build`
+(run `pnpm build:ui`) rather than failing on the first request. Binding a non-loopback host
+prints the no-auth warning above and disables `add_project`/`browse_dirs` unless
+`VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
+and the project file watchers.

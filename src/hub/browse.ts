@@ -25,7 +25,7 @@ export interface DirListing {
 }
 
 /** True if `child` is `root` itself or a real descendant of it (both already realpath'd). */
-function isWithinRoot(root: string, child: string): boolean {
+export function isWithinRoot(root: string, child: string): boolean {
   return child === root || child.startsWith(root + sep);
 }
 
