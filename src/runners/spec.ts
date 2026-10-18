@@ -23,6 +23,7 @@ import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
 import type { VanguardLogger } from '../core/logger.js';
 import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
+import { skillRegistryForRun } from '../context/skill-registry.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -52,6 +53,8 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
   maxTurns?: number;
   /** Branch the research worktree is cut from — the baseline Fable specs against (default: main). */
   baseBranch?: string;
+  /** --skills dir (e.g. the bundled tech-spec skill), merged with the repo's .github/vanguard-skills/. */
+  skillsDir?: string;
   logger?: VanguardLogger;
   signal?: AbortSignal;
   /**
@@ -129,7 +132,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
-    const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    const [retrospectiveMemory, skills] = await Promise.all([loadRetrospectiveMemory(deps.repoPath), skillRegistryForRun(deps.skillsDir, deps.repoPath)]);
     const ctx = await prepareContext(
       {
         taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
@@ -143,7 +146,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         keepLocalIfAhead: false,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
-      deps.contextDeps ?? {},
+      { skills, ...deps.contextDeps },
     );
     try {
       // haiku keeps the spec pass cheap on Claude; a provider that forces its own model (zai's glm,

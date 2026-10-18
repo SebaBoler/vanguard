@@ -77,6 +77,7 @@ export async function watchPrsCommand(cmd: WatchPrsCommand, deps: WatchPrsComman
         ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
         ...(cmd.reviewModel !== undefined ? { reviewModel: cmd.reviewModel } : {}),
         ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+        ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
       }),
   });
 

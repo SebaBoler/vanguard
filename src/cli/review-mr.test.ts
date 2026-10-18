@@ -15,6 +15,9 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
   disposeContext: vi.fn(async () => undefined),
 }));
 
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { prepareContext, runAgent } from '../core/vanguard.js';
 import { mergeRequestReviewMarker, reviewMergeRequest } from '../runners/mr-review.js';
@@ -113,6 +116,38 @@ describe('reviewMrCommand', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('MR g/p!5 carries no base branch'));
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  it("the default reviewer injects the --skills dir plus the repo's .github/vanguard-skills", async () => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    vi.mocked(startSandboxContext).mockResolvedValue({ destroy: async () => undefined } as never);
+    const root = await mkdtemp(join(tmpdir(), 'vg-review-mr-skills-'));
+    try {
+      for (const dir of [join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'deploy')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      vi.mocked(prepareContext).mockClear();
+      const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+      vi.mocked(runAgent).mockResolvedValue({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+      const glab: GlabRunner = async (args) => {
+        if (args[0] === 'mr' && args[1] === 'view') return JSON.stringify({ iid: 5, sha: 'abc123def4567890', target_branch: 'main' });
+        if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ username: 'vanguard-bot' });
+        if (args[0] === 'api') return '[]';
+        return '';
+      };
+      await reviewMrCommand(
+        { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: join(root, 'repo'), egress: true, skillsDir: join(root, 'bundled') },
+        { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
+      );
+      // The registry handed to prepareContext holds both the --skills skill and the repo's own one.
+      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      const copied: string[] = [];
+      await skills?.inject(['code-review', 'deploy'], { copyIn: async (_h: string, to: string) => { copied.push(to); } } as never);
+      expect(copied).toEqual(['/workspace/.vanguard/skills/code-review', '/workspace/.vanguard/skills/deploy']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

@@ -373,6 +373,21 @@ describe('parseCli', () => {
     expect(wp.kind === 'watch-prs' && wp.maxTurns).toBe(48);
   });
 
+  it('parses --skills on the spec, revise and review commands (each runs an agent outside runSourcedIssue)', () => {
+    const argvs = [
+      ['spec', 'o/r#1'],
+      ['revise-pr', 'o/r#7'],
+      ['review-pr', 'o/r#7'],
+      ['watch-prs', '--github-repo', 'o/r', '--label', 'l'],
+      ['review-mr', '--mr', '5', '--gitlab-project', 'g/p'],
+      ['watch-mrs', '--gitlab-project', 'g/p', '--label', 'l'],
+    ];
+    for (const argv of argvs) {
+      expect(parseCli([...argv, '--skills', '/skills'], '/work')).toMatchObject({ kind: argv[0], skillsDir: '/skills' });
+      expect('skillsDir' in parseCli(argv, '/work')).toBe(false);
+    }
+  });
+
   it('clamps a huge --max-turns or --max-rounds to Number.MAX_SAFE_INTEGER', () => {
     const huge = parseCli(['review-mr', '--mr', '5', '--gitlab-project', 'g/p', '--max-turns', '1e308'], '/work');
     expect(huge.kind === 'review-mr' && huge.maxTurns).toBe(Number.MAX_SAFE_INTEGER);

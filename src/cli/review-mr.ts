@@ -6,6 +6,7 @@ import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { agentAuthFromEnv, authSecrets } from '../agents/auth.js';
 import { selectAgents } from '../agents/registry.js';
 import { prepareContext, runAgent, disposeContext } from '../core/vanguard.js';
+import { skillRegistryForRun } from '../context/skill-registry.js';
 import { baseBranchOrDefault } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
@@ -105,7 +106,7 @@ async function runDefaultMrReviewer(
     const taskId = `mr-review-${mr.project.replace(/[^a-zA-Z0-9]/g, '-')}-${mr.iid}`;
     // The reviewer reads the tree the change lands on: the MR's target branch as origin has it.
     const baseBranch = baseBranchOrDefault(mr.targetBranch, `MR ${mr.project}!${mr.iid}`);
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' });
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' }, { skills: await skillRegistryForRun(cmd.skillsDir, cmd.repoPath) });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {
