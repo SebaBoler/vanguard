@@ -46,6 +46,6 @@ export function contrastColor(hex: string): string {
 }
 
 /** A project's effective color: the configured override, else the auto color from its path. */
-export function projectColor(p: { path: string; color?: string }): string {
+export function projectColor(p: { path: string; color?: string | null }): string {
   return p.color && isValidHexColor(p.color) ? p.color : autoColor(p.path);
 }

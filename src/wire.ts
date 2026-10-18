@@ -10,8 +10,8 @@
  *   drift test byte-compares them. Change here ⇒ regenerate, or root CI fails naming the fix.
  *
  * Rust never inspects these payloads (sidecar traffic passes through as opaque JSON), so this file
- * IS the contract for everything TS↔TS. TS↔Rust shapes (vanguard-output.d.ts vs serde structs)
- * are a different boundary and stay out.
+ * IS the contract for everything TS↔TS. The TS↔Rust shapes (serde structs in src-tauri) are a
+ * different boundary and stay hand-mirrored — see the note above `Project`.
  */
 
 /** Reasoning-effort tiers accepted across stages, flows, and the CLI. */
@@ -199,6 +199,22 @@ export const KEY_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const CUSTOM_PROVIDER_KEYS = ['name', 'baseUrl', 'keyEnv', 'model'] as const;
 
 /**
+ * A VALID `customProviders` entry (Subsystem 6) — the shape the core loader accepts and the
+ * Settings form edits. `AppConfig.customProviders` stays `unknown` on purpose: the file is
+ * hand-editable, so entries reach both producers invalid and with unknown keys, and only the
+ * loader (and `customProviderRowError`, its editor mirror) may call one well-formed.
+ */
+export interface CustomProviderSpec {
+  name: string;
+  /** Absolute http:/https: URL — becomes ANTHROPIC_BASE_URL verbatim. */
+  baseUrl: string;
+  /** Host env var NAME holding the key (read at dispatch, never stored). */
+  keyEnv: string;
+  /** Forced default model (zai pattern) for endpoints that don't serve the CLI's Claude default. */
+  model?: string;
+}
+
+/**
  * The built-in provider names, in registry-table order. A LITERAL, not derived: PROVIDER_NAMES is
  * `Object.keys(PROVIDERS)` inside registry.ts, which imports node-only provider classes — this
  * file must stay webview-safe. registry.test.ts pins `WIRE_PROVIDER_NAMES` equal (incl. order).
@@ -365,6 +381,8 @@ export interface SessionRead {
   estCostUsd: number;
 }
 
+/** Every field is nullable, not just optional: Rust's emit-all serde writes `null` for an absent
+ * `Option`, and a hand-edited `app.json` may spell a default that way too. */
 export interface AppConfig {
   source?: string | null;
   label?: string | null;
@@ -379,8 +397,8 @@ export interface AppConfig {
   /** Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; key is env-only. */
   chatModel?: string | null;
   chatBaseUrl?: string | null;
-  /** Opaque JSON preserved by Rust and the hub, including invalid entries and unknown keys.
-   * The core loader validates providers when they are used. */
+  /** Opaque JSON preserved by Rust and the hub, including invalid entries and unknown keys — see
+   * `CustomProviderSpec` for the shape a valid entry has. */
   customProviders?: unknown;
 }
 

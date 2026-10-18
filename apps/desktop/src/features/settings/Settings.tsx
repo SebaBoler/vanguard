@@ -5,10 +5,9 @@ import { useAppConfig } from '../../hooks';
 import { useDiscardGuard } from '../../navGuard';
 import { SOURCES } from '../../sources';
 import { projectColor } from '../../color';
-import { customProviderRowError, PROVIDERS } from './customProviders';
+import { customProviderRowError, customProviderRows, PROVIDERS } from './customProviders';
 import type { AppConfig } from '../../vanguard-output';
-
-type CustomProviderRow = NonNullable<AppConfig['customProviders']>[number];
+import type { CustomProviderSpec } from '../../wire';
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -70,14 +69,14 @@ export function Settings({ project }: { project: string }) {
     setSaved(false);
   };
 
-  const customs: CustomProviderRow[] = cfg.customProviders ?? [];
+  const customs: CustomProviderSpec[] = customProviderRows(cfg);
   const customErrors = customs.map((row, i) => customProviderRowError(row, i, customs));
   const customsValid = customErrors.every((e) => e === undefined);
   const healthyCustomNames = customs.filter((_, i) => customErrors[i] === undefined).map((r) => r.name);
   const providerOptions = [...PROVIDERS, ...healthyCustomNames];
 
-  const setCustoms = (rows: CustomProviderRow[]): void => set('customProviders', rows.length > 0 ? rows : undefined);
-  const setRow = (i: number, patch: Partial<CustomProviderRow>): void =>
+  const setCustoms = (rows: CustomProviderSpec[]): void => set('customProviders', rows.length > 0 ? rows : undefined);
+  const setRow = (i: number, patch: Partial<CustomProviderSpec>): void =>
     setCustoms(customs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   // Save gating (S6 §8 guards): before the config read resolves, a save would write the {} seed
