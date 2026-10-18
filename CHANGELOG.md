@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/SebaBoler/vanguard/compare/v1.6.0...v1.7.0) (2026-10-17)
+
+
+### Features
+
+* test(hub): browse/rpc tests compare un-realpathed tmp paths and fail on macOS (SebaBoler/vanguard[#477](https://github.com/SebaBoler/vanguard/issues/477)) ([#486](https://github.com/SebaBoler/vanguard/issues/486)) ([4b8aafb](https://github.com/SebaBoler/vanguard/commit/4b8aafb83328f7be1bb70986c30c3534373d93b6))
+
+
+### Bug Fixes
+
+* **hub:** RPC result envelope + Remote fetch wiring (browser smoke) ([#484](https://github.com/SebaBoler/vanguard/issues/484)) ([c6e9f24](https://github.com/SebaBoler/vanguard/commit/c6e9f2407815c5d8de2c07cebbfae7a4ba1d9789))
+* **hub:** run detail shows proof-of-work again: proof.json shares the run timestamp and the reader falls back to the closest earlier proof (SebaBoler/vanguard[#487](https://github.com/SebaBoler/vanguard/issues/487)) ([#488](https://github.com/SebaBoler/vanguard/issues/488)) ([b42d646](https://github.com/SebaBoler/vanguard/commit/b42d6464d472d190efd50c4fed1c0f02fc9d3ee1))
+* **hub:** serve the Tauri app icon as the web UI favicon ([#489](https://github.com/SebaBoler/vanguard/issues/489)) ([c02c443](https://github.com/SebaBoler/vanguard/commit/c02c443a626f038731abb48715a85b62b6fd3399))
+
 ## [1.6.0](https://github.com/SebaBoler/vanguard/compare/v1.5.0...v1.6.0) (2026-10-17)
 
 
