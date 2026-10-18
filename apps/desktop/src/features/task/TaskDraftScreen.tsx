@@ -16,6 +16,7 @@ import {
 import { MAX_INLINE_TOTAL_BYTES, MAX_IMAGE_BYTES, MAX_IMAGE_TOTAL_BYTES } from '../../wire.js';
 import type { CompleteAttachment } from '../../wire.js';
 import type { ComposerAttachment } from './ChatPane.js';
+import { customProviderRows } from '../settings/customProviders.js';
 import { useNavGuardRegistry } from '../../navGuard.js';
 import { relTime } from '../../time.js';
 import { DocEditor } from './DocEditor.js';
@@ -172,7 +173,7 @@ export function TaskDraftScreen({
         setDefaultModel(resolved);
         // Every distinct model the vanguard configuration knows about (handoff §4) — the resolved
         // default is presented by the "default" option, so it is excluded here.
-        const models = (cfg.customProviders ?? [])
+        const models = customProviderRows(cfg)
           .map((p) => p.model)
           .filter((m): m is string => typeof m === 'string' && m.trim() !== '');
         setModelOptions([...new Set(models)].filter((m) => m !== resolved));

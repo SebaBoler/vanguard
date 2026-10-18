@@ -114,7 +114,7 @@ interface Request {
  * system and CANNOT be undone from inside the app, so every caller mistake must fail here — loudly,
  * before anything is written — rather than half-way through a transport.
  */
-export function validateCreateTask(params: unknown): void {
+function validateCreateTask(params: unknown): void {
   const p = (params ?? {}) as Record<string, unknown>;
   if (typeof p.source !== 'string' || !TRANSPORTS.includes(p.source as (typeof TRANSPORTS)[number])) {
     throw new BadRequestError(`source must be one of: ${TRANSPORTS.join(', ')}`);
@@ -141,7 +141,7 @@ export function validateCreateTask(params: unknown): void {
  * in the runner. Provider and flow are shape-checked only — repo customs/flows are legal values this
  * sync validator cannot see; both resolve as first statements of the createRun dep (bad-request).
  */
-export function validateCreateRun(params: unknown): void {
+function validateCreateRun(params: unknown): void {
   const p = (params ?? {}) as Record<string, unknown>;
   if (typeof p.issueRef !== 'string' || p.issueRef.trim() === '') {
     throw new BadRequestError('issueRef is required and must be a non-blank string');
@@ -198,38 +198,38 @@ function requireFlowFile(p: Record<string, unknown>): void {
   }
 }
 
-export function validateListFlows(params: unknown): void {
+function validateListFlows(params: unknown): void {
   requireAbsoluteRepoPath(params);
 }
 
-export function validateListProviders(params: unknown): void {
+function validateListProviders(params: unknown): void {
   requireAbsoluteRepoPath(params);
 }
 
-export function validateReadFlow(params: unknown): void {
+function validateReadFlow(params: unknown): void {
   requireFlowFile(requireAbsoluteRepoPath(params));
 }
 
-export function validateDeleteFlow(params: unknown): void {
+function validateDeleteFlow(params: unknown): void {
   requireFlowFile(requireAbsoluteRepoPath(params));
 }
 
-export function validateListTasks(params: unknown): void {
+function validateListTasks(params: unknown): void {
   requireAbsoluteRepoPath(params);
 }
 
-export function validateFetchSpec(params: unknown): void {
+function validateFetchSpec(params: unknown): void {
   const p = requireAbsoluteRepoPath(params);
   if (typeof p.taskId !== 'string' || p.taskId.trim() === '') {
     throw new BadRequestError('taskId is required and must be a non-blank string');
   }
 }
 
-export function validateListRepoFiles(params: unknown): void {
+function validateListRepoFiles(params: unknown): void {
   requireAbsoluteRepoPath(params);
 }
 
-export function validateReadRepoFile(params: unknown): void {
+function validateReadRepoFile(params: unknown): void {
   const p = requireAbsoluteRepoPath(params);
   if (typeof p.path !== 'string' || p.path.trim() === '') {
     throw new BadRequestError('path is required and must be a non-blank string');
@@ -243,7 +243,7 @@ export function validateReadRepoFile(params: unknown): void {
  * validity predicate, the canonical-filename rule, and the built-in collision. The
  * sibling-duplicate check needs fs and lives in the dep.
  */
-export function validateWriteFlow(params: unknown): FlowDoc {
+function validateWriteFlow(params: unknown): FlowDoc {
   const p = requireAbsoluteRepoPath(params);
   requireFlowFile(p);
   let doc: FlowDoc;
@@ -263,6 +263,122 @@ export function validateWriteFlow(params: unknown): FlowDoc {
   return doc;
 }
 
+/** One table row: validate-then-call for a single core method. `validate` throws (BadRequestError)
+ * or returns the params `call` should use — the writeFlow row uses this to thread the coerced doc
+ * through without a second, method-specific unwrap at each call site. */
+interface CoreMethodDef {
+  validate: (params: unknown) => unknown;
+  call: (deps: SidecarDeps, params: unknown, onEvent?: (e: RunEvent) => void) => Promise<unknown>;
+}
+
+/** Adapts a void-returning validator (throws on bad input, otherwise has nothing to add) into a
+ * `CoreMethodDef['validate']` that passes the params through unchanged. */
+function passthrough(validate: (params: unknown) => void): (params: unknown) => unknown {
+  return (params) => {
+    validate(params);
+    return params;
+  };
+}
+
+/**
+ * Every core method's validate-then-call pairing, keyed by its sidecar wire name. `runSidecar` and
+ * `dispatchRpc` (`src/hub/rpc.ts`) both ride this table via `invokeCoreMethod` — adding a method here
+ * (plus its `api_*` name mapping in rpc.ts) is the only step needed to expose it on both transports.
+ */
+export const CORE_METHODS: Record<string, CoreMethodDef> = {
+  capabilities: {
+    validate: () => undefined,
+    call: async (deps) => deps.capabilities(),
+  },
+  createTask: {
+    validate: passthrough(validateCreateTask),
+    call: async (deps, params) => deps.createTask(params as CreateTaskParams),
+  },
+  createRun: {
+    validate: passthrough(validateCreateRun),
+    call: async (deps, params, onEvent) => deps.createRun(params as CreateRunParams, onEvent ?? (() => {})),
+  },
+  listFlows: {
+    validate: passthrough(validateListFlows),
+    call: async (deps, params) => deps.listFlows(params as ListFlowsParams),
+  },
+  listProviders: {
+    validate: passthrough(validateListProviders),
+    call: async (deps, params) => deps.listProviders(params as ListProvidersParams),
+  },
+  readFlow: {
+    validate: passthrough(validateReadFlow),
+    call: async (deps, params) => deps.readFlow(params as ReadFlowParams),
+  },
+  deleteFlow: {
+    validate: passthrough(validateDeleteFlow),
+    call: async (deps, params) => deps.deleteFlow(params as DeleteFlowParams),
+  },
+  listTasks: {
+    validate: passthrough(validateListTasks),
+    call: async (deps, params) => deps.listTasks(params as ListTasksParams),
+  },
+  fetchSpec: {
+    validate: passthrough(validateFetchSpec),
+    call: async (deps, params) => deps.fetchSpec(params as FetchSpecParams),
+  },
+  listRepoFiles: {
+    validate: passthrough(validateListRepoFiles),
+    call: async (deps, params) => deps.listRepoFiles(params as ListRepoFilesParams),
+  },
+  readRepoFile: {
+    validate: passthrough(validateReadRepoFile),
+    call: async (deps, params) => deps.readRepoFile(params as ReadRepoFileParams),
+  },
+  writeFlow: {
+    validate: (params) => {
+      const doc = validateWriteFlow(params);
+      // Pass the coerced doc, not the raw one — the clean rebuild is what gets emitted.
+      return { ...(params as Record<string, unknown>), doc };
+    },
+    call: async (deps, params) => deps.writeFlow(params as WriteFlowParams),
+  },
+};
+
+/** Is `name` a row in `CORE_METHODS`? */
+export function isCoreMethod(name: string): boolean {
+  return Object.hasOwn(CORE_METHODS, name);
+}
+
+/** Validate one core method's params by its wire name, without calling it — what `dispatchRpc`'s
+ * `api_create_run` case uses to run `createRun`'s validator while still calling `ctx.runSession.createRun`
+ * directly, instead of calling through a one-off `SidecarDeps` built just to override `createRun`. */
+export function validateCoreMethod(method: string, params: unknown): unknown {
+  if (!isCoreMethod(method)) {
+    throw new BadRequestError(`unknown method: ${method}`);
+  }
+  return CORE_METHODS[method]!.validate(params);
+}
+
+/**
+ * Validate then call one core method by its wire name — the single place `runSidecar` and
+ * `dispatchRpc` dispatch through, so there is exactly one validate-then-call pairing per method.
+ * `onEvent` is only read by `createRun`; every other method ignores it.
+ */
+export async function invokeCoreMethod(
+  deps: SidecarDeps,
+  method: string,
+  params: unknown,
+  onEvent?: (e: RunEvent) => void,
+): Promise<unknown> {
+  const validated = validateCoreMethod(method, params);
+  return CORE_METHODS[method]!.call(deps, validated, onEvent);
+}
+
+/** Classify a thrown value the way both `runSidecar` and `dispatchRpc` report it on the wire:
+ * BadRequestError (incl. UnknownCommandError)/FlowError/VanguardError are caller-correctable
+ * (`bad-request`); anything else is a real fault (`internal`). */
+export function classifyCoreError(err: unknown): { message: string; kind: 'bad-request' | 'internal' } {
+  const kind = err instanceof VanguardError || err instanceof FlowError ? 'bad-request' : 'internal';
+  const message = err instanceof Error ? err.message : String(err);
+  return { message, kind };
+}
+
 /**
  * Stdio JSON loop. Reads one request per line, writes correlated event/result/error lines.
  * DI on `deps` so the createRun event stream is testable without a real sandbox.
@@ -277,61 +393,26 @@ export async function runSidecar(
     if (line === '') continue;
     let req: Request;
     try {
-      req = JSON.parse(line) as Request;
+      const parsed: unknown = JSON.parse(line);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new BadRequestError('request must be an object');
+      }
+      req = parsed as Request;
     } catch {
       write(JSON.stringify({ error: { message: 'invalid JSON', kind: 'bad-request' } }));
       continue;
     }
     const id = req.id;
     try {
-      if (req.method === 'capabilities') {
-        write(JSON.stringify({ id, result: deps.capabilities() }));
-      } else if (req.method === 'createTask') {
-        validateCreateTask(req.params);
-        const result = await deps.createTask(req.params as CreateTaskParams);
-        write(JSON.stringify({ id, result }));
-      } else if (req.method === 'createRun') {
-        validateCreateRun(req.params);
-        const params = req.params as CreateRunParams;
-        const result = await deps.createRun(params, (e) => write(JSON.stringify({ id, event: e })));
-        write(JSON.stringify({ id, result }));
-      } else if (req.method === 'listFlows') {
-        validateListFlows(req.params);
-        write(JSON.stringify({ id, result: await deps.listFlows(req.params as ListFlowsParams) }));
-      } else if (req.method === 'listProviders') {
-        validateListProviders(req.params);
-        write(JSON.stringify({ id, result: await deps.listProviders(req.params as ListProvidersParams) }));
-      } else if (req.method === 'readFlow') {
-        validateReadFlow(req.params);
-        write(JSON.stringify({ id, result: await deps.readFlow(req.params as ReadFlowParams) }));
-      } else if (req.method === 'listTasks') {
-        validateListTasks(req.params);
-        write(JSON.stringify({ id, result: await deps.listTasks(req.params as ListTasksParams) }));
-      } else if (req.method === 'fetchSpec') {
-        validateFetchSpec(req.params);
-        write(JSON.stringify({ id, result: await deps.fetchSpec(req.params as FetchSpecParams) }));
-      } else if (req.method === 'listRepoFiles') {
-        validateListRepoFiles(req.params);
-        write(JSON.stringify({ id, result: await deps.listRepoFiles(req.params as ListRepoFilesParams) }));
-      } else if (req.method === 'readRepoFile') {
-        validateReadRepoFile(req.params);
-        write(JSON.stringify({ id, result: await deps.readRepoFile(req.params as ReadRepoFileParams) }));
-      } else if (req.method === 'deleteFlow') {
-        validateDeleteFlow(req.params);
-        write(JSON.stringify({ id, result: await deps.deleteFlow(req.params as DeleteFlowParams) }));
-      } else if (req.method === 'writeFlow') {
-        const doc = validateWriteFlow(req.params);
-        const params = req.params as WriteFlowParams;
-        // Pass the coerced doc, not the raw one — the clean rebuild is what gets emitted.
-        write(JSON.stringify({ id, result: await deps.writeFlow({ ...params, doc }) }));
-      } else {
-        write(JSON.stringify({ id, error: { message: `unknown method: ${String(req.method)}`, kind: 'bad-request' } }));
+      if (typeof req.method !== 'string') {
+        throw new BadRequestError('method must be a string');
       }
+      const method = req.method;
+      const onEvent = method === 'createRun' ? (e: RunEvent) => write(JSON.stringify({ id, event: e })) : undefined;
+      const result = await invokeCoreMethod(deps, method, req.params, onEvent);
+      write(JSON.stringify({ id, result }));
     } catch (err) {
-      // FlowError = a user-fixable flow-file problem (parse failure, duplicate, unknown flow) —
-      // caller-correctable, so bad-request. `internal` stays reserved for real faults (fs, runner).
-      const kind = err instanceof BadRequestError || err instanceof FlowError ? 'bad-request' : 'internal';
-      const message = err instanceof Error ? err.message : String(err);
+      const { message, kind } = classifyCoreError(err);
       write(JSON.stringify({ id, error: { message, kind } }));
     }
   }

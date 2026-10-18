@@ -4,21 +4,13 @@
 import { execa } from 'execa';
 import {
   BadRequestError,
-  validateCreateRun,
-  validateListFlows,
-  validateListProviders,
-  validateReadFlow,
-  validateWriteFlow,
-  validateDeleteFlow,
-  validateListTasks,
-  validateFetchSpec,
-  validateListRepoFiles,
-  validateReadRepoFile,
+  invokeCoreMethod,
+  validateCoreMethod,
+  classifyCoreError,
   type SidecarDeps,
   type CreateRunParams,
+  type CreateTaskParams,
 } from '../sidecar/sidecar.js';
-import { FlowError } from '../flows/repo.js';
-import { VanguardError } from '../core/errors.js';
 import { ProjectAllowlist, assertGitWorkTreeDir, assertMutationsAllowed, type BindOptions } from './allowlist.js';
 import { WatchRegistry } from './watch.js';
 import type { RunSession } from './run-session.js';
@@ -189,14 +181,12 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
     }
     case 'list_tasks': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
-      validateListTasks({ repoPath: real });
-      return ctx.deps.listTasks({ repoPath: real });
+      return invokeCoreMethod(ctx.deps, 'listTasks', { repoPath: real });
     }
     case 'fetch_spec': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const taskId = requireString(args, 'taskId');
-      validateFetchSpec({ repoPath: real, taskId });
-      return ctx.deps.fetchSpec({ repoPath: real, taskId });
+      return invokeCoreMethod(ctx.deps, 'fetchSpec', { repoPath: real, taskId });
     }
     case 'watch_project': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
@@ -209,14 +199,15 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       return null;
     }
     case 'api_capabilities': {
-      return ctx.deps.capabilities();
+      return invokeCoreMethod(ctx.deps, 'capabilities', undefined);
     }
     case 'api_create_run': {
-      const params = args.params;
-      validateCreateRun(params);
-      const p = params as CreateRunParams;
-      const real = await ctx.allowlist.assertAllowed(p.repoPath);
-      return ctx.runSession.createRun({ ...p, repoPath: real });
+      const params = (args.params ?? {}) as Record<string, unknown>;
+      const real = await ctx.allowlist.assertAllowed(requireString(params, 'repoPath'));
+      // The run session (not deps.createRun) owns single-in-flight gating and event
+      // buffering/publishing — validate via the table row, then call it directly.
+      const validated = validateCoreMethod('createRun', { ...params, repoPath: real });
+      return ctx.runSession.createRun(validated as CreateRunParams);
     }
     case 'api_active_run': {
       return ctx.runSession.activeRun();
@@ -233,60 +224,49 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       const title = requireString(args, 'title');
       const body = typeof args.body === 'string' ? args.body : '';
       // The client never chooses the tracker: source/team/label are read server-side from app.json.
+      // `createTask`'s own validator (not a re-typed check here) rejects a bad source/missing team.
       const cfg = await readAppConfig(real);
-      const source = cfg.source ?? 'github';
-      if (source === 'linear' && (cfg.team === undefined || cfg.team.trim() === '')) {
-        throw new BadRequestError('a Linear team key is required to create a task (set it in Settings)');
-      }
-      return ctx.deps.createTask({
-        source,
+      const params: CreateTaskParams = {
+        source: cfg.source ?? 'github',
         repoPath: real,
         title,
         body,
         ...(cfg.label !== undefined ? { labels: [cfg.label] } : {}),
         ...(cfg.team !== undefined ? { team: cfg.team } : {}),
-      });
+      };
+      return invokeCoreMethod(ctx.deps, 'createTask', params);
     }
     case 'api_list_flows': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
-      validateListFlows({ repoPath: real });
-      return ctx.deps.listFlows({ repoPath: real });
+      return invokeCoreMethod(ctx.deps, 'listFlows', { repoPath: real });
     }
     case 'api_list_providers': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
-      validateListProviders({ repoPath: real });
-      return ctx.deps.listProviders({ repoPath: real });
+      return invokeCoreMethod(ctx.deps, 'listProviders', { repoPath: real });
     }
     case 'api_read_flow': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const file = requireString(args, 'file');
-      validateReadFlow({ repoPath: real, file });
-      return ctx.deps.readFlow({ repoPath: real, file });
+      return invokeCoreMethod(ctx.deps, 'readFlow', { repoPath: real, file });
     }
     case 'api_write_flow': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const file = requireString(args, 'file');
-      // validateWriteFlow returns the coerced doc — pass THAT through, not the raw one (sidecar.ts's
-      // own rule, mirrored here verbatim).
-      const doc = validateWriteFlow({ repoPath: real, file, doc: args.doc });
-      return ctx.deps.writeFlow({ repoPath: real, file, doc });
+      return invokeCoreMethod(ctx.deps, 'writeFlow', { repoPath: real, file, doc: args.doc });
     }
     case 'api_delete_flow': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const file = requireString(args, 'file');
-      validateDeleteFlow({ repoPath: real, file });
-      return ctx.deps.deleteFlow({ repoPath: real, file });
+      return invokeCoreMethod(ctx.deps, 'deleteFlow', { repoPath: real, file });
     }
     case 'api_list_repo_files': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
-      validateListRepoFiles({ repoPath: real });
-      return ctx.deps.listRepoFiles({ repoPath: real });
+      return invokeCoreMethod(ctx.deps, 'listRepoFiles', { repoPath: real });
     }
     case 'api_read_repo_file': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const path = requireString(args, 'path');
-      validateReadRepoFile({ repoPath: real, path });
-      return ctx.deps.readRepoFile({ repoPath: real, path });
+      return invokeCoreMethod(ctx.deps, 'readRepoFile', { repoPath: real, path });
     }
     case 'api_repo_ok': {
       const repoPath = requireString(args, 'repoPath');
@@ -326,12 +306,11 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
   }
 }
 
-/** Classify a thrown value the way the sidecar's own loop does: BadRequestError/FlowError/VanguardError
- * are caller-correctable (`bad-request`); everything else is a real fault (`internal`). */
+/** Classify a thrown value for the wire, on top of `classifyCoreError`'s message/kind (the one
+ * place that pairing lives — see `src/sidecar/sidecar.ts`): adds the 404 hint the HTTP layer wants
+ * for an unknown command. */
 export function classifyError(err: unknown): { message: string; kind: ErrorKind; notFound: boolean } {
   const notFound = err instanceof UnknownCommandError;
-  if (err instanceof BadRequestError || err instanceof FlowError || err instanceof VanguardError) {
-    return { message: err.message, kind: 'bad-request', notFound };
-  }
-  return { message: err instanceof Error ? err.message : String(err), kind: 'internal', notFound: false };
+  const { message, kind } = classifyCoreError(err);
+  return { message, kind, notFound };
 }
