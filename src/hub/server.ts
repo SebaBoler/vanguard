@@ -60,14 +60,18 @@ function singleHeader(value: string | string[] | undefined): string | undefined 
 }
 
 /** Same-origin check for mutating routes: no Origin header (curl, same-process tooling) is allowed
- * through; a present Origin must match the request's own Host, or the request is cross-origin. */
+ * through; a present Origin must match the request's own Host, or the request is cross-origin. This
+ * guards against cross-site requests by host, not by scheme, so an HTTPS reverse proxy in front of
+ * the hub (the VPS deployment) works with no extra configuration: the browser's `https://` Origin
+ * still matches the `Host` header the hub sees, provided the proxy preserves the public Host. */
 function sameOriginOk(req: IncomingMessage): boolean {
   const origin = singleHeader(req.headers.origin);
   if (origin === undefined) return true;
   const host = req.headers.host;
   if (host === undefined) return false;
   try {
-    return new URL(origin).origin === `http://${host}`;
+    const parsed = new URL(origin);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host === host;
   } catch {
     return false;
   }
