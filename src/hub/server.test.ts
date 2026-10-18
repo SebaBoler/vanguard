@@ -78,15 +78,33 @@ describe('hub server', () => {
     expect((await fetch(baseUrl + '/healthz')).status).toBe(200);
   });
 
-  test('rejects a different origin scheme and lookalike JSON media types', async () => {
-    for (const headers of [
-      { origin: baseUrl.replace('http:', 'https:'), 'content-type': 'application/json' },
-      { 'content-type': 'application/jsonp' },
-    ]) {
-      const response = await fetch(baseUrl + '/rpc/list_runs', {
-        method: 'POST', headers, body: '{}',
+  test('rejects lookalike JSON media types', async () => {
+    const response = await fetch(baseUrl + '/rpc/list_runs', {
+      method: 'POST', headers: { 'content-type': 'application/jsonp' }, body: '{}',
+    });
+    expect(response.status).toBe(400);
+  });
+
+  test('same-origin check compares host, not scheme: accepts a matching Host, rejects non-HTTP schemes, garbage, and mismatched hosts', async () => {
+    const { host, port } = new URL(baseUrl);
+    const cases: Array<[origin: string, expectedStatus: number]> = [
+      [baseUrl.replace('http:', 'https:'), 200],
+      ['null', 400],
+      ['not a URL', 400],
+      [`ftp://${host}`, 400],
+      [`ws://${host}`, 400],
+      [`https://127.0.0.1:${Number(port) === 65535 ? 65534 : Number(port) + 1}`, 400],
+    ];
+    for (const [origin, expectedStatus] of cases) {
+      const res = await fetch(baseUrl + '/rpc/list_runs', {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ repoPath: repo }),
       });
-      expect(response.status).toBe(400);
+      expect(res.status, origin).toBe(expectedStatus);
+      if (expectedStatus === 400) {
+        expect(await res.json()).toMatchObject({ error: { message: 'cross-origin request rejected' } });
+      }
     }
   });
 
