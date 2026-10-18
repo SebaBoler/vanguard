@@ -73,7 +73,7 @@ describe('pickRunOptions', () => {
 // The heavy host-side machinery (Docker, proxies, context, stage execution) is stubbed so the test
 // exercises only the orchestration the seam owns: hook ordering and the lost-MR-link persistence.
 
-const { writeStages, writeProof, writeVisualProof, beginRun, runStages, commitStage, publishForReview } = vi.hoisted(() => {
+const { writeStages, beginRun, runStages, commitStage, publishForReview } = vi.hoisted(() => {
   const writeStages = vi.fn(async () => {});
   const writeProof = vi.fn(async () => '/proof.json');
   const writeVisualProof = vi.fn(async () => '/visual-proof.json');
