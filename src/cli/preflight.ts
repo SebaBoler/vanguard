@@ -41,6 +41,7 @@ export interface PreflightReport {
 const MIN_NODE_MAJOR = 24;
 /** Name of the sandbox CLI-version check; `doctor --fix` keys off it. */
 export const SANDBOX_CLI_CHECK = 'sandbox claude cli';
+export const SANDBOX_CURSOR_CLI_CHECK = 'sandbox cursor cli';
 
 
 const defaultRunner: PreflightRunner = async (cmd, args, opts) => {
@@ -349,6 +350,15 @@ export async function runPreflight(cmd: PreflightCommand, opts: PreflightOptions
             )
           : check(SANDBOX_CLI_CHECK, true),
     );
+    // The Cursor CLI is opt-in in the image (CURSOR_CLI_VERSION build arg), so a cursor run must check for it.
+    if (usedProviders.includes('cursor')) {
+      const agent = await runOk(run, cmd.repoPath, 'docker', ['run', '--rm', image, 'agent', '--version']);
+      checks.push(
+        agent.ok && agent.stdout.trim() !== ''
+          ? check(SANDBOX_CURSOR_CLI_CHECK, true)
+          : check(SANDBOX_CURSOR_CLI_CHECK, false, `no \`agent\` in ${image} — rebuild with CURSOR_CLI_VERSION=<version> ./docker/build.sh`),
+      );
+    }
   }
 
   const isGitlabBacked =

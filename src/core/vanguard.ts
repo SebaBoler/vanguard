@@ -377,7 +377,9 @@ export async function runAgent(ctx: RunContext, input: StageInput): Promise<RunR
   const signal = AbortSignal.any(sources);
 
   try {
-    if (input.resumeSessionId !== undefined) {
+    // Only the claude-CLI providers have a captured jsonl to restore (see captureSession below); codex/cursor
+    // keep their chat in the sandbox, so a restore would copyIn a host file that never existed and throw.
+    if (input.resumeSessionId !== undefined && agentFamily(input.agent.name) === 'claude-cli') {
       // Within a shared sandbox the session is already present natively (the prior stage wrote it).
       // Restoring it would overwrite the agent-owned jsonl with a root-owned copy the agent cannot
       // read, breaking resume. Only restore for a true cross-run resume, when it is not present.
