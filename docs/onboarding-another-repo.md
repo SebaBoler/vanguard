@@ -305,7 +305,7 @@ The revise CLI picks it up automatically when present and falls back to `GITHUB_
 3. **Label it:**
    - `ready for agent` — the task is precisely scoped (you wrote the criteria); Vanguard builds it directly.
    - `ready for spec` — a rough idea; Vanguard writes a Tech Spec first, then builds it.
-4. Vanguard opens a **draft PR** and moves the issue through `vanguard:running` → `vanguard:needs-human-review`.
+4. Vanguard opens a **draft PR** and moves the issue through `vanguard:running` → `vanguard:needs-human-review`. Its title is prefixed with a Conventional-Commits type (`fix:` for an issue carrying a `bug` label, `feat:` otherwise, plus an optional scope) — if your repo runs [release-please](https://github.com/googleapis/release-please) with squash-merge set to **"Default to pull request title"**, that prefix is what lands in the squash commit release-please reads, so the PR's changes reach the changelog and version bump without a human retitling it by hand first.
 
 ---
 
