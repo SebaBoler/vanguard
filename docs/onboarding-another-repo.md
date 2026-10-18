@@ -98,7 +98,7 @@ The reusable workflow installs Vanguard with `pnpm install --ignore-workspace`, 
 | `persist-metrics` | boolean | `false` | push run metrics to an orphan branch (see below) |
 | `metrics-branch` | string | `''` (`vanguard-metrics`) | branch used by `persist-metrics` |
 | `upload-run-records` | boolean | `false` | upload `.vanguard/runs/` as a workflow artifact (see below) |
-| `skills` | string | `.vanguard-src/skills` | `--skills`: Vanguard's bundled skills; keep the default. Your repo's own skills go in `.github/vanguard-skills/<name>/SKILL.md` and are merged in automatically, no input needed ([Custom skills](../README.md#custom-skills-bring-your-own)) |
+| `skills` | string | `.vanguard-src/skills` | `--skills`: Vanguard's bundled skills; keep the default. Your repo's own skills go in `.github/vanguard-skills/<name>/SKILL.md` and are merged in automatically, no input needed ([Custom skills](../README.md#custom-skills-bring-your-own)). GitHub, GitLab and Projects runs used to ignore this input; they now read it, so a custom path that does not exist fails the run at startup |
 | `max-tasks` | string | `''` (no cap) | `--max-tasks`: cap ready issues claimed per phase in one run |
 | `vanguard-ref` | string | `''` (the workflow's own ref) | Vanguard source ref to build |
 

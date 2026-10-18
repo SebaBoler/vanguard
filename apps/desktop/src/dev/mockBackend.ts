@@ -52,9 +52,9 @@ const commandHandlers = {
   read_app_config_strict: () => appConfig,
   write_app_config: () => undefined,
   list_remote_runs: () => remoteRuns,
-  download_run_records: (args: { runId?: number } | undefined) => {
-    const { runId = 12345 } = args ?? {};
-    return { cachePath: `/mock/config/remote-runs/org-my-app/${runId}`, runs };
+  import_remote_run: (args: { runId?: number } | undefined) => {
+    const { runId = remoteImport.runId } = args ?? {};
+    return { ...remoteImport, runId };
   },
   list_tasks: () => ({ tasks: boardTasks, capped: false }),
   fetch_spec: () => ({ spec: '## Task\n\nFix the login bug when the JWT token expires after inactivity.\n\n**Acceptance criteria:**\n- [ ] Login still works after token refresh\n- [ ] Tests pass\n- [ ] No regressions in the auth flow\n' }),
@@ -95,11 +95,10 @@ const commandHandlers = {
   api_run_backlog: () => [],
   api_cancel: () => undefined,
   api_repo_ok: () => true,
-  // Hub-only commands (apps/desktop never reaches these through Tauri, but the browser dev build —
+  // Hub-only command (apps/desktop never reaches it through Tauri, but the browser dev build —
   // no Tauri runtime, hub marker absent — still needs a fixture so RepoPicker is drivable via the
   // mock backend, and so the ipc.ts coverage guard below passes).
   browse_dirs: () => dirListing,
-  fetch_remote_run: () => remoteImport,
 } satisfies Partial<{
   [K in keyof Commands]: (args: Commands[K]['args']) => Promise<Commands[K]['result']> | Commands[K]['result'];
 }>;
@@ -117,12 +116,16 @@ const handlers = { ...commandHandlers, ...pluginHandlers } as Record<string, (ar
 
 export const HANDLED_COMMANDS: readonly string[] = Object.keys(handlers);
 
+/** Answer one command from the fixture table. Exposed so a hub-mode test can serve
+ *  `POST /rpc/<cmd>` from the same fixtures `install()` serves over Tauri. */
+export function handle(cmd: string, args: unknown): unknown {
+  const handler = handlers[cmd];
+  if (handler) return handler(args);
+  console.warn(`[mockBackend] unhandled IPC command: ${cmd}`);
+  return undefined;
+}
+
 export function install(): void {
   mockWindows('main');
-  mockIPC((cmd, args) => {
-    const handler = handlers[cmd];
-    if (handler) return handler(args);
-    console.warn(`[mockBackend] unhandled IPC command: ${cmd}`);
-    return undefined;
-  });
+  mockIPC(handle);
 }

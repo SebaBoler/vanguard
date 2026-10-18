@@ -220,7 +220,7 @@ describe('hub <-> browser transport integration', () => {
     expect(runs).toEqual(direct);
     expect(runs).toHaveLength(1);
 
-    const detail = await readRun(repo, TASK_ID, TIMESTAMP);
+    const detail = await readRun(repo, { source: { kind: 'local' }, taskId: TASK_ID, timestamp: TIMESTAMP });
     expect(detail.proof).toBeDefined();
     expect(detail.proof?.passed).toBe(true);
   });

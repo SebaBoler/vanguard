@@ -48,7 +48,7 @@ type SandboxRun = (
  * proof is opt-in only.
  */
 export async function resolveVisualProofCommand(
-  worktreePath: string,
+  _worktreePath: string, // unread: nothing is detected from the worktree, unlike resolveVerifyCommand
   opts: { cmd?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<string | undefined> {
   if (opts.cmd !== undefined && opts.cmd !== '') return opts.cmd;
