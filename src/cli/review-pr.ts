@@ -142,7 +142,11 @@ async function runDefaultReviewer(
     const taskId = `pr-review-${pr.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${pr.number}`;
     // The reviewer reads the tree the change lands on: the PR's base as origin has it.
     const baseBranch = baseBranchOrDefault(pr.baseRefName, `PR ${pr.repoSlug}#${pr.number}`);
-    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' }, { skills: await skillRegistryForRun(cmd.skillsDir, cmd.repoPath) });
+    const ctx = await prepareContext({ taskId, localRepoPath: cmd.repoPath, sandbox, agentName: agents.agent.name, baseBranch, start: 'base' }, {
+      // Repo skills come from the worktree (the base as origin has it), never from the host checkout,
+      // which may hold the change under review: it must not be able to rewrite its own reviewer's skills.
+      skills: (worktreePath) => skillRegistryForRun(cmd.skillsDir, worktreePath),
+    });
     const baseTurns = cmd.maxTurns ?? DEFAULT_REVIEW_MAX_TURNS;
     try {
       const result = await runAgent(ctx, {

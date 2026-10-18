@@ -15,7 +15,7 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
   disposeContext: vi.fn(async () => undefined),
 }));
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
@@ -119,12 +119,19 @@ describe('reviewMrCommand', () => {
     }
   });
 
-  it("the default reviewer injects the --skills dir plus the repo's .github/vanguard-skills", async () => {
+  it("the default reviewer injects the --skills dir plus the base's .github/vanguard-skills, never the host checkout's", async () => {
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
     vi.mocked(startSandboxContext).mockResolvedValue({ destroy: async () => undefined } as never);
-    const root = await mkdtemp(join(tmpdir(), 'vg-review-mr-skills-'));
+    // realpath: repo skill paths are resolved (macOS tmpdir is a symlink to /private/var).
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'vg-review-mr-skills-')));
     try {
-      for (const dir of [join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'deploy')]) {
+      // The host checkout holds the change under review (a code-review override); the worktree holds the base.
+      const skillDirs = [
+        join(root, 'bundled', 'code-review'),
+        join(root, 'repo', '.github', 'vanguard-skills', 'code-review'),
+        join(root, 'worktree', '.github', 'vanguard-skills', 'deploy'),
+      ];
+      for (const dir of skillDirs) {
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
       }
@@ -141,11 +148,15 @@ describe('reviewMrCommand', () => {
         { kind: 'review-mr', iid: 5, project: 'g/p', repoPath: join(root, 'repo'), egress: true, skillsDir: join(root, 'bundled') },
         { reviewMergeRequest: (ref, deps) => reviewMergeRequest(ref, { ...deps, glab }), log: () => undefined },
       );
-      // The registry handed to prepareContext holds both the --skills skill and the repo's own one.
-      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
-      const copied: string[] = [];
-      await skills?.inject(['code-review', 'deploy'], { copyIn: async (_h: string, to: string) => { copied.push(to); } } as never);
-      expect(copied).toEqual(['/workspace/.vanguard/skills/code-review', '/workspace/.vanguard/skills/deploy']);
+      // prepareContext gets a resolver: repo skills are read from the worktree it cuts, not the host checkout.
+      const resolve = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof resolve !== 'function') throw new Error('expected a worktree skill resolver');
+      const copied: string[][] = [];
+      await (await resolve(join(root, 'worktree'))).inject(['code-review', 'deploy'], { copyIn: async (from: string, to: string) => { copied.push([from, to]); } } as never);
+      expect(copied).toEqual([
+        [join(root, 'bundled', 'code-review'), '/workspace/.vanguard/skills/code-review'],
+        [join(root, 'worktree', '.github', 'vanguard-skills', 'deploy'), '/workspace/.vanguard/skills/deploy'],
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
