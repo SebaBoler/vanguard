@@ -4,27 +4,12 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BadRequestError } from '../sidecar/sidecar.js';
-import { isRunRecordFile, listRunSummaries, remoteRunsRoot, type RunSummary } from './runs.js';
+import { isRunRecordFile, listRunSummaries, remoteRunsRoot } from './runs.js';
+import type { RemoteImport, RemoteRun, RunSummary } from '../wire.js';
 
-export interface RemoteRun {
-  id: number;
-  status: string;
-  conclusion: string;
-  title: string;
-  branch: string;
-  workflow: string;
-  createdAt: string;
-  event: string;
-  url: string;
-}
-
-export interface RemoteImport {
-  runId: number;
-  taskIds: string[];
-  /** Full summaries, so the Remote screen can list the imported records like local runs. */
-  runs: RunSummary[];
-  cachedAt: string;
-}
+// RemoteRun/RemoteImport live in src/wire.ts (the drift-tested TS<->TS contract); re-exported here
+// so callers can keep importing them from './remote.js'.
+export type { RemoteImport, RemoteRun } from '../wire.js';
 
 /** Injectable shell-out, defaulting to the real `execa` — tests pass a fake. */
 export interface Exec {
@@ -44,7 +29,7 @@ function strOf(v: unknown, key: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function parseRuns(json: unknown): RemoteRun[] {
+function parseRuns(json: unknown): Omit<RemoteRun, 'cached'>[] {
   if (!Array.isArray(json)) {
     throw new Error('unexpected gh output');
   }
@@ -63,6 +48,20 @@ function parseRuns(json: unknown): RemoteRun[] {
       url: strOf(r, 'url'),
     };
   });
+}
+
+/** The run's cached summaries, already imported into `<repoPath>/.vanguard/remote-runs/<id>` by a
+ * prior `fetchRemoteRun`, or `[]` if not yet imported (or unreadable). */
+async function cachedRunSummaries(repoPath: string, runId: number): Promise<RunSummary[]> {
+  try {
+    return await listRunSummaries(remoteRunsRoot(repoPath, runId));
+  } catch {
+    return [];
+  }
+}
+
+function toRemoteImport(runId: number, runs: RunSummary[]): RemoteImport {
+  return { runId, taskIds: [...new Set(runs.map((r) => r.taskId))], runs, cachedAt: new Date().toISOString() };
 }
 
 function isEnoentFlavored(message: string): boolean {
@@ -100,12 +99,14 @@ export async function listRemoteRuns(repoPath: string, exec: Exec = defaultExec)
   } catch {
     throw new Error('`gh run list` failed: unexpected gh output');
   }
+  let runs: Omit<RemoteRun, 'cached'>[];
   try {
-    return parseRuns(parsed);
+    runs = parseRuns(parsed);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`\`gh run list\` failed: ${message}`);
   }
+  return Promise.all(runs.map(async (r) => ({ ...r, cached: (await cachedRunSummaries(repoPath, r.id)).length > 0 })));
 }
 
 /** Recursively walk `root`, rejecting symlinks and enforcing file-count/byte-size ceilings. */
@@ -205,6 +206,10 @@ async function topLevelEntryNames(dir: string): Promise<string[]> {
  * return a summary of what was imported.
  */
 export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec = defaultExec): Promise<RemoteImport> {
+  const cachedRuns = await cachedRunSummaries(repoPath, runId);
+  if (cachedRuns.length > 0) {
+    return toRemoteImport(runId, cachedRuns);
+  }
   const importDir = await mkdtemp(join(tmpdir(), 'vanguard-hub-import-'));
 
   try {
@@ -260,12 +265,5 @@ export async function fetchRemoteRun(repoPath: string, runId: number, exec: Exec
   await rm(importDir, { recursive: true, force: true });
 
   const runs = await listRunSummaries(remoteRunsRoot(repoPath, runId));
-  const taskIds = [...new Set(runs.map((r) => r.taskId))];
-
-  return {
-    runId,
-    taskIds,
-    runs,
-    cachedAt: new Date().toISOString(),
-  };
+  return toRemoteImport(runId, runs);
 }
