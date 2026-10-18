@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.8.0](https://github.com/SebaBoler/vanguard/compare/v1.7.0...v1.8.0) (2026-10-18)
+
+
+### Features
+
+* **desktop:** typed command catalogue in src/wire.ts for the Tauri, hub and mock adapters ([#509](https://github.com/SebaBoler/vanguard/issues/509)) ([63d5c67](https://github.com/SebaBoler/vanguard/commit/63d5c67a720e54b63bd855cb5b5b56f7fcc5c0ce)), closes [#498](https://github.com/SebaBoler/vanguard/issues/498)
+* **factory:** conventional-commit prefix on factory PR titles ([#502](https://github.com/SebaBoler/vanguard/issues/502)) ([212e135](https://github.com/SebaBoler/vanguard/commit/212e1355ed43556dbc2ebb513b2ffaf13850b735)), closes [#495](https://github.com/SebaBoler/vanguard/issues/495)
+* **hub:** one wire codec for the RPC envelope, SSE frames and the hub marker ([#503](https://github.com/SebaBoler/vanguard/issues/503)) ([3fa1748](https://github.com/SebaBoler/vanguard/commit/3fa1748508aee33d350169b9eb690d8db6c9ab61)), closes [#496](https://github.com/SebaBoler/vanguard/issues/496) [#491](https://github.com/SebaBoler/vanguard/issues/491)
+* **inspector:** one address for a CI run's records on both backends ([#516](https://github.com/SebaBoler/vanguard/issues/516)) ([626b278](https://github.com/SebaBoler/vanguard/commit/626b278942ddb8c5cd5b3f5363c620d627d2b35c)), closes [#499](https://github.com/SebaBoler/vanguard/issues/499)
+* **skills:** inject skills into the spec, revise and review runs ([#517](https://github.com/SebaBoler/vanguard/issues/517)) ([74055e0](https://github.com/SebaBoler/vanguard/commit/74055e00138f7b5ef34cbc4dd2b1dfb12cefdcd1))
+* **skills:** merge the repo's .github/vanguard-skills into every run ([#515](https://github.com/SebaBoler/vanguard/issues/515)) ([6fbbc39](https://github.com/SebaBoler/vanguard/commit/6fbbc39364758a21fd76bafc997e8f4b8bccafef))
+
+
+### Bug Fixes
+
+* **desktop:** run-record types from src/wire.ts, diffOmitted and visualProof in the UI, RemoteRun.cached on the hub ([#505](https://github.com/SebaBoler/vanguard/issues/505)) ([a4919a5](https://github.com/SebaBoler/vanguard/commit/a4919a5c29813105a6ec547dd128908e5c5a6629)), closes [#492](https://github.com/SebaBoler/vanguard/issues/492)
+* **hub:** api_create_task runs validateCreateTask; one core-method table behind both dispatchers ([#508](https://github.com/SebaBoler/vanguard/issues/508)) ([d59785e](https://github.com/SebaBoler/vanguard/commit/d59785e7180f7bb12927c7dadb0d2331fe04fd31)), closes [#500](https://github.com/SebaBoler/vanguard/issues/500) [#493](https://github.com/SebaBoler/vanguard/issues/493)
+* **hub:** same-origin check compares host, not scheme ([#506](https://github.com/SebaBoler/vanguard/issues/506)) ([1ef03d4](https://github.com/SebaBoler/vanguard/commit/1ef03d43129f0a6a94e7669bfa4edc75bd44e579)), closes [#490](https://github.com/SebaBoler/vanguard/issues/490)
+
 ## [1.7.0](https://github.com/SebaBoler/vanguard/compare/v1.6.0...v1.7.0) (2026-10-17)
 
 
