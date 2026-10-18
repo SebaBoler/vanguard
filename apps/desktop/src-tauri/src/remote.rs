@@ -1,8 +1,9 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::runs::{self, RunSummary};
 
@@ -25,14 +26,29 @@ pub struct RemoteRun {
     pub cached: bool,
 }
 
-/// A CI run's downloaded record tree, parsed like a local repo's `.vanguard/runs`.
+/// A CI run's downloaded `vanguard-runs` artifact, parsed like a local `.vanguard/runs`. Mirrors
+/// the hub's `RemoteImport` (src/hub/remote.ts) byte-for-shape — same TS type on the wire.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteRecords {
-    /// Cache dir laid out like a repo (`<cache_path>/.vanguard/runs/…`), so the renderer passes it
-    /// to `read_run` as `repo_path` and gets the same RunDetail as for a local run.
-    pub cache_path: String,
+pub struct RemoteImport {
+    pub run_id: u64,
+    pub task_ids: Vec<String>,
     pub runs: Vec<RunSummary>,
+    pub cached_at: String,
+}
+
+/// Where one run's records live — the UI only ever carries this discriminant (`RunRef` in
+/// src/wire.ts), never a resolved root; each backend picks its own root from it in `read_run`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RunSource {
+    Local,
+    Ci { run_id: u64 },
+}
+
+/// `new Date().toISOString()`-shaped timestamp (matches the hub's `RemoteImport.cachedAt`).
+fn now_iso() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.%3fZ").to_string()
 }
 
 fn str_of(v: &serde_json::Value, k: &str) -> String {
@@ -89,6 +105,15 @@ fn cache_repo_dir(cache_root: &Path, slug: &str, run_id: u64) -> PathBuf {
     cache_root.join("remote-runs").join(slug).join(run_id.to_string())
 }
 
+/// Resolve a `RunSource` to the root `read_run` should read — `repo_path` itself for `Local`, the
+/// run's cache dir (freshly keyed by `repo_path`'s current slug) for `Ci`.
+pub fn resolve_root(cache_root: &Path, repo_path: &Path, source: &RunSource) -> PathBuf {
+    match source {
+        RunSource::Local => repo_path.to_path_buf(),
+        RunSource::Ci { run_id } => cache_repo_dir(cache_root, &repo_slug(repo_path), *run_id),
+    }
+}
+
 fn is_cached(cache_repo: &Path) -> bool {
     fs::read_dir(runs::runs_dir(cache_repo)).map(|mut d| d.next().is_some()).unwrap_or(false)
 }
@@ -143,7 +168,7 @@ fn fetch_artifact(repo_path: &Path, run_id: u64, dest: &Path) -> Result<(), Stri
 /// Pull a CI run's `vanguard-runs` artifact into the cache (once; cached runs skip `gh`) and group
 /// it into the same run summaries the local Runs table uses. Best-effort like `list_remote_runs`:
 /// `gh` missing / unauthenticated / no such artifact come back as the tool's own message.
-pub fn download_run_records(cache_root: &Path, repo_path: &Path, run_id: u64) -> Result<RemoteRecords, String> {
+pub fn import_remote_run(cache_root: &Path, repo_path: &Path, run_id: u64) -> Result<RemoteImport, String> {
     let cache_repo = cache_repo_dir(cache_root, &repo_slug(repo_path), run_id);
     if !is_cached(&cache_repo) {
         if let Err(e) = fetch_artifact(repo_path, run_id, &runs::runs_dir(&cache_repo)) {
@@ -152,7 +177,9 @@ pub fn download_run_records(cache_root: &Path, repo_path: &Path, run_id: u64) ->
         }
     }
     let runs = runs::list_run_summaries(&cache_repo).map_err(|e| e.to_string())?;
-    Ok(RemoteRecords { cache_path: cache_repo.to_string_lossy().into_owned(), runs })
+    let mut seen = HashSet::new();
+    let task_ids: Vec<String> = runs.iter().filter(|r| seen.insert(r.task_id.clone())).map(|r| r.task_id.clone()).collect();
+    Ok(RemoteImport { run_id, task_ids, runs, cached_at: now_iso() })
 }
 
 #[cfg(test)]
@@ -229,9 +256,17 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
         let cache_repo = cache_repo_dir(cache.path(), "proj-a", 7);
         write_record(&cache_repo);
-        let out = download_run_records(cache.path(), &repo, 7).unwrap();
-        assert_eq!(out.cache_path, cache_repo.to_string_lossy());
+        let out = import_remote_run(cache.path(), &repo, 7).unwrap();
+        assert_eq!(out.run_id, 7);
+        assert_eq!(out.task_ids, vec!["task-9".to_string()]);
         assert_eq!(out.runs.len(), 1);
         assert_eq!(out.runs[0].task_id, "task-9");
+    }
+
+    #[test]
+    fn resolve_root_picks_repo_path_for_local_and_the_cache_dir_for_ci() {
+        assert_eq!(resolve_root(Path::new("/cfg"), Path::new("/repo"), &RunSource::Local), Path::new("/repo"));
+        let ci = resolve_root(Path::new("/cfg"), Path::new("/repo"), &RunSource::Ci { run_id: 42 });
+        assert_eq!(ci, cache_repo_dir(Path::new("/cfg"), &repo_slug(Path::new("/repo")), 42));
     }
 }
