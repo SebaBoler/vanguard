@@ -265,7 +265,7 @@ export const dirListing: DirListing = {
   ],
 };
 
-/** A `fetch_remote_run` import of a CI run's `vanguard-runs` artifact. */
+/** An `import_remote_run` import of a CI run's `vanguard-runs` artifact. */
 export const remoteImport: RemoteImport = {
   runId: 12345,
   taskIds: [...new Set(runs.map((r) => r.taskId))],

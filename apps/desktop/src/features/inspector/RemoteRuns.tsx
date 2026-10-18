@@ -1,21 +1,9 @@
 import { useState } from 'react';
 import { Button, Table, Chip, ScrollTable } from '@/ui';
 import { Download } from 'lucide-react';
-import { downloadRunRecords, fetchRemoteRun, listRemoteRuns } from '../../ipc';
-import { isHubMode } from '../../transport';
+import { importRemoteRun, listRemoteRuns } from '../../ipc';
 import { useAsync } from '../../hooks';
-import type { RemoteRecords, RemoteRun, RunSummary } from '../../vanguard-output';
-
-/**
- * Tauri keeps a per-run cache dir that stands in for a repo root (`download_run_records`); the hub
- * imports under the project's own `.vanguard/remote-runs/<id>` (`fetch_remote_run`) and `read_run`
- * selects that root by `remoteRunId`. Same screen, two backends.
- */
-async function loadRecords(project: string, runId: number): Promise<RemoteRecords> {
-  if (!isHubMode()) return downloadRunRecords(project, runId);
-  const imported = await fetchRemoteRun(project, runId);
-  return { cachePath: project, runs: imported.runs, remoteRunId: runId };
-}
+import type { RemoteImport, RemoteRun, RunSource, RunSummary } from '../../vanguard-output';
 
 function when(ts: string): string {
   return ts.replace('T', ' ').slice(0, 16);
@@ -34,16 +22,16 @@ function StatusChip({ r }: { r: RemoteRun }) {
 }
 
 /** Per-row state of the record fetch; absent = not asked yet. */
-type Records = { loading: true } | { error: string } | { data: RemoteRecords };
+type Records = { loading: true } | { error: string } | { data: RemoteImport };
 
 export function RemoteRuns({
   project,
   onOpenRun,
 }: {
   project: string;
-  /** Open a downloaded record in the run inspector; `cachePath` stands in for the repo root
-   * (hub mode: the project, plus the `remoteRunId` that selects the imported root). */
-  onOpenRun: (cachePath: string, run: RunSummary, remoteRunId?: number) => void;
+  /** Open an imported record in the run inspector. The `source` names the CI run, never a root —
+   * whichever backend imported it resolves that in `read_run`. */
+  onOpenRun: (run: RunSummary, source: RunSource) => void;
 }) {
   const { data: runs, error, loading } = useAsync(() => listRemoteRuns(project), [project]);
   const [records, setRecords] = useState<Record<number, Records>>({});
@@ -51,7 +39,7 @@ export function RemoteRuns({
   const fetchRecords = async (id: number): Promise<void> => {
     setRecords((m) => ({ ...m, [id]: { loading: true } }));
     try {
-      const data = await loadRecords(project, id);
+      const data = await importRemoteRun(project, id);
       setRecords((m) => ({ ...m, [id]: { data } }));
     } catch (e) {
       setRecords((m) => ({ ...m, [id]: { error: String(e) } }));
