@@ -3,6 +3,7 @@
 // docs/hub.md / tech spec §2.4): both existing `listen()` call sites in apps/desktop/src are
 // server-to-client only, so a one-way stream is sufficient and `Last-Event-ID` gives backlog replay
 // without hand-rolled sequence tracking.
+import { encodeEvent, STREAM_RESET_EVENT } from '../hub-wire.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /** Ring buffer size: covers several runs' reconnect window without unbounded memory growth. */
@@ -25,10 +26,6 @@ interface ClientState {
   pendingWrites: number;
 }
 
-function frame(entry: BufferedEvent): string {
-  return `id: ${entry.id}\nevent: ${entry.event}\ndata: ${JSON.stringify(entry.data)}\n\n`;
-}
-
 export class EventBus {
   private nextId = 1;
   private readonly ring: BufferedEvent[] = [];
@@ -48,7 +45,7 @@ export class EventBus {
   }
 
   private writeEntry(client: ClientState, entry: BufferedEvent): void {
-    const flushed = this.tryWrite(client.res, frame(entry));
+    const flushed = this.tryWrite(client.res, encodeEvent(entry.id, entry.event, entry.data));
     if (flushed === undefined) return; // write threw; client already dropped
     if (flushed) {
       client.pendingWrites = 0;
@@ -104,7 +101,7 @@ export class EventBus {
     if (lastEventId !== undefined && Number.isFinite(lastEventId)) {
       const oldest = this.ring[0]?.id;
       if (oldest !== undefined && lastEventId < oldest - 1) {
-        if (this.tryWrite(res, 'event: stream-reset\ndata: {}\n\n') === undefined) return true;
+        if (this.tryWrite(res, encodeEvent(undefined, STREAM_RESET_EVENT, {})) === undefined) return true;
       } else {
         for (const entry of this.ring) {
           if (entry.id > lastEventId) this.writeEntry(client, entry);

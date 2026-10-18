@@ -5,8 +5,7 @@ import { extname, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { jsonError } from './json-response.js';
 import { isWithinRoot } from './browse.js';
-
-const HUB_MARKER_SCRIPT = '<script>window.__VANGUARD_HUB__=true</script>';
+import { HUB_MARKER } from '../hub-wire.js';
 
 /** Inject the hub marker immediately after `<head>`. Pure string function (its own test target).
  * Throws if no insertion point is found — a silent no-op here means the browser silently takes the
@@ -15,7 +14,7 @@ export function injectHubMarker(html: string): string {
   const idx = html.indexOf('<head>');
   if (idx === -1) throw new Error('index.html has no <head> — cannot inject the hub marker');
   const insertAt = idx + '<head>'.length;
-  return html.slice(0, insertAt) + HUB_MARKER_SCRIPT + html.slice(insertAt);
+  return html.slice(0, insertAt) + HUB_MARKER + html.slice(insertAt);
 }
 
 export interface StaticOptions {

@@ -35,6 +35,14 @@ commands, `false` stays `false`); an error answers `400`/`404`/`500 {"error": {"
 `kind` = `bad-request` or `internal`. `apps/desktop/src/transport.ts` unwraps `result` and rejects with
 `error.message`, so both sides must keep this envelope.
 
+**`src/hub-wire.ts` is the single source of truth for this envelope, the SSE frame shape, and the hub
+marker** — a zero-import module copied verbatim into `apps/desktop/src/hub-wire.ts` by `pnpm gen:wire`
+(drift caught by `src/wire.test.ts`). The server (`src/hub/server.ts`, `events.ts`, `static.ts`) and the
+browser (`apps/desktop/src/transport.ts`) both call its `encodeResult`/`encodeError`/`decodeResponse`/
+`encodeEvent`/`decodeEvent`/`HUB_MARKER` instead of hand-rolling either side of the wire. A reconnecting
+SSE client whose `Last-Event-ID` gap exceeds the replay ring gets a `stream-reset` frame instead of a
+replay; `transport.ts` resyncs by re-running its snapshot fetches rather than trusting the stream alone.
+
 ## Env vars
 
 | Variable | Default |
