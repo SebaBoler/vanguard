@@ -16,7 +16,7 @@ vi.mock('../core/vanguard.js', async (importOriginal) => ({
 }));
 
 import { prepareContext, runAgent } from '../core/vanguard.js';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reviewPrCommand } from './review-pr.js';
@@ -130,6 +130,56 @@ describe('reviewPrCommand', () => {
       warn.mockRestore();
       if (prev === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       else process.env.CLAUDE_CODE_OAUTH_TOKEN = prev;
+    }
+  });
+
+  it("the default reviewer injects the --skills dir plus the base's .github/vanguard-skills, never the host checkout's", async () => {
+    const prev = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-test';
+    // realpath: repo skill paths are resolved (macOS tmpdir is a symlink to /private/var).
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'vg-review-pr-skills-')));
+    try {
+      // The host checkout holds the change under review (a code-review override); the worktree holds the base.
+      const skillDirs = [
+        join(root, 'bundled', 'code-review'),
+        join(root, 'repo', '.github', 'vanguard-skills', 'code-review'),
+        join(root, 'worktree', '.github', 'vanguard-skills', 'deploy'),
+      ];
+      for (const dir of skillDirs) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      vi.mocked(prepareContext).mockClear();
+      const attempt = { taskId: 't', exitReason: 'completed', turns: 1, worktreePath: '/wt', worktreePreserved: false } as const;
+      vi.mocked(runAgent).mockResolvedValue({ ...attempt, completed: true, finalText: 'No blocking findings.' });
+      const cmd: Extract<Command, { kind: 'review-pr' }> = {
+        kind: 'review-pr',
+        prRef: '12',
+        repoSlug: 'o/r',
+        repoPath: join(root, 'repo'),
+        egress: false,
+        skillsDir: join(root, 'bundled'),
+      };
+      await reviewPrCommand(cmd, {
+        reviewPullRequest: async (_ref, deps) => {
+          await deps.reviewer(fakeResult().pr, { isRetry: false });
+          return fakeResult();
+        },
+        log: () => undefined,
+      });
+      // prepareContext gets a resolver: repo skills are read from the worktree it cuts, not the host checkout.
+      const resolve = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof resolve !== 'function') throw new Error('expected a worktree skill resolver');
+      const copied: string[][] = [];
+      await (await resolve(join(root, 'worktree'))).inject(['code-review', 'deploy'], { copyIn: async (from: string, to: string) => { copied.push([from, to]); } } as never);
+      expect(copied).toEqual([
+        [join(root, 'bundled', 'code-review'), '/workspace/.vanguard/skills/code-review'],
+        [join(root, 'worktree', '.github', 'vanguard-skills', 'deploy'), '/workspace/.vanguard/skills/deploy'],
+      ]);
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      else process.env.CLAUDE_CODE_OAUTH_TOKEN = prev;
+      await rm(root, { recursive: true, force: true });
     }
   });
 

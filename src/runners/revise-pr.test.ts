@@ -1135,3 +1135,42 @@ describe('pushToExistingBranch', () => {
     expect(calls[0]?.args).toEqual(['push', '--no-verify', 'upstream', 'HEAD:my-branch']);
   });
 });
+
+describe('runRevisePullRequest — skills', () => {
+  it("injects the --skills dir plus the repo's .github/vanguard-skills into the revise sandbox", async () => {
+    const bundled = await mkdtemp(join(tmpdir(), 'vg-revise-skills-'));
+    const outPath = join(bundled, 'out.md');
+    try {
+      for (const dir of [join(bundled, 'skills', 'code-review'), join(repo, '.github', 'vanguard-skills', 'deploy')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      const sandbox = makeSandbox();
+      const copied: string[] = [];
+      sandbox.copyIn = async (_hostPath: string, to: string): Promise<void> => {
+        copied.push(to);
+      };
+      const gh: GhRunner = async (args) => {
+        if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+        if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+        if (args[0] === 'api' && args[1] === 'graphql' && args.some((a) => a.startsWith('query=') && a.includes('reviewThreads'))) return makeFeedbackJson();
+        throw new Error(`unexpected gh call in dry-run: ${args.join(' ')}`);
+      };
+      await runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: sandbox,
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _baseBranch: 'feature-branch',
+        provider: 'claude',
+        out: outPath,
+        skillsDir: join(bundled, 'skills'),
+      });
+      expect(copied).toEqual(expect.arrayContaining(['/root/.claude/skills/code-review', '/root/.claude/skills/deploy']));
+    } finally {
+      await rm(bundled, { recursive: true, force: true });
+    }
+  });
+});

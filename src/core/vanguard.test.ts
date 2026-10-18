@@ -13,6 +13,7 @@ import {
   assertNoWorkflowChanges,
 } from './vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
+import { skillRegistryForRun } from '../context/skill-registry.js';
 import { WorkflowGuardError } from './errors.js';
 import type { RunOptions } from './types.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
@@ -204,6 +205,37 @@ describe('vanguard.run', () => {
     const ctx = await prepareContext({ taskId: 'keep', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
     await disposeContext(ctx, { keep: true });
     expect(wasDestroyed()).toBe(false);
+  });
+
+  it('a skills resolver reads repo skills from the new worktree, not the host checkout', async () => {
+    const skill = async (root: string, id: string): Promise<void> => {
+      await mkdir(join(root, '.github', 'vanguard-skills', id), { recursive: true });
+      await writeFile(join(root, '.github', 'vanguard-skills', id, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+    };
+    await skill(repo, 'deploy');
+    await execa('git', ['add', '.'], { cwd: repo });
+    await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'skills'], { cwd: repo });
+    await skill(repo, 'local-only'); // in the host checkout, not on main
+    const { sandbox } = makeSandbox();
+    const copied: string[] = [];
+    sandbox.copyIn = async (_hostPath: string, to: string): Promise<void> => {
+      copied.push(to);
+    };
+    const resolvedFrom: string[] = [];
+    const ctx = await prepareContext(
+      { taskId: 'skills-wt', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox },
+      {
+        worktrees: new WorktreeManager(repo),
+        skills: (worktreePath) => {
+          resolvedFrom.push(worktreePath);
+          return skillRegistryForRun(undefined, worktreePath);
+        },
+      },
+    );
+    await disposeContext(ctx);
+    expect(resolvedFrom).toEqual([ctx.worktreePath]);
+    expect(copied).toContain('/root/.claude/skills/deploy');
+    expect(copied).not.toContain('/root/.claude/skills/local-only');
   });
 
   it('reports cacheEfficiency from agent usage', async () => {

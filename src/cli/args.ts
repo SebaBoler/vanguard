@@ -13,6 +13,8 @@ export type Command =
       prRef: string;
       repoSlug?: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       egress: boolean;
       llmProxy?: boolean;
       provider?: ProviderName;
@@ -43,6 +45,8 @@ export type Command =
       issueRef: string;
       repoSlug?: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       egress: boolean;
       llmProxy?: boolean;
       provider?: ProviderName;
@@ -62,6 +66,8 @@ export type Command =
       prRef: string;
       repoSlug?: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       egress: boolean;
       llmProxy?: boolean;
       provider?: ProviderName;
@@ -76,6 +82,8 @@ export type Command =
       kind: 'watch-prs';
       repoSlug: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       label: string;
       reviewingLabel: string;
       reviewedLabel: string;
@@ -218,6 +226,8 @@ export type Command =
       iid: number;
       project: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       egress: boolean;
       llmProxy?: boolean;
       provider?: ProviderName;
@@ -229,6 +239,8 @@ export type Command =
       kind: 'watch-mrs';
       project: string;
       repoPath: string;
+      /** --skills dir, merged with the repo's .github/vanguard-skills/ (see skillRegistryForRun). */
+      skillsDir?: string;
       label: string;
       reviewingLabel: string;
       reviewedLabel: string;
@@ -720,6 +732,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'review-pr',
       prRef,
       repoPath,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       egress: values.egress === true,
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
@@ -754,6 +767,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'spec',
       issueRef,
       repoPath,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
@@ -779,6 +793,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'revise-pr',
       prRef,
       repoPath,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
@@ -804,6 +819,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'watch-prs',
       repoSlug,
       repoPath,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       label,
       reviewingLabel: typeof values['reviewing-label'] === 'string' ? values['reviewing-label'] : DEFAULT_PR_REVIEWING_LABEL,
       reviewedLabel: typeof values['reviewed-label'] === 'string' ? values['reviewed-label'] : DEFAULT_PR_REVIEWED_LABEL,
@@ -845,6 +861,7 @@ export function parseCli(argv: string[], cwd: string): Command {
       iid: iidRaw,
       project,
       repoPath,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       egress: values.egress === true,
       ...(values['llm-proxy'] === true ? { llmProxy: true } : {}),
       ...(builtinProvider !== undefined ? { provider: builtinProvider } : {}),
@@ -875,6 +892,7 @@ export function parseCli(argv: string[], cwd: string): Command {
     return {
       kind: 'watch-mrs',
       ...shared,
+      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       egress: values.egress === true,
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : DEFAULT_CONCURRENCY,
       intervalMs: (Number.isFinite(interval) && interval > 0 ? interval : 60) * 1000,
@@ -1283,7 +1301,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --max-turns <n>        Agent CLI turn cap for the first review attempt (default: ${DEFAULT_REVIEW_MAX_TURNS}; opt-in, higher cost).
                            Tool calls count as turns. The retry after an incomplete review gets 1.5x
     --out <file>           Write the review to this local file instead of posting a PR comment (no trace on the tracker)
-    --egress --llm-proxy --repo <path>         As for run/watch
+    --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 
   research options:
     <owner/repo#number>     GitHub issue to research
@@ -1305,7 +1323,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --out <file>            Write the spec to this local file instead of posting an issue comment (pairs with run --spec-file)
     --commit-author <a>     White-label the comment (drop the "Vanguard" heading); the author value is unused
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for the spec pass (default: claude)
-    --egress --llm-proxy --repo <path>         As for run/watch
+    --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 
   revise-pr options:
     <url-or-number>        GitHub PR URL, owner/repo#number, or bare number with --github-repo
@@ -1317,7 +1335,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage
     --max-rounds <n>       Maximum revision rounds (default: 2)
-    --egress --llm-proxy --repo <path>         As for run/watch
+    --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 
     Triggered by the "needs revision" label on a Vanguard draft PR. Reads feedback from
     review threads, review summaries, and PR comments; applies fixes to the existing PR branch;
@@ -1337,7 +1355,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for PR review (default: claude)
     --review-model <m>     Model for the PR review
     --max-turns <n>        As for review-pr
-    --egress --llm-proxy --repo <path>         As for run/watch
+    --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 
     Example:
       vanguard watch-prs --github-repo owner/repo --label "ready for vanguard review"
@@ -1355,7 +1373,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
   review-mr options:
     --mr <iid>               GitLab MR IID (integer)
     --gitlab-project <g/p>   GitLab project path (required, e.g. group/project)
-    --provider --review-model --max-turns --egress --llm-proxy --repo  As for review-pr
+    --provider --review-model --max-turns --egress --llm-proxy --skills --repo  As for review-pr
 
   watch-mrs options:
     --gitlab-project <g/p>   Required project path (e.g. group/project)
@@ -1368,7 +1386,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider used for MR review (default: claude)
     --review-model <m>       Model for the MR review
     --max-turns <n>          As for review-pr
-    --egress --llm-proxy --repo <path>         As for run/watch
+    --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 
     Example:
       vanguard watch-mrs --gitlab-project group/project --label "ready for review"

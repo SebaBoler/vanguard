@@ -620,6 +620,7 @@ describe('runSourcedIssue', () => {
       await runSourcedIssue('group/project#1', { repoPath: join(root, 'repo'), skillsDir: join(root, 'bundled') }, fakeAdapter([], STAGES));
 
       const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof skills === 'function') throw new Error('expected a SkillRegistry');
       const copied: string[] = [];
       await skills?.inject(['code-review', 'deploy'], { copyIn: async (_h: string, to: string) => { copied.push(to); } } as never);
       expect(copied).toEqual(['/workspace/.vanguard/skills/code-review', '/workspace/.vanguard/skills/deploy']);

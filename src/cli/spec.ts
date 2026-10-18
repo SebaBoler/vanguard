@@ -56,6 +56,7 @@ export async function specCommand(cmd: SpecCommand, deps: SpecCommandDeps = {}):
     ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
+    ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
   };
 
   if (deps.generateSpec !== undefined) {

@@ -31,6 +31,7 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
     ...(cmd.maxRounds !== undefined ? { maxRounds: cmd.maxRounds } : {}),
     ...(cmd.commitAuthor !== undefined ? { commitAuthor: cmd.commitAuthor } : {}),
     ...(cmd.out !== undefined ? { out: cmd.out } : {}),
+    ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
     log,
   };
 
