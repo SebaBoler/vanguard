@@ -69,7 +69,21 @@ describe('listRemoteRuns', () => {
       createdAt: '2026-07-06T19:12:02Z',
       event: 'pull_request',
       url: 'https://gh/run/1',
+      cached: false,
     });
+  });
+
+  it('marks only caches containing readable run records as cached', async () => {
+    const root = remoteRunsRoot(repo, GH_RUN_LIST_FIXTURE[0]!.databaseId);
+    const exec: Exec = async () => ({ stdout: JSON.stringify(GH_RUN_LIST_FIXTURE), stderr: '' });
+    await mkdir(root, { recursive: true });
+    expect((await listRemoteRuns(repo, exec))[0]?.cached).toBe(false);
+    const task = join(root, 'task-cache');
+    await mkdir(task);
+    await writeFile(join(task, 'record.json'), 'invalid json');
+    expect((await listRemoteRuns(repo, exec))[0]?.cached).toBe(false);
+    await writeFile(join(task, 'record.json'), runRecordJson('task-cache', '2026-07-06T19:12:02.000Z'));
+    expect((await listRemoteRuns(repo, exec))[0]?.cached).toBe(true);
   });
 
   it('T-31 maps an ENOENT-flavored rejection to a "gh not available" error', async () => {
@@ -186,7 +200,7 @@ describe('fetchRemoteRun', () => {
     await expect(fetchRemoteRun(repo, 105, exec)).rejects.toThrow(/has no "vanguard-runs" artifact/);
   });
 
-  it('T-35 replaces a previously-cached import atomically, and seeds .gitignore exactly once', async () => {
+  it('T-35 opens a previously cached import without gh and preserves .gitignore', async () => {
     const makeExec = (taskId: string, timestamp: string): Exec => async (file, args) => {
       if (file === 'gh' && args[0] === 'run' && args[1] === 'download') {
         const dir = downloadDirOf(args);
@@ -198,13 +212,19 @@ describe('fetchRemoteRun', () => {
       throw new Error(`unexpected exec call: ${file} ${args.join(' ')}`);
     };
 
+    const incomplete = join(remoteRunsRoot(repo, 105), 'incomplete');
+    await mkdir(incomplete, { recursive: true });
+    await writeFile(join(incomplete, 'record.json'), 'invalid json');
     await fetchRemoteRun(repo, 105, makeExec('task-first', '2026-07-06T19:15:02.000Z'));
-    const second = await fetchRemoteRun(repo, 105, makeExec('task-second', '2026-07-06T19:16:02.000Z'));
+    await expect(lstat(incomplete)).rejects.toThrow();
+    const second = await fetchRemoteRun(repo, 105, async () => {
+      throw new Error('cached records must open without gh');
+    });
 
-    expect(second.taskIds).toEqual(['task-second']);
+    expect(second.taskIds).toEqual(['task-first']);
     const summaries = await listRunSummaries(remoteRunsRoot(repo, 105));
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.taskId).toBe('task-second');
+    expect(summaries[0]?.taskId).toBe('task-first');
 
     const remoteRunsBase = join(repo, '.vanguard', 'remote-runs');
     await expect(lstat(join(remoteRunsBase, '105.tmp'))).rejects.toThrow();

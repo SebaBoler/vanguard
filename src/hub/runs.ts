@@ -2,79 +2,11 @@
 import { lstat, readdir, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { BadRequestError } from '../sidecar/sidecar.js';
+import type { Proof, RunDetail, RunRecord, RunSummary, StageDetail, VisualProof } from '../wire.js';
 
-export interface AgentUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadInputTokens: number;
-}
-
-export interface RunRecord {
-  taskId: string;
-  completed: boolean;
-  exitReason: string;
-  turns: number;
-  sessionId?: string;
-  worktreePath: string;
-  worktreePreserved: boolean;
-  finalText: string;
-  usage?: AgentUsage;
-  costUsd?: number;
-  cacheEfficiency?: number;
-  durationMs?: number;
-  model?: string;
-  timestamp: string;
-  stage?: string;
-  prUrl?: string;
-  /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-record.ts). */
-  diffOmitted?: 'secret-blocked' | 'secret-scan';
-}
-
-export interface Proof {
-  command: string;
-  exitCode: number;
-  passed: boolean;
-  sha256: string;
-  outputTail: string;
-}
-
-export interface VisualProofArtifact {
-  path: string;
-  sha256: string;
-  bytes: number;
-}
-
-export interface VisualProof {
-  command: string;
-  exitCode: number;
-  passed: boolean;
-  sha256: string;
-  outputTail: string;
-  artifacts: VisualProofArtifact[];
-}
-
-export interface RunSummary {
-  taskId: string;
-  timestamp: string;
-  stages: string[];
-  totalCostUsd: number;
-  anyFailed: boolean;
-  prUrl?: string;
-}
-
-export interface StageDetail {
-  record: RunRecord;
-  diff?: string;
-  transcript?: string;
-}
-
-export interface RunDetail {
-  taskId: string;
-  timestamp: string;
-  stages: StageDetail[];
-  proof?: Proof;
-  visualProof?: VisualProof;
-}
+// Record shapes live in src/wire.ts (the drift-tested TS<->TS contract) and are re-exported here
+// so the rest of the hub can keep importing them from './runs.js'.
+export type { AgentUsage, Proof, RunDetail, RunRecord, RunSummary, StageDetail, VisualProof, VisualProofArtifact } from '../wire.js';
 
 /** `<runsRoot>` is the directory directly containing per-task subdirectories. */
 export function defaultRunsRoot(repoPath: string): string {
