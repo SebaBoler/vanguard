@@ -21,6 +21,12 @@ This opens a browser at the printed URL.
 Local mode has no authentication — on a VPS put it behind Tailscale or an authenticating reverse proxy,
 never a published port.
 
+The same-origin check (`sameOriginOk` in `src/hub/server.ts`) compares the request's `Origin` header
+against its own `Host` header, not scheme, so the hub works behind an HTTPS-terminating reverse proxy
+with no extra hub flags, provided the proxy preserves the public `Host` header (including any
+non-default port). Only HTTP(S) origins are accepted; the browser's `https://` Origin matches
+the public `Host` even though the proxy connects to the hub over HTTP.
+
 ## Wire format
 
 The UI talks to the hub with `POST /rpc/<command>` (JSON body = the command's camelCase args, `{}` when
