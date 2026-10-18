@@ -1,4 +1,4 @@
-import { readdir, lstat, readFile, mkdtemp, writeFile, rm, realpath } from 'node:fs/promises';
+import { readdir, lstat, stat, readFile, mkdtemp, writeFile, rm, realpath } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentFamily } from '../agents/provider.js';
@@ -275,7 +275,8 @@ export const REPO_SKILLS_DIR = '.github/vanguard-skills';
 
 /**
  * The skills in `dir`: each subdirectory holding a SKILL.md, keyed by directory name. Symlinked
- * skill dirs and SKILL.md files are skipped, so a registry never reads host files outside `dir`.
+ * skill dirs and SKILL.md files are skipped (the latter with a warning), so a registry never reads
+ * host files outside `dir`.
  */
 async function skillsIn(dir: string): Promise<Record<string, string>> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -283,11 +284,10 @@ async function skillsIn(dir: string): Promise<Record<string, string>> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillDir = join(dir, entry.name);
-    try {
-      if ((await lstat(join(skillDir, 'SKILL.md'))).isFile()) skills[entry.name] = skillDir;
-    } catch {
-      // not a skill directory; skip
-    }
+    // No SKILL.md: not a skill directory; skip.
+    const skillMd = await lstat(join(skillDir, 'SKILL.md')).catch(() => undefined);
+    if (skillMd?.isSymbolicLink() === true) console.warn(`vanguard: skipping skill ${skillDir}: its SKILL.md is a symlink`);
+    else if (skillMd?.isFile() === true) skills[entry.name] = skillDir;
   }
   return skills;
 }
@@ -314,6 +314,9 @@ async function repoSkills(repoPath: string): Promise<Record<string, string>> {
   if (!dir.startsWith(`${await realpath(repoPath)}${sep}`)) {
     throw new VanguardError(`${REPO_SKILLS_DIR} resolves outside the repo (${dir}); keep the skills in the repo itself.`);
   }
+  if (!(await stat(dir)).isDirectory()) {
+    throw new VanguardError(`${REPO_SKILLS_DIR} is not a directory; make it a directory of <name>/SKILL.md skills or remove it.`);
+  }
   return skillsIn(dir);
 }
 
@@ -324,5 +327,8 @@ async function repoSkills(repoPath: string): Promise<Record<string, string>> {
  */
 export async function skillRegistryForRun(skillsDir: string | undefined, repoPath: string): Promise<SkillRegistry> {
   const [base, repo] = await Promise.all([skillsDir === undefined ? {} : skillsIn(skillsDir), repoSkills(repoPath)]);
+  const overridden = Object.keys(repo).filter((id) => Object.hasOwn(base, id));
+  // Visible in the run log: a repo skill can replace a guardrail such as code-review.
+  if (overridden.length > 0) console.warn(`vanguard: ${REPO_SKILLS_DIR} overrides --skills skill(s): ${overridden.join(', ')}`);
   return new SkillRegistry({ ...base, ...repo });
 }

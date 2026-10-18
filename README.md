@@ -223,7 +223,7 @@ Keep your domain skills in the target repo under `.github/vanguard-skills/`:
 
 That is the whole setup. `run` and `watch` inject every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/`, on every source (GitHub, GitLab, Projects, Linear). The reusable workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
 
-A repo skill with the same directory name as a bundled one replaces it, so a repo can ship its own `code-review`. Skill directories and `SKILL.md` files that are symlinks are skipped, and a `.github/vanguard-skills` that resolves outside the repo fails the run.
+A repo skill with the same directory name as a bundled one replaces it, so a repo can ship its own `code-review`; the run log names every skill replaced this way. Skill directories that are symlinks are skipped, and so are `SKILL.md` files that are symlinks, with a warning in the run log. A `.github/vanguard-skills` that is not a directory, or that resolves outside the repo, fails the run.
 
 Skills are injected per-provider in the format each CLI auto-discovers:
 

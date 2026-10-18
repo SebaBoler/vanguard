@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -576,8 +576,29 @@ describe('skillRegistryForRun', () => {
     const repo = join(root, 'repo');
     await addSkill(bundled, 'code-review');
     await addSkill(join(repo, REPO_SKILLS_DIR), 'code-review');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const skills = await injected(await skillRegistryForRun(bundled, repo));
     expect(skills['code-review']).toMatch(/\.github\/vanguard-skills\/code-review$/);
+    expect(warn).toHaveBeenCalledWith('vanguard: .github/vanguard-skills overrides --skills skill(s): code-review');
+    warn.mockRestore();
+  });
+
+  it('logs no override when the repo only adds skills, even one named like an Object member', async () => {
+    const bundled = join(root, 'bundled');
+    const repo = join(root, 'repo');
+    await addSkill(bundled, 'code-review');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'constructor');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await skillRegistryForRun(bundled, repo);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('fails with a clear error when .github/vanguard-skills is a file', async () => {
+    const repo = join(root, 'repo');
+    await mkdir(join(repo, '.github'), { recursive: true });
+    await writeFile(join(repo, REPO_SKILLS_DIR), 'oops');
+    await expect(skillRegistryForRun(undefined, repo)).rejects.toThrow(/\.github\/vanguard-skills is not a directory/);
   });
 
   it('a repo without .github/vanguard-skills is a no-op', async () => {
@@ -613,6 +634,9 @@ describe('skillRegistryForRun', () => {
     await mkdir(join(dir, 'linked'), { recursive: true });
     await writeFile(join(root, 'host-file'), '---\nname: x\ndescription: y\n---\n');
     await symlink(join(root, 'host-file'), join(dir, 'linked', 'SKILL.md'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo)))).toEqual(['ok']);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/skipping skill .*linked: its SKILL\.md is a symlink$/));
+    warn.mockRestore();
   });
 });
