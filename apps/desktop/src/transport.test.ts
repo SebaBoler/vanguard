@@ -1,6 +1,6 @@
 import { test, expect, afterEach, vi } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { invoke, isHubMode, subscribe } from './transport';
+import { invoke, isHubMode, subscribe, onStreamReset } from './transport';
 
 /** Minimal fake EventSource — jsdom doesn't implement one. Tracks every instance so a test can
  * assert how many were actually constructed (the "one shared EventSource" guarantee). */
@@ -160,4 +160,59 @@ test('T-94 unsubscribe closes the source when the last handler leaves', async ()
 
   unlistenB();
   expect(es.closed).toBe(true);
+});
+
+test.each([null, {}, { projects: [] }])('hub invoke rejects malformed success body %j', async (body) => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+  await expect(invoke('list_projects')).rejects.toBe('hub response body is missing "result"');
+});
+
+test.each([false, 0, '', null])('hub invoke preserves result %j', async (result) => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ result }), { status: 200 })));
+  await expect(invoke('list_projects')).resolves.toBe(result);
+});
+
+test('T-95 a stream-reset frame triggers every registered resync callback (#491)', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  const calls: string[] = [];
+  const unlistenA = await onStreamReset(() => calls.push('a'));
+  const unlistenB = await onStreamReset(() => calls.push('b'));
+
+  const es = FakeEventSource.instances[0]!;
+  es.emit('stream-reset', {});
+  expect(calls).toEqual(['a', 'b']);
+
+  unlistenA();
+  unlistenB();
+});
+
+test('T-96 a stream-reset also reaches a named subscription\'s resync sibling, not its own handler', async () => {
+  window.__VANGUARD_HUB__ = true;
+  vi.stubGlobal('EventSource', FakeEventSource);
+  const changed: unknown[] = [];
+  const resyncs: number[] = [];
+  const unlistenChanged = await subscribe<string>('vanguard:changed', (e) => changed.push(e.payload));
+  const unlistenReset = await onStreamReset(() => resyncs.push(1));
+
+  expect(FakeEventSource.instances).toHaveLength(1); // still one shared source
+  const es = FakeEventSource.instances[0]!;
+  es.emit('stream-reset', {});
+  expect(resyncs).toEqual([1]);
+  expect(changed).toEqual([]); // stream-reset never reaches a named handler as a payload
+
+  es.emit('vanguard:changed', '/repo');
+  expect(changed).toEqual(['/repo']);
+
+  unlistenChanged();
+  unlistenReset();
+});
+
+test('T-97 onStreamReset is a no-op outside hub mode', async () => {
+  const unlisten = await onStreamReset(() => {
+    throw new Error('must not be called under Tauri');
+  });
+  expect(() => unlisten()).not.toThrow();
 });

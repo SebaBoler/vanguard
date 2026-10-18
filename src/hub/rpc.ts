@@ -24,6 +24,7 @@ import { WatchRegistry } from './watch.js';
 import type { RunSession } from './run-session.js';
 import { CompleteRegistry, type CompleteParams } from './complete.js';
 import { browseDirs } from './browse.js';
+import type { ErrorKind } from '../hub-wire.js';
 import { defaultRunsRoot, remoteRunsRoot, listRunSummaries, readRunDetail } from './runs.js';
 import { listActive, readSession } from './active.js';
 import { readAppConfig, readAppConfigStrict, writeAppConfig, type AppConfig } from './app-config.js';
@@ -324,8 +325,6 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       throw new UnknownCommandError(`unknown command: ${cmd}`);
   }
 }
-
-export type ErrorKind = 'bad-request' | 'internal';
 
 /** Classify a thrown value the way the sidecar's own loop does: BadRequestError/FlowError/VanguardError
  * are caller-correctable (`bad-request`); everything else is a real fault (`internal`). */

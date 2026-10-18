@@ -7,6 +7,7 @@ import { serveStatic } from './static.js';
 import { EventBus } from './events.js';
 import { writeJson, jsonError } from './json-response.js';
 import { dispatchRpc, classifyError, type RpcContext } from './rpc.js';
+import { encodeError, encodeResult } from '../hub-wire.js';
 import { ProjectAllowlist, type BindOptions } from './allowlist.js';
 import { WatchRegistry, type WatchOptions } from './watch.js';
 import { createRunSession } from './run-session.js';
@@ -50,8 +51,8 @@ function notFound(res: ServerResponse): void {
 }
 
 function methodNotAllowed(res: ServerResponse, allow: string): void {
-  res.writeHead(405, { allow, 'content-type': 'application/json' });
-  res.end(JSON.stringify({ error: { message: 'method not allowed', kind: 'bad-request' } }));
+  const encoded = encodeError({ message: 'method not allowed', kind: 'bad-request' }, 405);
+  writeJson(res, encoded.status, encoded.body, { allow });
 }
 
 function singleHeader(value: string | string[] | undefined): string | undefined {
@@ -112,8 +113,8 @@ function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> 
 }
 
 function respondBodyTooLarge(res: ServerResponse): void {
-  res.writeHead(413, { 'content-type': 'application/json', connection: 'close' });
-  res.end(JSON.stringify({ error: { message: 'request body too large', kind: 'bad-request' } }), () => res.socket?.destroy());
+  const encoded = encodeError({ message: 'request body too large', kind: 'bad-request' }, 413);
+  writeJson(res, encoded.status, encoded.body, { connection: 'close' }, () => res.socket?.destroy());
 }
 
 async function handleRpcRequest(ctx: RpcContext, req: IncomingMessage, res: ServerResponse, cmd: string): Promise<void> {
@@ -143,7 +144,7 @@ async function handleRpcRequest(ctx: RpcContext, req: IncomingMessage, res: Serv
     const result = await dispatchRpc(ctx, cmd, body);
     // Spec §2.3: success is `{ result }` (null for void commands); apps/desktop/src/transport.ts reads
     // `body.result`. A bare body here left the UI with `undefined` projects on first paint.
-    writeJson(res, 200, { result: result ?? null });
+    writeJson(res, 200, encodeResult(result));
   } catch (err) {
     const classified = classifyError(err);
     const status = classified.notFound ? 404 : classified.kind === 'bad-request' ? 400 : 500;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Chip, cn } from '@/ui';
 import { ArrowLeft, FilePlus, RefreshCw } from 'lucide-react';
-import { canUseFleet, subscribe } from '../../transport';
+import { canUseFleet, subscribe, onStreamReset } from '../../transport';
 import {
   listRuns,
   listActive,
@@ -154,10 +154,14 @@ export function Inspector({
     const unlisten = subscribe<string>('vanguard:changed', (e) => {
       if (e.payload === project) void refresh();
     });
+    // A stream-reset means the SSE gap may have swallowed a vanguard:changed we'd otherwise have
+    // reacted to, so resync unconditionally rather than trusting the stream to have told us (#491).
+    const unlistenReset = onStreamReset(() => void refresh());
     return () => {
       setWatching(false);
       void unwatchProject(project);
       void unlisten.then((f) => f());
+      void unlistenReset.then((f) => f());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
