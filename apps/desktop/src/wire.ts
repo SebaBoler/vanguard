@@ -335,12 +335,27 @@ export interface RemoteRun {
   cached: boolean;
 }
 
-/** A CI run's downloaded `vanguard-runs` artifact imported by `fetch_remote_run` / `fetchRemoteRun`. */
+/** A CI run's downloaded `vanguard-runs` artifact imported by `import_remote_run` / `importRemoteRun`. */
 export interface RemoteImport {
   runId: number;
   taskIds: string[];
   runs: RunSummary[];
   cachedAt: string;
+}
+
+/**
+ * Where one run's records live, resolved to a root by whichever backend answers `read_run` —
+ * Tauri's own per-run cache dir (`src-tauri/src/remote.rs`), the hub's
+ * `<project>/.vanguard/remote-runs/<runId>` (`src/hub/runs.ts`). The UI never sees either root: it
+ * only carries this discriminant (see `RunRef`).
+ */
+export type RunSource = { kind: 'local' } | { kind: 'ci'; runId: number };
+
+/** Identifies one run record to open: which source tree, and which task/timestamp within it. */
+export interface RunRef {
+  source: RunSource;
+  taskId: string;
+  timestamp: string;
 }
 
 /**
@@ -403,16 +418,6 @@ export interface AppConfig {
   customProviders?: unknown;
 }
 
-/** A CI run's downloaded `vanguard-runs` artifact, parsed like a local `.vanguard/runs`. */
-export interface RemoteRecords {
-  /** Cache dir laid out like a repo root — pass it to `readRun` as `repoPath`. */
-  cachePath: string;
-  runs: RunSummary[];
-  /** Hub mode only: the records live under `<project>/.vanguard/remote-runs/<id>`, so `cachePath` is
-   * the project itself and `readRun` needs this id to pick the remote root. */
-  remoteRunId?: number;
-}
-
 /** Hub-only (src/hub/browse.ts) — one subdirectory offered by `browse_dirs`, standing in for the
  * native folder dialog Tauri doesn't have in a browser. */
 export interface DirEntry {
@@ -456,7 +461,7 @@ export interface CompleteCallArgs {
  */
 export interface Commands {
   list_runs: { args: { repoPath: string }; result: RunSummary[] };
-  read_run: { args: { repoPath: string; taskId: string; timestamp: string; remoteRunId?: number }; result: RunDetail };
+  read_run: { args: { repoPath: string; taskId: string; timestamp: string; source: RunSource }; result: RunDetail };
   list_projects: { args: undefined; result: Project[] };
   add_project: { args: { path: string }; result: Project[] };
   remove_project: { args: { path: string }; result: Project[] };
@@ -472,8 +477,10 @@ export interface Commands {
   write_draft_asset: { args: { repoPath: string; id: string; name: string; bytes: number[] }; result: string };
   clear_draft_assets: { args: { repoPath: string; id: string }; result: void };
   list_remote_runs: { args: { repoPath: string }; result: RemoteRun[] };
-  /** TAURI_ONLY: no hub equivalent — the hub serves run records straight off disk. */
-  download_run_records: { args: { repoPath: string; runId: number }; result: RemoteRecords };
+  /** Both backends implement this: Tauri downloads+caches under the app config dir, the hub under
+   * the project's `.vanguard/remote-runs/<id>` — each resolves `source: { kind: 'ci', runId }` for
+   * a later `read_run` to its own root. A cache hit skips `gh run download` on both sides. */
+  import_remote_run: { args: { repoPath: string; runId: number }; result: RemoteImport };
   list_tasks: { args: { repoPath: string }; result: { tasks: BoardTask[]; capped: boolean } };
   fetch_spec: { args: { repoPath: string; taskId: string }; result: { spec: string } };
   watch_project: { args: { repoPath: string }; result: void };
@@ -496,9 +503,6 @@ export interface Commands {
   api_cancel_complete: { args: { callId: string }; result: void };
   /** HUB_ONLY: no native folder dialog in a browser (src/hub/browse.ts stands in for one). */
   browse_dirs: { args: { path?: string }; result: DirListing };
-  /** HUB_ONLY: the hub imports a CI run's artifact server-side; the desktop downloads it instead
-   * (`download_run_records`). */
-  fetch_remote_run: { args: { repoPath: string; runId: number }; result: RemoteImport };
   /** TAURI_ONLY: the Fleet screen's shell-spawn surface — disabled in hub mode (remote code
    * execution on a reachable server). */
   spawn_run: { args: { cwd: string; command: string }; result: number };
@@ -509,14 +513,12 @@ export interface Commands {
 }
 
 /** Commands the hub does not implement for real: absent from `src/hub/rpc.ts`'s dispatch cases (the
- * Fleet shell-spawn surface is rejected generically instead of dispatched; `download_run_records`
- * has no hub equivalent at all). */
-export const TAURI_ONLY = ['download_run_records', 'spawn_run', 'kill_run', 'list_spawns'] as const satisfies readonly (keyof Commands)[];
+ * Fleet shell-spawn surface is rejected generically instead of dispatched). */
+export const TAURI_ONLY = ['spawn_run', 'kill_run', 'list_spawns'] as const satisfies readonly (keyof Commands)[];
 
 /** Commands with no `#[tauri::command]` in `src-tauri/src/lib.rs` — browser-only stand-ins for
- * native capability the webview doesn't need (no folder-picker dialog, no server-side artifact
- * fetch). */
-export const HUB_ONLY = ['browse_dirs', 'fetch_remote_run'] as const satisfies readonly (keyof Commands)[];
+ * native capability the webview doesn't need (no folder-picker dialog). */
+export const HUB_ONLY = ['browse_dirs'] as const satisfies readonly (keyof Commands)[];
 
 /** Every command name, for the lib.rs parity test and friends. TYPE-CHECKED (not just asserted)
  * against `Commands`: the `satisfies` below rejects a typo or a name not in `Commands`, and
@@ -540,7 +542,7 @@ export const COMMAND_NAMES = [
   'write_draft_asset',
   'clear_draft_assets',
   'list_remote_runs',
-  'download_run_records',
+  'import_remote_run',
   'list_tasks',
   'fetch_spec',
   'watch_project',
@@ -562,7 +564,6 @@ export const COMMAND_NAMES = [
   'api_complete',
   'api_cancel_complete',
   'browse_dirs',
-  'fetch_remote_run',
   'spawn_run',
   'kill_run',
   'list_spawns',

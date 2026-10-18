@@ -6,8 +6,8 @@ import type {
   ActiveRun,
   SessionRead,
   RemoteRun,
-  RemoteRecords,
   RemoteImport,
+  RunRef,
   DirListing,
   AppConfig,
 } from './vanguard-output';
@@ -30,19 +30,17 @@ export function listRuns(repoPath: string): Promise<RunSummary[]> {
   return call('list_runs', { repoPath });
 }
 
-export function readRun(repoPath: string, taskId: string, timestamp: string, remoteRunId?: number): Promise<RunDetail> {
-  return call('read_run', { repoPath, taskId, timestamp, remoteRunId });
+/** Read one run record under `repoPath`. `ref.source` names WHICH tree it lives in (the project's
+ *  own runs, or a CI run imported by `importRemoteRun`) — the backend answering resolves it to a
+ *  root, so the renderer never carries one. */
+export function readRun(repoPath: string, ref: RunRef): Promise<RunDetail> {
+  return call('read_run', { repoPath, taskId: ref.taskId, timestamp: ref.timestamp, source: ref.source });
 }
 
 /** Hub-only: a native-dialog stand-in (src/hub/browse.ts) — lists `path`'s subdirectories, confined
  * to the hub's browse root, for `RepoPicker`. `path` omitted lists the root itself. */
 export function browseDirs(path?: string): Promise<DirListing> {
   return call('browse_dirs', { path });
-}
-
-/** Hub-only: imports a CI run's `vanguard-runs` artifact server-side (src/hub/remote.ts). */
-export function fetchRemoteRun(repoPath: string, runId: number): Promise<RemoteImport> {
-  return call('fetch_remote_run', { repoPath, runId });
 }
 
 export function listProjects(): Promise<Project[]> {
@@ -84,10 +82,12 @@ export function listRemoteRuns(repoPath: string): Promise<RemoteRun[]> {
   return call('list_remote_runs', { repoPath });
 }
 
-/** Pull a CI run's record artifact into the app's cache (once) and group it into run summaries;
- *  open one with `readRun(records.cachePath, …)`. */
-export function downloadRunRecords(repoPath: string, runId: number): Promise<RemoteRecords> {
-  return call('download_run_records', { repoPath, runId });
+/** Import a CI run's record artifact (once; a cache hit skips `gh`) and group it into run summaries.
+ *  Both backends implement it — the desktop caches under the app config dir, the hub under the
+ *  project's `.vanguard/remote-runs/<id>`. Open one with `readRun(project, { source: { kind: 'ci',
+ *  runId }, … })`: the root stays on whichever side imported it. */
+export function importRemoteRun(repoPath: string, runId: number): Promise<RemoteImport> {
+  return call('import_remote_run', { repoPath, runId });
 }
 
 /** Board read path (S9): served by core over the sidecar query pipe; capped drives the banner. */

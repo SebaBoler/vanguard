@@ -63,6 +63,16 @@ function optionalNumber(args: Record<string, unknown>, key: string): number | un
   return typeof v === 'number' ? v : undefined;
 }
 
+/** `read_run`'s `source` (wire's `RunSource`) → the root the records live under: the project's own
+ * `.vanguard/runs`, or a CI run's imported `.vanguard/remote-runs/<id>`. The client never names a
+ * root — the same discriminant resolves against the Tauri cache dir on the desktop side. */
+function runSourceRoot(repoPath: string, raw: unknown): string {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  if (source.kind === 'local') return defaultRunsRoot(repoPath);
+  if (source.kind === 'ci' && typeof source.runId === 'number') return remoteRunsRoot(repoPath, source.runId);
+  throw new BadRequestError("source is required and must be { kind: 'local' } or { kind: 'ci', runId: number }");
+}
+
 async function repoOk(repoPath: string): Promise<boolean> {
   try {
     const res = await execa('git', ['-C', repoPath, 'rev-parse', '--is-inside-work-tree']);
@@ -97,9 +107,7 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const taskId = requireString(args, 'taskId');
       const timestamp = requireString(args, 'timestamp');
-      const remoteRunId = optionalNumber(args, 'remoteRunId');
-      const root = remoteRunId !== undefined ? remoteRunsRoot(real, remoteRunId) : defaultRunsRoot(real);
-      return readRunDetail(root, taskId, timestamp);
+      return readRunDetail(runSourceRoot(real, args.source), taskId, timestamp);
     }
     case 'list_projects': {
       return projects.list(ctx.configDir);
@@ -173,7 +181,7 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       return remote.listRemoteRuns(real);
     }
-    case 'fetch_remote_run': {
+    case 'import_remote_run': {
       const real = await ctx.allowlist.assertAllowed(requireString(args, 'repoPath'));
       const runId = optionalNumber(args, 'runId');
       if (runId === undefined) throw new BadRequestError('runId is required and must be a number');
