@@ -72,7 +72,7 @@ export { installSignalCleanup, destroyAllTracked } from './core/cleanup.js';
 export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
 export { startEgressProxy, egressEnv, isAllowed, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST, type EgressProxy } from './sandbox/egress-proxy.js';
 export { startEgressEnclave, type EgressEnclave } from './sandbox/egress-network.js';
-export { persistRunRecord, persistStageOutcomes, type PersistOptions } from './core/run-record.js';
+export { beginRun, type RunWriter, type WriteStagesOptions } from './core/run-store.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
 export {
   runLinearIssue,
