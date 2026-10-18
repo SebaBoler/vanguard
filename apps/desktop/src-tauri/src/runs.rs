@@ -38,6 +38,7 @@ pub struct RunRecord {
     pub timestamp: String,
     pub stage: Option<String>,
     pub pr_url: Option<String>,
+    pub diff_omitted: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,25 @@ pub struct Proof {
     pub passed: bool,
     pub sha256: String,
     pub output_tail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualProofArtifact {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualProof {
+    pub command: String,
+    pub exit_code: i32,
+    pub passed: bool,
+    pub sha256: String,
+    pub output_tail: String,
+    pub artifacts: Vec<VisualProofArtifact>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +96,7 @@ pub struct RunDetail {
     pub timestamp: String,
     pub stages: Vec<StageDetail>,
     pub proof: Option<Proof>,
+    pub visual_proof: Option<VisualProof>,
 }
 
 pub fn runs_dir(repo_path: &Path) -> std::path::PathBuf {
@@ -237,11 +258,17 @@ pub fn read_run_detail(repo_path: &Path, task_id: &str, timestamp: &str) -> io::
         .ok()
         .and_then(|c| serde_json::from_str::<Proof>(&c).ok());
 
+    let visual_proof_path = task_dir.join(format!("{}.visual-proof.json", sanitize_timestamp(timestamp)));
+    let visual_proof = fs::read_to_string(&visual_proof_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<VisualProof>(&c).ok());
+
     Ok(RunDetail {
         task_id: task_id.to_string(),
         timestamp: timestamp.to_string(),
         stages,
         proof,
+        visual_proof,
     })
 }
 
@@ -276,6 +303,11 @@ mod tests {
             &dir.join("2026-07-06T19-12-02-123Z.proof.json"),
             r#"{"command":"pnpm test","exitCode":1,"passed":false,"sha256":"deadbeef","outputTail":"1 test failed"}"#,
         );
+        write(
+            &dir.join("2026-07-06T19-12-02-123Z.visual-proof.json"),
+            r#"{"command":"pnpm visual","exitCode":0,"passed":true,"sha256":"vp","outputTail":"ok",
+                "artifacts":[{"path":"shot.png","sha256":"abc","bytes":42}]}"#,
+        );
     }
 
     #[test]
@@ -298,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_detail_with_diff_transcript_proof() {
+    fn reads_detail_with_diff_transcript_proof_and_visual_proof() {
         let tmp = tempfile::tempdir().unwrap();
         fixture(tmp.path());
         let d = read_run_detail(tmp.path(), "task-7", "2026-07-06T19:12:02.123Z").unwrap();
@@ -313,6 +345,26 @@ mod tests {
         let proof = d.proof.as_ref().unwrap();
         assert!(!proof.passed);
         assert_eq!(proof.exit_code, 1);
+        let visual_proof = d.visual_proof.as_ref().unwrap();
+        assert!(visual_proof.passed);
+        assert_eq!(visual_proof.artifacts.len(), 1);
+        assert_eq!(visual_proof.artifacts[0].path, "shot.png");
+    }
+
+    #[test]
+    fn preserves_diff_omitted_through_native_read_and_serialization() {
+        let tmp = tempfile::tempdir().unwrap();
+        fixture(tmp.path());
+        let path = tmp.path().join(".vanguard/runs/task-7/2026-07-06T19-12-02-123Z-review.json");
+        let mut record: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for reason in ["secret-blocked", "secret-scan"] {
+            record["diffOmitted"] = serde_json::json!(reason);
+            write(&path, &serde_json::to_string(&record).unwrap());
+            let detail = read_run_detail(tmp.path(), "task-7", "2026-07-06T19:12:02.123Z").unwrap();
+            let review = detail.stages.iter().find(|s| s.record.stage.as_deref() == Some("review")).unwrap();
+            assert_eq!(serde_json::to_value(&review.record).unwrap()["diffOmitted"], reason);
+            assert!(review.diff.is_none());
+        }
     }
 
     #[test]

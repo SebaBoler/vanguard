@@ -225,3 +225,103 @@ export interface Finding {
   title: string;
   evidence: string;
 }
+
+/**
+ * Persisted run-record shapes (src/hub/runs.ts and src-tauri/src/runs.rs both produce these; this
+ * file pins the hub's TS side so desktop drift fails CI — the Rust side stays a hand-mirror).
+ */
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+export interface RunRecord {
+  taskId: string;
+  completed: boolean;
+  exitReason: string;
+  turns: number;
+  sessionId?: string;
+  worktreePath: string;
+  worktreePreserved: boolean;
+  finalText: string;
+  usage?: AgentUsage;
+  costUsd?: number;
+  cacheEfficiency?: number;
+  durationMs?: number;
+  model?: string;
+  timestamp: string;
+  stage?: string;
+  prUrl?: string;
+  /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-record.ts). */
+  diffOmitted?: 'secret-blocked' | 'secret-scan';
+}
+
+export interface Proof {
+  command: string;
+  exitCode: number;
+  passed: boolean;
+  sha256: string;
+  outputTail: string;
+}
+
+export interface VisualProofArtifact {
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface VisualProof {
+  command: string;
+  exitCode: number;
+  passed: boolean;
+  sha256: string;
+  outputTail: string;
+  artifacts: VisualProofArtifact[];
+}
+
+export interface RunSummary {
+  taskId: string;
+  timestamp: string;
+  stages: string[];
+  totalCostUsd: number;
+  anyFailed: boolean;
+  prUrl?: string;
+}
+
+export interface StageDetail {
+  record: RunRecord;
+  diff?: string;
+  transcript?: string;
+}
+
+export interface RunDetail {
+  taskId: string;
+  timestamp: string;
+  stages: StageDetail[];
+  proof?: Proof;
+  visualProof?: VisualProof;
+}
+
+/** A CI run, as returned by `gh run list` (src/hub/remote.ts) / Tauri's `list_remote_runs`. */
+export interface RemoteRun {
+  id: number;
+  status: string;
+  conclusion: string;
+  title: string;
+  branch: string;
+  workflow: string;
+  createdAt: string;
+  event: string;
+  url: string;
+  /** The run's record artifact is already in the local cache (opens without `gh`). */
+  cached: boolean;
+}
+
+/** A CI run's downloaded `vanguard-runs` artifact imported by `fetch_remote_run` / `fetchRemoteRun`. */
+export interface RemoteImport {
+  runId: number;
+  taskIds: string[];
+  runs: RunSummary[];
+  cachedAt: string;
+}

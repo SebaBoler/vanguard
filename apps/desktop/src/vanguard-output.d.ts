@@ -1,38 +1,23 @@
 // Hand-mirrors of the RUST serde structs in src-tauri (the persisted/aggregated shapes) — a TS
 // seam cannot pin these; keep them in sync manually. Anything Rust passes through OPAQUELY
 // belongs in src/wire.ts (the generated S7 contract), not here.
-export interface AgentUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadInputTokens: number;
-}
-
-export interface RunRecord {
-  taskId: string;
-  completed: boolean;
-  exitReason: string;
-  turns: number;
-  sessionId?: string;
-  worktreePath: string;
-  worktreePreserved: boolean;
-  finalText: string;
-  usage?: AgentUsage;
-  costUsd?: number;
-  cacheEfficiency?: number;
-  durationMs?: number;
-  model?: string;
-  timestamp: string;
-  stage?: string;
-  prUrl?: string;
-}
-
-export interface Proof {
-  command: string;
-  exitCode: number;
-  passed: boolean;
-  sha256: string;
-  outputTail: string;
-}
+//
+// The run-record/remote-run shapes ARE pinned by a TS seam: src/hub (the web hub) is a second,
+// TS-side producer of these shapes, so they live in src/wire.ts and are re-exported below —
+// drift between the hub and this app now fails CI instead of silently rendering stale UI.
+import type { RunSummary } from './wire';
+export type {
+  AgentUsage,
+  Proof,
+  RemoteImport,
+  RemoteRun,
+  RunDetail,
+  RunRecord,
+  RunSummary,
+  StageDetail,
+  VisualProof,
+  VisualProofArtifact,
+} from './wire';
 
 export interface ActiveRun {
   taskId: string;
@@ -79,20 +64,6 @@ export interface AppConfig {
   customProviders?: { name: string; baseUrl: string; keyEnv: string; model?: string }[] | null;
 }
 
-export interface RemoteRun {
-  id: number;
-  status: string;
-  conclusion: string;
-  title: string;
-  branch: string;
-  workflow: string;
-  createdAt: string;
-  event: string;
-  url: string;
-  /** The run's record artifact is already in the local cache (opens without `gh`). */
-  cached: boolean;
-}
-
 /** A CI run's downloaded `vanguard-runs` artifact, parsed like a local `.vanguard/runs`. */
 export interface RemoteRecords {
   /** Cache dir laid out like a repo root — pass it to `readRun` as `repoPath`. */
@@ -116,28 +87,6 @@ export interface Project {
   color?: string;
 }
 
-export interface RunSummary {
-  taskId: string;
-  timestamp: string;
-  stages: string[];
-  totalCostUsd: number;
-  anyFailed: boolean;
-  prUrl?: string;
-}
-
-export interface StageDetail {
-  record: RunRecord;
-  diff?: string;
-  transcript?: string;
-}
-
-export interface RunDetail {
-  taskId: string;
-  timestamp: string;
-  stages: StageDetail[];
-  proof?: Proof;
-}
-
 /** Hub-only (src/hub/browse.ts) — one subdirectory offered by `browse_dirs`, standing in for the
  * native folder dialog Tauri doesn't have in a browser. */
 export interface DirEntry {
@@ -152,12 +101,4 @@ export interface DirListing {
   path: string;
   parent?: string;
   entries: DirEntry[];
-}
-
-/** Hub-only (src/hub/remote.ts) — a CI run's `vanguard-runs` artifact imported by `fetch_remote_run`. */
-export interface RemoteImport {
-  runId: number;
-  taskIds: string[];
-  runs: RunSummary[];
-  cachedAt: string;
 }

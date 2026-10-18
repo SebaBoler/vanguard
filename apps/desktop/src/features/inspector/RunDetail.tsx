@@ -9,7 +9,7 @@ import type { RunDetail as RunDetailT } from '../../vanguard-output';
 
 export function RunDetail({ detail, project }: { detail: RunDetailT; project: string }) {
   const [tab, setTab] = useState('overview');
-  const diffStages = detail.stages.filter((s) => s.diff);
+  const diffStages = detail.stages.filter((s) => s.diff || s.record.diffOmitted);
   const transcriptStages = detail.stages.filter((s) => s.transcript);
 
   return (
@@ -46,7 +46,11 @@ export function RunDetail({ detail, project }: { detail: RunDetailT; project: st
             {diffStages.length > 1 && (
               <div className="font-mono text-xs text-muted-foreground">{s.record.stage ?? 'run'}</div>
             )}
-            <DiffView diff={s.diff} />
+            {s.record.diffOmitted ? (
+              <div className="text-sm text-muted-foreground">diff withheld: {s.record.diffOmitted}</div>
+            ) : (
+              <DiffView diff={s.diff} />
+            )}
           </div>
         ))}
       </Tabs.Panel>
