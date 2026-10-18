@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseSpecManifest,
+  primaryModuleScope,
   extractDiffFiles,
   diffAddsTestContent,
   checkConformance,
@@ -313,5 +314,19 @@ describe('commitLeakWarningBlock', () => {
 
   it('returns an empty block for no leaks', () => {
     expect(commitLeakWarningBlock([])).toBe('');
+  });
+});
+
+describe('primaryModuleScope', () => {
+  it('omits the scope without declared files', () => {
+    expect(primaryModuleScope(undefined)).toBeUndefined();
+    expect(primaryModuleScope({})).toBeUndefined();
+    expect(primaryModuleScope({ files: [] })).toBeUndefined();
+  });
+
+  it('selects the most frequent module, breaking ties by manifest order', () => {
+    const files = ['src/hub/a.ts', 'apps/desktop/a.ts', 'apps/desktop/b.ts', 'docs/guide.md'].map((path) => ({ path }));
+    expect(primaryModuleScope({ files })).toBe('desktop');
+    expect(primaryModuleScope({ files: files.slice(0, 2) })).toBe('hub');
   });
 });

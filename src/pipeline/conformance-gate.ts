@@ -36,6 +36,31 @@ export function parseSpecManifest(specText: string): SpecManifest | undefined {
   }
 }
 
+/**
+ * Best-effort Conventional-Commits scope for a PR title: the most common module among the manifest's
+ * declared files (the segment after `src/` or `apps/`, else the file's first path segment). Undefined
+ * when the manifest declares no files — the scope is optional, never a hard requirement.
+ */
+export function primaryModuleScope(manifest: SpecManifest | undefined): string | undefined {
+  const counts = new Map<string, number>();
+  for (const file of manifest?.files ?? []) {
+    const parts = file.path.split('/');
+    const module = (parts[0] === 'src' || parts[0] === 'apps') && parts[1] !== undefined ? parts[1] : parts[0];
+    if (module === undefined || module === '') continue;
+    counts.set(module, (counts.get(module) ?? 0) + 1);
+  }
+  // Map iteration follows insertion (first-seen) order; strict `>` keeps the first-seen module on ties.
+  let best: string | undefined;
+  let bestCount = 0;
+  for (const [module, count] of counts) {
+    if (count > bestCount) {
+      best = module;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 /** Extract every file path touched by a unified diff (both sides of renames), deduped. */
 export function extractDiffFiles(diff: string): string[] {
   const files = new Set<string>();
