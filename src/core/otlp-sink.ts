@@ -18,7 +18,7 @@ export interface OtlpSinkConfig {
   headers: Record<string, string>;
 }
 
-/** One run as handed to the sink: the stage metric records persistStageOutcomes just wrote. */
+/** One run as handed to the sink: the stage metric records `beginRun().writeStages()` just wrote. */
 export interface RunTrace {
   taskId: string;
   /** ISO persist timestamp shared by every stage record of the run; the trace ends here. */
