@@ -10,7 +10,8 @@ import { WatchRegistry } from './watch.js';
 import { createRunSession } from './run-session.js';
 import { CompleteRegistry } from './complete.js';
 import { writeAppConfig } from './app-config.js';
-import type { SidecarDeps } from '../sidecar/sidecar.js';
+import { BadRequestError, runSidecar, type SidecarDeps } from '../sidecar/sidecar.js';
+import { VanguardError } from '../core/errors.js';
 import type { ChildProcess } from 'node:child_process';
 
 class FakeChild extends EventEmitter {
@@ -265,5 +266,56 @@ describe('dispatchRpc', () => {
     expect(payload).not.toHaveProperty('evilExtra');
     expect(payload.system).toBe('s');
     expect(payload.attachments).toEqual(['a']);
+  });
+
+  test('api_create_task rejects an invalid configured source as bad-request (#493)', async () => {
+    const repo = await tmpRepo();
+    const { ctx } = await makeCtx(repo);
+    // app.json can hold any string (no enum at that boundary) — a stale/hand-edited value must still
+    // be caught by createTask's own validator, not silently forwarded to the transport.
+    await writeAppConfig(repo, { source: 'not-a-real-tracker' });
+    try {
+      await dispatchRpc(ctx, 'api_create_task', { repoPath: repo, title: 't', body: 'b' });
+      expect.unreachable();
+    } catch (e) {
+      expect(classifyError(e).kind).toBe('bad-request');
+    }
+  });
+
+  test('BadRequestError, VanguardError and a generic Error classify identically on the sidecar and hub paths', async () => {
+    const repo = await tmpRepo();
+    async function* lines(...ls: string[]): AsyncIterable<string> {
+      for (const l of ls) yield l;
+    }
+    const cases = [new BadRequestError('bad request'), new VanguardError('vanguard failure'), new Error('generic failure')];
+    for (const err of cases) {
+      const out: string[] = [];
+      await runSidecar(
+        lines(JSON.stringify({ id: 'x', method: 'listFlows', params: { repoPath: '/abs' } })),
+        (l) => out.push(l),
+        fakeDeps({
+          listFlows: async () => {
+            throw err;
+          },
+        }),
+      );
+      const sidecarKind = (JSON.parse(out[0]!) as { error: { kind: string } }).error.kind;
+
+      const { ctx } = await makeCtx(repo, {
+        depsOverrides: {
+          listFlows: async () => {
+            throw err;
+          },
+        },
+      });
+      let hubKind: string | undefined;
+      try {
+        await dispatchRpc(ctx, 'api_list_flows', { repoPath: repo });
+        expect.unreachable();
+      } catch (e) {
+        hubKind = classifyError(e).kind;
+      }
+      expect(hubKind).toBe(sidecarKind);
+    }
   });
 });

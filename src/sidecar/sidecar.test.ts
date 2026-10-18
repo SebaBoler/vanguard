@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tmpdir } from 'node:os';
+import { VanguardError } from '../core/errors.js';
 import { assertFlowResolvable, FlowError } from '../flows/repo.js';
 import { runSidecar, type SidecarDeps } from './sidecar.js';
 import type { RunEvent } from '../pipeline/events.js';
@@ -60,6 +61,29 @@ describe('runSidecar', () => {
     await runSidecar(lines(JSON.stringify({ id: 'x', method: 'nope' })), write, stubDeps());
     expect(JSON.parse(out[0]!)).toMatchObject({ id: 'x', error: { kind: 'bad-request' } });
   });
+
+  it.each(['toString', 'constructor', '__proto__', 'hasOwnProperty'])(
+    'rejects inherited method %s as unknown', async (method) => {
+      const { write, out } = collect();
+      await runSidecar(lines(JSON.stringify({ id: 'x', method })), write, stubDeps());
+      expect(JSON.parse(out[0]!)).toEqual({
+        id: 'x', error: { kind: 'bad-request', message: 'unknown method: ' + method },
+      });
+    },
+  );
+
+  it.each([null, [], 1, { id: 'x', method: { toString: null } }, { id: 'x', method: ['capabilities'] }])(
+    'rejects malformed request %j and keeps serving requests', async (request) => {
+      const { write, out } = collect();
+      await runSidecar(
+        lines(JSON.stringify(request), JSON.stringify({ id: 'next', method: 'capabilities' })),
+        write, stubDeps(),
+      );
+      expect(out).toHaveLength(2);
+      expect(JSON.parse(out[0]!).error.kind).toBe('bad-request');
+      expect(JSON.parse(out[1]!)).toMatchObject({ id: 'next', result: { providers: ['claude'] } });
+    },
+  );
 
   it('dispatches deleteFlow through the validator (absolute repoPath + flow-file grammar)', async () => {
     const { write, out } = collect();
@@ -225,20 +249,22 @@ describe('flow-file methods over the protocol (S5)', () => {
     expect(called).toBe(false);
   });
 
-  it('classifies FlowError as bad-request and anything else as internal', async () => {
+  it('classifies FlowError and VanguardError as bad-request and other errors as internal', async () => {
     const { write, out } = collect();
     await runSidecar(
-      lines(req('readFlow', { repoPath: '/abs', file: 'a.hcl' }), req('readFlow', { repoPath: '/abs', file: 'b.hcl' })),
+      lines(req('readFlow', { repoPath: '/abs', file: 'a.hcl' }), req('readFlow', { repoPath: '/abs', file: 'b.hcl' }), req('readFlow', { repoPath: '/abs', file: 'c.hcl' })),
       write,
       stubDeps({
         readFlow: async ({ file }): Promise<never> => {
           if (file === 'a.hcl') throw new FlowError('expected exactly one flow block, found none');
+          if (file === 'c.hcl') throw new VanguardError('unknown provider');
           throw new Error('EACCES: permission denied');
         },
       }),
     );
     expect(JSON.parse(out[0]!).error).toEqual({ message: 'expected exactly one flow block, found none', kind: 'bad-request' });
     expect(JSON.parse(out[1]!).error.kind).toBe('internal');
+    expect(JSON.parse(out[2]!).error).toEqual({ message: 'unknown provider', kind: 'bad-request' });
   });
 });
 
