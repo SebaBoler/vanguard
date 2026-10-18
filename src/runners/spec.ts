@@ -5,7 +5,7 @@ import { forcedProviderModel, selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes } from '../core/run-record.js';
+import { beginRun } from '../core/run-store.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -167,7 +167,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       }
       // Persisted under the 'spec' label (not the stage's library name) so `vanguard stats` keys it as before.
       const persistSpec = (): Promise<void> =>
-        persistStageOutcomes(deps.repoPath, [{ ...specOutcome, name: 'spec' }], { flow: 'spec', provider: agent.name });
+        beginRun(deps.repoPath, ctx.taskId).writeStages([{ ...specOutcome, name: 'spec' }], { flow: 'spec', provider: agent.name });
       // Lenient extraction recovers a spec whose closing tag was lost to a truncated stream (common
       // through a corp MITM proxy). A genuinely empty result yields undefined below.
       const extracted = extractTagLenient(specOutcome.result.finalText, SPEC_TAG);

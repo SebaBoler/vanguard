@@ -11,8 +11,9 @@ export function LiveRun({
 }: {
   active: ActiveRun;
   refreshKey: number;
-  /** Budget cap from the project's .vanguard/app.json; when set, the strip shows spend vs cap. */
-  budgetUsd?: number;
+  /** Budget cap from the project's .vanguard/app.json; when set, the strip shows spend vs cap.
+   *  Nullable like the config field — Rust's serde writes `null` for an absent `Option`. */
+  budgetUsd?: number | null;
 }) {
   const [data, setData] = useState<SessionRead | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);

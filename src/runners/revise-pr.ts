@@ -24,7 +24,7 @@ import { skillRegistryForRun } from '../context/skill-registry.js';
 import { resolveVerifyCommand, runVerification, renderVerificationFeedback } from '../pipeline/verify.js';
 import { reviewRequestBody } from './review-body.js';
 import { repairUntilGreen } from '../pipeline/repair-gate.js';
-import { persistStageOutcomes } from '../core/run-record.js';
+import { beginRun } from '../core/run-store.js';
 import { appendStepSummary } from '../core/step-summary.js';
 import type { StepSummary, StepSummaryExit } from '../core/step-summary.js';
 import type { StageOutcome } from '../pipeline/pipeline.js';
@@ -235,9 +235,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
     }
     const taskId = `revise-pr-${target.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${target.number}`;
-    // One timestamp for the whole revision round, shared by the two (mutually exclusive) persistStageOutcomes
-    // calls below, for consistency with runSourcedIssue's runTimestamp.
-    const revisionStageMeta = { timestamp: new Date().toISOString(), flow: 'revise', provider: agents.agent.name };
+    // One RunWriter for the whole revision round, shared by the two (mutually exclusive) writeStages
+    // calls below, for consistency with runSourcedIssue's writer.
+    const writer = beginRun(deps.repoPath, taskId);
+    const revisionStageMeta = { flow: 'revise', provider: agents.agent.name };
     const ctx = await prepareContext(
       {
         taskId,
@@ -329,7 +330,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         revisionDiff = await ctx.wm.diff(ctx.worktreePath);
       } catch (err) {
         // Nothing is known about the content on this path (the scan never ran): keep the payloads off disk.
-        await persistStageOutcomes(deps.repoPath, outcomes, { ...revisionStageMeta, omitDiff: true });
+        await writer.writeStages(outcomes, { ...revisionStageMeta, omitDiff: true });
         throw err;
       }
       const whiteLabel = deps.commitAuthor !== undefined;
@@ -343,7 +344,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
       // the outcomes are persisted — the first delivery does this in runSourcedIssue. Persisted after
       // the scan so a blocked round leaves no `.diff` / `.bundle` on disk (the diff holds the secret).
-      await persistStageOutcomes(deps.repoPath, outcomes, {
+      await writer.writeStages(outcomes, {
         ...revisionStageMeta,
         ...(block !== undefined ? { omitDiff: true } : {}),
       });
