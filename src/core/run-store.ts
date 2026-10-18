@@ -471,6 +471,52 @@ export function beginRun(repoPath: string, taskId: string, timestamp: string = n
   };
 }
 
+// ---------------------------------------------------------------------------
+// Deprecated compatibility surface — one release, for the pre-RunWriter exports of src/index.ts
+// ---------------------------------------------------------------------------
+
+/** @deprecated Options of {@link persistRunRecord}; `beginRun().writeStages()` covers these. */
+export interface PersistOptions {
+  /** ISO timestamp; defaults to now. Injected for deterministic tests. */
+  timestamp?: string;
+  /** Stage name, when persisting a single stage of a multi-stage run. */
+  label?: string;
+  /** The PR opened for this run, if any. */
+  prUrl?: string;
+  /** Model the stage was configured with (StageOutcome.model); recorded next to the served `model`. */
+  requestedModel?: string;
+  /** See {@link WriteStagesOptions.omitDiff}. */
+  omitDiff?: boolean;
+}
+
+/**
+ * @deprecated Use `beginRun(repoPath, taskId).writeStages([...])` — a writer owns the run's timestamp,
+ * so its proof files share the stage records' prefix. Kept for one release of compatibility.
+ */
+export async function persistRunRecord(localRepoPath: string, result: RunResult, opts: PersistOptions = {}): Promise<string> {
+  return writeRecord(runsRoot(localRepoPath), result.taskId, opts.timestamp ?? new Date().toISOString(), result, {
+    ...(opts.label !== undefined ? { label: opts.label } : {}),
+    ...(opts.prUrl !== undefined ? { prUrl: opts.prUrl } : {}),
+    ...(opts.requestedModel !== undefined ? { requestedModel: opts.requestedModel } : {}),
+    ...(opts.omitDiff !== undefined ? { omitDiff: opts.omitDiff } : {}),
+  });
+}
+
+/**
+ * @deprecated Use `beginRun(repoPath, taskId).writeStages(outcomes, opts)`. Kept for one release of
+ * compatibility; takes the run's taskId from the first outcome, as the old writer did.
+ */
+export async function persistStageOutcomes(
+  localRepoPath: string,
+  outcomes: ReadonlyArray<{ name: string; result: RunResult; model?: string }>,
+  opts: WriteStagesOptions & { timestamp?: string } = {},
+): Promise<void> {
+  const first = outcomes[0];
+  if (first === undefined) return;
+  const { timestamp, ...rest } = opts;
+  await beginRun(localRepoPath, first.result.taskId, timestamp).writeStages(outcomes, rest);
+}
+
 /**
  * Append one `{ evt: 'decision_probe', ts, taskId, ... }` line to metrics.jsonl — the log-only
  * difficulty probe, joined to the stage outcomes by taskId in `vanguard stats`. Independent of

@@ -73,6 +73,8 @@ export { setSandboxLimit, sandboxLimit } from './core/concurrency.js';
 export { startEgressProxy, egressEnv, isAllowed, allowlistWithout, DEFAULT_EGRESS_ALLOWLIST, type EgressProxy } from './sandbox/egress-proxy.js';
 export { startEgressEnclave, type EgressEnclave } from './sandbox/egress-network.js';
 export { beginRun, type RunWriter, type WriteStagesOptions } from './core/run-store.js';
+// Deprecated: the pre-RunWriter writers, kept for one release of compatibility. Prefer `beginRun`.
+export { persistRunRecord, persistStageOutcomes, type PersistOptions } from './core/run-store.js';
 export { runGc, type GcCliOptions, type GcReport } from './cli/gc.js';
 export {
   runLinearIssue,
