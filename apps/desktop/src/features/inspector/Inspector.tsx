@@ -31,7 +31,7 @@ import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
 import { foldLiveEvent, reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
 import { useAppConfig } from '../../hooks';
-import type { RunSummary, RunDetail as RunDetailT, ActiveRun } from '../../vanguard-output';
+import type { RunSummary, RunDetail as RunDetailT, ActiveRun, RunRef, RunSource } from '../../vanguard-output';
 
 export function Inspector({
   project,
@@ -79,15 +79,12 @@ export function Inspector({
   const runGen = useRef(0); // bumped per launch; a settled apiCreateRun from an older run is dropped
   const [repoOk, setRepoOk] = useState(true); // cached: is `project` a git work tree? (fails a run at click)
 
-  // Repo root the open detail was read from: the project, or a CI run's record cache (Remote screen).
-  const detailRoot = useRef(project);
-  // Hub mode: a CI run's records sit under the project's `.vanguard/remote-runs/<id>`; `read_run` picks that root by id.
-  const detailRemoteRunId = useRef<number | undefined>(undefined);
-  const openRef = useRef<{ root: string; taskId: string; timestamp: string; remoteRunId?: number } | null>(null);
+  // The open detail's ref, so `refresh` can re-read it: which run, and which tree it came from —
+  // the project's own runs, or a CI run imported by the Remote screen. Only the discriminant
+  // travels — whichever backend answers `read_run` resolves it to a root. Written by `open`.
+  const openRef = useRef<RunRef | null>(null);
   useEffect(() => {
-    openRef.current = detail
-      ? { root: detailRoot.current, taskId: detail.taskId, timestamp: detail.timestamp, remoteRunId: detailRemoteRunId.current }
-      : null;
+    if (!detail) openRef.current = null;
   }, [detail]);
 
   // Rail navigation drops any open drill-down.
@@ -140,7 +137,7 @@ export function Inspector({
       setActive(a);
       setTick((t) => t + 1);
       const o = openRef.current;
-      if (o) setDetail(await readRun(o.root, o.taskId, o.timestamp, o.remoteRunId));
+      if (o) setDetail(await readRun(project, o));
     } catch {
       // transient mid-write; next event resyncs
     }
@@ -300,12 +297,12 @@ export function Inspector({
       });
   };
 
-  const open = async (r: RunSummary, root = project, remoteRunId?: number): Promise<void> => {
+  const open = async (r: RunSummary, source: RunSource = { kind: 'local' }): Promise<void> => {
     setError(null);
+    const ref: RunRef = { source, taskId: r.taskId, timestamp: r.timestamp };
     try {
-      detailRoot.current = root;
-      detailRemoteRunId.current = remoteRunId;
-      setDetail(await readRun(root, r.taskId, r.timestamp, remoteRunId));
+      setDetail(await readRun(project, ref));
+      openRef.current = ref;
     } catch (e) {
       setError(String(e));
     }
@@ -434,7 +431,7 @@ export function Inspector({
         <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} />
       ) : screen === 'remote' ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <RemoteRuns project={project} onOpenRun={(cachePath, r, remoteRunId) => void open(r, cachePath, remoteRunId)} />
+          <RemoteRuns project={project} onOpenRun={open} />
         </div>
       ) : screen === 'fleet' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
