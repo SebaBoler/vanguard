@@ -115,7 +115,7 @@ export function RemoteRuns({
                         <li key={`${s.taskId}:${s.timestamp}`}>
                           <button
                             type="button"
-                            onClick={() => onOpenRun(rec.data.cachePath, s, rec.data.remoteRunId)}
+                            onClick={() => onOpenRun(s, { kind: 'ci', runId: rec.data.runId })}
                             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-left hover:bg-muted"
                           >
                             <span className="font-medium">{s.taskId}</span>
