@@ -225,6 +225,17 @@ describe('runSourcedIssue', () => {
     scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
 
+  it('uses the issue bug label and manifest module in the published title', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    vi.mocked(adapter.prepare).mockResolvedValueOnce({ task: {
+      ...task,
+      labels: ['bug'],
+      comments: [{ body: '<spec_manifest>{"files":[{"path":"src/hub/api.ts","required":false}]}</spec_manifest>' }],
+    } } as Awaited<ReturnType<SourceAdapter['prepare']>>);
+    await runSourcedIssue(task.id, { repoPath: '/repo' }, adapter);
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ title: 'fix(hub): t (group/project#1)' }));
+  });
+
   it('starts from the remote base (#429), or from the reused branch on --reuse, and says which (#446)', async () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo', baseBranch: 'develop', keepLocalIfAhead: false }, adapter);

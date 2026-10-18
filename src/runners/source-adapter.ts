@@ -29,6 +29,7 @@ import { repairUntilGreen } from '../pipeline/repair-gate.js';
 import { deliverChange } from './deliver-change.js';
 import {
   parseSpecManifest,
+  primaryModuleScope,
   checkConformance,
   renderConformanceFeedback,
   commitLeakWarningBlock,
@@ -575,6 +576,7 @@ export async function runSourcedIssue(
       // The body is built after the commit so a partial result can carry commit-level `Closes #N`
       // leaks as a blocking warning. White-label mode keeps the body to just the Closes/Part-of line —
       // no automated proof-of-work blocks — so the PR reads like a plain human PR.
+      const scope = primaryModuleScope(manifest);
       const delivery = await deliverChange(ctx, {
         taskId: task.id,
         // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
@@ -587,6 +589,8 @@ export async function runSourcedIssue(
         target: {
           kind: 'new-pr',
           title: `${task.title} (${task.id})`,
+          bugLabel: task.labels.includes('bug'),
+          ...(scope !== undefined ? { scope } : {}),
           draft: true,
           ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
           body: ({ commitLeaks }) => whiteLabel

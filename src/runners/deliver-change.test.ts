@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { deliverChange } from './deliver-change.js';
+import { conventionalPrTitle, deliverChange } from './deliver-change.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 
 let repo: string;
@@ -133,7 +133,22 @@ describe('deliverChange', () => {
       expect(r.commitLeaks.length).toBeGreaterThan(0);
     });
     const gh = calls.find((c) => c[0] === 'gh');
+    expect(gh?.[gh.indexOf('--title') + 1]).toBe('feat: thing (o/r#7)');
     expect(gh?.[gh.indexOf('--body') + 1]).toMatch(/leaks=[1-9]/);
     expect(calls.some((c) => c[0] === 'git' && c[1] === 'push')).toBe(true);
   });
+});
+
+describe('conventionalPrTitle', () => {
+  it('selects the type and optional scope', () => {
+    expect(conventionalPrTitle('Add search')).toBe('feat: Add search');
+    expect(conventionalPrTitle('Repair search', { bugLabel: true, scope: 'hub' })).toBe('fix(hub): Repair search');
+    expect(conventionalPrTitle('Repair search', { bugLabel: true, scope: '' })).toBe('fix: Repair search');
+  });
+
+  it.each(['feat: add search', 'fix(hub): repair search', 'feat!: change API', 'refactor(core)!: change API', 'chore: cleanup'])(
+    'preserves an existing conventional title: %s', (title) => {
+      expect(conventionalPrTitle(title, { bugLabel: true, scope: 'other' })).toBe(title);
+    },
+  );
 });

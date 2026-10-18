@@ -23,7 +23,12 @@ export interface CommitAuthor {
 export type DeliveryTarget =
   | {
       kind: 'new-pr';
+      /** Prefixed with a Conventional-Commits type (see conventionalPrTitle) before the PR is opened. */
       title: string;
+      /** `true` when the issue carries a `bug` label: picks `fix:` over the default `feat:`. */
+      bugLabel?: boolean;
+      /** Optional Conventional-Commits scope, e.g. the spec's primary module (`runners`, `hub`). */
+      scope?: string;
       /** Built after the commit so it can carry the closing-keyword leaks found in the new commits. */
       body: (info: { commitLeaks: CommitClosingLeak[] }) => string;
       draft?: boolean;
@@ -57,6 +62,24 @@ export type DeliverChangeResult =
   | { kind: 'delivered-pr'; sha: string; headSha: string; prUrl: string; commitLeaks: CommitClosingLeak[] }
   /** existing-branch: the commit was pushed onto the PR head. */
   | { kind: 'delivered-push'; sha: string; headSha: string; commitLeaks: CommitClosingLeak[] };
+
+const CONVENTIONAL_TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+const CONVENTIONAL_PREFIX_RE = new RegExp(`^(${CONVENTIONAL_TYPES.join('|')})(\\([^)]+\\))?!?:\\s`);
+
+/**
+ * Prefix a PR title with a Conventional-Commits type so the squash-merge commit on `main` carries
+ * one too: release-please reads the squash commit's title (not the PR body) to pick a changelog
+ * section and bump, and a factory PR titled straight from the issue (`Run detail never shows … (#487)`)
+ * has none. Idempotent: a title that already starts with a valid `type(scope)?: ` prefix is returned
+ * unchanged, so re-deriving a title (e.g. on a later retitle) never double-prefixes or drops one a
+ * human already set.
+ */
+export function conventionalPrTitle(title: string, opts: { bugLabel?: boolean; scope?: string } = {}): string {
+  if (CONVENTIONAL_PREFIX_RE.test(title)) return title;
+  const type = opts.bugLabel === true ? 'fix' : 'feat';
+  const scope = opts.scope !== undefined && opts.scope !== '' ? `(${opts.scope})` : '';
+  return `${type}${scope}: ${title}`;
+}
 
 /**
  * The secret gate: scan an outgoing diff, log the masked findings, and return the block to report.
@@ -98,7 +121,7 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   const { target } = opts;
   if (target.kind === 'new-pr') {
     const pr = await publishForReview(ctx, {
-      title: target.title,
+      title: conventionalPrTitle(target.title, target),
       body: target.body({ commitLeaks }),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
