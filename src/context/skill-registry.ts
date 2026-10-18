@@ -1,5 +1,5 @@
-import { readdir, stat, readFile, mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir, lstat, readFile, mkdtemp, writeFile, rm, realpath } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentFamily } from '../agents/provider.js';
 import { VanguardError } from '../core/errors.js';
@@ -270,23 +270,59 @@ export class SkillRegistry {
   }
 }
 
+/** Where a target repo keeps its own skills, relative to the repo root. Merged in by skillRegistryForRun. */
+export const REPO_SKILLS_DIR = '.github/vanguard-skills';
+
 /**
- * Build a registry from a directory where each subdirectory containing a SKILL.md is a skill
- * (the Claude Code skill format used by collections like obra/superpowers and cursor-team-kit).
- * Combine with SkillRegistry.injectAll so the agent auto-discovers and selects them.
+ * The skills in `dir`: each subdirectory holding a SKILL.md, keyed by directory name. Symlinked
+ * skill dirs and SKILL.md files are skipped, so a registry never reads host files outside `dir`.
  */
-export async function skillRegistryFromDirectory(dir: string): Promise<SkillRegistry> {
+async function skillsIn(dir: string): Promise<Record<string, string>> {
   const entries = await readdir(dir, { withFileTypes: true });
   const skills: Record<string, string> = {};
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillDir = join(dir, entry.name);
     try {
-      await stat(join(skillDir, 'SKILL.md'));
-      skills[entry.name] = skillDir;
+      if ((await lstat(join(skillDir, 'SKILL.md'))).isFile()) skills[entry.name] = skillDir;
     } catch {
       // not a skill directory; skip
     }
   }
-  return new SkillRegistry(skills);
+  return skills;
+}
+
+/**
+ * Build a registry from a directory where each subdirectory containing a SKILL.md is a skill
+ * (the Claude Code skill format used by collections like obra/superpowers and cursor-team-kit).
+ * Combine with SkillRegistry.injectAll so the agent auto-discovers and selects them.
+ */
+export async function skillRegistryFromDirectory(dir: string): Promise<SkillRegistry> {
+  return new SkillRegistry(await skillsIn(dir));
+}
+
+/** The repo's own skills (REPO_SKILLS_DIR); none when the dir does not exist. */
+async function repoSkills(repoPath: string): Promise<Record<string, string>> {
+  let dir: string;
+  try {
+    dir = await realpath(join(repoPath, REPO_SKILLS_DIR));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  // Repo content is copied in from the host: a symlink on the path must not reach files outside the repo.
+  if (!dir.startsWith(`${await realpath(repoPath)}${sep}`)) {
+    throw new VanguardError(`${REPO_SKILLS_DIR} resolves outside the repo (${dir}); keep the skills in the repo itself.`);
+  }
+  return skillsIn(dir);
+}
+
+/**
+ * The registry for one run: every skill in `skillsDir` (`--skills`, e.g. Vanguard's bundled set)
+ * plus the target repo's own REPO_SKILLS_DIR, so a repo adds skills without replacing the bundled
+ * ones the review and simplify stages use. On an id clash the repo's skill wins.
+ */
+export async function skillRegistryForRun(skillsDir: string | undefined, repoPath: string): Promise<SkillRegistry> {
+  const [base, repo] = await Promise.all([skillsDir === undefined ? {} : skillsIn(skillsDir), repoSkills(repoPath)]);
+  return new SkillRegistry({ ...base, ...repo });
 }

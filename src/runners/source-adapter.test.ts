@@ -601,6 +601,24 @@ describe('runSourcedIssue', () => {
     expect(publishForReview.mock.calls[0]?.[1]).not.toHaveProperty('baseBranch');
   });
 
+  it("injects the --skills dir plus the repo's .github/vanguard-skills on every source (not just Linear)", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vg-adapter-skills-'));
+    try {
+      for (const dir of [join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'deploy')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      await runSourcedIssue('group/project#1', { repoPath: join(root, 'repo'), skillsDir: join(root, 'bundled') }, fakeAdapter([], STAGES));
+
+      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      const copied: string[] = [];
+      await skills?.inject(['code-review', 'deploy'], { copyIn: async (_h: string, to: string) => { copied.push(to); } } as never);
+      expect(copied).toEqual(['/workspace/.vanguard/skills/code-review', '/workspace/.vanguard/skills/deploy']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
     commitStage.mockResolvedValueOnce({ committed: false, branch: 'b' });
     const order: string[] = [];

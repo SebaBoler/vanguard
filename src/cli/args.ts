@@ -119,7 +119,6 @@ export type Command =
       reviewState?: string;
       repoSlug?: string;
       repoPath: string;
-      skillsDir?: string;
       /** Cap on ready tasks per poll; parsed with watch's flags, read by nothing doctor runs. */
       maxTasks?: number;
       specModel?: string;
@@ -147,7 +146,6 @@ export type Command =
       reuse?: boolean;
       repoPath: string;
       concurrency: number;
-      skillsDir?: string;
       repoSlug?: string;
       label?: string;
       /** GitLab project path (e.g. group/project); optional for --source gitlab (falls back to git remote auto-detect). */
@@ -171,7 +169,6 @@ export type Command =
       reviewState?: string;
       repoSlug?: string;
       repoPath: string;
-      skillsDir?: string;
       concurrency: number;
       intervalMs: number;
       once: boolean;
@@ -342,6 +339,7 @@ function parseRunOptions(values: Record<string, string | boolean | undefined>, c
     baseBranch: typeof values.base === 'string' ? values.base : undefined,
     maxTurns: checked.maxTurns,
     maxRepairIterations: checked.maxRepairIterations,
+    skillsDir: typeof values.skills === 'string' ? values.skills : undefined,
   });
 }
 
@@ -946,7 +944,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(proxyMode ? { llmProxy: true } : {}),
       ...(Number.isFinite(forkN) && forkN >= 2 ? { forkN: Math.floor(forkN) } : {}),
       ...(values.reuse === true ? { reuse: true } : {}),
-      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...(typeof values.label === 'string' ? { label: values.label } : {}),
       ...(typeof values['gitlab-project'] === 'string' && picked[0] === 'gitlab' ? { project: values['gitlab-project'] } : {}),
@@ -1084,7 +1081,6 @@ export function parseCli(argv: string[], cwd: string): Command {
       ...(typeof values['trigger-state-name'] === 'string' ? { triggerStateName: values['trigger-state-name'] } : {}),
       ...(typeof values['claimed-state'] === 'string' ? { claimedState: values['claimed-state'] } : {}),
       ...(typeof values['review-state'] === 'string' ? { reviewState: values['review-state'] } : {}),
-      ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
       ...(typeof values['github-repo'] === 'string' ? { repoSlug: values['github-repo'] } : {}),
       ...runOptions,
       ...(proxyMode ? { llmProxy: true } : {}),
@@ -1265,7 +1261,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --llm-proxy            Hold the Anthropic credential in a trusted sidecar; the sandbox gets only a per-run nonce (implies --egress, Claude + Codex; Cursor stays direct)
     --reuse                Reuse an existing chore/vanguard-<taskId>-* branch/worktree instead of minting a new run id
     --repo <path>          Local git repo to work in (default: cwd)
-    --skills <dir>         Skills directory to inject (Linear: the linear-cli skill)
+    --skills <dir>         Skills directory to inject (Linear: the linear-cli skill); the repo's .github/vanguard-skills/ is merged in
     --github-repo <o/r>    GitHub repo slug (default: detected from origin)
     --concurrency <n>      (parent/project) max tasks at once (default: 2)
 ${SHARED_RUN_OPTIONS_USAGE}

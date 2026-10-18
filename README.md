@@ -221,14 +221,9 @@ Keep your domain skills in the target repo under `.github/vanguard-skills/`:
   python-expert/SKILL.md
 ```
 
-Copy them into the bundled set before the run so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. Add one step to the workflow above:
+That is the whole setup. `run` and `watch` inject every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/`, on every source (GitHub, GitLab, Projects, Linear). The reusable workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
 
-```yaml
-      - name: Add custom skills
-        run: cp -r .github/vanguard-skills/* .vanguard-src/skills/
-```
-
-The run step already passes `--skills .vanguard-src/skills`, so it now injects both. Pointing `--skills` straight at `.github/vanguard-skills` would drop the bundled skills the loop needs, so merge, do not replace.
+A repo skill with the same directory name as a bundled one replaces it, so a repo can ship its own `code-review`. Skill directories and `SKILL.md` files that are symlinks are skipped, and a `.github/vanguard-skills` that resolves outside the repo fails the run.
 
 Skills are injected per-provider in the format each CLI auto-discovers:
 
@@ -683,7 +678,7 @@ The job runs `vanguard watch --source github --once` **once**: a `ready for spec
 
 The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
 
-Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
+Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`), plus any skills the repo keeps in `.github/vanguard-skills/` (see [Custom skills](#custom-skills-bring-your-own)). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
 
 **Backward compatibility — `vanguard:review` label (deprecated).** The post-build resting state was renamed from `vanguard:review` to `vanguard:needs-human-review`; the maintained repos (vanguard, temp-test, alpha-window) have had the old label deleted. A repo onboarded before the rename may still carry `vanguard:review` on in-flight items — Vanguard will not migrate it automatically. The new default and the old label coexist harmlessly (`gh label create --force` adds the new one without touching the old); delete the stale `vanguard:review` once nothing in flight uses it, or pass `--review-state vanguard:review` to a host-run `vanguard watch` if you deliberately want to keep the old terminal label (the reusable workflow has no input for it).
 

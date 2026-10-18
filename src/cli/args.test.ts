@@ -229,6 +229,7 @@ describe('parseCli', () => {
       '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
       '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
       '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
+      '--skills', '/skills',
     ];
     // Required<>: a RunOptions field added without an entry here fails to compile, as it does in parseRunOptions.
     // --plan is asserted separately because it excludes --flow.
@@ -250,6 +251,7 @@ describe('parseCli', () => {
       baseBranch: 'dev',
       maxTurns: 80,
       maxRepairIterations: 5,
+      skillsDir: '/skills',
     };
     const run = parseCli(['run', '--github', 'o/r#1', ...shared], '/work');
     const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', ...shared], '/work');

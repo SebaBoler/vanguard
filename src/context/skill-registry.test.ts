@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SkillRegistry, skillRegistryFromDirectory, parseSkillMeta } from './skill-registry.js';
+import { SkillRegistry, skillRegistryFromDirectory, skillRegistryForRun, parseSkillMeta, REPO_SKILLS_DIR } from './skill-registry.js';
 import type { IsolatedSandboxProvider } from '../sandbox/provider.js';
 
 interface FakeSandbox {
@@ -536,5 +536,83 @@ describe('skillRegistryFromDirectory', () => {
     const targets = copies.map(([, s]) => s).sort();
     expect(targets).toEqual(['/home/agent/.claude/skills/fmt', '/home/agent/.claude/skills/lint']);
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('skillRegistryForRun', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'vg-run-skills-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function addSkill(dir: string, id: string): Promise<void> {
+    await mkdir(join(dir, id), { recursive: true });
+    await writeFile(join(dir, id, 'SKILL.md'), `---\nname: ${id}\ndescription: ${id}.\n---\n`);
+  }
+
+  /** id -> host dir, as the claude family copies each skill to ~/.claude/skills/<id>. */
+  async function injected(registry: SkillRegistry): Promise<Record<string, string>> {
+    const { sandbox, copies } = makeSandbox();
+    await registry.injectAll(sandbox, '/home/agent', 'claude-code');
+    return Object.fromEntries(copies.map(([host, to]) => [to.replace('/home/agent/.claude/skills/', ''), host]));
+  }
+
+  it("merges the --skills dir with the repo's .github/vanguard-skills", async () => {
+    const bundled = join(root, 'bundled');
+    const repo = join(root, 'repo');
+    await addSkill(bundled, 'code-review');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'deploy');
+    expect(await injected(await skillRegistryForRun(bundled, repo))).toEqual({
+      'code-review': join(bundled, 'code-review'),
+      deploy: expect.stringMatching(/\.github\/vanguard-skills\/deploy$/),
+    });
+  });
+
+  it("the repo's skill wins an id clash", async () => {
+    const bundled = join(root, 'bundled');
+    const repo = join(root, 'repo');
+    await addSkill(bundled, 'code-review');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'code-review');
+    const skills = await injected(await skillRegistryForRun(bundled, repo));
+    expect(skills['code-review']).toMatch(/\.github\/vanguard-skills\/code-review$/);
+  });
+
+  it('a repo without .github/vanguard-skills is a no-op', async () => {
+    const bundled = join(root, 'bundled');
+    await addSkill(bundled, 'simplify');
+    await mkdir(join(root, 'repo'));
+    expect(await injected(await skillRegistryForRun(bundled, join(root, 'repo')))).toEqual({ simplify: join(bundled, 'simplify') });
+  });
+
+  it('loads repo skills alone when no --skills dir is given', async () => {
+    const repo = join(root, 'repo');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'deploy');
+    expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo)))).toEqual(['deploy']);
+  });
+
+  it('still fails on a missing --skills dir (a typo must not drop the bundled skills silently)', async () => {
+    await expect(skillRegistryForRun(join(root, 'nope'), root)).rejects.toThrow(/ENOENT/);
+  });
+
+  it('refuses a .github/vanguard-skills symlinked outside the repo', async () => {
+    const outside = join(root, 'host');
+    const repo = join(root, 'repo');
+    await addSkill(outside, 'secrets');
+    await mkdir(join(repo, '.github'), { recursive: true });
+    await symlink(outside, join(repo, REPO_SKILLS_DIR));
+    await expect(skillRegistryForRun(undefined, repo)).rejects.toThrow(/resolves outside the repo/);
+  });
+
+  it('skips a skill whose SKILL.md is a symlink', async () => {
+    const repo = join(root, 'repo');
+    const dir = join(repo, REPO_SKILLS_DIR);
+    await addSkill(dir, 'ok');
+    await mkdir(join(dir, 'linked'), { recursive: true });
+    await writeFile(join(root, 'host-file'), '---\nname: x\ndescription: y\n---\n');
+    await symlink(join(root, 'host-file'), join(dir, 'linked', 'SKILL.md'));
+    expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo)))).toEqual(['ok']);
   });
 });
