@@ -4,7 +4,6 @@ import { publishReviewVerdict } from '../pipeline/review-publish.js';
 import { addPrFailureLabel } from '../tasks/github.js';
 import { fanOut } from '../pipeline/fan-out.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
-import { skillRegistryFromDirectory } from '../context/skill-registry.js';
 import { runSourcedIssue } from './source-adapter.js';
 import { knownGitlabProjectFromOrigin, publishGitlabVerdict, addGitlabFailureLabel } from './gitlab.js';
 import { renderSecretBlockComment } from '../core/secret-scan.js';
@@ -20,6 +19,7 @@ import type { RunIssueDeps, RunIssueResult, SourceAdapter, PublishVerdictInput, 
 /** Everything needed to run a single Linear issue end to end. */
 export interface RunLinearIssueDeps extends RunIssueDeps {
   linearKey: string;
+  /** Required here: the agent reads the issue through the linear-cli skill in this dir. */
   skillsDir: string;
 }
 
@@ -59,11 +59,7 @@ function linearStages(): PipelineStage[] {
 export function linearAdapter(deps: RunLinearIssueDeps, gitlabProject?: string, glab?: GlabRunner): SourceAdapter {
   return {
     async prepare(issueRef: string) {
-      const [task, skills] = await Promise.all([
-        new LinearCliTaskFetcher().fetch(issueRef),
-        skillRegistryFromDirectory(deps.skillsDir),
-      ]);
-      return { task, skills };
+      return { task: await new LinearCliTaskFetcher().fetch(issueRef) };
     },
     secrets: { LINEAR_API_KEY: deps.linearKey },
     taskId: (task) => `linear-${task.id.toLowerCase()}`,

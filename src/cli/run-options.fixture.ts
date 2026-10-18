@@ -27,4 +27,5 @@ export const RUN_OPTIONS = {
   maxTurns: 80,
   maxRepairIterations: 5,
   escalateModel: 'claude-fable-5',
+  skillsDir: '/skills',
 } as const satisfies Exhaustive<SharedRunOptions>;
