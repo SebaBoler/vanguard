@@ -14,15 +14,7 @@ import type { AgentProvider, AgentRunInput } from './provider.js';
  * Trust model (spec §2): `.vanguard/` is trusted-as-code — flow refs already execute repo TS on the
  * host — so this loader treats the file as trusted input and validates shape, not intent.
  */
-export interface CustomProviderSpec {
-  name: string;
-  /** Absolute http:/https: URL — becomes ANTHROPIC_BASE_URL verbatim. */
-  baseUrl: string;
-  /** Host env var NAME holding the key (read at dispatch, never stored). */
-  keyEnv: string;
-  /** Forced default model (zai pattern) for endpoints that don't serve the CLI's Claude default. */
-  model?: string;
-}
+export type { CustomProviderSpec };
 
 /**
  * One configured entry: healthy (`spec` set) or broken (`error` set). `index` = array position
@@ -35,8 +27,9 @@ export interface CustomProviderEntry {
   spec?: CustomProviderSpec;
 }
 
-// One repo-name grammar + entry vocabulary, shared with the desktop via src/wire.ts (S7).
+// One repo-name grammar + entry vocabulary + entry shape, shared with the desktop via src/wire.ts (S7).
 import { FLOW_NAME_RE as NAME_RE, KEY_ENV_RE, CUSTOM_PROVIDER_KEYS } from '../wire.js';
+import type { CustomProviderSpec } from '../wire.js';
 
 const ENTRY_KEYS: ReadonlySet<string> = new Set(CUSTOM_PROVIDER_KEYS);
 
