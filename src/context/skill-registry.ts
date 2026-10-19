@@ -274,6 +274,12 @@ export class SkillRegistry {
 export const REPO_SKILLS_DIR = '.github/vanguard-skills';
 
 /**
+ * Skills only the spec pass may load. tech-spec fires on an under-specified task and forbids editing
+ * source files, so in an implement, revise or review run it can end the run COMPLETE with no diff.
+ */
+export const SPEC_ONLY_SKILLS = ['tech-spec'] as const;
+
+/**
  * The skills in `dir`: each subdirectory holding a SKILL.md, keyed by directory name. Symlinked
  * skill dirs and SKILL.md files are skipped (the latter with a warning), so a registry never reads
  * host files outside `dir`.
@@ -323,12 +329,20 @@ async function repoSkills(repoPath: string): Promise<Record<string, string>> {
 /**
  * The registry for one run: every skill in `skillsDir` (`--skills`, e.g. Vanguard's bundled set)
  * plus the target repo's own REPO_SKILLS_DIR, so a repo adds skills without replacing the bundled
- * ones the review and simplify stages use. On an id clash the repo's skill wins.
+ * ones the review and simplify stages use. On an id clash the repo's skill wins. SPEC_ONLY_SKILLS
+ * are dropped unless `includeSpecSkills` is set (the spec pass alone), so a new caller cannot get them by accident.
  */
-export async function skillRegistryForRun(skillsDir: string | undefined, repoPath: string): Promise<SkillRegistry> {
+export async function skillRegistryForRun(
+  skillsDir: string | undefined,
+  repoPath: string,
+  opts: { includeSpecSkills?: boolean } = {},
+): Promise<SkillRegistry> {
   const [base, repo] = await Promise.all([skillsDir === undefined ? {} : skillsIn(skillsDir), repoSkills(repoPath)]);
   const overridden = Object.keys(repo).filter((id) => Object.hasOwn(base, id));
   // Visible in the run log: a repo skill can replace a guardrail such as code-review.
   if (overridden.length > 0) console.warn(`vanguard: ${REPO_SKILLS_DIR} overrides --skills skill(s): ${overridden.join(', ')}`);
-  return new SkillRegistry({ ...base, ...repo });
+  const skills: Record<string, string> = { ...base, ...repo };
+  // After the merge, so a repo-supplied copy is dropped too.
+  if (opts.includeSpecSkills !== true) for (const id of SPEC_ONLY_SKILLS) delete skills[id];
+  return new SkillRegistry(skills);
 }

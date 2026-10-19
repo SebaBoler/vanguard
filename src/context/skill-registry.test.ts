@@ -594,6 +594,23 @@ describe('skillRegistryForRun', () => {
     warn.mockRestore();
   });
 
+  it('drops the spec-only tech-spec skill by default and keeps it on opt-in', async () => {
+    const bundled = join(root, 'bundled');
+    const repo = join(root, 'repo');
+    await addSkill(bundled, 'tech-spec');
+    await addSkill(bundled, 'code-review');
+    await mkdir(repo);
+    expect(Object.keys(await injected(await skillRegistryForRun(bundled, repo)))).toEqual(['code-review']);
+    expect(Object.keys(await injected(await skillRegistryForRun(bundled, repo, { includeSpecSkills: true }))).sort()).toEqual(['code-review', 'tech-spec']);
+  });
+
+  it('drops a repo-supplied tech-spec too unless the run opts in', async () => {
+    const repo = join(root, 'repo');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'tech-spec');
+    expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo)))).toEqual([]);
+    expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo, { includeSpecSkills: true })))).toEqual(['tech-spec']);
+  });
+
   it('fails with a clear error when .github/vanguard-skills is a file', async () => {
     const repo = join(root, 'repo');
     await mkdir(join(repo, '.github'), { recursive: true });
