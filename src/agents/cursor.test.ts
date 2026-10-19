@@ -183,7 +183,10 @@ describe('CursorProvider', () => {
     ['claude-opus-4-8', 'intelligence'],
     ['fable', 'intelligence'],
     ['claude-fable-5-1', 'intelligence'],
-  ])('maps the Claude tier %s onto Auto %s', async (model, mode) => {
+    ['auto-intelligence', 'intelligence'],
+    ['auto-balance', 'balanced'],
+    ['auto-cost', 'cost'],
+  ])('maps %s onto Auto %s', async (model, mode) => {
     const { command } = await capture({ model });
     expect(command).toContain(`'--model' 'auto-smart[optimize_for=${mode}]'`);
   });
@@ -198,6 +201,11 @@ describe('CursorProvider', () => {
     expect(turns).toEqual(['PONG']);
     expect(out.finalText).toBe('PONG');
     expect(out.model).toBe('Grok 4.7');
+  });
+
+  it('passes a prototype key through as a model instead of mapping it', async () => {
+    const { command } = await capture({ model: 'constructor' });
+    expect(command).toContain("'--model' 'constructor'");
   });
 
   it('reports the Auto mode itself when no routing notice is streamed', async () => {

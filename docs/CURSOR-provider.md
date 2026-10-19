@@ -44,19 +44,20 @@ names as they are. It runs either one of its **Auto modes**, which pick a model 
 **Cursor model id**. These values work in `--provider-model`, `--review-model`, `--spec-model`,
 `--fallback-model`, `--escalate-model` and the matching workflow inputs:
 
-| Value                                    | Runs                                    |
-| ---------------------------------------- | --------------------------------------- |
-| nothing, or `auto`                       | Auto Balance (the account default)      |
-| `auto-smart[optimize_for=balanced]`      | Auto Balance                            |
-| `auto-smart[optimize_for=intelligence]`  | Auto Intelligence                       |
-| `auto-smart[optimize_for=cost]`          | Auto Cost                               |
+| Value                                                         | Runs                                    |
+| ------------------------------------------------------------- | --------------------------------------- |
+| nothing, or `auto`                                            | Auto Balance (the account default)      |
+| `auto-balance` (= `auto-smart[optimize_for=balanced]`)        | Auto Balance                            |
+| `auto-intelligence` (= `auto-smart[optimize_for=intelligence]`) | Auto Intelligence                     |
+| `auto-cost` (= `auto-smart[optimize_for=cost]`)               | Auto Cost                               |
 | an id from `agent models`, e.g. `claude-opus-5-5-high`, `gpt-5.6-sol-high`, `composer-2.5` | exactly that model (ids vary by account and plan) |
 
-Quote the brackets in a shell:
+The short names are Vanguard's and translate to Cursor's `auto-smart[…]` form. They also fit a
+`vanguard:model=auto-intelligence` issue label, while the long form exceeds GitHub's 50-character label
+limit.
 
 ```bash
-vanguard run --github o/r#1 --provider cursor \
-  --provider-model 'auto-smart[optimize_for=intelligence]' --review-model 'auto-smart[optimize_for=cost]'
+vanguard run --github o/r#1 --provider cursor --provider-model auto-intelligence --review-model auto-cost
 ```
 
 The Claude tiers that Vanguard's presets pin (spec → `haiku`, planner → `opus`, escalation →

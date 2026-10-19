@@ -34,10 +34,21 @@ const AUTO_MODE: Readonly<Record<string, string>> = {
   fable: 'intelligence',
 };
 
-/** The `--model` value for a requested model: a Claude tier becomes its Auto mode, anything else is as given. */
+/**
+ * Short names for the Auto modes, so a workflow input or a `vanguard:model=` label (GitHub caps labels at
+ * 50 characters) need not carry `auto-smart[optimize_for=…]`. A Map: the keys come from user input.
+ */
+const AUTO_SHORT = new Map([
+  ['auto-intelligence', 'intelligence'],
+  ['auto-balance', 'balanced'],
+  ['auto-cost', 'cost'],
+]);
+
+/** The `--model` value for a requested model: a short name or Claude tier becomes its Auto mode, anything else is as given. */
 function cursorModel(model: string): string {
   const tier = CLAUDE_MODEL.exec(model)?.[1];
-  return tier === undefined ? model : `auto-smart[optimize_for=${AUTO_MODE[tier] ?? 'balanced'}]`;
+  const mode = AUTO_SHORT.get(model) ?? (tier !== undefined ? AUTO_MODE[tier] : undefined);
+  return mode === undefined ? model : `auto-smart[optimize_for=${mode}]`;
 }
 
 /**
