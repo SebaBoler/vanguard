@@ -629,6 +629,27 @@ describe('runSourcedIssue', () => {
     }
   });
 
+  it('an implement run does not inject the spec-only tech-spec skill (bundled or repo-supplied)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vg-adapter-tech-spec-'));
+    try {
+      for (const dir of [join(root, 'bundled', 'tech-spec'), join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'tech-spec')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await runSourcedIssue('group/project#1', { repoPath: join(root, 'repo'), skillsDir: join(root, 'bundled') }, fakeAdapter([], STAGES));
+      warn.mockRestore();
+
+      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof skills === 'function') throw new Error('expected a SkillRegistry');
+      const sandbox = { copyIn: async (): Promise<void> => {} } as never;
+      await expect(skills?.inject(['tech-spec'], sandbox)).rejects.toThrow('Unknown skill: tech-spec');
+      await expect(skills?.inject(['code-review'], sandbox)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
     commitStage.mockResolvedValueOnce({ committed: false, branch: 'b' });
     const order: string[] = [];
