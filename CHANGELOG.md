@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/SebaBoler/vanguard/compare/v1.8.1...v1.9.0) (2026-10-19)
+
+
+### Features
+
+* **cursor:** make the Cursor CLI provider work in the factory ([#519](https://github.com/SebaBoler/vanguard/issues/519)) ([16c2cec](https://github.com/SebaBoler/vanguard/commit/16c2cec1cfecbabfdfa52374824258b1e1919bdf))
+
+
+### Bug Fixes
+
+* **skills:** keep tech-spec out of implement, revise and review runs ([#526](https://github.com/SebaBoler/vanguard/issues/526)) ([56899cc](https://github.com/SebaBoler/vanguard/commit/56899cc9df7b1733fec7bb9fe0b5df1c9a1c0d0e))
+* **skills:** warn on a dropped repo tech-spec, no override noise ([#531](https://github.com/SebaBoler/vanguard/issues/531)) ([9fbc5c6](https://github.com/SebaBoler/vanguard/commit/9fbc5c68b6e5cf113991152357112062d5eb06bd))
+
 ## [1.8.1](https://github.com/SebaBoler/vanguard/compare/v1.8.0...v1.8.1) (2026-10-19)
 
 
