@@ -19,6 +19,10 @@
 * **hub:** api_create_task runs validateCreateTask; one core-method table behind both dispatchers ([#508](https://github.com/SebaBoler/vanguard/issues/508)) ([d59785e](https://github.com/SebaBoler/vanguard/commit/d59785e7180f7bb12927c7dadb0d2331fe04fd31)), closes [#500](https://github.com/SebaBoler/vanguard/issues/500) [#493](https://github.com/SebaBoler/vanguard/issues/493)
 * **hub:** same-origin check compares host, not scheme ([#506](https://github.com/SebaBoler/vanguard/issues/506)) ([1ef03d4](https://github.com/SebaBoler/vanguard/commit/1ef03d43129f0a6a94e7669bfa4edc75bd44e579)), closes [#490](https://github.com/SebaBoler/vanguard/issues/490)
 
+### Code Refactoring
+
+* **core:** one run-record store (`src/core/run-store.ts`, `beginRun()` returns a `RunWriter` that owns the run timestamp); `persistStageOutcomes`/`persistRunRecord` stay exported one release as deprecated wrappers (SebaBoler/vanguard[#497](https://github.com/SebaBoler/vanguard/issues/497)) ([#510](https://github.com/SebaBoler/vanguard/issues/510)) ([119fd6e](https://github.com/SebaBoler/vanguard/commit/119fd6e207a386406b4e0fd8c3cab1270cf571f6))
+
 ## [1.7.0](https://github.com/SebaBoler/vanguard/compare/v1.6.0...v1.7.0) (2026-10-17)
 
 
