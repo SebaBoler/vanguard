@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { RepoPicker } from './RepoPicker';
 import type { DirListing } from './vanguard-output';
@@ -25,6 +25,12 @@ function install(): void {
     throw new Error(`unexpected path ${path}`);
   });
 }
+
+// The Tabs primitive reads matchMedia on mount; jsdom has none.
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+});
+afterEach(() => vi.unstubAllGlobals());
 
 describe('RepoPicker', () => {
   test('T-96 badges render per entry, and Add is disabled until a git-repo row is entered', async () => {
