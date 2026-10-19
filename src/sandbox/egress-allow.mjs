@@ -15,6 +15,9 @@ export const DEFAULT_EGRESS_ALLOWLIST = [
   'api.z.ai',
   // OpenRouter direct mode (--provider openrouter --egress). Dropped under --llm-proxy.
   'openrouter.ai',
+  // Cursor CLI (--provider cursor): api2.cursor.sh plus the api5 agent subdomains. Cursor is never
+  // proxied (the key rides into the sandbox), so this stays under --llm-proxy too.
+  'cursor.sh',
   'api.linear.app',
   'github.com',
   'api.github.com',
