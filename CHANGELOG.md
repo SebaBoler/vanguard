@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/SebaBoler/vanguard/compare/v1.8.0...v1.8.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** dependabot bumps for root and apps/desktop in one verified PR ([#527](https://github.com/SebaBoler/vanguard/issues/527)) ([a11ced6](https://github.com/SebaBoler/vanguard/commit/a11ced6036e0206c1444bd3437d0e4e023604ee9))
+
 ## [1.8.0](https://github.com/SebaBoler/vanguard/compare/v1.7.0...v1.8.0) (2026-10-18)
 
 
