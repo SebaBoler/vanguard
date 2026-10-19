@@ -380,6 +380,35 @@ describe('runPreflight', () => {
     );
   });
 
+  it('fails when cursor is selected but the sandbox image has no `agent` binary', async () => {
+    const base = makeRunner();
+    const report = await runPreflight(githubDoctor({ provider: 'cursor' }), {
+      env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CURSOR_API_KEY: 'key' },
+      nodeVersion: '24.11.1',
+      run: async (cmd, args, opts) => {
+        if (cmd === 'docker' && args.includes('agent')) throw new Error('exec: "agent": executable file not found in $PATH');
+        return base(cmd, args, opts);
+      },
+    });
+
+    expect(report.ok).toBe(false);
+    const cli = report.checks.find((c) => c.name === 'sandbox cursor cli');
+    expect(cli?.ok).toBe(false);
+    expect(cli?.reason).toContain('CURSOR_CLI_VERSION=');
+  });
+
+  it('passes the cursor cli check when the image carries `agent`, and skips it for other providers', async () => {
+    const base = makeRunner();
+    const run: PreflightRunner = async (cmd, args, opts) =>
+      cmd === 'docker' && args.includes('agent') ? { stdout: '2026.10.16-e3cb207' } : base(cmd, args, opts);
+    const env = { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token', CURSOR_API_KEY: 'key' };
+    const cursor = await runPreflight(githubDoctor({ provider: 'cursor' }), { env, nodeVersion: '24.11.1', run });
+    expect(cursor.checks.find((c) => c.name === 'sandbox cursor cli')?.ok).toBe(true);
+
+    const claude = await runPreflight(githubDoctor(), { env, nodeVersion: '24.11.1', run });
+    expect(claude.checks.find((c) => c.name === 'sandbox cursor cli')).toBeUndefined();
+  });
+
   it('fails provider auth for doctor-prs with codex and llmProxy true when OpenAI key is absent', async () => {
     const report = await runPreflight(doctorPrs({ provider: 'codex', llmProxy: true }), {
       env: { GH_TOKEN: 'gh', CLAUDE_CODE_OAUTH_TOKEN: 'token' },

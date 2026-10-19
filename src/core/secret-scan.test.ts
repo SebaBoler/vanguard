@@ -49,6 +49,10 @@ describe('redactTokens', () => {
     expect(redactTokens('https://github.com/o/r.git')).toBe('https://github.com/o/r.git');
   });
 
+  it('redacts a bare Cursor API key', () => {
+    expect(redactTokens(`agent: invalid key crsr_${'0a1b2c3d'.repeat(8)} for this team`)).toBe('agent: invalid key [REDACTED-CURSOR] for this team');
+  });
+
   it('redacts a bare fake sk- key and a key=value assignment (new patterns)', () => {
     expect(redactTokens(`OPENAI_API_KEY=${FAKE_SK_KEY}`)).toContain('[REDACTED');
     expect(redactTokens(`export ${FAKE_SK_KEY}`)).toBe(`export [REDACTED-KEY]`);

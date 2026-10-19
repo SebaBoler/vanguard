@@ -155,6 +155,18 @@ describe('vanguard.run', () => {
     expect(entries.some((e) => e.msg.includes('model mismatch'))).toBe(false);
   });
 
+  it('does not warn for cursor, which serves a claude-* request through an Auto mode', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const { logger, entries } = captureLogger();
+    const agent = { ...fakeAgent([{ text: 'ok' }], { finalText: 'ok', turns: 1, model: 'Grok 4.7' }), name: 'cursor' };
+    await run(
+      { taskId: 't-cursor-model', localRepoPath: repo, promptTemplate: 'do', sandbox, agent, model: 'claude-fable-5-1', logger },
+      { worktrees: wm },
+    );
+    expect(entries.some((e) => e.msg.includes('model mismatch'))).toBe(false);
+  });
+
   it('removes a clean worktree and reports not-completed', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();
@@ -187,6 +199,25 @@ describe('vanguard.run', () => {
     expect(wasDestroyed()).toBe(false);
     await disposeContext(ctx);
     expect(wasDestroyed()).toBe(true);
+  });
+
+  it('a cursor resume never restores a Claude session jsonl (none was captured; copyIn would throw)', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const probed: string[] = [];
+    sandbox.exists = async (path: string): Promise<boolean> => {
+      probed.push(path);
+      return false;
+    };
+    sandbox.copyIn = async (hostPath: string): Promise<void> => {
+      if (hostPath.endsWith('.jsonl')) throw new Error(`copyIn ${hostPath}`);
+    };
+    const ctx = await prepareContext({ taskId: 't-cursor-resume', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox }, { worktrees: wm });
+    const agent = { ...fakeAgent([{ text: 'two' }], { finalText: 'two', turns: 1, sessionId: 'chat-1' }), name: 'cursor' };
+    const res = await runAgent(ctx, { promptTemplate: 'b', agent, resumeSessionId: 'chat-1' });
+    expect(res.turns).toBe(1);
+    expect(probed.some((p) => p.includes('chat-1'))).toBe(false);
+    await disposeContext(ctx);
   });
 
   it('a reuse start asks WorktreeManager.create for the existing branch', async () => {

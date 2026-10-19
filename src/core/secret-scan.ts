@@ -101,6 +101,8 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: 'url-userinfo', re: /([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/]*@/gi, replacement: '$1[REDACTED]@' },
   { name: 'github-token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g, replacement: '[REDACTED-GH]' },
   { name: 'gitlab-token', re: /\bglpat-[A-Za-z0-9_-]{20,}/g, replacement: '[REDACTED-GL]' },
+  // Cursor user API keys (`crsr_` + 64 hex): CURSOR_API_KEY rides into the sandbox unproxied.
+  { name: 'cursor-key', re: /\bcrsr_[A-Za-z0-9]{32,}/g, replacement: '[REDACTED-CURSOR]' },
   { name: 'basic-auth', re: /(Basic\s+)[A-Za-z0-9+/=]{16,}/g, replacement: '$1[REDACTED]' },
   {
     name: 'assignment',

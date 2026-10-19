@@ -26,6 +26,23 @@ RUN npm install -g \
     pnpm \
     bun
 
+# Cursor CLI (`agent`, --provider cursor) is opt-in: ~550 MB unpacked, so it is installed only when a
+# version is given, e.g. CURSOR_CLI_VERSION=2026.10.16-e3cb207 (the id cursor.com/install pins).
+# Declared here, not at the top, so setting it leaves the layers above cached.
+ARG CURSOR_CLI_VERSION=
+# Root-owned under /opt with the bin on /usr/local/bin: `sh -lc` resets PATH from /etc/profile, so the
+# installer's ~/.local/bin would not be found. curl is pulled in only for this download.
+# ponytail: pinned by version, not checksum (Cursor publishes none); add a per-arch sha256 if it does.
+RUN if [ -n "${CURSOR_CLI_VERSION}" ]; then \
+      case "$(uname -m)" in x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo "cursor: unsupported arch $(uname -m)" >&2; exit 1 ;; esac \
+      && apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+      && mkdir -p /opt/cursor-agent \
+      && curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_CLI_VERSION}/linux/${arch}/agent-cli-package.tar.gz" \
+         | tar --strip-components=1 -xzf - -C /opt/cursor-agent \
+      && ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/agent \
+      && agent --version; \
+    fi
+
 RUN groupadd -g 10001 agent \
  && useradd -m -u 10001 -g agent -s /bin/bash agent \
  && mkdir -p /workspace /home/agent/.claude \
