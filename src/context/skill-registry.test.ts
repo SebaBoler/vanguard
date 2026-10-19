@@ -600,15 +600,37 @@ describe('skillRegistryForRun', () => {
     await addSkill(bundled, 'tech-spec');
     await addSkill(bundled, 'code-review');
     await mkdir(repo);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(Object.keys(await injected(await skillRegistryForRun(bundled, repo)))).toEqual(['code-review']);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
     expect(Object.keys(await injected(await skillRegistryForRun(bundled, repo, { includeSpecSkills: true }))).sort()).toEqual(['code-review', 'tech-spec']);
   });
 
-  it('drops a repo-supplied tech-spec too unless the run opts in', async () => {
+  it('drops a repo-supplied tech-spec too unless the run opts in, and says so', async () => {
     const repo = join(root, 'repo');
     await addSkill(join(repo, REPO_SKILLS_DIR), 'tech-spec');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo)))).toEqual([]);
+    expect(warn).toHaveBeenCalledWith('vanguard: .github/vanguard-skills/tech-spec is loaded only by the spec pass');
+    warn.mockClear();
     expect(Object.keys(await injected(await skillRegistryForRun(undefined, repo, { includeSpecSkills: true })))).toEqual(['tech-spec']);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('logs no override for a dropped tech-spec, only for one the run injects', async () => {
+    const bundled = join(root, 'bundled');
+    const repo = join(root, 'repo');
+    await addSkill(bundled, 'tech-spec');
+    await addSkill(join(repo, REPO_SKILLS_DIR), 'tech-spec');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await skillRegistryForRun(bundled, repo);
+    expect(warn.mock.calls).toEqual([['vanguard: .github/vanguard-skills/tech-spec is loaded only by the spec pass']]);
+    warn.mockClear();
+    await skillRegistryForRun(bundled, repo, { includeSpecSkills: true });
+    expect(warn.mock.calls).toEqual([['vanguard: .github/vanguard-skills overrides --skills skill(s): tech-spec']]);
+    warn.mockRestore();
   });
 
   it('fails with a clear error when .github/vanguard-skills is a file', async () => {

@@ -338,11 +338,17 @@ export async function skillRegistryForRun(
   opts: { includeSpecSkills?: boolean } = {},
 ): Promise<SkillRegistry> {
   const [base, repo] = await Promise.all([skillsDir === undefined ? {} : skillsIn(skillsDir), repoSkills(repoPath)]);
-  const overridden = Object.keys(repo).filter((id) => Object.hasOwn(base, id));
+  const skills: Record<string, string> = { ...base, ...repo };
+  // After the merge, so a repo-supplied copy is dropped too. Its author gets a signal; a bundled drop stays silent.
+  if (opts.includeSpecSkills !== true) {
+    for (const id of SPEC_ONLY_SKILLS) {
+      if (Object.hasOwn(repo, id)) console.warn(`vanguard: ${REPO_SKILLS_DIR}/${id} is loaded only by the spec pass`);
+      delete skills[id];
+    }
+  }
+  // After the drop: a skill this run never injects overrides nothing.
+  const overridden = Object.keys(repo).filter((id) => Object.hasOwn(base, id) && Object.hasOwn(skills, id));
   // Visible in the run log: a repo skill can replace a guardrail such as code-review.
   if (overridden.length > 0) console.warn(`vanguard: ${REPO_SKILLS_DIR} overrides --skills skill(s): ${overridden.join(', ')}`);
-  const skills: Record<string, string> = { ...base, ...repo };
-  // After the merge, so a repo-supplied copy is dropped too.
-  if (opts.includeSpecSkills !== true) for (const id of SPEC_ONLY_SKILLS) delete skills[id];
   return new SkillRegistry(skills);
 }
