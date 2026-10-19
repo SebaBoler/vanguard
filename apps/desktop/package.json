@@ -43,7 +43,7 @@
     "jsdom": "^25",
     "tailwindcss": "^4",
     "tailwindcss-debug-screens": "^3.0.1",
-    "typescript": "~5.9.0",
+    "typescript": "~7.0.2",
     "vite": "^7",
     "vitest": "^4"
   }
