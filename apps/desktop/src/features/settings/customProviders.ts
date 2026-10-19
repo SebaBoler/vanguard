@@ -1,8 +1,17 @@
 import type { AppConfig } from '../../vanguard-output';
-
-type Row = NonNullable<AppConfig['customProviders']>[number];
-
 import { WIRE_PROVIDER_NAMES, FLOW_NAME_RE, KEY_ENV_RE, CUSTOM_PROVIDER_KEYS } from '../../wire';
+import type { CustomProviderSpec } from '../../wire';
+
+// A form row IS a valid entry (wire's CustomProviderSpec — one definition, shared with the core
+// loader). `AppConfig.customProviders` itself stays OPAQUE (`unknown`): Rust and the hub round-trip
+// the raw JSON, unknown keys and all, so the narrowing below is the one place the editor claims a
+// shape — and every row it yields still goes through customProviderRowError.
+type Row = CustomProviderSpec;
+
+/** The config's opaque `customProviders` as editable rows (non-array JSON → no rows). */
+export function customProviderRows(cfg: AppConfig): Row[] {
+  return Array.isArray(cfg.customProviders) ? (cfg.customProviders as Row[]) : [];
+}
 
 /** Built-in provider names, from the generated wire contract (S7 — pinned to the registry in core). */
 export const PROVIDERS: readonly string[] = WIRE_PROVIDER_NAMES;

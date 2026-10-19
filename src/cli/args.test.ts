@@ -229,6 +229,7 @@ describe('parseCli', () => {
       '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
       '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
       '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
+      '--skills', '/skills',
     ];
     // Required<>: a RunOptions field added without an entry here fails to compile, as it does in parseRunOptions.
     // --plan is asserted separately because it excludes --flow.
@@ -250,6 +251,7 @@ describe('parseCli', () => {
       baseBranch: 'dev',
       maxTurns: 80,
       maxRepairIterations: 5,
+      skillsDir: '/skills',
     };
     const run = parseCli(['run', '--github', 'o/r#1', ...shared], '/work');
     const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', ...shared], '/work');
@@ -369,6 +371,21 @@ describe('parseCli', () => {
     expect(wm.kind === 'watch-mrs' && wm.maxTurns).toBe(48);
     const wp = parseCli(['watch-prs', '--github-repo', 'o/r', '--label', 'l', '--max-turns', '48'], '/work');
     expect(wp.kind === 'watch-prs' && wp.maxTurns).toBe(48);
+  });
+
+  it('parses --skills on the spec, revise and review commands (each runs an agent outside runSourcedIssue)', () => {
+    const argvs = [
+      ['spec', 'o/r#1'],
+      ['revise-pr', 'o/r#7'],
+      ['review-pr', 'o/r#7'],
+      ['watch-prs', '--github-repo', 'o/r', '--label', 'l'],
+      ['review-mr', '--mr', '5', '--gitlab-project', 'g/p'],
+      ['watch-mrs', '--gitlab-project', 'g/p', '--label', 'l'],
+    ];
+    for (const argv of argvs) {
+      expect(parseCli([...argv, '--skills', '/skills'], '/work')).toMatchObject({ kind: argv[0], skillsDir: '/skills' });
+      expect('skillsDir' in parseCli(argv, '/work')).toBe(false);
+    }
   });
 
   it('clamps a huge --max-turns or --max-rounds to Number.MAX_SAFE_INTEGER', () => {

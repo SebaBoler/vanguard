@@ -126,6 +126,7 @@ export async function watchLinearSource(
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
       ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+      skillsDir,
     };
     await watchLinearLoopV1({
       spec: {
@@ -212,6 +213,7 @@ export async function watchGithubSource(
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
       ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+      ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
     };
     await watchGithubLoopV1({
       spec: {
@@ -313,6 +315,7 @@ export async function watchGitlabSource(
       ...(cmd.specModel !== undefined ? { specModel: cmd.specModel } : {}),
       ...(cmd.baseBranch !== undefined ? { baseBranch: cmd.baseBranch } : {}),
       ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
+      ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
     };
     await watchGitlabLoopV1({
       spec: {

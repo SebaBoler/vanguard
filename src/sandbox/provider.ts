@@ -36,7 +36,11 @@ export interface IsolatedSandboxProvider {
   exec: (command: string, options?: ExecOptions) => Promise<ExecResult>;
   /** Stream a long-running command's stdout while it runs (for live logging / abort). */
   execStream: (command: string, options?: ExecOptions) => ExecStream;
-  /** Copy a host file/dir INTO the sandbox. */
+  /**
+   * Copy a host file/dir INTO the sandbox. Symlinks inside a copied dir must arrive as links, never
+   * dereferenced (docker cp does this): repo skills are copied in from the host, and a link must not
+   * pull host files into the sandbox.
+   */
   copyIn: (hostPath: string, sandboxPath: string) => Promise<void>;
   /** Copy a sandbox file/dir OUT to the host. */
   copyFileOut: (sandboxPath: string, hostPath: string) => Promise<void>;

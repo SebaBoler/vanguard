@@ -14,7 +14,7 @@ import { FLOWS } from '../api/capabilities.js';
 import { resolveRepoFlow, unknownFlowError } from '../flows/repo.js';
 import { buildReviewerAttribution } from '../pipeline/review-publish.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes, persistVerification, persistVisualProof, persistDecisionProbe } from '../core/run-record.js';
+import { beginRun, persistDecisionProbe } from '../core/run-store.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { appendStepSummary } from '../core/step-summary.js';
@@ -43,7 +43,7 @@ import type { AgentAuth } from '../agents/auth.js';
 import type { ProviderChoice, CustomProviderEntry } from '../agents/registry.js';
 import type { PipelineStage, StageOutcome } from '../pipeline/pipeline.js';
 import type { RunEvent } from '../pipeline/events.js';
-import type { SkillRegistry } from '../context/skill-registry.js';
+import { skillRegistryForRun } from '../context/skill-registry.js';
 
 /** Agent-pipeline options shared by the `run` and `watch` commands, threaded verbatim into the *Deps. */
 export interface RunOptions extends ProviderChoice {
@@ -94,6 +94,11 @@ export interface RunOptions extends ProviderChoice {
    * to the tracker. Pairs with `vanguard spec --out` for a no-trace client-repo flow. Set via --spec-file.
    */
   specFile?: string;
+  /**
+   * Skills directory injected into the sandbox (Vanguard's bundled `skills/` in the factory), merged
+   * with the target repo's own `.github/vanguard-skills/`. Set via --skills.
+   */
+  skillsDir?: string;
 }
 
 /**
@@ -127,6 +132,7 @@ export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
     ...(cmd.maxTurns !== undefined ? { maxTurns: cmd.maxTurns } : {}),
     ...(cmd.maxRepairIterations !== undefined ? { maxRepairIterations: cmd.maxRepairIterations } : {}),
     ...(cmd.specFile !== undefined ? { specFile: cmd.specFile } : {}),
+    ...(cmd.skillsDir !== undefined ? { skillsDir: cmd.skillsDir } : {}),
   };
 }
 
@@ -169,8 +175,8 @@ export interface PublishVerdictInput {
 
 /** Per-source seam: fetch/prepare, extra secrets, id derivation, stage set, extra variables, PR link-back. */
 export interface SourceAdapter {
-  /** Fetch the task and any source-specific context. Runs on the host. */
-  prepare(issueRef: string): Promise<{ task: Task; skills?: SkillRegistry }>;
+  /** Fetch the task. Runs on the host. */
+  prepare(issueRef: string): Promise<{ task: Task }>;
   /** Extra sandbox secrets merged in before agent secrets (e.g. LINEAR_API_KEY). */
   secrets?: Record<string, string>;
   /** Derive the worktree/task id from the fetched task. */
@@ -327,7 +333,8 @@ export async function runSourcedIssue(
   const flow = deps.flow ?? (deps.plan === true ? 'plan' : undefined);
   const baseStages = await resolveBaseStages(flow, deps.repoPath, adapter, deps.customProviders);
 
-  const { task: fetchedTask, skills } = await adapter.prepare(issueRef);
+  // Every source gets the same skills: the --skills dir plus the repo's own .github/vanguard-skills/.
+  const [{ task: fetchedTask }, skills] = await Promise.all([adapter.prepare(issueRef), skillRegistryForRun(deps.skillsDir, deps.repoPath)]);
   // --spec-file: layer the local spec onto the fetched task as a virtual comment — the implementer
   // prompt ({{COMMENTS}}), triage, and the conformance manifest read it exactly like a posted spec,
   // with nothing written to the tracker. Copy, don't mutate: the fetched object may be shared.
@@ -398,7 +405,7 @@ export async function runSourcedIssue(
         ...(deps.keepLocalIfAhead !== undefined ? { keepLocalIfAhead: deps.keepLocalIfAhead } : {}),
         ...(whiteLabel ? { branchPrefix: 'feat/', branchId: branchIdFromTaskId(adapter.taskId(task)) } : {}),
       },
-      skills !== undefined ? { skills } : {},
+      { skills },
     );
     let outcomes: StageOutcome[] = [];
     // On Actions each run leaves one block in the job's Summary tab, built from the same outcomes as
@@ -460,10 +467,10 @@ export async function runSourcedIssue(
         );
       }
       const runMeta = { flow: flow ?? 'default', provider: agents.agent.name };
-      // One timestamp for the whole run: proof.json, visual-proof.json and every stage record share
-      // this prefix so the hub/desktop readers can match a run's proof to its stage records by name.
-      const runTimestamp = new Date().toISOString();
-      const stageMeta = { ...runMeta, timestamp: runTimestamp };
+      // One RunWriter for the whole run: it owns the timestamp, so proof.json, visual-proof.json and
+      // every stage record share one prefix and the hub/desktop readers can match a run's proof to
+      // its stage records by name.
+      const writer = beginRun(deps.repoPath, adapter.taskId(task));
       deps.onEvent?.({
         type: 'run-start',
         taskId: adapter.taskId(task),
@@ -557,8 +564,8 @@ export async function runSourcedIssue(
       );
 
       await Promise.all([
-        verification !== undefined ? persistVerification(deps.repoPath, ctx.taskId, verification, { timestamp: runTimestamp }) : undefined,
-        visualProof !== undefined ? persistVisualProof(deps.repoPath, ctx.taskId, visualProof, { timestamp: runTimestamp }) : undefined,
+        verification !== undefined ? writer.writeProof(verification) : undefined,
+        visualProof !== undefined ? writer.writeVisualProof(visualProof) : undefined,
       ]);
 
       // Verification participates in the Closes/Part-of decision alongside conformance: a red result
@@ -605,7 +612,7 @@ export async function runSourcedIssue(
       });
       if (delivery.kind === 'secret-blocked') {
         // The blocked diff holds the secret the scan caught: keep it (and the bundle) off disk.
-        await persistStageOutcomes(deps.repoPath, outcomes, { ...stageMeta, omitDiff: true });
+        await writer.writeStages(outcomes, { ...runMeta, omitDiff: true });
         await stepSummary('secret-blocked');
         // White-label runs keep the automation invisible in the client repo: no secret-blocked label,
         // no branded comment. The operator still gets the masked findings on stderr + run record.
@@ -614,7 +621,7 @@ export async function runSourcedIssue(
         return { task, secretBlocked: true };
       }
       if (delivery.kind === 'no-changes') {
-        await persistStageOutcomes(deps.repoPath, outcomes, stageMeta);
+        await writer.writeStages(outcomes, runMeta);
         await stepSummary('no-changes');
         deps.onEvent?.({ type: 'run-end' });
         return { task };
@@ -641,7 +648,7 @@ export async function runSourcedIssue(
           ...(deps.reviewGate === true ? { gate: true } : {}),
         });
       }
-      await persistStageOutcomes(deps.repoPath, outcomes, { ...stageMeta, prUrl: pr.prUrl });
+      await writer.writeStages(outcomes, { ...runMeta, prUrl: pr.prUrl });
       await stepSummary(verificationFailed ? 'verify-failed' : 'completed', { prUrl: pr.prUrl });
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
       if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -762,5 +762,32 @@ describe('runSpecGenerator', () => {
     expect(await capturedMaxTurns({ maxTurns: 50 })).toBe(50);
     // default when unset
     expect(await capturedMaxTurns({})).toBe(30);
+  });
+
+  it("injects the --skills dir plus the repo's .github/vanguard-skills (the bundled tech-spec skill reaches the spec pass)", async () => {
+    const bundled = await mkdtemp(join(tmpdir(), 'vg-spec-skills-'));
+    try {
+      for (const dir of [join(bundled, 'tech-spec'), join(repo, '.github', 'vanguard-skills', 'deploy')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      const { sandbox } = makeSandbox();
+      const copied: string[] = [];
+      sandbox.copyIn = async (_hostPath: string, to: string): Promise<void> => {
+        copied.push(to);
+      };
+      const task = readyTask('ENG-22');
+      await runSpecGenerator(task.id, {
+        auth: { type: 'api', apiKey: 'x' } as never,
+        repoPath: repo,
+        fetcher: fakeFetcher({ [task.id]: task }, [task]),
+        sandboxFactory: () => sandbox,
+        agent: recordingSpecAgent({}),
+        skillsDir: bundled,
+      });
+      expect(copied).toEqual(expect.arrayContaining(['/root/.claude/skills/tech-spec', '/root/.claude/skills/deploy']));
+    } finally {
+      await rm(bundled, { recursive: true, force: true });
+    }
   });
 });

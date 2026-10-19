@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { customProviderRowError, PROVIDERS } from './customProviders';
+import { customProviderRowError, customProviderRows, PROVIDERS } from './customProviders';
 
 const ROW = { name: 'my-proxy', baseUrl: 'https://llm.example.com/api', keyEnv: 'MY_PROXY_API_KEY' };
 
@@ -33,5 +33,20 @@ describe('customProviderRowError (grammar mirror of the core predicate)', () => 
 
   it('PROVIDERS mirrors the six built-ins', () => {
     expect(PROVIDERS).toEqual(['claude', 'codex', 'cursor', 'zai', 'openrouter', 'meridian']);
+  });
+});
+
+describe('customProviderRows (narrowing the opaque wire field)', () => {
+  it('keeps every array entry, including ones the editor would flag', () => {
+    const rows = [ROW, { ...ROW, name: 'My-Proxy', futureKey: true }];
+    expect(customProviderRows({ customProviders: rows })).toEqual(rows);
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['null (Rust emit-all)', null],
+    ['non-array JSON from a hand-edited file', { 'my-proxy': { baseUrl: 'https://llm.example.com' } }],
+  ])('yields no rows when the field is %s', (_label, value) => {
+    expect(customProviderRows({ customProviders: value })).toEqual([]);
   });
 });

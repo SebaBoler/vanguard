@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { WIRE_PROVIDER_NAMES } from './wire.js';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import { COMMAND_NAMES, HUB_ONLY, TAURI_ONLY, WIRE_PROVIDER_NAMES } from './wire.js';
+import type { AppConfig, CompleteCallArgs, Project } from './wire.js';
 import { PROVIDER_NAMES } from './agents/registry.js';
 
 // Mirrors scripts/gen-desktop-wire.ts (which cannot be imported from src/ — rootDir). The
@@ -22,6 +23,29 @@ function assertZeroImports(file: string): void {
 }
 
 describe('wire contract (S7)', () => {
+  it('catalogue matches the registered Tauri commands', () => {
+    const rust = readFileSync(join(__dirname, '../apps/desktop/src-tauri/src/lib.rs'), 'utf8');
+    const registered = rust.match(/tauri::generate_handler!\[([\s\S]*?)\]/)?.[1];
+    expect(registered).toBeDefined();
+    const names = registered!.split(',').map((name) => name.trim().replace(/^sidecar::/, '')).filter(Boolean);
+    expect(names.sort()).toEqual(COMMAND_NAMES.filter((name) => !(HUB_ONLY as readonly string[]).includes(name)).sort());
+  });
+
+  it('catalogue matches the implemented hub dispatch cases', () => {
+    const rpc = readFileSync(join(__dirname, 'hub/rpc.ts'), 'utf8');
+    const names = [...rpc.matchAll(/case '([^']+)':/g)].map((match) => match[1]);
+    expect(names.sort()).toEqual(COMMAND_NAMES.filter((name) => !(TAURI_ONLY as readonly string[]).includes(name)).sort());
+  });
+
+  it('models nullable Rust options and opaque config without widening completion permissions', () => {
+    expectTypeOf<null>().toExtend<Project['lastRun']>();
+    expectTypeOf<null>().toExtend<Project['color']>();
+    expectTypeOf<null>().toExtend<AppConfig['source']>();
+    expectTypeOf<null>().toExtend<AppConfig['concurrency']>();
+    expectTypeOf<AppConfig['customProviders']>().toEqualTypeOf<unknown>();
+    expectTypeOf<keyof CompleteCallArgs>().toEqualTypeOf<'system' | 'messages' | 'model' | 'attachments'>();
+  });
+
   it('desktop copy is byte-identical to header + core source (codegen drift guard — run pnpm gen:wire)', () => {
     assertByteIdenticalCopy('wire.ts');
   });

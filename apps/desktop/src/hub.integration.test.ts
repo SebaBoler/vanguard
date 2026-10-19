@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { execa } from 'execa';
 import { createHubServer, type HubServer } from '../../../src/hub/server.js';
-import { persistStageOutcomes, persistVerification } from '../../../src/core/run-record.js';
+import { beginRun } from '../../../src/core/run-store.js';
 import { listRunSummaries, defaultRunsRoot } from '../../../src/hub/runs.js';
 import { savePaths } from '../../../src/hub/projects.js';
 import type { SidecarDeps } from '../../../src/sidecar/sidecar.js';
@@ -152,7 +152,7 @@ beforeEach(async () => {
   await execa('git', ['init', '-b', 'main'], { cwd: repo });
   await execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: repo });
 
-  // Seed one run through the real persistence path (core/run-record.ts), not a hand-rolled fixture
+  // Seed one run through the real persistence path (core/run-store.ts), not a hand-rolled fixture
   // JSON file, so a change to the record shape would break this test the same way it would a real run.
   const result: RunResult = {
     taskId: TASK_ID,
@@ -164,7 +164,8 @@ beforeEach(async () => {
     finalText: 'ok',
     costUsd: 0.25,
   };
-  await persistStageOutcomes(repo, [{ name: 'implement', result }], { timestamp: TIMESTAMP });
+  const writer = beginRun(repo, TASK_ID, TIMESTAMP);
+  await writer.writeStages([{ name: 'implement', result }]);
   const verification: VerificationResult = {
     command: 'pnpm test',
     exitCode: 0,
@@ -172,7 +173,7 @@ beforeEach(async () => {
     sha256: 'deadbeef',
     outputTail: 'all green',
   };
-  await persistVerification(repo, TASK_ID, verification, { timestamp: TIMESTAMP });
+  await writer.writeProof(verification);
 
   // `seedRepoPath` below only widens the RPC allowlist; `list_projects` reads the persisted project
   // store (src/hub/projects.ts), so the seeded repo must be written there too to show up in it.
@@ -219,7 +220,7 @@ describe('hub <-> browser transport integration', () => {
     expect(runs).toEqual(direct);
     expect(runs).toHaveLength(1);
 
-    const detail = await readRun(repo, TASK_ID, TIMESTAMP);
+    const detail = await readRun(repo, { source: { kind: 'local' }, taskId: TASK_ID, timestamp: TIMESTAMP });
     expect(detail.proof).toBeDefined();
     expect(detail.proof?.passed).toBe(true);
   });

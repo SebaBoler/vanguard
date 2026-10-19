@@ -130,7 +130,11 @@ export interface StageInput {
 
 export interface RunDeps {
   worktrees?: WorktreeManager;
-  skills?: SkillRegistry;
+  /**
+   * Skills to inject, or a resolver called with the new worktree's path, so repo skills can be read
+   * from the tree the run starts from rather than from the host checkout.
+   */
+  skills?: SkillRegistry | ((worktreePath: string) => Promise<SkillRegistry>);
 }
 
 async function resolveHome(sandbox: IsolatedSandboxProvider): Promise<string> {
@@ -193,7 +197,6 @@ async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promi
 export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): Promise<RunContext> {
   const log = opts.logger ?? createLogger();
   const wm = deps.worktrees ?? new WorktreeManager(opts.localRepoPath);
-  const skills = deps.skills ?? new SkillRegistry({});
   let startRef = await resolveStartRef(opts, log);
   const wt = await wm.create(opts.taskId, startRef ?? opts.baseBranch, {
     ...(opts.start === 'reuse' ? { reuse: true } : {}),
@@ -218,6 +221,7 @@ export async function prepareContext(opts: PrepareOptions, deps: RunDeps = {}): 
     const home = await resolveHome(opts.sandbox);
     await opts.sandbox.copyIn(wt.path, WORKDIR);
     await seedSandboxGit(opts.sandbox);
+    const skills = typeof deps.skills === 'function' ? await deps.skills(wt.path) : (deps.skills ?? new SkillRegistry({}));
     await skills.injectAll(opts.sandbox, home, opts.agentName, opts.reviewAgentName, opts.fallbackAgentName);
     const ctx: RunContext = {
       taskId: opts.taskId,

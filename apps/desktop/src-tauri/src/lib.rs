@@ -22,11 +22,14 @@ async fn list_runs(repo_path: String) -> Result<Vec<runs::RunSummary>, String> {
 
 #[tauri::command]
 async fn read_run(
+    app: tauri::AppHandle,
     repo_path: String,
     task_id: String,
     timestamp: String,
+    source: remote::RunSource,
 ) -> Result<runs::RunDetail, String> {
-    runs::read_run_detail(Path::new(&repo_path), &task_id, &timestamp).map_err(|e| e.to_string())
+    let root = remote::resolve_root(&config_dir(&app)?, Path::new(&repo_path), &source);
+    runs::read_run_detail(&root, &task_id, &timestamp).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -121,13 +124,15 @@ async fn list_remote_runs(app: tauri::AppHandle, repo_path: String) -> Result<Ve
 }
 
 /// Pull a CI run's record artifact into `<app config>/remote-runs/…` and parse it like local runs.
+/// Shared command name/shape with the hub's `import_remote_run` (src/hub/rpc.ts) — each backend
+/// resolves the `{kind: 'ci', runId}` source this hands back to its own root in `read_run`.
 #[tauri::command]
-async fn download_run_records(
+async fn import_remote_run(
     app: tauri::AppHandle,
     repo_path: String,
     run_id: u64,
-) -> Result<remote::RemoteRecords, String> {
-    remote::download_run_records(&config_dir(&app)?, Path::new(&repo_path), run_id)
+) -> Result<remote::RemoteImport, String> {
+    remote::import_remote_run(&config_dir(&app)?, Path::new(&repo_path), run_id)
 }
 
 /// Board read path (S9): one brain — the transports live in core now. Same command name, new
@@ -202,7 +207,7 @@ pub fn run() {
             write_draft_asset,
             clear_draft_assets,
             list_remote_runs,
-            download_run_records,
+            import_remote_run,
             list_tasks,
             fetch_spec,
             spawn_run,

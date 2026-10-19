@@ -2,7 +2,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { readAppConfig } from './app-config.js';
-import { defaultRunsRoot, listRunSummaries, runsFingerprint, type RunSummary } from './runs.js';
+import { defaultRunsRoot, listRunSummaries } from './runs.js';
 import { listActive } from './active.js';
 
 export interface Project {
@@ -19,28 +19,6 @@ export interface Project {
   runsLast24h: number;
   /** Configured per-project color (`#rrggbb`), or undefined -> the UI derives one from the path. */
   color?: string;
-}
-
-/**
- * Parsed run summaries per repo, reused across dashboard polls while the runs tree is unchanged.
- * `listRunSummaries` reads + JSON-parses every run record; without this the whole history would be
- * re-parsed for every project on each poll. Keyed by repo path; the runs-tree fingerprint
- * invalidates an entry when a record is added, removed, or rewritten.
- */
-const summariesCache = new Map<string, { fingerprint: number; summaries: RunSummary[] }>();
-
-async function cachedSummaries(repoPath: string): Promise<RunSummary[]> {
-  const fingerprint = await runsFingerprint(defaultRunsRoot(repoPath));
-  const cached = summariesCache.get(repoPath);
-  if (cached !== undefined && cached.fingerprint === fingerprint) {
-    return cached.summaries;
-  }
-  // Only cache a successful parse. Caching a transient error's empty result would pin the
-  // dashboard at 0 runs until the tree fingerprint next shifts; let a failure self-heal on the
-  // next poll instead by not caching it.
-  const summaries = await listRunSummaries(defaultRunsRoot(repoPath));
-  summariesCache.set(repoPath, { fingerprint, summaries });
-  return summaries;
 }
 
 function projectsFile(configDir: string): string {
@@ -73,7 +51,7 @@ export async function aggregate(repoPath: string, now: Date = new Date()): Promi
   const base = basename(repoPath);
   const name = base !== '' ? base : repoPath;
   const [summaries, runningCount, { color }] = await Promise.all([
-    cachedSummaries(repoPath),
+    listRunSummaries(defaultRunsRoot(repoPath)),
     listActive(repoPath).then((active) => active.length),
     readAppConfig(repoPath),
   ]);

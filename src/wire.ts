@@ -10,8 +10,8 @@
  *   drift test byte-compares them. Change here ⇒ regenerate, or root CI fails naming the fix.
  *
  * Rust never inspects these payloads (sidecar traffic passes through as opaque JSON), so this file
- * IS the contract for everything TS↔TS. TS↔Rust shapes (vanguard-output.d.ts vs serde structs)
- * are a different boundary and stay out.
+ * IS the contract for everything TS↔TS. The TS↔Rust shapes (serde structs in src-tauri) are a
+ * different boundary and stay hand-mirrored — see the note above `Project`.
  */
 
 /** Reasoning-effort tiers accepted across stages, flows, and the CLI. */
@@ -199,6 +199,22 @@ export const KEY_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const CUSTOM_PROVIDER_KEYS = ['name', 'baseUrl', 'keyEnv', 'model'] as const;
 
 /**
+ * A VALID `customProviders` entry (Subsystem 6) — the shape the core loader accepts and the
+ * Settings form edits. `AppConfig.customProviders` stays `unknown` on purpose: the file is
+ * hand-editable, so entries reach both producers invalid and with unknown keys, and only the
+ * loader (and `customProviderRowError`, its editor mirror) may call one well-formed.
+ */
+export interface CustomProviderSpec {
+  name: string;
+  /** Absolute http:/https: URL — becomes ANTHROPIC_BASE_URL verbatim. */
+  baseUrl: string;
+  /** Host env var NAME holding the key (read at dispatch, never stored). */
+  keyEnv: string;
+  /** Forced default model (zai pattern) for endpoints that don't serve the CLI's Claude default. */
+  model?: string;
+}
+
+/**
  * The built-in provider names, in registry-table order. A LITERAL, not derived: PROVIDER_NAMES is
  * `Object.keys(PROVIDERS)` inside registry.ts, which imports node-only provider classes — this
  * file must stay webview-safe. registry.test.ts pins `WIRE_PROVIDER_NAMES` equal (incl. order).
@@ -227,7 +243,7 @@ export interface Finding {
 }
 
 /**
- * Persisted run-record shapes (src/hub/runs.ts and src-tauri/src/runs.rs both produce these; this
+ * Persisted run-record shapes (src/core/run-store.ts and src-tauri/src/runs.rs both produce these; this
  * file pins the hub's TS side so desktop drift fails CI — the Rust side stays a hand-mirror).
  */
 export interface AgentUsage {
@@ -253,7 +269,7 @@ export interface RunRecord {
   timestamp: string;
   stage?: string;
   prUrl?: string;
-  /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-record.ts). */
+  /** Why no `.diff` / `.bundle` / transcript sit next to this record (see core run-store.ts). */
   diffOmitted?: 'secret-blocked' | 'secret-scan';
 }
 
@@ -318,10 +334,249 @@ export interface RemoteRun {
   cached: boolean;
 }
 
-/** A CI run's downloaded `vanguard-runs` artifact imported by `fetch_remote_run` / `fetchRemoteRun`. */
+/** A CI run's downloaded `vanguard-runs` artifact imported by `import_remote_run` / `importRemoteRun`. */
 export interface RemoteImport {
   runId: number;
   taskIds: string[];
   runs: RunSummary[];
   cachedAt: string;
+}
+
+/**
+ * Where one run's records live, resolved to a root by whichever backend answers `read_run` —
+ * Tauri's own per-run cache dir (`src-tauri/src/remote.rs`), the hub's
+ * `<project>/.vanguard/remote-runs/<runId>` (`src/hub/runs.ts`). The UI never sees either root: it
+ * only carries this discriminant (see `RunRef`).
+ */
+export type RunSource = { kind: 'local' } | { kind: 'ci'; runId: number };
+
+/** Identifies one run record to open: which source tree, and which task/timestamp within it. */
+export interface RunRef {
+  source: RunSource;
+  taskId: string;
+  timestamp: string;
+}
+
+/**
+ * Hand-mirrors of RUST serde structs in src-tauri (the persisted/aggregated shapes) — a TS seam
+ * cannot pin these to Rust, so they live here only because the `Commands` catalogue below needs a
+ * result type for every command; keep them in sync with src-tauri by hand.
+ */
+export interface Project {
+  path: string;
+  name: string;
+  runCount: number;
+  taskCount: number;
+  totalCostUsd: number;
+  failedCount: number;
+  lastRun?: string | null;
+  runningCount: number;
+  runsLast24h: number;
+  color?: string | null;
+}
+
+export interface ActiveRun {
+  taskId: string;
+  sessionFile: string;
+  lastActivityMs: number;
+}
+
+export interface TranscriptEntry {
+  role: 'assistant' | 'tool';
+  text: string;
+}
+
+export interface SessionRead {
+  entries: TranscriptEntry[];
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  /** Live spend estimate in USD (priced per-message off each message's model; unknown models add
+   * nothing, so it's a lower bound — show as "~$"). */
+  estCostUsd: number;
+}
+
+/** Every field is nullable, not just optional: Rust's emit-all serde writes `null` for an absent
+ * `Option`, and a hand-edited `app.json` may spell a default that way too. */
+export interface AppConfig {
+  source?: string | null;
+  label?: string | null;
+  team?: string | null;
+  color?: string | null;
+  provider?: string | null;
+  reviewProvider?: string | null;
+  verifyCmd?: string | null;
+  concurrency?: number | null;
+  budgetUsd?: number | null;
+  runCommand?: string | null;
+  /** Doc-editor chat model (Subsystem 3), e.g. `claude-sonnet-5`. Non-secret; key is env-only. */
+  chatModel?: string | null;
+  chatBaseUrl?: string | null;
+  /** Opaque JSON preserved by Rust and the hub, including invalid entries and unknown keys — see
+   * `CustomProviderSpec` for the shape a valid entry has. */
+  customProviders?: unknown;
+}
+
+/** Hub-only (src/hub/browse.ts) — one subdirectory offered by `browse_dirs`, standing in for the
+ * native folder dialog Tauri doesn't have in a browser. */
+export interface DirEntry {
+  name: string;
+  path: string;
+  isGitRepo: boolean;
+  hasVanguard: boolean;
+}
+
+/** Hub-only (src/hub/browse.ts) — one `browse_dirs` page: the listed directory plus its children. */
+export interface DirListing {
+  path: string;
+  parent?: string;
+  entries: DirEntry[];
+}
+
+/** A Fleet-screen spawned process (TAURI_ONLY — Fleet is disabled in hub mode). */
+export interface SpawnInfo {
+  pid: number;
+  cwd: string;
+  command: string;
+}
+
+/**
+ * Allowlisted fields for `api_complete`'s `req` (S3/Editor UX 7/7). Deliberately NOT
+ * `Omit<CompleteRequest, 'baseUrl' | 'assetRoot'>`: every field here is one the renderer is
+ * permitted to send across the webview boundary. A new `CompleteRequest` field must be added HERE
+ * to cross that boundary — a denylist (Omit) would auto-expose it instead (review #342).
+ */
+export interface CompleteCallArgs {
+  system?: CompleteRequest['system'];
+  messages: CompleteRequest['messages'];
+  model: string;
+  attachments?: CompleteRequest['attachments'];
+}
+
+/**
+ * Shared command catalogue for the Tauri, hub and mock adapters. Adapter integration is separate:
+ * the existing invoke wrappers and dispatchers do not yet enforce these argument/result types.
+ * The parity test checks registered Rust commands and hub dispatch cases against this catalogue.
+ */
+export interface Commands {
+  list_runs: { args: { repoPath: string }; result: RunSummary[] };
+  read_run: { args: { repoPath: string; taskId: string; timestamp: string; source: RunSource }; result: RunDetail };
+  list_projects: { args: undefined; result: Project[] };
+  add_project: { args: { path: string }; result: Project[] };
+  remove_project: { args: { path: string }; result: Project[] };
+  list_active: { args: { repoPath: string }; result: ActiveRun[] };
+  read_session: { args: { sessionFile: string }; result: SessionRead };
+  read_app_config: { args: { repoPath: string }; result: AppConfig };
+  read_app_config_strict: { args: { repoPath: string }; result: AppConfig };
+  write_app_config: { args: { repoPath: string; config: AppConfig }; result: void };
+  list_drafts: { args: { repoPath: string }; result: string[] };
+  read_draft: { args: { repoPath: string; id: string }; result: string };
+  write_draft: { args: { repoPath: string; id: string; content: string }; result: void };
+  delete_draft: { args: { repoPath: string; id: string }; result: void };
+  write_draft_asset: { args: { repoPath: string; id: string; name: string; bytes: number[] }; result: string };
+  clear_draft_assets: { args: { repoPath: string; id: string }; result: void };
+  list_remote_runs: { args: { repoPath: string }; result: RemoteRun[] };
+  /** Both backends implement this: Tauri downloads+caches under the app config dir, the hub under
+   * the project's `.vanguard/remote-runs/<id>` — each resolves `source: { kind: 'ci', runId }` for
+   * a later `read_run` to its own root. A cache hit skips `gh run download` on both sides. */
+  import_remote_run: { args: { repoPath: string; runId: number }; result: RemoteImport };
+  list_tasks: { args: { repoPath: string }; result: { tasks: BoardTask[]; capped: boolean } };
+  fetch_spec: { args: { repoPath: string; taskId: string }; result: { spec: string } };
+  watch_project: { args: { repoPath: string }; result: void };
+  unwatch_project: { args: { repoPath: string }; result: void };
+  api_capabilities: { args: undefined; result: Capabilities };
+  api_create_run: { args: { params: CreateRunParams }; result: CreateRunResult };
+  api_active_run: { args: undefined; result: { runId: string; repoPath: string } | null };
+  api_run_backlog: { args: { runId: string }; result: unknown[] };
+  api_cancel: { args: undefined; result: void };
+  api_create_task: { args: { repoPath: string; title: string; body: string }; result: CreatedTask };
+  api_list_flows: { args: { repoPath: string }; result: { flows: RepoFlowInfo[] } };
+  api_list_providers: { args: { repoPath: string }; result: { providers: RepoProviderInfo[] } };
+  api_read_flow: { args: { repoPath: string; file: string }; result: { doc: FlowDoc; source: string } };
+  api_write_flow: { args: { repoPath: string; file: string; doc: FlowDoc }; result: { source: string } };
+  api_delete_flow: { args: { repoPath: string; file: string }; result: void };
+  api_list_repo_files: { args: { repoPath: string }; result: { files: string[]; capped: boolean } };
+  api_read_repo_file: { args: { repoPath: string; path: string }; result: { path: string; content: string; truncated: boolean } };
+  api_repo_ok: { args: { repoPath: string }; result: boolean };
+  api_complete: { args: { repoPath: string; req: CompleteCallArgs; callId?: string }; result: CompleteResponse };
+  api_cancel_complete: { args: { callId: string }; result: void };
+  /** HUB_ONLY: no native folder dialog in a browser (src/hub/browse.ts stands in for one). */
+  browse_dirs: { args: { path?: string }; result: DirListing };
+  /** TAURI_ONLY: the Fleet screen's shell-spawn surface — disabled in hub mode (remote code
+   * execution on a reachable server). */
+  spawn_run: { args: { cwd: string; command: string }; result: number };
+  /** TAURI_ONLY (see spawn_run). */
+  kill_run: { args: { pid: number }; result: void };
+  /** TAURI_ONLY (see spawn_run). */
+  list_spawns: { args: undefined; result: SpawnInfo[] };
+}
+
+/** Commands the hub does not implement for real: absent from `src/hub/rpc.ts`'s dispatch cases (the
+ * Fleet shell-spawn surface is rejected generically instead of dispatched). */
+export const TAURI_ONLY = ['spawn_run', 'kill_run', 'list_spawns'] as const satisfies readonly (keyof Commands)[];
+
+/** Commands with no `#[tauri::command]` in `src-tauri/src/lib.rs` — browser-only stand-ins for
+ * native capability the webview doesn't need (no folder-picker dialog). */
+export const HUB_ONLY = ['browse_dirs'] as const satisfies readonly (keyof Commands)[];
+
+/** Every command name, for the lib.rs parity test and friends. TYPE-CHECKED (not just asserted)
+ * against `Commands`: the `satisfies` below rejects a typo or a name not in `Commands`, and
+ * `_Exhaustive` rejects a missing one — adding a command to `Commands` without adding it here is a
+ * compile error. */
+export const COMMAND_NAMES = [
+  'list_runs',
+  'read_run',
+  'list_projects',
+  'add_project',
+  'remove_project',
+  'list_active',
+  'read_session',
+  'read_app_config',
+  'read_app_config_strict',
+  'write_app_config',
+  'list_drafts',
+  'read_draft',
+  'write_draft',
+  'delete_draft',
+  'write_draft_asset',
+  'clear_draft_assets',
+  'list_remote_runs',
+  'import_remote_run',
+  'list_tasks',
+  'fetch_spec',
+  'watch_project',
+  'unwatch_project',
+  'api_capabilities',
+  'api_create_run',
+  'api_active_run',
+  'api_run_backlog',
+  'api_cancel',
+  'api_create_task',
+  'api_list_flows',
+  'api_list_providers',
+  'api_read_flow',
+  'api_write_flow',
+  'api_delete_flow',
+  'api_list_repo_files',
+  'api_read_repo_file',
+  'api_repo_ok',
+  'api_complete',
+  'api_cancel_complete',
+  'browse_dirs',
+  'spawn_run',
+  'kill_run',
+  'list_spawns',
+] as const satisfies readonly (keyof Commands)[];
+type _Exhaustive = keyof Commands extends (typeof COMMAND_NAMES)[number]
+  ? true
+  : ['missing from COMMAND_NAMES', Exclude<keyof Commands, (typeof COMMAND_NAMES)[number]>];
+const _exhaustive: _Exhaustive = true;
+void _exhaustive;
+
+/** The two named realtime channels the wire carries (`src/hub/rpc.ts`'s `publish`, Rust's `emit_event`).
+ * The desktop additionally sees a Rust-minted `run-accepted` `api:event` variant core never emits —
+ * that is a desktop extension of `RunEvent`, declared desktop-side (see typedRunReducer.ts), not here. */
+export interface Events {
+  'api:event': { runId: string; event: RunEvent };
+  'vanguard:changed': string;
 }

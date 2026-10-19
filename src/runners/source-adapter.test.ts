@@ -73,12 +73,22 @@ describe('pickRunOptions', () => {
 // The heavy host-side machinery (Docker, proxies, context, stage execution) is stubbed so the test
 // exercises only the orchestration the seam owns: hook ordering and the lost-MR-link persistence.
 
-const { persistStageOutcomes, runStages, commitStage, publishForReview } = vi.hoisted(() => ({
-  persistStageOutcomes: vi.fn(async () => {}),
-  runStages: vi.fn(),
-  commitStage: vi.fn(),
-  publishForReview: vi.fn(),
-}));
+const { writeStages, beginRun, runStages, commitStage, publishForReview } = vi.hoisted(() => {
+  const writeStages = vi.fn(async () => {});
+  const writeProof = vi.fn(async () => '/proof.json');
+  const writeVisualProof = vi.fn(async () => '/visual-proof.json');
+  return {
+    writeStages,
+    writeProof,
+    writeVisualProof,
+    // One fake RunWriter for every beginRun call: the assertions read the writer's own calls, so the
+    // real writer never runs and nothing is written under the fake repo path.
+    beginRun: vi.fn(() => ({ writeStages, writeProof, writeVisualProof })),
+    runStages: vi.fn(),
+    commitStage: vi.fn(),
+    publishForReview: vi.fn(),
+  };
+});
 
 vi.mock('../sandbox/llm-proxy.js', () => ({
   startProviderProxies: vi.fn(async () => ({ openai: undefined, destroy: vi.fn(async () => {}) })),
@@ -140,10 +150,8 @@ vi.mock('../core/retrospective-memory.js', () => ({
   refreshRetrospectiveMemory: vi.fn(async () => {}),
 }));
 const { persistDecisionProbe } = vi.hoisted(() => ({ persistDecisionProbe: vi.fn(async () => {}) }));
-vi.mock('../core/run-record.js', () => ({
-  persistStageOutcomes: (...args: unknown[]) => persistStageOutcomes(...(args as [])),
-  persistVerification: vi.fn(async () => {}),
-  persistVisualProof: vi.fn(async () => {}),
+vi.mock('../core/run-store.js', () => ({
+  beginRun: (...args: unknown[]) => beginRun(...(args as [])),
   persistDecisionProbe: (...args: unknown[]) => persistDecisionProbe(...(args as [])),
 }));
 vi.mock('../core/run-summary.js', () => ({ summarizeOutcomes: vi.fn(() => '') }));
@@ -558,8 +566,9 @@ describe('runSourcedIssue', () => {
     const adapter = fakeAdapter([], STAGES);
     await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
-    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', prUrl: MR_URL, timestamp: expect.any(String) }]);
+    expect(beginRun.mock.calls[0]).toEqual(['/repo', 'gl-1']);
+    expect(writeStages).toHaveBeenCalledTimes(1);
+    expect(writeStages.mock.calls[0]).toEqual([[stageOutcome('reviewer')], { flow: 'default', provider: 'claude', prUrl: MR_URL }]);
   });
 
   it('white-label (--commit-author): no review comment, no issue link-back, clean PR body', async () => {
@@ -601,6 +610,46 @@ describe('runSourcedIssue', () => {
     expect(publishForReview.mock.calls[0]?.[1]).not.toHaveProperty('baseBranch');
   });
 
+  it("injects the --skills dir plus the repo's .github/vanguard-skills on every source (not just Linear)", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vg-adapter-skills-'));
+    try {
+      for (const dir of [join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'deploy')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      await runSourcedIssue('group/project#1', { repoPath: join(root, 'repo'), skillsDir: join(root, 'bundled') }, fakeAdapter([], STAGES));
+
+      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof skills === 'function') throw new Error('expected a SkillRegistry');
+      const copied: string[] = [];
+      await skills?.inject(['code-review', 'deploy'], { copyIn: async (_h: string, to: string) => { copied.push(to); } } as never);
+      expect(copied).toEqual(['/workspace/.vanguard/skills/code-review', '/workspace/.vanguard/skills/deploy']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('an implement run does not inject the spec-only tech-spec skill (bundled or repo-supplied)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vg-adapter-tech-spec-'));
+    try {
+      for (const dir of [join(root, 'bundled', 'tech-spec'), join(root, 'bundled', 'code-review'), join(root, 'repo', '.github', 'vanguard-skills', 'tech-spec')]) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'SKILL.md'), '---\nname: s\ndescription: d\n---\n');
+      }
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await runSourcedIssue('group/project#1', { repoPath: join(root, 'repo'), skillsDir: join(root, 'bundled') }, fakeAdapter([], STAGES));
+      warn.mockRestore();
+
+      const skills = vi.mocked(prepareContext).mock.calls[0]?.[1]?.skills;
+      if (typeof skills === 'function') throw new Error('expected a SkillRegistry');
+      const sandbox = { copyIn: async (): Promise<void> => {} } as never;
+      await expect(skills?.inject(['tech-spec'], sandbox)).rejects.toThrow('Unknown skill: tech-spec');
+      await expect(skills?.inject(['code-review'], sandbox)).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('persists stage outcomes WITHOUT a url and opens no PR on the no-commit early return', async () => {
     commitStage.mockResolvedValueOnce({ committed: false, branch: 'b' });
     const order: string[] = [];
@@ -608,8 +657,8 @@ describe('runSourcedIssue', () => {
     const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
 
     expect(result.prUrl).toBeUndefined();
-    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', timestamp: expect.any(String) }]);
+    expect(writeStages).toHaveBeenCalledTimes(1);
+    expect(writeStages.mock.calls[0]).toEqual([[stageOutcome('reviewer')], { flow: 'default', provider: 'claude' }]);
     expect(publishForReview).not.toHaveBeenCalled();
     expect(order).toEqual([]);
     expect(resolveAndRunVisualProof).toHaveBeenCalled();
@@ -648,8 +697,8 @@ describe('runSourcedIssue', () => {
     expect(result.prUrl).toBeUndefined();
     expect(commitStage).not.toHaveBeenCalled();
     expect(publishForReview).not.toHaveBeenCalled();
-    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
-    expect(persistStageOutcomes.mock.calls[0]).toEqual(['/repo', [stageOutcome('reviewer')], { flow: 'default', provider: 'claude', omitDiff: true, timestamp: expect.any(String) }]);
+    expect(writeStages).toHaveBeenCalledTimes(1);
+    expect(writeStages.mock.calls[0]).toEqual([[stageOutcome('reviewer')], { flow: 'default', provider: 'claude', omitDiff: true }]);
 
     expect(order).toEqual(['signalSecretBlock']);
     expect(adapter.signalSecretBlock).toHaveBeenCalledTimes(1);
@@ -708,7 +757,7 @@ describe('runSourcedIssue', () => {
     expect(adapter.signalSecretBlock).not.toHaveBeenCalled();
     expect(commitStage).not.toHaveBeenCalled();
     expect(publishForReview).not.toHaveBeenCalled();
-    expect(persistStageOutcomes).toHaveBeenCalledTimes(1);
+    expect(writeStages).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
   });
 
@@ -803,8 +852,8 @@ describe('runSourcedIssue', () => {
     expect(runAgent).toHaveBeenCalledTimes(2); // default MAX_REPAIR_ITERATIONS
     // Repairs resume on the implementer's routed model, and their cost folds into the stage record.
     expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
-    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
-    const implementer = persisted?.[1].find((o) => o.name === 'implementer');
+    const persisted = writeStages.mock.calls.at(-1) as unknown as [StageOutcome[]] | undefined;
+    const implementer = persisted?.[0].find((o) => o.name === 'implementer');
     expect(implementer?.result.costUsd).toBeCloseTo(1.0);
     expect(implementer?.result.turns).toBe(10);
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
@@ -834,8 +883,8 @@ describe('runSourcedIssue', () => {
     expect(runAgent.mock.calls[0]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-sonnet-5' });
     expect(runAgent.mock.calls[1]?.[1]).toMatchObject({ resumeSessionId: 'sess-1', model: 'claude-fable-5' });
     // The stage record is re-labelled to the model that closed the gate.
-    const persisted = persistStageOutcomes.mock.calls.at(-1) as unknown as [string, StageOutcome[]] | undefined;
-    expect(persisted?.[1].find((o) => o.name === 'implementer')?.model).toBe('claude-fable-5');
+    const persisted = writeStages.mock.calls.at(-1) as unknown as [StageOutcome[]] | undefined;
+    expect(persisted?.[0].find((o) => o.name === 'implementer')?.model).toBe('claude-fable-5');
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).toContain(`Closes ${task.id}`);
   });

@@ -5,7 +5,7 @@ import { forcedProviderModel, selectAgents } from '../agents/registry.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { runStages, techSpecStage } from '../pipeline/pipeline.js';
 import { authSecrets } from '../agents/auth.js';
-import { persistStageOutcomes } from '../core/run-record.js';
+import { beginRun } from '../core/run-store.js';
 import { summarizeOutcomes } from '../core/run-summary.js';
 import { loadRetrospectiveMemory, refreshRetrospectiveMemory } from '../core/retrospective-memory.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
@@ -23,6 +23,7 @@ import type { AgentProvider } from '../agents/provider.js';
 import type { RunDeps } from '../core/vanguard.js';
 import type { VanguardLogger } from '../core/logger.js';
 import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
+import { skillRegistryForRun } from '../context/skill-registry.js';
 
 /**
  * Everything needed to research one task and produce its technical specification. Mirrors the subset
@@ -52,6 +53,8 @@ export interface RunSpecGeneratorDeps extends ProviderChoice {
   maxTurns?: number;
   /** Branch the research worktree is cut from — the baseline Fable specs against (default: main). */
   baseBranch?: string;
+  /** --skills dir (e.g. the bundled tech-spec skill), merged with the repo's .github/vanguard-skills/. */
+  skillsDir?: string;
   logger?: VanguardLogger;
   signal?: AbortSignal;
   /**
@@ -129,7 +132,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
   try {
     const sandbox = (deps.sandboxFactory ?? ((s) => defaultSandboxFactory(deps, s, providerProxies.openai, injectAnthropicAuth)))(secrets);
 
-    const retrospectiveMemory = await loadRetrospectiveMemory(deps.repoPath);
+    const [retrospectiveMemory, skills] = await Promise.all([loadRetrospectiveMemory(deps.repoPath), skillRegistryForRun(deps.skillsDir, deps.repoPath, { includeSpecSkills: true })]);
     const ctx = await prepareContext(
       {
         taskId: `spec-${task.id.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}`,
@@ -143,7 +146,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
         keepLocalIfAhead: false,
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       },
-      deps.contextDeps ?? {},
+      { skills, ...deps.contextDeps },
     );
     try {
       // haiku keeps the spec pass cheap on Claude; a provider that forces its own model (zai's glm,
@@ -164,7 +167,7 @@ export async function runSpecGenerator(id: string, deps: RunSpecGeneratorDeps): 
       }
       // Persisted under the 'spec' label (not the stage's library name) so `vanguard stats` keys it as before.
       const persistSpec = (): Promise<void> =>
-        persistStageOutcomes(deps.repoPath, [{ ...specOutcome, name: 'spec' }], { flow: 'spec', provider: agent.name });
+        beginRun(deps.repoPath, ctx.taskId).writeStages([{ ...specOutcome, name: 'spec' }], { flow: 'spec', provider: agent.name });
       // Lenient extraction recovers a spec whose closing tag was lost to a truncated stream (common
       // through a corp MITM proxy). A genuinely empty result yields undefined below.
       const extracted = extractTagLenient(specOutcome.result.finalText, SPEC_TAG);
