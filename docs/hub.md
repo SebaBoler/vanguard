@@ -55,6 +55,38 @@ replay; `transport.ts` resyncs by re-running its snapshot fetches rather than tr
 | `VANGUARD_HUB_WATCH_INTERVAL_MS` | `2000` |
 | `VANGUARD_HUB_BROWSE_ROOT` | `$HOME` |
 | `VANGUARD_HUB_ALLOW_ADD` | — |
+| `VANGUARD_HUB_CLONE_HOSTS` | — (comma-separated hosts, added to `github.com`/`gitlab.com`) |
+
+## Add project: existing folder or clone a URL
+
+The **Add project** dialog has two modes:
+
+- **Existing folder** — browse (`browse_dirs`, confined to the browse root) to a directory that's
+  already a git work tree and add it, exactly as before.
+- **Clone repository** — paste a repository URL, pick the parent folder with the same browser, and
+  optionally override the folder name (default: the repo name from the URL). The hub clones it under
+  the chosen parent and adds it, so a fresh install or a VPS hub with nothing to browse yet doesn't
+  need a shell on the host first.
+
+`clone_project { url, parentDir, name? } -> Project` (hub-only, `HUB_ONLY` in `src/wire.ts`) backs the
+second mode:
+
+- The URL must be `https://` or `ssh://`/`git@` to `github.com`, `gitlab.com`, or a host listed in
+  `VANGUARD_HUB_CLONE_HOSTS` — no local paths, no `file://`.
+- The target is resolved under the browse root, exactly like `browse_dirs`'s traversal guard (both
+  sides realpath'd); a target outside the root, or an existing non-empty directory, is refused before
+  anything is written.
+- The clone runs via `gh repo clone` when the host is `github.com` and `gh` is authenticated (so
+  private repos work with the host's own credentials), or plain `git clone` otherwise. Progress lines
+  stream over the same SSE bus (`GET /events`) as a `vanguard:clone-progress` event (`{ line }`) so the
+  dialog can show them live.
+- On success it calls the same `add_project` path (allowlist + project store) and returns the new
+  project's dashboard summary — the project appears without a page reload.
+- On failure (bad URL, disallowed host, path outside the browse root, non-empty target, or `git`/`gh`
+  itself failing) nothing is written and the error comes back as `bad-request` with git's message.
+
+Gated exactly like `add_project`: loopback only, unless `VANGUARD_HUB_ALLOW_ADD=1` — a non-loopback
+bind (server mode) must not let anyone clone onto the host.
 
 ## Coolify / Docker Compose
 
@@ -137,6 +169,6 @@ vanguard hub [--repo <path>] [--host <addr>] [--port <n>] [--ui-dir <dir>] [--no
 
 A missing or unbuilt `--ui-dir` fails at startup, naming `pnpm --dir apps/desktop build`
 (run `pnpm build:ui`) rather than failing on the first request. Binding a non-loopback host
-prints the no-auth warning above and disables `add_project`/`browse_dirs` unless
+prints the no-auth warning above and disables `add_project`/`browse_dirs`/`clone_project` unless
 `VANGUARD_HUB_ALLOW_ADD=1`. `SIGINT`/`SIGTERM` close the listener, every connected SSE client,
 and the project file watchers.

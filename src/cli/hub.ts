@@ -67,6 +67,9 @@ export async function hubCommand(command: Extract<Command, { kind: 'hub' }>): Pr
     uiDir,
     configDir,
     browseRoot: process.env.VANGUARD_HUB_BROWSE_ROOT ?? homedir(),
+    ...(process.env.VANGUARD_HUB_CLONE_HOSTS
+      ? { cloneHosts: process.env.VANGUARD_HUB_CLONE_HOSTS.split(',').map((h) => h.trim()).filter(Boolean) }
+      : {}),
     bind: {
       isLoopback,
       allowAdd: process.env.VANGUARD_HUB_ALLOW_ADD === '1',

@@ -30,7 +30,7 @@ describe('RepoPicker', () => {
   test('T-96 badges render per entry, and Add is disabled until a git-repo row is entered', async () => {
     install();
     const onAdd = vi.fn().mockResolvedValue(undefined);
-    render(<RepoPicker onAdd={onAdd} onClose={() => {}} />);
+    render(<RepoPicker onAdd={onAdd} onClone={vi.fn()} onClose={() => {}} />);
 
     await screen.findByText('git-repo');
     const gitRow = screen.getByText('git-repo').closest('button')!;
@@ -47,7 +47,7 @@ describe('RepoPicker', () => {
   test('T-96 navigation: entering a non-git row keeps Add disabled; entering a git row enables it; "up" returns to the parent listing', async () => {
     install();
     const onAdd = vi.fn().mockResolvedValue(undefined);
-    render(<RepoPicker onAdd={onAdd} onClose={() => {}} />);
+    render(<RepoPicker onAdd={onAdd} onClone={vi.fn()} onClose={() => {}} />);
 
     await screen.findByText('git-repo');
     fireEvent.click(screen.getByText('plain'));
@@ -68,7 +68,7 @@ describe('RepoPicker', () => {
   test('T-96 Escape dismisses the picker', async () => {
     install();
     const onClose = vi.fn();
-    render(<RepoPicker onAdd={vi.fn()} onClose={onClose} />);
+    render(<RepoPicker onAdd={vi.fn()} onClone={vi.fn()} onClose={onClose} />);
     await screen.findByText('git-repo');
 
     fireEvent.keyDown(window, { key: 'Escape' });
