@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { dispatchRpc, classifyError, FLEET_DISABLED_MESSAGE, type RpcContext } from './rpc.js';
+import * as clone from './clone.js';
+import { loadPaths } from './projects.js';
 import { ProjectAllowlist } from './allowlist.js';
 import { WatchRegistry } from './watch.js';
 import { createRunSession } from './run-session.js';
@@ -318,4 +320,38 @@ describe('dispatchRpc', () => {
       expect(hubKind).toBe(sidecarKind);
     }
   });
+});
+
+
+test('clone_project registers the clone, returns its summary and publishes progress', async () => {
+  const { ctx, published } = await makeCtx(await tmpRepo());
+  const target = join(ctx.browseRoot, 'repo');
+  await mkdir(join(target, '.git'), { recursive: true });
+  const mock = vi.spyOn(clone, 'cloneProject').mockImplementation(async (_root, _params, deps) => {
+    deps?.onProgress?.('receiving objects');
+    return target;
+  });
+  try {
+    ctx.cloneHosts = ['internal.example'];
+    const result = await dispatchRpc(ctx, 'clone_project', { url: 'https://internal.example/org/repo.git', parentDir: ctx.browseRoot });
+    expect(result).toMatchObject({ path: target, name: 'repo' });
+    expect(await loadPaths(ctx.configDir)).toEqual([target]);
+    expect(published).toContainEqual({ name: 'vanguard:clone-progress', payload: { line: 'receiving objects' } });
+    expect(mock).toHaveBeenCalledWith(ctx.browseRoot, expect.anything(), expect.objectContaining({ allowedHosts: ctx.cloneHosts }));
+  } finally {
+    mock.mockRestore();
+  }
+});
+
+test('clone_project enforces mutation permissions before cloning', async () => {
+  const { ctx } = await makeCtx(await tmpRepo(), { bind: { isLoopback: false, allowAdd: false } });
+  const mock = vi.spyOn(clone, 'cloneProject');
+  try {
+    await expect(dispatchRpc(ctx, 'clone_project', { url: 'https://github.com/org/repo.git', parentDir: ctx.browseRoot }))
+      .rejects.toThrow('disabled on a non-loopback bind');
+    expect(mock).not.toHaveBeenCalled();
+    expect(await loadPaths(ctx.configDir)).toEqual([]);
+  } finally {
+    mock.mockRestore();
+  }
 });

@@ -27,6 +27,8 @@ export interface HubServerOptions {
   uiDir: string;
   configDir: string;
   browseRoot: string;
+  /** Additional permitted clone hosts. */
+  cloneHosts?: readonly string[];
   bind: BindOptions;
   /** The `--repo` seed, always allowed even before it reaches the persisted project store. */
   seedRepoPath?: string;
@@ -213,6 +215,7 @@ export function createHubServer(opts: HubServerOptions): HubServer {
     deps,
     configDir: opts.configDir,
     browseRoot: opts.browseRoot,
+    ...(opts.cloneHosts !== undefined ? { cloneHosts: opts.cloneHosts } : {}),
     bind: opts.bind,
     publish,
   };

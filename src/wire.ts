@@ -502,6 +502,8 @@ export interface Commands {
   api_cancel_complete: { args: { callId: string }; result: void };
   /** HUB_ONLY: no native folder dialog in a browser (src/hub/browse.ts stands in for one). */
   browse_dirs: { args: { path?: string }; result: DirListing };
+  /** HUB_ONLY: clone a repository under the browse root and register it. */
+  clone_project: { args: { url: string; parentDir: string; name?: string }; result: Project };
   /** TAURI_ONLY: the Fleet screen's shell-spawn surface — disabled in hub mode (remote code
    * execution on a reachable server). */
   spawn_run: { args: { cwd: string; command: string }; result: number };
@@ -517,7 +519,7 @@ export const TAURI_ONLY = ['spawn_run', 'kill_run', 'list_spawns'] as const sati
 
 /** Commands with no `#[tauri::command]` in `src-tauri/src/lib.rs` — browser-only stand-ins for
  * native capability the webview doesn't need (no folder-picker dialog). */
-export const HUB_ONLY = ['browse_dirs'] as const satisfies readonly (keyof Commands)[];
+export const HUB_ONLY = ['browse_dirs', 'clone_project'] as const satisfies readonly (keyof Commands)[];
 
 /** Every command name, for the lib.rs parity test and friends. TYPE-CHECKED (not just asserted)
  * against `Commands`: the `satisfies` below rejects a typo or a name not in `Commands`, and
@@ -563,6 +565,7 @@ export const COMMAND_NAMES = [
   'api_complete',
   'api_cancel_complete',
   'browse_dirs',
+  'clone_project',
   'spawn_run',
   'kill_run',
   'list_spawns',
@@ -573,10 +576,12 @@ type _Exhaustive = keyof Commands extends (typeof COMMAND_NAMES)[number]
 const _exhaustive: _Exhaustive = true;
 void _exhaustive;
 
-/** The two named realtime channels the wire carries (`src/hub/rpc.ts`'s `publish`, Rust's `emit_event`).
+/** Named realtime channels the wire carries (`src/hub/rpc.ts`'s `publish`, Rust's `emit_event`).
  * The desktop additionally sees a Rust-minted `run-accepted` `api:event` variant core never emits —
  * that is a desktop extension of `RunEvent`, declared desktop-side (see typedRunReducer.ts), not here. */
 export interface Events {
   'api:event': { runId: string; event: RunEvent };
   'vanguard:changed': string;
+  /** Hub-only clone progress. */
+  'vanguard:clone-progress': { line: string };
 }

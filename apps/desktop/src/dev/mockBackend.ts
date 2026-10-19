@@ -99,6 +99,12 @@ const commandHandlers = {
   // no Tauri runtime, hub marker absent — still needs a fixture so RepoPicker is drivable via the
   // mock backend, and so the ipc.ts coverage guard below passes).
   browse_dirs: () => dirListing,
+  clone_project: (args: { url?: string; name?: string } | undefined) => ({
+    ...projects[0]!,
+    path: `/mock/clones/${args?.name ?? 'repo'}`,
+    name: args?.name ?? 'repo',
+    runCount: 0, taskCount: 0, totalCostUsd: 0, failedCount: 0, runningCount: 0, runsLast24h: 0,
+  }),
 } satisfies Partial<{
   [K in keyof Commands]: (args: Commands[K]['args']) => Promise<Commands[K]['result']> | Commands[K]['result'];
 }>;

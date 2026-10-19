@@ -51,6 +51,13 @@ export function addProject(path: string): Promise<Project[]> {
   return call('add_project', { path });
 }
 
+/** Hub-only: clone `url` under `parentDir` (the same browse-root-confined picker as `browseDirs`)
+ *  and register the result, returning just the new project (not the whole list — the caller appends
+ *  it, like `cloneProject`'s RepoPicker caller does). */
+export function cloneProject(url: string, parentDir: string, name?: string): Promise<Project> {
+  return call('clone_project', { url, parentDir, name });
+}
+
 export function removeProject(path: string): Promise<Project[]> {
   return call('remove_project', { path });
 }

@@ -10,7 +10,7 @@ import { RepoPicker } from './RepoPicker';
 import { TailwindDebugScreens } from './components/TailwindDebugScreens';
 import { Dashboard } from './features/dashboard/Dashboard';
 import { Inspector } from './features/inspector/Inspector';
-import { listProjects, addProject, removeProject, listActive } from './ipc';
+import { listProjects, addProject, cloneProject, removeProject, listActive } from './ipc';
 import { projectColor, contrastColor } from './color';
 import { createNavGuardRegistry, NavGuardContext } from './navGuard';
 import { ProjectCombobox } from './ProjectCombobox';
@@ -307,6 +307,11 @@ export default function App() {
         <RepoPicker
           onAdd={async (path) => {
             setProjects(await addProject(path));
+            setShowRepoPicker(false);
+          }}
+          onClone={async (url, parentDir, name) => {
+            const project = await cloneProject(url, parentDir, name);
+            setProjects((prev) => [...prev, project]);
             setShowRepoPicker(false);
           }}
           onClose={() => setShowRepoPicker(false)}
