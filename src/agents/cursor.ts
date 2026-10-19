@@ -21,12 +21,30 @@ interface StreamMessage {
 }
 
 /**
- * Claude CLI aliases and Anthropic ids that Vanguard's stage presets pin (spec → `haiku`, plan →
- * `opus`, escalation → `claude-fable-5-1`). Cursor has no such ids, so they are dropped and the account
- * default (`auto`) runs. Cursor's own ids pass through, including `claude-sonnet-5-thinking-high`.
+ * Claude CLI aliases and Anthropic ids that Vanguard's stage presets pin (spec → `haiku`, implement →
+ * `sonnet`, plan → `opus`, escalation → `claude-fable-5-1`) map onto Cursor's Auto modes by tier, so a
+ * stage keeps its intelligence/cost trade-off without naming models an account may not have. Cursor's own
+ * ids pass through, including `claude-opus-5-5-high` (a suffix after the version, so no match here).
  */
-// ponytail: drop, not map; map aliases to Cursor ids if stages should keep their tier on cursor.
-const CLAUDE_MODEL = /^(?:haiku|sonnet|opus|fable)$|^claude-(?:haiku|sonnet|opus|fable)(?:-\d+)+$/;
+const CLAUDE_MODEL = /^(?:claude-)?(haiku|sonnet|opus|fable)(?:-\d+)*$/;
+const AUTO_MODE: Readonly<Record<string, string>> = {
+  haiku: 'cost',
+  sonnet: 'balanced',
+  opus: 'intelligence',
+  fable: 'intelligence',
+};
+
+/** The `--model` value for a requested model: a Claude tier becomes its Auto mode, anything else is as given. */
+function cursorModel(model: string): string {
+  const tier = CLAUDE_MODEL.exec(model)?.[1];
+  return tier === undefined ? model : `auto-smart[optimize_for=${AUTO_MODE[tier] ?? 'balanced'}]`;
+}
+
+/**
+ * Auto mode opens its first segment with the model it picked ("> Auto routed to Grok 4.7\n\n"), either
+ * alone (before a tool call) or followed by the answer. It is a notice, not part of the turn's text.
+ */
+const AUTO_ROUTED = /^> Auto routed to ([^\n]+)\n*/;
 
 /**
  * Sandbox setup run before `agent`: allow every shell command and file access in
@@ -46,7 +64,7 @@ function buildArgs(input: AgentRunInput): string[] {
   // --trust: headless runs cannot answer the workspace-trust prompt. --sandbox disabled: the Vanguard
   // container is the boundary; Cursor's own sandbox is not set up there.
   const args = ['-p', '--output-format', 'stream-json', '--trust', '--sandbox', 'disabled'];
-  if (input.model !== undefined && !CLAUDE_MODEL.test(input.model)) args.push('--model', input.model);
+  if (input.model !== undefined) args.push('--model', cursorModel(input.model));
   // A pipeline resume (repair gate, spec nudge) runs in the same sandbox, where the chat is still on disk.
   if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
   return args;
@@ -83,9 +101,13 @@ export class CursorProvider implements AgentProvider {
       }
       parsedAny = true;
       if (msg.session_id !== undefined) sessionId = msg.session_id;
-      if (msg.type === 'system' && typeof msg.model === 'string') model = msg.model;
+      if (msg.type === 'system' && typeof msg.model === 'string') model ??= msg.model;
       if (msg.type === 'assistant') {
-        const text = assistantText(msg);
+        const raw = assistantText(msg);
+        const routed = AUTO_ROUTED.exec(raw);
+        // The served model, not the mode ("Auto Balance"), is what run records and stats should show.
+        if (routed?.[1] !== undefined) model = routed[1].trim();
+        const text = routed !== null ? raw.slice(routed[0].length) : raw;
         if (text !== '') {
           turns += 1;
           finalText = text;

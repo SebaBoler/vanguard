@@ -39,11 +39,20 @@ boundary, as with codex's `danger-full-access`.
 
 ## Behaviour
 
-- **Models.** `--provider-model` takes a Cursor id from `agent models`, for example `auto` (the default),
-  `gpt-5.6-sol-high` or `claude-sonnet-5-thinking-high`. The Claude aliases and Anthropic ids that
-  Vanguard's presets pin (`haiku`, `sonnet`, `opus`, `claude-sonnet-5-5`, `claude-fable-5-1`, …) are
-  dropped, so those stages run on the account default. Run records and `stats` show Cursor's display
-  name from the stream, for example "Auto Balance".
+- **Models.** The Claude tiers that Vanguard's presets pin map onto Cursor's Auto modes. This keeps each
+  stage's trade-off without naming models an account may not have:
+
+  | Requested (alias or Anthropic id)      | Cursor `--model`                       |
+  | -------------------------------------- | -------------------------------------- |
+  | `haiku`, `claude-haiku-*`              | `auto-smart[optimize_for=cost]`         |
+  | `sonnet`, `claude-sonnet-*`            | `auto-smart[optimize_for=balanced]`     |
+  | `opus`, `fable`, `claude-opus-*`, `claude-fable-*` | `auto-smart[optimize_for=intelligence]` |
+
+  Auto picks a model on every call. In one run the implementer landed on Claude Opus 5.5 and the reviewer
+  on Grok 4.7. To pin a model, pass a Cursor id from `agent models` (for example `claude-opus-5-5-high`,
+  `gpt-5.6-sol-high` or `composer-2.5`) through `--provider-model` / `--review-model`. Cursor ids pass
+  through unchanged. Run records and `stats` show the model Auto routed to, taken from the "> Auto routed
+  to …" notice. When there is no notice they show the mode or model display name.
 - **Usage.** Token usage comes from the `result` event (input, output, cache-read). Cursor reports no
   cost.
 - **Resume.** Repair-gate repairs and the spec resume nudge pass `--resume <chatId>`. The chat lives in
@@ -68,7 +77,8 @@ boundary, as with codex's `danger-full-access`.
 
 Checked with CLI 2026.10.16-e3cb207 in the sandbox image, using a team key whose admin disabled "Run
 Everything". The real `CursorProvider` ran with the prompt on stdin. It edited a file and ran a shell
-command, with no `--force` and a Claude model dropped to `auto`. A second call with `--resume` in the
-same container recalled the first. The recorded stream is the test fixture
-(`src/agents/cursor-stream.fixture.ndjson`). Not yet run: a full `vanguard run`/factory pipeline on
-cursor.
+command without `--force`. A second call with `--resume` in the same container recalled the first. The
+`opus`/`haiku`/`claude-sonnet-5-5` requests ran on Auto Intelligence, Auto Cost and Auto Balance. The
+recorded stream is the test fixture (`src/agents/cursor-stream.fixture.ndjson`). A full
+`vanguard run --provider cursor --egress` on a GitHub issue ran with no Claude credential. Implementer,
+reviewer and simplifier all completed, the gate passed, and it opened the PR in 210 s.

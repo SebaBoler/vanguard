@@ -92,12 +92,13 @@ describe('CursorProvider', () => {
     expect(out.transcript).toBe(streamJson);
   });
 
-  it('parses a recorded stream: thinking skipped, last segment final, usage mapped', async () => {
+  it('parses a recorded stream: thinking skipped, routing notice taken as the model, usage mapped', async () => {
     const { turns, out } = await drain(fakeSandbox(recorded));
-    expect(turns).toEqual(['> Auto routed to GPT-5.6 Sol\n\n', 'DONE']);
+    expect(turns).toEqual(['DONE']);
+    expect(out.turns).toBe(1);
     expect(out.finalText).toBe('DONE');
     expect(out.sessionId).toBe('9b5b760d-5016-4e23-ab06-e3d2968346a6');
-    expect(out.model).toBe('Auto Balance');
+    expect(out.model).toBe('GPT-5.6 Sol');
     expect(out.usage).toEqual({ inputTokens: 12, outputTokens: 137, cacheReadInputTokens: 30147 });
     expect(out.costUsd).toBeUndefined();
   });
@@ -165,14 +166,49 @@ describe('CursorProvider', () => {
     expect(commands[1]).not.toContain('--force');
   });
 
-  it.each(['gpt-5.2', 'auto', 'claude-sonnet-5-thinking-high', 'claude-opus-5-thinking-high'])('passes the Cursor model id %s through', async (model) => {
+  it.each(['gpt-5.2', 'auto', 'claude-opus-5-5-high', 'claude-sonnet-5-thinking-high', 'claude-4.5-sonnet', 'auto-smart[optimize_for=cost]'])(
+    'passes the Cursor model id %s through',
+    async (model) => {
+      const { command } = await capture({ model });
+      expect(command).toContain(`'--model' '${model}'`);
+    },
+  );
+
+  it.each([
+    ['haiku', 'cost'],
+    ['claude-haiku-4-5-20251001', 'cost'],
+    ['sonnet', 'balanced'],
+    ['claude-sonnet-5-5', 'balanced'],
+    ['opus', 'intelligence'],
+    ['claude-opus-4-8', 'intelligence'],
+    ['fable', 'intelligence'],
+    ['claude-fable-5-1', 'intelligence'],
+  ])('maps the Claude tier %s onto Auto %s', async (model, mode) => {
     const { command } = await capture({ model });
-    expect(command).toContain(`'--model' '${model}'`);
+    expect(command).toContain(`'--model' 'auto-smart[optimize_for=${mode}]'`);
   });
 
-  it.each(['haiku', 'sonnet', 'opus', 'claude-sonnet-5-5', 'claude-fable-5-1'])('drops the Claude model %s so the account default runs', async (model) => {
-    const { command } = await capture({ model });
-    expect(command).not.toContain('--model');
+  it('strips a routing notice that shares its segment with the answer (no tool call in between)', async () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1', model: 'Auto Intelligence' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '> Auto routed to Grok 4.7\n\nPONG' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '> Auto routed to Grok 4.7\n\nPONG', session_id: 's1' }),
+    ].join('\n');
+    const { turns, out } = await drain(fakeSandbox(stream));
+    expect(turns).toEqual(['PONG']);
+    expect(out.finalText).toBe('PONG');
+    expect(out.model).toBe('Grok 4.7');
+  });
+
+  it('reports the Auto mode itself when no routing notice is streamed', async () => {
+    const stream = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1', model: 'Auto Cost' }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'PONG' }] } }),
+      JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'PONG', session_id: 's1' }),
+    ].join('\n');
+    const { out } = await drain(fakeSandbox(stream));
+    expect(out.model).toBe('Auto Cost');
+    expect(out.finalText).toBe('PONG');
   });
 
   it('resumes the chat by id', async () => {

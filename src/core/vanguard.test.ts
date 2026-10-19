@@ -154,6 +154,18 @@ describe('vanguard.run', () => {
     expect(entries.some((e) => e.msg.includes('model mismatch'))).toBe(false);
   });
 
+  it('does not warn for cursor, which serves a claude-* request through an Auto mode', async () => {
+    const wm = new WorktreeManager(repo);
+    const { sandbox } = makeSandbox();
+    const { logger, entries } = captureLogger();
+    const agent = { ...fakeAgent([{ text: 'ok' }], { finalText: 'ok', turns: 1, model: 'Grok 4.7' }), name: 'cursor' };
+    await run(
+      { taskId: 't-cursor-model', localRepoPath: repo, promptTemplate: 'do', sandbox, agent, model: 'claude-fable-5-1', logger },
+      { worktrees: wm },
+    );
+    expect(entries.some((e) => e.msg.includes('model mismatch'))).toBe(false);
+  });
+
   it('removes a clean worktree and reports not-completed', async () => {
     const wm = new WorktreeManager(repo);
     const { sandbox, wasDestroyed } = makeSandbox();
