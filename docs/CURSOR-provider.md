@@ -37,22 +37,44 @@ boundary, as with codex's `danger-full-access`.
      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
    ```
 
+## Choosing a model
+
+Model names work differently here than on `claude` or `codex`. Cursor does not take Anthropic or OpenAI
+names as they are. It runs either one of its **Auto modes**, which pick a model on every call, or a
+**Cursor model id**. These values work in `--provider-model`, `--review-model`, `--spec-model`,
+`--fallback-model`, `--escalate-model` and the matching workflow inputs:
+
+| Value                                    | Runs                                    |
+| ---------------------------------------- | --------------------------------------- |
+| nothing, or `auto`                       | Auto Balance (the account default)      |
+| `auto-smart[optimize_for=balanced]`      | Auto Balance                            |
+| `auto-smart[optimize_for=intelligence]`  | Auto Intelligence                       |
+| `auto-smart[optimize_for=cost]`          | Auto Cost                               |
+| an id from `agent models`, e.g. `claude-opus-5-5-high`, `gpt-5.6-sol-high`, `composer-2.5` | exactly that model (ids vary by account and plan) |
+
+Quote the brackets in a shell:
+
+```bash
+vanguard run --github o/r#1 --provider cursor \
+  --provider-model 'auto-smart[optimize_for=intelligence]' --review-model 'auto-smart[optimize_for=cost]'
+```
+
+The Claude tiers that Vanguard's presets pin (spec → `haiku`, planner → `opus`, escalation →
+`claude-fable-5-1`) are not Cursor models. They map onto the matching Auto mode, so each stage keeps its
+trade-off:
+
+| Requested (alias or Anthropic id)                  | Runs on                                  |
+| -------------------------------------------------- | ---------------------------------------- |
+| `haiku`, `claude-haiku-*`                          | `auto-smart[optimize_for=cost]`          |
+| `sonnet`, `claude-sonnet-*`                        | `auto-smart[optimize_for=balanced]`      |
+| `opus`, `fable`, `claude-opus-*`, `claude-fable-*` | `auto-smart[optimize_for=intelligence]`  |
+
+An Auto mode is not deterministic. In one run the implementer landed on Claude Opus 5.5 and the reviewer on
+Grok 4.7. Run records and `stats` show the model Auto actually routed to, taken from the "> Auto routed to
+…" notice. When there is no notice they show the mode's display name, for example "Auto Cost".
+
 ## Behaviour
 
-- **Models.** The Claude tiers that Vanguard's presets pin map onto Cursor's Auto modes. This keeps each
-  stage's trade-off without naming models an account may not have:
-
-  | Requested (alias or Anthropic id)      | Cursor `--model`                       |
-  | -------------------------------------- | -------------------------------------- |
-  | `haiku`, `claude-haiku-*`              | `auto-smart[optimize_for=cost]`         |
-  | `sonnet`, `claude-sonnet-*`            | `auto-smart[optimize_for=balanced]`     |
-  | `opus`, `fable`, `claude-opus-*`, `claude-fable-*` | `auto-smart[optimize_for=intelligence]` |
-
-  Auto picks a model on every call. In one run the implementer landed on Claude Opus 5.5 and the reviewer
-  on Grok 4.7. To pin a model, pass a Cursor id from `agent models` (for example `claude-opus-5-5-high`,
-  `gpt-5.6-sol-high` or `composer-2.5`) through `--provider-model` / `--review-model`. Cursor ids pass
-  through unchanged. Run records and `stats` show the model Auto routed to, taken from the "> Auto routed
-  to …" notice. When there is no notice they show the mode or model display name.
 - **Usage.** Token usage comes from the `result` event (input, output, cache-read). Cursor reports no
   cost.
 - **Resume.** Repair-gate repairs and the spec resume nudge pass `--resume <chatId>`. The chat lives in
