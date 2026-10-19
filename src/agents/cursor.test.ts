@@ -1,11 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { CursorProvider } from './cursor.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 import type { AgentRunInput, AgentRunOutput } from './provider.js';
 
+/** The last exec (the `agent` call) plus every command in order (setup first). */
 interface Captured {
   command: string;
   input: string | undefined;
+  commands: string[];
 }
 
 function fakeSandbox(stdout: string, exitCode: number = 0, stderr: string = '', captured?: Captured): IsolatedSandboxProvider {
@@ -14,11 +17,16 @@ function fakeSandbox(stdout: string, exitCode: number = 0, stderr: string = '', 
       if (captured !== undefined) {
         captured.command = command;
         captured.input = opts?.input;
+        captured.commands.push(command);
       }
       return { stdout, stderr, exitCode };
     },
   } as unknown as IsolatedSandboxProvider;
 }
+
+// Recorded from CLI 2026.10.16-e3cb207 in the sandbox image (one edit, one shell call), with all but one
+// `thinking` delta trimmed.
+const recorded = readFileSync(new URL('./cursor-stream.fixture.ndjson', import.meta.url), 'utf8');
 
 const SESSION = 'c6b62c6f-7ead-4fd6-9922-e952131177ff';
 
@@ -66,7 +74,7 @@ async function drain(sandbox: IsolatedSandboxProvider, extra: Partial<AgentRunIn
 }
 
 async function capture(extra: Partial<AgentRunInput> = {}): Promise<Captured> {
-  const captured: Captured = { command: '', input: undefined };
+  const captured: Captured = { command: '', input: undefined, commands: [] };
   await drain(fakeSandbox(streamJson, 0, '', captured), extra);
   return captured;
 }
@@ -82,6 +90,16 @@ describe('CursorProvider', () => {
     expect(out.usage).toBeUndefined();
     expect(out.costUsd).toBeUndefined();
     expect(out.transcript).toBe(streamJson);
+  });
+
+  it('parses a recorded stream: thinking skipped, last segment final, usage mapped', async () => {
+    const { turns, out } = await drain(fakeSandbox(recorded));
+    expect(turns).toEqual(['> Auto routed to GPT-5.6 Sol\n\n', 'DONE']);
+    expect(out.finalText).toBe('DONE');
+    expect(out.sessionId).toBe('9b5b760d-5016-4e23-ab06-e3d2968346a6');
+    expect(out.model).toBe('Auto Balance');
+    expect(out.usage).toEqual({ inputTokens: 12, outputTokens: 137, cacheReadInputTokens: 30147 });
+    expect(out.costUsd).toBeUndefined();
   });
 
   it('falls back to result.result when no assistant segment was streamed', async () => {
@@ -130,17 +148,26 @@ describe('CursorProvider', () => {
     await expect(err).rejects.not.toThrow(/abcdefghijklmnop1234/);
   });
 
-  it('runs headless: print mode, stream-json, force, trust, own sandbox off, prompt on stdin', async () => {
+  it('runs headless: print mode, stream-json, trust, own sandbox off, prompt on stdin', async () => {
     const { command, input: stdin } = await capture();
     expect(command).toMatch(/^agent /);
-    for (const flag of ["'-p'", "'stream-json'", "'--force'", "'--trust'", "'--sandbox' 'disabled'"]) expect(command).toContain(flag);
+    for (const flag of ["'-p'", "'stream-json'", "'--trust'", "'--sandbox' 'disabled'"]) expect(command).toContain(flag);
     expect(command).not.toContain('do it');
     expect(stdin).toBe('do it');
   });
 
-  it('passes a Cursor model id through', async () => {
-    const { command } = await capture({ model: 'gpt-5' });
-    expect(command).toContain("'--model' 'gpt-5'");
+  it('allowlists every command in cli-config.json before the run instead of --force (team admins can disable it)', async () => {
+    const { commands } = await capture();
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toContain('cli-config.json');
+    expect(commands[0]).toContain('"Shell(*)"');
+    expect(commands[1]).toMatch(/^agent /);
+    expect(commands[1]).not.toContain('--force');
+  });
+
+  it.each(['gpt-5.2', 'auto', 'claude-sonnet-5-thinking-high', 'claude-opus-5-thinking-high'])('passes the Cursor model id %s through', async (model) => {
+    const { command } = await capture({ model });
+    expect(command).toContain(`'--model' '${model}'`);
   });
 
   it.each(['haiku', 'sonnet', 'opus', 'claude-sonnet-5-5', 'claude-fable-5-1'])('drops the Claude model %s so the account default runs', async (model) => {

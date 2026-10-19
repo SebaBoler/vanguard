@@ -1,13 +1,13 @@
 import { AgentError } from '../core/errors.js';
 import { redactTokens } from '../core/secret-scan.js';
-import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput } from './provider.js';
+import type { AgentProvider, AgentRunInput, AgentTurn, AgentRunOutput, AgentUsage } from './provider.js';
 import { shellQuote, assistantText } from './shell.js';
 
 /**
- * One NDJSON line of `agent -p --output-format stream-json` (cursor.com/docs/cli/reference/output-format):
- * `system/init` (session_id, model display name), `user`, one `assistant` per text segment between tool
- * calls, `tool_call` started/completed, and a terminal `result`. The stream carries no token usage or
- * cost, so this provider reports neither.
+ * One NDJSON line of `agent -p --output-format stream-json` (cursor.com/docs/cli/reference/output-format,
+ * checked against CLI 2026.10.16): `system/init` (session_id, model display name such as "Auto Balance"),
+ * `user`, `thinking` deltas (ignored), one `assistant` per text segment between tool calls, `tool_call`
+ * started/completed, and a terminal `result` carrying token usage but no cost.
  */
 interface StreamMessage {
   type?: string;
@@ -17,20 +17,35 @@ interface StreamMessage {
   message?: { content?: Array<{ type?: string; text?: string }> };
   is_error?: boolean;
   result?: string;
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number };
 }
 
 /**
  * Claude CLI aliases and Anthropic ids that Vanguard's stage presets pin (spec → `haiku`, plan →
- * `opus`, escalation → `claude-fable-5-1`). Cursor names its models differently, so these are dropped
- * and the account's default model runs. Any other id is passed through as given.
+ * `opus`, escalation → `claude-fable-5-1`). Cursor has no such ids, so they are dropped and the account
+ * default (`auto`) runs. Cursor's own ids pass through, including `claude-sonnet-5-thinking-high`.
  */
-// ponytail: drop, not map; add a Claude → Cursor id map once `agent models` output is pinned down.
-const CLAUDE_MODEL = /^(?:haiku|sonnet|opus|fable)$|^claude-(?:haiku|sonnet|opus|fable)-/;
+// ponytail: drop, not map; map aliases to Cursor ids if stages should keep their tier on cursor.
+const CLAUDE_MODEL = /^(?:haiku|sonnet|opus|fable)$|^claude-(?:haiku|sonnet|opus|fable)(?:-\d+)+$/;
+
+/**
+ * Sandbox setup run before `agent`: allow every shell command and file access in
+ * `~/.cursor/cli-config.json`, keeping the rest of the file. This replaces `--force`, which a team
+ * admin can disable ("Run Everything"); without either, print mode rejects every command but `ls`. The
+ * Vanguard container is the boundary, as for codex's danger-full-access.
+ */
+const CURSOR_SETUP =
+  `node -e 'const fs=require("fs"),p=require("path"),f=p.join(process.env.HOME,".cursor","cli-config.json");let c={version:1};try{c=JSON.parse(fs.readFileSync(f,"utf8"))}catch{}c.permissions={allow:["Shell(*)","Read(**)","Write(**)"],deny:[]};fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,JSON.stringify(c,null,2))'`;
+
+function toUsage(raw: StreamMessage['usage']): AgentUsage | undefined {
+  if (raw === undefined) return undefined;
+  return { inputTokens: raw.inputTokens ?? 0, outputTokens: raw.outputTokens ?? 0, cacheReadInputTokens: raw.cacheReadTokens ?? 0 };
+}
 
 function buildArgs(input: AgentRunInput): string[] {
   // --trust: headless runs cannot answer the workspace-trust prompt. --sandbox disabled: the Vanguard
-  // container is the boundary (like codex's danger-full-access); Cursor's own sandbox is not set up there.
-  const args = ['-p', '--output-format', 'stream-json', '--force', '--trust', '--sandbox', 'disabled'];
+  // container is the boundary; Cursor's own sandbox is not set up there.
+  const args = ['-p', '--output-format', 'stream-json', '--trust', '--sandbox', 'disabled'];
   if (input.model !== undefined && !CLAUDE_MODEL.test(input.model)) args.push('--model', input.model);
   // A pipeline resume (repair gate, spec nudge) runs in the same sandbox, where the chat is still on disk.
   if (input.resumeSessionId !== undefined) args.push('--resume', input.resumeSessionId);
@@ -44,12 +59,11 @@ export class CursorProvider implements AgentProvider {
     // The prompt goes on stdin, never argv: `sh -lc` puts the whole command in one argv string, which
     // Linux caps at 128 KiB (see codex.ts). Cursor has no system-prompt flag, so it leads the prompt.
     const prompt = input.systemPrompt !== undefined ? `${input.systemPrompt}\n\n${input.prompt}` : input.prompt;
+    const execOpts = { cwd: input.workdir, ...(input.signal !== undefined ? { signal: input.signal } : {}) };
+    // Best-effort like codex's login: a failed setup surfaces as rejected commands, not a crash here.
+    await input.sandbox.exec(CURSOR_SETUP, execOpts);
     const command = `agent ${buildArgs(input).map(shellQuote).join(' ')}`;
-    const res = await input.sandbox.exec(command, {
-      cwd: input.workdir,
-      input: prompt,
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    });
+    const res = await input.sandbox.exec(command, { ...execOpts, input: prompt });
 
     let sessionId: string | undefined;
     let finalText = '';
@@ -100,6 +114,8 @@ export class CursorProvider implements AgentProvider {
 
     const output: AgentRunOutput = { finalText, turns, transcript: res.stdout };
     if (sessionId !== undefined) output.sessionId = sessionId;
+    const usage = toUsage(result.usage);
+    if (usage !== undefined) output.usage = usage;
     if (model !== undefined) output.model = model;
     return output;
   }
