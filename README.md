@@ -35,6 +35,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 
 ## What's new (October 2026)
 
+- **Vanguard Hub** — `vanguard hub` serves the Inspector cockpit over HTTP/SSE: task board with **New Run**, live transcript, run records with proof of work, CI-run import, Add project by folder or by repository URL. Local mode, one instance per team; see [Hub](#hub) and [docs/hub.md](docs/hub.md).
 - **Reactive model escalation** — `--escalate-model <m>`: the first gate repair stays on the implementer model; a second red gate resumes the same session on a stronger one. Cheap by default, expensive only after an observed failure. ([Models](#models))
 - **Implementer fallback provider** — `--fallback-provider <p>` [`--fallback-model <m>`]: when the implementer's provider throws (outage, usage limit, revoked credential) the stage retries once on this provider — and so does every other stage that runs on the implementer's provider (simplifier, planner, any repo-flow stage), since a provider that is down for one is down for all; the repair loop resumes on whichever provider actually ran. Skills are injected for the fallback's CLI family too. Same mechanism the cross-provider reviewer already has. The fallback must sit on a different transport slot than the implementer: `claude`, `zai`, `openrouter`, `meridian` and custom endpoints all drive the `claude` CLI through `ANTHROPIC_BASE_URL`, so a `claude` implementer falls back to `codex` (or `cursor`), while a `codex` implementer can fall back to `claude`/`openrouter`/`zai`. The registry rejects a colliding pair at preflight; `vanguard doctor`/`watch` preflight checks the fallback's credential too. Not combinable with `--fork` (variants run on the primary only), and `--escalate-model` never reaches the fallback CLI: once the fallback holds the session its repairs stay on its own model.
 - **Per-task model label** — `vanguard:model=<m>` on an issue pins that task's implementer model, over `--provider-model`; the human's call beats any heuristic. GitHub, GitLab, Linear.
@@ -447,6 +448,39 @@ pnpm test
 ```
 
 Node 24+, pnpm, Vitest, ESM with NodeNext. Tests are co-located as `*.test.ts`. Docker integration tests run when Docker is present and skip otherwise.
+
+## Hub
+
+`vanguard hub` is the factory's cockpit in a browser: the same Inspector UI the Tauri desktop app
+ships, served over plain HTTP + SSE from a Node process next to your repos, with no native app to
+install. One instance per developer or team; agent code runs where the hub runs.
+
+```bash
+pnpm install && pnpm build:ui          # once: deps + the UI bundle
+docker/build.sh                        # once: vanguard-sandbox (only needed for runs started from the hub)
+export CLAUDE_CODE_OAUTH_TOKEN=...     # the shell that starts the hub is the env the runs get
+pnpm hub --repo /path/to/your/repo     # http://127.0.0.1:7777
+```
+
+What you get per project: a **Dashboard** of projects with run counts and spend; a **Task board**
+of your tracker's issues (GitHub, GitLab, Linear) with **New Run** starting the pipeline in the
+sandbox and a live transcript; **Runs** with every stage's record, diff, transcript, proof of work and
+visual proof; **Remote**, which imports a CI run's `vanguard-runs` artifact and shows it like a local
+run; **Workflow** for the repo's `.vanguard/flows/*.hcl`; **Settings** for `.vanguard/app.json`.
+**Add project** takes an existing folder or a repository URL it clones for you.
+
+Three ways to use it:
+
+1. **Local factory** — runs start from the Task board and execute in Docker on this machine; PRs
+   land on GitHub/GitLab as usual. Needs the token in the hub's environment and the sandbox image.
+2. **Observe the CI factory** — keep running Vanguard in GitHub Actions (callers with
+   `upload-run-records: true`) and use the hub read-only: Remote → Fetch records → open the run.
+   Nothing to install beyond `gh auth login`.
+3. **Self-hosted** — `docker/hub.Dockerfile` on a VPS (Coolify, Hetzner) behind Tailscale or an
+   authenticating reverse proxy, never a published port: local mode has no login yet.
+   `VANGUARD_HUB_ALLOW_ADD=1` enables Add project / Clone on a non-loopback bind.
+
+Details, wire format, env vars and the Compose example: [docs/hub.md](docs/hub.md).
 
 ## Autonomous loop
 

@@ -12,6 +12,38 @@ pnpm build:ui && pnpm hub --repo /path/to/your/repo
 
 This opens a browser at the printed URL.
 
+### Prerequisites
+
+- Node 24 and pnpm; `pnpm install` at the repo root (the UI bundle is a separate pnpm project that
+  `pnpm build:ui` installs and builds).
+- `gh auth login` — the Task board, Remote and cloning private repositories go through `gh`.
+- For runs started from the hub: Docker with the sandbox image (`docker/build.sh` builds
+  `vanguard-sandbox:latest`; the egress proxy sidecar uses the same image, so a missing image
+  surfaces as "Failed to start egress enclave"), and the provider credential exported in the shell
+  that starts the hub — `CLAUDE_CODE_OAUTH_TOKEN` for Claude (`claude setup-token`), or the
+  provider's own variable. The hub passes its environment to the run; a launcher without a shell
+  (an IDE "launch" entry, a Compose file without `environment:`) has no token, and the first run
+  fails at start.
+- A project is a git work tree. Its `.vanguard/app.json` (task source, labels, provider, budget) is
+  what the Settings screen edits; a repo without one works with the defaults.
+
+## Three ways to use it
+
+1. **Local factory.** Add the project, open the Task board, click **New Run** on an issue. The
+   pipeline runs in the sandbox on this machine; the Runs screen shows the live transcript and, when
+   it ends, every stage's record, diff, transcript, proof of work and visual proof. The PR lands on
+   GitHub/GitLab like any other Vanguard run.
+2. **Observe the CI factory.** Keep running Vanguard in GitHub Actions (see
+   [onboarding-another-repo.md](onboarding-another-repo.md); the callers must pass
+   `upload-run-records: true`) and use the hub read-only: Remote lists the repo's CI runs,
+   **Fetch records** imports a run's `vanguard-runs` artifact into `.vanguard/remote-runs/<id>`, and
+   the records open like local ones. No token, no Docker, no sandbox on this machine.
+3. **Self-hosted.** Build `docker/hub.Dockerfile`, run it on a VPS (Coolify, Hetzner) behind Tailscale
+   or an authenticating reverse proxy, and reach it from a laptop or a phone. Agent code runs on
+   that host, so it needs Docker and the token there. Local mode has no login of its own: never
+   publish the port. `VANGUARD_HUB_ALLOW_ADD=1` enables Add project and Clone repository on a
+   non-loopback bind (see [Modes](#modes) and [Coolify / Docker Compose](#coolify--docker-compose)).
+
 ## Modes
 
 - **Local mode** — no authentication, binds `127.0.0.1` by default. Intended for running on your own
