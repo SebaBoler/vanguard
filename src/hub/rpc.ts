@@ -16,6 +16,7 @@ import { WatchRegistry } from './watch.js';
 import type { RunSession } from './run-session.js';
 import { CompleteRegistry, type CompleteParams } from './complete.js';
 import { browseDirs } from './browse.js';
+import { cloneProject } from './clone.js';
 import type { ErrorKind } from '../hub-wire.js';
 import { defaultRunsRoot, remoteRunsRoot, listRunSummaries, readRunDetail } from './runs.js';
 import { listActive, readSession } from './active.js';
@@ -39,6 +40,8 @@ export interface RpcContext {
   configDir: string;
   browseRoot: string;
   bind: BindOptions;
+  /** Hosts `clone_project` accepts beyond `DEFAULT_CLONE_HOSTS` (a self-hosted GitHub/GitLab). */
+  cloneHosts?: readonly string[];
   /** Publish a server->client event (wired to the hub's EventBus). */
   publish: (name: string, payload: unknown) => void;
 }
@@ -117,6 +120,20 @@ export async function dispatchRpc(ctx: RpcContext, cmd: string, rawArgs: unknown
       const path = requireString(args, 'path');
       await assertGitWorkTreeDir(path);
       return projects.add(ctx.configDir, path);
+    }
+    case 'clone_project': {
+      assertMutationsAllowed(ctx.bind);
+      const url = requireString(args, 'url');
+      const parentDir = requireString(args, 'parentDir');
+      const name = optionalString(args, 'name');
+      const target = await cloneProject(
+        ctx.browseRoot,
+        { url, parentDir, name },
+        { allowedHosts: ctx.cloneHosts, onProgress: (line) => ctx.publish('vanguard:clone-progress', { line }) },
+      );
+      await assertGitWorkTreeDir(target);
+      await projects.add(ctx.configDir, target);
+      return projects.aggregate(target);
     }
     case 'remove_project': {
       const path = requireString(args, 'path');
