@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/SebaBoler/vanguard/compare/v1.9.0...v1.10.0) (2026-10-20)
+
+
+### Features
+
+* **hub:** Add project by repository URL — clone into a chosen folder, then register it ([#534](https://github.com/SebaBoler/vanguard/issues/534)) ([440a27c](https://github.com/SebaBoler/vanguard/commit/440a27c3ca79995311f1263bbbeb35ed92b1e440)), closes [#532](https://github.com/SebaBoler/vanguard/issues/532)
+
 ## [1.9.0](https://github.com/SebaBoler/vanguard/compare/v1.8.1...v1.9.0) (2026-10-19)
 
 
