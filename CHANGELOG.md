@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.1](https://github.com/SebaBoler/vanguard/compare/v1.10.0...v1.10.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **ci:** pass bundled skills to review and revise runs ([#538](https://github.com/SebaBoler/vanguard/issues/538)) ([c4f21a6](https://github.com/SebaBoler/vanguard/commit/c4f21a69fa69d95f38cbe2ee6f0105b363285af8))
+
+
+### Documentation
+
+* **hub:** README Hub section, prerequisites and usage paths; docs/refactor in the changelog ([#536](https://github.com/SebaBoler/vanguard/issues/536)) ([4b2d172](https://github.com/SebaBoler/vanguard/commit/4b2d1724b6ce36a68111512cc03d9e5b222f60d8))
+
 ## [1.10.0](https://github.com/SebaBoler/vanguard/compare/v1.9.0...v1.10.0) (2026-10-20)
 
 
