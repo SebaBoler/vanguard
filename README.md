@@ -56,7 +56,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 - [Task sources](#task-sources-pick-one)
 - [Auth](#auth) · [Local secrets](#local-secrets-two-ways)
 - [End to end](#end-to-end)
-- [Skills](#skills) · [Custom skills (bring your own)](#custom-skills-bring-your-own)
+- [Skills](#skills) · [Custom skills (bring your own)](#custom-skills-bring-your-own) · [When a skill is worth adding](#when-a-skill-is-worth-adding)
 - [Models](#models)
 - [Providers](#providers) — Claude / Codex / Cursor / z.ai / OpenRouter, cross-provider, Codex subscription, custom endpoint
 - [Fork-and-select](#fork-and-select)
@@ -210,15 +210,14 @@ The repo bundles five skills in `skills/`: `code-review` and `simplify` (used by
 
 ### Custom skills (bring your own)
 
-A skill is a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body), the standard Claude Code format. `--skills <dir>` injects every subdirectory in that dir, and the agent picks the right one per task by matching each skill's `description`. A Docker task pulls in `docker-expert`, a UI task `frontend-design`, and `ponytail` fires on everything. You curate the set, the model chooses per task. There is no per-issue flag.
+A skill is a directory with a `SKILL.md` (frontmatter `name` + `description`, then the body), the standard Claude Code format. `--skills <dir>` injects every subdirectory in that dir, and the agent picks the right one per task by matching each skill's `description`. A migration task pulls in `db-migrations`, a release task `release`, and `ponytail` fires on everything. You curate the set, the model chooses per task. There is no per-issue flag.
 
 Keep your domain skills in the target repo under `.github/vanguard-skills/`:
 
 ```
 .github/vanguard-skills/
-  docker-expert/SKILL.md
-  frontend-design/SKILL.md
-  python-expert/SKILL.md
+  db-migrations/SKILL.md
+  release/SKILL.md
 ```
 
 That is the whole setup. Vanguard injects every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/` into `run` and `watch` on every source (GitHub, GitLab, Projects, Linear), the spec pass (`spec`, and `watch` loop-v1), `revise-pr`, and the reviewers (`review-pr`, `watch-prs`, `review-mr`, `watch-mrs`). `research` runs without skills. Reviewers take repo skills from the PR's base branch, so a PR cannot change the skills of its own review. The implement workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
@@ -229,15 +228,25 @@ Skills are injected per-provider in the format each CLI auto-discovers:
 
 | Provider | Target | Format |
 |---|---|---|
-| `claude-code`, `zai` | `~/.claude/skills/<id>/` | Full skill directory (current behaviour) |
+| `claude-code`, `zai`, `openrouter`, `meridian`, custom endpoints | `~/.claude/skills/<id>/` | Full skill directory |
 | `codex` | `$CODEX_HOME/AGENTS.md` (`~/.codex/AGENTS.md` by default) | Pointer index: name + description + path to `.vanguard/skills/<id>/SKILL.md` |
 | `cursor` | `.cursor/rules/<id>.mdc` | One `.mdc` per skill with `description`/`globs` frontmatter + pointer |
 
 Codex receives only a pointer index (not the full skill bodies) in its always-on `AGENTS.md` to avoid inflating every turn with N full skill texts; the model reads the body from `.vanguard/skills/<id>/SKILL.md` when the description matches the task. Cursor rules use `alwaysApply: false` so they are description-attached, not always-on, for the same reason. Neither `.cursor/rules/` nor `.vanguard/skills/` is copied back into the PR diff.
 
-**Cross-provider limitation:** when `--provider` and `--review-provider` differ (e.g. `--provider claude --review-provider codex`), skills are injected for the implementer's family only. The Codex reviewer runs without the skill index in that configuration. Inject for both families is a planned extension.
+**Cross-provider runs:** skills are injected for every CLI family that may run in the sandbox: the implementer (`--provider`), the reviewer (`--review-provider`) and the implementer fallback (`--fallback-provider`). With `--provider claude --review-provider codex`, the Claude stages get `~/.claude/skills/` and the Codex reviewer gets the `AGENTS.md` pointer index.
 
 Two checks before a skill goes in. It must be self-contained: `SKILL.md` plus plain text, no MCP or browser, since the sandbox has neither. It must allow model invocation: skip any with `disable-model-invocation: true`, because the agent never triggers those itself. Only the `description`s load up front, so curate about a dozen, not a whole collection.
+
+### When a skill is worth adding
+
+A skill is worth adding when it carries knowledge the model lacks: how to drive an unfamiliar CLI (the linear-cli skill below), a repo-specific procedure such as writing a migration or cutting a release, or long instructions that only some tasks need.
+
+Generic expert skills such as `docker-expert` or `python-expert` add little, because the model already knows Docker and Python. Put your stack rules and conventions in the target repo's `CLAUDE.md` (Codex reads `AGENTS.md`), which the agent CLI loads on every stage.
+
+An instruction that a stage must follow on every run belongs in the stage prompt, since the model decides whether to open a skill. Vanguard's review prompt says "If a code-review skill is available, use it.", and the simplify prompt says the same for `simplify`. Both prompts also state their core instructions directly, so a stage that skips the skill still follows them. The skills add the detailed checks, and `code-review` adds the severity rules for blocking a merge.
+
+To see which skills a run used, search its transcripts in `.vanguard/runs/<taskId>/`. A Claude-family stage logs each Skill tool call as `"skill":"<id>"`. Codex and Cursor read the body from `.vanguard/skills/<id>/SKILL.md`, so search for that path instead.
 
 ### Example: the linear-cli skill
 
@@ -707,7 +716,7 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
 ```
 
-`spec-model: opus` plans, `provider: claude` + `provider-model: sonnet` implements and simplifies, `review-provider: codex` reviews (these map to `--spec-model`, `--provider`, `--provider-model`, `--review-provider`). Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches the Claude implementer stages; the Codex reviewer does not receive a skill index in this cross-provider configuration (see [Skills](#skills)).
+`spec-model: opus` plans, `provider: claude` + `provider-model: sonnet` implements and simplifies, `review-provider: codex` reviews (these map to `--spec-model`, `--provider`, `--provider-model`, `--review-provider`). Vanguard writes `CODEX_AUTH_JSON` to `~/.codex/auth.json` inside the sandbox (see [Providers](#providers)) and Codex runs on the subscription. `--skills` reaches both: the Claude stages get the full skill directories, the Codex reviewer gets a pointer index in its `AGENTS.md` (see [Skills](#skills)).
 
 `provider-model` applies only to the Claude stages; it is never handed to the cross-provider reviewer (an Anthropic model name like `sonnet` would be rejected by the ChatGPT backend). The Codex reviewer uses its own default model — set `review-model` to pick a specific one.
 
