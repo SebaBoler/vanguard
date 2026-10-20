@@ -36,6 +36,10 @@ on:
         description: 'Keep the model credential in a sidecar proxy, out of the sandbox (--llm-proxy). Not usable with a Codex subscription.'
         type: boolean
         default: false
+      skills:
+        description: 'Skills directory (--skills), relative to the workspace.'
+        type: string
+        default: .vanguard-src/skills
       vanguard-ref:
         description: 'Vanguard source ref to build. Empty = the ref this workflow was called at.'
         type: string
@@ -168,6 +172,7 @@ jobs:
           IN_FALLBACK_OK: ${{ steps.preflight.outputs.fallback-ok }}
           IN_AUTHOR: ${{ inputs.author }}
           IN_LLM_PROXY: ${{ inputs.llm-proxy }}
+          IN_SKILLS: ${{ inputs.skills }}
         run: |
           run_review() {
             local provider="$1" model="$2"
@@ -176,6 +181,7 @@ jobs:
               --reviewing-label "vanguard:reviewing"
               --reviewed-label "vanguard:reviewed"
               --repo "$GITHUB_WORKSPACE")
+            [ -n "$IN_SKILLS" ] && args+=(--skills "$IN_SKILLS")
             [ -n "$IN_AUTHOR" ] && args+=(--author "$IN_AUTHOR")
             [ -n "$provider" ] && args+=(--provider "$provider")
             [ -n "$model" ] && args+=(--review-model "$model")
