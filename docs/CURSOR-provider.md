@@ -28,21 +28,17 @@ boundary, as with codex's `danger-full-access`.
    ```
 
    `vanguard doctor` checks for `agent` in the image whenever cursor is one of the providers.
-3. **GitHub Actions.** The reusable workflows install the CLI when `provider`, `review-provider` or
-   `fallback-provider` is `cursor`. The version comes from the `cursor-cli-version` input. They also pass
-   the optional `CURSOR_API_KEY` secret through. The caller has to forward it:
-
-   ```yaml
-   secrets:
-     CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-   ```
+3. **GitHub Actions: not supported yet.** The reusable workflows do not install the Cursor CLI in the
+   sandbox image and do not pass `CURSOR_API_KEY` through, so `provider: cursor` fails there. Cursor
+   runs locally, on an always-on host and in the desktop app, wherever you build the image as in step 2.
+   Workflow support (a `cursor-cli-version` input plus an optional `CURSOR_API_KEY` secret) is planned.
 
 ## Choosing a model
 
 Model names work differently here than on `claude` or `codex`. Cursor does not take Anthropic or OpenAI
 names as they are. It runs either one of its **Auto modes**, which pick a model on every call, or a
 **Cursor model id**. These values work in `--provider-model`, `--review-model`, `--spec-model`,
-`--fallback-model`, `--escalate-model` and the matching workflow inputs:
+`--fallback-model` and `--escalate-model`:
 
 | Value                                                         | Runs                                    |
 | ------------------------------------------------------------- | --------------------------------------- |
