@@ -1,0 +1,30 @@
+%% Security boundary: the topology behind security-light.svg / security-dark.svg (README "Security").
+%% Change it here first, mirror it in security.archify.json, then re-render with archify (github.com/tt-a1i/archify):
+%%   node archify/bin/archify.mjs deliver architecture docs/diagrams/security.archify.json <out>.html --quality showcase
+%% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg security
+%% Dashed = opt-in: --llm-proxy (on in the review and revise workflows) and --egress.
+flowchart TB
+  subgraph github[GitHub]
+    input["Issue / PR text<br/>untrusted input"]
+    pr["Branch + draft PR<br/>pushed by host only"]
+  end
+  subgraph host[Host: GitHub Actions runner, holds the GitHub token]
+    gate{"Author gate<br/>author + sender"}
+    prompt["Prompt<br/>untrusted &lt;tags&gt; escaped"]
+    copyback["Copy-back<br/>CI config dropped"]
+    scan{"Secret scan<br/>hit: nothing pushed"}
+  end
+  subgraph sandbox[Docker sandbox: non-root, cap-drop ALL, noexec tmpfs]
+    agent["Agent CLI<br/>no GitHub token"]
+  end
+  subgraph sidecars[Opt-in sidecars]
+    llmproxy["LLM proxy<br/>real key; agent: nonce"]
+    egress["Egress proxy<br/>host allowlist"]
+  end
+  model["Model API<br/>Anthropic, OpenAI"]
+  hosts["Allowed hosts<br/>npm, PyPI, GitHub"]
+
+  input --> gate --> prompt --> agent
+  agent -->|changed files| copyback --> scan -->|push| pr
+  agent -.->|nonce| llmproxy -.->|real key| model
+  agent -.->|CONNECT| egress -.-> hosts

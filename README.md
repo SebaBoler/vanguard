@@ -25,9 +25,16 @@
 Vanguard turns work items into reviewed code changes — autonomously:
 
 1. **Fetch** — pulls a Task from a pluggable Task Source: GitHub Issues, GitLab Issues, or Linear.
-2. **Run** — an AI agent pipeline (planner → implementer → reviewer → adversary → repairer) implements it inside an isolated Docker sandbox.
+2. **Run** — an AI agent pipeline (implementer → reviewer → simplifier by default, planner → implementer → reviewer with `--plan`) implements it inside an isolated Docker sandbox.
 3. **Verify** — a Proof-of-Work command runs after the agent finishes; failures flag the PR/MR instead of silently passing.
 4. **Deliver** — opens a **draft PR/MR**. Humans review and merge; Vanguard does the toil.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/factory-loop-dark.svg" />
+    <img src="docs/diagrams/factory-loop-light.svg" width="100%" alt="Vanguard factory loop: a human labels an issue ready for spec or ready for agent; Vanguard triages it on GitHub Actions (too vague goes to needs info until a human edits it); the agent writes a read-only tech spec and builds (implement, review, simplify) in a Docker sandbox; Vanguard opens a draft PR; a human reviews it and either merges or labels needs revision, which sends the agent to fix the review comments and push to the same PR." />
+  </picture>
+</p>
 
 Run it once per ticket — or let the **Watch Loop** autonomously list ready Tasks, claim them, and process them end to end.
 
@@ -84,13 +91,12 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 
 ## How it works
 
-```
-task source ──> [Spec loop] ──> [Agent loop] ──> commit ──> publish PR ──> dispose
- (Linear /      Planner          Implementer        Merger    (GitHub)       cleanup
-  GitHub)       (read-only,      -> Reviewer
-                posts spec,      -> Simplifier
-                advances state)
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/run-pipeline-dark.svg" />
+    <img src="docs/diagrams/run-pipeline-light.svg" width="100%" alt="One Vanguard run: on the GitHub Actions host, claim and triage (no model call; too vague goes to needs info). In the Docker sandbox: implement, review (Codex, fresh context, fixes), simplify (fresh context), then verify with the proof-of-work command; red sends it to repair (at most 2, the second on a stronger model) and back to verify. Green, or repairs used up, goes back to the host: secret scan (a hit means secret-blocked), then push and open a draft PR (still red adds verify-failed)." />
+  </picture>
+</p>
 
 **Loop v1 adds a layered two-pass flow before each implementation run:**
 
@@ -415,7 +421,16 @@ vanguard run --linear TES-1 --fork 3
 
 ## Security
 
-One opt-in feature sends data from the host itself: the [difficulty probe](#models) (`VANGUARD_DECISION_PROBE=1`) posts issue text to a decision-model endpoint outside the sandbox, `--egress` and `--llm-proxy`, and skips white-label runs by default. The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/security-dark.svg" />
+    <img src="docs/diagrams/security-light.svg" width="100%" alt="Vanguard security boundary: untrusted issue or PR text passes an author and sender gate on the GitHub Actions host, which builds the prompt with untrusted tags escaped. The agent CLI runs in a Docker sandbox (non-root, cap-drop ALL, noexec tmpfs) with no GitHub token. Changed files come back through copy-back, which drops CI config, then a secret scan; only the host pushes the branch and opens the draft PR. Opt-in sidecars: an LLM proxy holds the real model key while the agent gets a per-run nonce, and an egress proxy allows CONNECT only to allowlisted hosts (npm, PyPI, GitHub)." />
+  </picture>
+</p>
+
+Dashed edges are opt-in: `--llm-proxy` (on in the review and revise workflows) and `--egress`. Without them the model token sits in the sandbox's noexec tmpfs and egress is open.
+
+One opt-in feature sends data from the host itself: the [difficulty probe](#models) (`VANGUARD_DECISION_PROBE=1`) posts issue text to a decision-model endpoint from the host process, so neither the sandbox nor `--egress` and `--llm-proxy` cover it, and it skips white-label runs unless set to `all`. The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
 
 `VANGUARD_OWNER_LABEL=<id>` labels every container and network with `vanguard.owner=<id>`, so a CI job can remove its own leftovers: first the containers with `docker ps -aq --filter label=vanguard.owner=<id> | xargs -r docker rm -f`, then the egress network with `docker network ls -q --filter label=vanguard.owner=<id> | xargs -r docker network rm`, which Docker refuses while a container still uses it. `xargs -r` skips the command when nothing matches, so a clean job does not fail its `after_script`.
 
@@ -503,6 +518,13 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 > **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent` only. The spec loop runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug. Add an ownership label such as `vanguard` only when your watcher is started with `--label vanguard`.
 
 #### Routing labels — full set (which go on an **issue** vs a **PR**)
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/labels-dark.svg" />
+    <img src="docs/diagrams/labels-light.svg" width="100%" alt="Vanguard routing labels in three columns: labels you add, labels Vanguard sets while working, and labels that mean it is your turn. needs research leads to vanguard:researching, which posts findings and rests until you pick the next label. ready for spec leads to vanguard:speccing, which posts the spec and moves the issue to ready for agent, or to needs info when triage finds it too vague. ready for agent leads to vanguard:running, then vanguard:needs-human-review once the draft PR is open, or needs info. needs revision on a Vanguard draft leads to vanguard:revising, which pushes fixes and returns to vanguard:needs-human-review. ready for vanguard review on any PR leads to vanguard:reviewing, then vanguard:reviewed." />
+  </picture>
+</p>
 
 `ready for ...` / `needs ...` are **triggers you add by hand**; `vanguard:...` are **states Vanguard sets itself**. Issue-side triggers fire `issues: labeled` workflows; PR-side triggers fire `pull_request_target: labeled` workflows.
 

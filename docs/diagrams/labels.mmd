@@ -1,0 +1,32 @@
+%% Routing labels: the topology behind labels-light.svg / labels-dark.svg (README "Routing labels — full set").
+%% Change it here first, mirror it in labels.archify.json, then re-render with archify (github.com/tt-a1i/archify):
+%%   node archify/bin/archify.mjs deliver architecture docs/diagrams/labels.archify.json <out>.html --quality showcase
+%% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg labels
+flowchart LR
+  subgraph you[You add]
+    research["needs research<br/>issue: look it up first"]
+    spec["ready for spec<br/>issue: plan, then build"]
+    agent["ready for agent<br/>issue: build it"]
+    revision["needs revision<br/>PR: a Vanguard draft"]
+    vreview["ready for vanguard review<br/>PR: any author"]
+  end
+  subgraph working[Vanguard is working]
+    researching["vanguard:researching<br/>posts findings, rests"]
+    speccing["vanguard:speccing<br/>writes the tech spec"]
+    running["vanguard:running<br/>builds in the sandbox"]
+    revising["vanguard:revising<br/>fixes your comments"]
+    reviewing["vanguard:reviewing<br/>read-only review"]
+  end
+  subgraph turn[Your turn]
+    info["needs info<br/>triage: too vague"]
+    humanreview["vanguard:needs-human-review<br/>the draft PR is open"]
+    reviewed["vanguard:reviewed<br/>review comment posted"]
+  end
+
+  research --> researching
+  spec --> speccing -->|spec posted| agent
+  speccing --> info
+  agent --> running --> humanreview
+  running --> info
+  revision --> revising -->|fixes pushed| humanreview
+  vreview --> reviewing --> reviewed
