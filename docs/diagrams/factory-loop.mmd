@@ -1,0 +1,27 @@
+%% Factory loop: the topology behind factory-loop-light.svg / factory-loop-dark.svg (README "What is Vanguard?").
+%% Change it here first, mirror it in factory-loop.archify.json, then re-render with archify (github.com/tt-a1i/archify):
+%%   node archify/bin/archify.mjs deliver architecture docs/diagrams/factory-loop.archify.json <out>.html --quality showcase
+%% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg factory-loop
+flowchart TB
+  subgraph human[Human]
+    issue["Issue<br/>ready for spec / agent"]
+    merge["Merge<br/>humans only"]
+    review["Review<br/>approve or revise"]
+  end
+  subgraph host[Vanguard on GitHub Actions]
+    triage{"Triage<br/>acceptance criteria?"}
+    info["needs info<br/>too vague, no spend"]
+    pr["Draft PR<br/>needs-human-review"]
+  end
+  subgraph sandbox[Agent in Docker sandbox]
+    spec["Tech spec<br/>read-only planner"]
+    build["Build<br/>implement · review · simplify"]
+    revise["Revise<br/>fix review comments"]
+  end
+
+  issue --> triage
+  triage --> info -->|human edits| issue
+  triage -->|ready for spec| spec --> build
+  triage -->|ready for agent| build
+  build --> pr --> review --> merge
+  review -->|needs revision| revise -->|push fixes| pr

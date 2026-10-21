@@ -1,0 +1,23 @@
+%% One run: the topology behind run-pipeline-light.svg / run-pipeline-dark.svg (README "How it works").
+%% Change it here first, mirror it in run-pipeline.archify.json, then re-render with archify (github.com/tt-a1i/archify):
+%%   node archify/bin/archify.mjs deliver architecture docs/diagrams/run-pipeline.archify.json <out>.html --quality showcase
+%% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg run-pipeline
+flowchart LR
+  subgraph host[Host: GitHub Actions runner]
+    triage{"Claim + triage<br/>no model call"}
+    info["needs info<br/>too vague, no spend"]
+    scan{"Secret scan<br/>hit: secret-blocked"}
+    pr["Push + draft PR<br/>red: verify-failed"]
+  end
+  subgraph sandbox[Agent in Docker sandbox]
+    implement["Implement<br/>writes the change"]
+    review["Review<br/>Codex, fresh context"]
+    simplify["Simplify<br/>fresh context"]
+    verify{"Verify<br/>proof-of-work cmd"}
+    repair["Repair<br/>2nd: stronger model"]
+  end
+
+  triage --> info
+  triage --> implement --> review --> simplify --> verify
+  verify -->|red, max 2| repair -->|re-verify| verify
+  verify -->|green, or repairs used up| scan --> pr
