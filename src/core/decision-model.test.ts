@@ -15,7 +15,7 @@ describe('decisionModelConfig', () => {
   it('needs credentials and, on Workers AI, a hosted model; a generic URL wins and never gets the Cloudflare token', () => {
     expect(decisionModelConfig({})).toBeUndefined();
     const cf = { CLOUDFLARE_ACCOUNT_ID: 'acc', CLOUDFLARE_AUTH_TOKEN: 't' };
-    expect(decisionModelConfig(cf)).toEqual({ url: 'https://api.cloudflare.com/client/v4/accounts/acc/ai/run/@cf/cloudflare/clef-flash', token: 't', model: 'clef-flash' });
+    expect(decisionModelConfig(cf)).toEqual({ url: 'https://api.cloudflare.com/client/v4/accounts/acc/ai/run/@cf/cloudflare/clef', token: 't', model: 'clef' });
     expect(decisionModelConfig(cf, 'clef')?.model).toBe('clef');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(decisionModelConfig(cf, 'jev')).toBeUndefined();

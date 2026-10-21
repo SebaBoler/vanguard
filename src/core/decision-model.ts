@@ -5,7 +5,8 @@
  * Used by the log-only difficulty probe, the eval judge and the fork scorer.
  */
 
-export const DECISION_MODEL_DEFAULT = 'clef-flash';
+/** clef over clef-flash: replaying 11 factory probes (2026-10-21) gave Brier 0.05 vs 0.16 — flash was overconfident. */
+export const DECISION_MODEL_DEFAULT = 'clef';
 /** Workers AI hosts exactly these two; any other name on that route is a typo that would 400 silently. */
 const WORKERS_AI_MODELS = new Set(['clef', 'clef-flash']);
 const DEFAULT_TIMEOUT_MS = 10_000;
