@@ -34,9 +34,9 @@ describe('decisionProbeConfig', () => {
     expect(decisionProbeConfig({ VANGUARD_DECISION_PROBE: '1', CLOUDFLARE_ACCOUNT_ID: 'acc' })).toBeUndefined();
   });
 
-  it('builds the Workers AI URL from the Cloudflare pair, defaulting to clef-flash, and refuses other models there', () => {
+  it('builds the Workers AI URL from the Cloudflare pair, defaulting to clef, and refuses other models there', () => {
     const cfg = decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1' });
-    expect(cfg).toEqual({ url: 'https://api.cloudflare.com/client/v4/accounts/acc/ai/run/@cf/cloudflare/clef-flash', token: 't', model: 'clef-flash' });
+    expect(cfg).toEqual({ url: 'https://api.cloudflare.com/client/v4/accounts/acc/ai/run/@cf/cloudflare/clef', token: 't', model: 'clef' });
     expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_MODEL: 'clef' })?.model).toBe('clef');
     expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_MODEL: 'jev' })).toBeUndefined();
     expect(decisionProbeConfig({ VANGUARD_DECISION_PROBE: '1', CLOUDFLARE_ACCOUNT_ID: 'a/../b', CLOUDFLARE_AUTH_TOKEN: 't' })?.url).toContain('/accounts/a%2F..%2Fb/');
@@ -44,12 +44,12 @@ describe('decisionProbeConfig', () => {
 
   it('a generic System-One endpoint wins and never receives the Cloudflare token', () => {
     expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1', VANGUARD_DECISION_URL: 'http://ai-box:8080/decide' }))
-      .toEqual({ url: 'http://ai-box:8080/decide', model: 'clef-flash' });
+      .toEqual({ url: 'http://ai-box:8080/decide', model: 'clef' });
   });
 
   it('white-label runs are skipped unless the switch is `all`', () => {
     expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: '1' }, { whiteLabel: true })).toBeUndefined();
-    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: 'all' }, { whiteLabel: true })?.model).toBe('clef-flash');
+    expect(decisionProbeConfig({ ...cf, VANGUARD_DECISION_PROBE: 'all' }, { whiteLabel: true })?.model).toBe('clef');
   });
 });
 
