@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.11.0](https://github.com/spietrza/vanguard/compare/v1.10.1...v1.11.0) (2026-10-22)
+
+
+### Features
+
+* **decision-model:** default to clef instead of clef-flash ([#541](https://github.com/spietrza/vanguard/issues/541)) ([024cefe](https://github.com/spietrza/vanguard/commit/024cefead604baad844cb566ac0f637b7008522c))
+* **factory:** open the PR ready for review when every gate passed ([#549](https://github.com/spietrza/vanguard/issues/549)) ([dcf0334](https://github.com/spietrza/vanguard/commit/dcf03341904f224240d189833e8fac7020523c4d))
+* **verify:** run the repo's verify script so the gate matches CI ([#548](https://github.com/spietrza/vanguard/issues/548)) ([21d81d0](https://github.com/spietrza/vanguard/commit/21d81d03644f0cbf5cace9f273daadd74cc57bf4))
+
+
+### Bug Fixes
+
+* **ci:** gate on spietrza, open factory PRs with the push token ([#543](https://github.com/spietrza/vanguard/issues/543)) ([7755fa8](https://github.com/spietrza/vanguard/commit/7755fa810f92f012b02e22b0b74a67717834fefc))
+* **deps:** bump vite from 7.3.6 to 7.3.7 in apps/desktop ([#544](https://github.com/spietrza/vanguard/issues/544)) ([5443487](https://github.com/spietrza/vanguard/commit/5443487ad16d0735e855675ad132240f8d596667))
+
+
+### Documentation
+
+* add flow diagrams to README ([#542](https://github.com/spietrza/vanguard/issues/542)) ([6663df3](https://github.com/spietrza/vanguard/commit/6663df36cf0e788a652eae6922fe4246ea49e072))
+* **cursor:** GitHub Actions does not support cursor yet ([#539](https://github.com/spietrza/vanguard/issues/539)) ([05e6a46](https://github.com/spietrza/vanguard/commit/05e6a46944064dd8cb5feaa008b515e8227570ca))
+* diagrams cover GitLab and Linear, not just GitHub ([#545](https://github.com/spietrza/vanguard/issues/545)) ([bb7cfa0](https://github.com/spietrza/vanguard/commit/bb7cfa010026381cdaaf0aba62a22c684a2213d3))
+* diagrams show ready PRs and the automatic review ([#551](https://github.com/spietrza/vanguard/issues/551)) ([1d0e5dd](https://github.com/spietrza/vanguard/commit/1d0e5ddfddbc5e17eefb6d3dc90f4536baaccd2c))
+
 ## [1.10.1](https://github.com/SebaBoler/vanguard/compare/v1.10.0...v1.10.1) (2026-10-20)
 
 
