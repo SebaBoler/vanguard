@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractReviewVerdict, reviewOutcomeUsable, outputTail, verdictContradictsFindings, hasBlockingFinding } from './review-prompt.js';
+import { extractReviewVerdict, extractReviewRisk, reviewOutcomeUsable, outputTail, verdictContradictsFindings, hasBlockingFinding, VERDICT_INSTRUCTION } from './review-prompt.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { renderConformanceSection } from '../pipeline/review-publish.js';
 import { publishGitlabVerdict } from './gitlab.js';
@@ -344,6 +344,14 @@ describe('extractReviewVerdict', () => {
     expect(hasBlockingFinding('one high-severity leak')).toBe(true);
   });
 
+  it('VERDICT_INSTRUCTION warns the risk sentence off every prose keyword the gate scans as blocking', () => {
+    // The risk sentence is prose the gate scans, so a clean review that uses one of these reads as blocking.
+    for (const keyword of ['critical', 'high severity', 'high-severity']) {
+      expect(hasBlockingFinding(keyword)).toBe(true);
+      expect(VERDICT_INSTRUCTION).toContain(`\`${keyword}\``);
+    }
+  });
+
   it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding in any form the gate recognises', () => {
     expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n- [high] auth.ts:1 token never expires')).toBe(true);
     expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"high","kind":"security","title":"t","evidence":"e"}]}</findings>')).toBe(true);
@@ -352,6 +360,31 @@ describe('extractReviewVerdict', () => {
     expect(verdictContradictsFindings('Verdict: NO BLOCKING FINDINGS\n<findings>{"findings":[{"severity":"low","kind":"style","title":"t","evidence":"e"}]}</findings>')).toBe(false);
     expect(verdictContradictsFindings('Verdict: BLOCKING\n- [critical] x')).toBe(false);
     expect(verdictContradictsFindings('no verdict line [high]')).toBe(false);
+  });
+
+  it('extractReviewRisk: each level, case-insensitive, with or without emphasis, directly after the verdict line', () => {
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\nRisk: low — doc-only change')).toBe('low');
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\nRisk: MEDIUM — touches the copy-back path')).toBe('medium');
+    expect(extractReviewRisk('Verdict: BLOCKING\nRisk: high — the sandbox escape is exploitable')).toBe('high');
+    expect(extractReviewRisk('**Verdict:** BLOCKING\n**Risk:** high — x')).toBe('high');
+    expect(extractReviewRisk('## Verdict: blocking\n## Risk: medium — x')).toBe('medium');
+  });
+
+  it('extractReviewRisk: undefined when the line is missing', () => {
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\n\nAll good.')).toBeUndefined();
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS')).toBeUndefined();
+    expect(extractReviewRisk('')).toBeUndefined();
+  });
+
+  it('extractReviewRisk: undefined when the Risk line is not directly after the verdict line', () => {
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\nAll good.\nRisk: medium — x')).toBeUndefined();
+    expect(extractReviewRisk('Some preamble.\nVerdict: NO BLOCKING FINDINGS\nRisk: medium — x')).toBeUndefined();
+  });
+
+  it('extractReviewRisk: rejects a Risk line inside a blockquote, fence or list — only a quote from the diff/PR body would take that shape', () => {
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\n> Risk: medium — quoted from the PR body')).toBeUndefined();
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\n```\nRisk: medium — x\n```')).toBeUndefined();
+    expect(extractReviewRisk('Verdict: NO BLOCKING FINDINGS\n- Risk: medium — x')).toBeUndefined();
   });
 
   it('outputTail keeps the end of a long reply', () => {

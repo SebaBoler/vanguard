@@ -17,6 +17,8 @@ export interface StepSummary {
   prUrl?: string;
   /** Review runs: the stated verdict. */
   verdict?: string;
+  /** Review runs: the stated risk level, directly after the verdict. */
+  risk?: string;
   /** The thrown error, when `exit` is 'error'. */
   error?: string;
 }
@@ -40,6 +42,7 @@ export function renderStepSummary(summary: StepSummary): string {
   const trailer = [
     summary.prUrl !== undefined ? `- PR: ${summary.prUrl}` : undefined,
     summary.verdict !== undefined ? `- Verdict: ${summary.verdict}` : undefined,
+    summary.risk !== undefined ? `- Risk: ${summary.risk}` : undefined,
     summary.error !== undefined ? `- Error: ${summary.error}` : undefined,
   ].filter((line): line is string => line !== undefined);
   return [

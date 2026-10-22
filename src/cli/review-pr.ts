@@ -40,7 +40,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
   // On Actions each review leaves one block in the job's Summary tab (no GITHUB_STEP_SUMMARY ⇒ no-op).
   // The default reviewer records its agent calls here; an injected one records nothing.
   const outcomes: SummaryOutcome[] = [];
-  const stepSummary = (taskId: string, exit: StepSummaryExit, extra: Pick<StepSummary, 'prUrl' | 'verdict' | 'error'> = {}): Promise<void> => {
+  const stepSummary = (taskId: string, exit: StepSummaryExit, extra: Pick<StepSummary, 'prUrl' | 'verdict' | 'risk' | 'error'> = {}): Promise<void> => {
     const model = outcomes.at(-1)?.result.model ?? cmd.reviewModel;
     return appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
       taskId,
@@ -59,6 +59,7 @@ export async function reviewPrCommand(cmd: ReviewPrCommand, deps: ReviewPrComman
     await stepSummary(`${result.pr.repoSlug}#${result.pr.number}`, 'completed', {
       prUrl: result.pr.url,
       ...(result.verdict !== undefined ? { verdict: result.verdict } : {}),
+      ...(result.risk !== undefined ? { risk: result.risk } : {}),
     });
     if (cmd.out !== undefined) {
       await mkdir(dirname(cmd.out), { recursive: true });
