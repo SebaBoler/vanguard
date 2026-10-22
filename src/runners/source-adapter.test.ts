@@ -246,6 +246,16 @@ describe('runSourcedIssue', () => {
     } } as Awaited<ReturnType<SourceAdapter['prepare']>>);
     await runSourcedIssue(task.id, { repoPath: '/repo' }, adapter);
     expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ title: 'fix(hub): t (group/project#1)' }));
+    // Default commit message shares the same type/scope logic as the PR title (no second prefix, fix: for bug).
+    expect((commitStage.mock.calls[0]?.[1] as { message: string }).message).toBe('fix(hub): t (group/project#1)');
+  });
+
+  it('default commit message does not double-prefix a title that already carries a Conventional Commits type', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    vi.mocked(adapter.prepare).mockResolvedValueOnce({ task: { ...task, title: 'refactor(hub): tidy helpers' } } as Awaited<ReturnType<SourceAdapter['prepare']>>);
+    await runSourcedIssue(task.id, { repoPath: '/repo' }, adapter);
+    expect((commitStage.mock.calls[0]?.[1] as { message: string }).message).toBe('refactor(hub): tidy helpers (group/project#1)');
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ title: 'refactor(hub): tidy helpers (group/project#1)' }));
   });
 
   it('starts from the remote base (#429), or from the reused branch on --reuse, and says which (#446)', async () => {
@@ -604,6 +614,29 @@ describe('runSourcedIssue', () => {
     expect(msg.startsWith('feat: ')).toBe(true);
     expect(msg).toMatch(/\(#904\)$/);
     expect(msg.replace('feat: ', '')).not.toMatch(/[A-Z]/); // fully lower-case → passes commitlint subject-case
+  });
+
+  it('conventionalCommitMessage: does not double-prefix a title that already carries a Conventional Commits type', () => {
+    const msg = conventionalCommitMessage('refactor(hub): tidy helpers', 'task-5');
+    expect(msg).toBe('refactor(hub): tidy helpers (#5)');
+  });
+
+  it('conventionalCommitMessage: picks fix: for a bug label', () => {
+    const msg = conventionalCommitMessage('search is broken', 'task-6', { bugLabel: true });
+    expect(msg).toBe('fix: search is broken (#6)');
+  });
+
+  it('conventionalCommitMessage: plain title gives feat:', () => {
+    const msg = conventionalCommitMessage('add search', 'task-7');
+    expect(msg).toBe('feat: add search (#7)');
+  });
+
+  it('conventionalCommitMessage: the 100-char cap still holds with a prefix', () => {
+    const title = 'deleted CP is not fully removed during adding CP with the name of a previously deleted one here';
+    const msg = conventionalCommitMessage(title, 'gh-pwc-pl-tax-itbc-data-controls-engine-904', { bugLabel: true });
+    expect(msg.length).toBeLessThanOrEqual(100);
+    expect(msg.startsWith('fix: ')).toBe(true);
+    expect(msg).toMatch(/\(#904\)$/);
   });
 
   it('--base is the branch the context is prepared for (the PR targets it via ctx.baseBranch)', async () => {
