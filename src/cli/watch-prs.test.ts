@@ -1,10 +1,14 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { eventPullRequestHint, watchPrsCommand } from './watch-prs.js';
 import type { Command } from './args.js';
 import type { ReviewPrCommandRunner } from './watch-prs.js';
 import type { PullRequestWatchItem, PullRequestWatchPrimitives, WatchPullRequestsLoopOptions } from '../runners/pr-watch.js';
 
 describe('watchPrsCommand', () => {
+  // On Actions the suite itself runs under a pull_request event (e.g. `opened`), which the hint now trusts.
+  beforeEach(() => vi.stubEnv('GITHUB_EVENT_PATH', ''));
+  afterEach(() => vi.unstubAllEnvs());
+
   it('wires GitHub PR primitives to review-pr with operator logs', async () => {
     const logs: string[] = [];
     let capturedPrimitives: PullRequestWatchPrimitives | undefined;
@@ -111,6 +115,15 @@ describe('eventPullRequestHint', () => {
   it('returns the PR number when the event label matches the trigger label', () => {
     const read = (): string => JSON.stringify({ label: { name: 'ready for vanguard review' }, pull_request: { number: 316 } });
     expect(eventPullRequestHint('ready for vanguard review', '/event.json', read)).toBe(316);
+  });
+
+  it('returns the PR number for a just-opened or just-readied PR (labelled by an earlier job)', () => {
+    for (const action of ['opened', 'ready_for_review']) {
+      const read = (): string => JSON.stringify({ action, pull_request: { number: 548 } });
+      expect(eventPullRequestHint('ready for vanguard review', '/event.json', read)).toBe(548);
+    }
+    const synchronize = (): string => JSON.stringify({ action: 'synchronize', pull_request: { number: 548 } });
+    expect(eventPullRequestHint('ready for vanguard review', '/event.json', synchronize)).toBeUndefined();
   });
 
   it('ignores other labels, missing paths, junk payloads, and non-PR events', () => {
