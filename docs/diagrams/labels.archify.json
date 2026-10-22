@@ -12,15 +12,15 @@
     { "id": "research", "type": "frontend", "label": "needs research", "sublabel": "issue: look it up first", "pos": [36, 60], "size": [190, 52] },
     { "id": "spec", "type": "frontend", "label": "ready for spec", "sublabel": "issue: plan, then build", "pos": [36, 148], "size": [190, 52] },
     { "id": "agent", "type": "frontend", "label": "ready for agent", "sublabel": "issue: build it", "pos": [36, 236], "size": [190, 52] },
-    { "id": "revision", "type": "frontend", "label": "needs revision", "sublabel": "PR: a Vanguard draft", "pos": [36, 340], "size": [190, 52] },
-    { "id": "vreview", "type": "frontend", "label": "ready for vanguard review", "sublabel": "PR: any author", "pos": [36, 428], "size": [190, 52] },
+    { "id": "revision", "type": "frontend", "label": "needs revision", "sublabel": "PR: opened by Vanguard", "pos": [36, 340], "size": [190, 52] },
+    { "id": "vreview", "type": "frontend", "label": "ready for vanguard review", "sublabel": "PR: any; auto if ready", "pos": [36, 428], "size": [190, 52] },
     { "id": "researching", "type": "backend", "label": "vanguard:researching", "sublabel": "posts findings, rests", "pos": [266, 60], "size": [190, 52] },
     { "id": "speccing", "type": "backend", "label": "vanguard:speccing", "sublabel": "writes the tech spec", "pos": [266, 148], "size": [190, 52] },
     { "id": "running", "type": "backend", "label": "vanguard:running", "sublabel": "builds in the sandbox", "pos": [266, 236], "size": [190, 52] },
     { "id": "revising", "type": "backend", "label": "vanguard:revising", "sublabel": "fixes your comments", "pos": [266, 340], "size": [190, 52] },
     { "id": "reviewing", "type": "backend", "label": "vanguard:reviewing", "sublabel": "read-only review", "pos": [266, 428], "size": [190, 52] },
     { "id": "info", "type": "security", "label": "needs info", "sublabel": "triage: too vague", "pos": [496, 148], "size": [190, 52] },
-    { "id": "humanreview", "type": "external", "label": "vanguard:needs-human-review", "sublabel": "the draft PR is open", "pos": [496, 236], "size": [190, 52] },
+    { "id": "humanreview", "type": "external", "label": "vanguard:needs-human-review", "sublabel": "the PR is open", "pos": [496, 236], "size": [190, 52] },
     { "id": "reviewed", "type": "external", "label": "vanguard:reviewed", "sublabel": "review comment posted", "pos": [496, 428], "size": [190, 52] }
   ],
   "boundaries": [

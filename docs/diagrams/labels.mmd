@@ -7,8 +7,8 @@ flowchart LR
     research["needs research<br/>issue: look it up first"]
     spec["ready for spec<br/>issue: plan, then build"]
     agent["ready for agent<br/>issue: build it"]
-    revision["needs revision<br/>PR: a Vanguard draft"]
-    vreview["ready for vanguard review<br/>PR: any author"]
+    revision["needs revision<br/>PR: opened by Vanguard"]
+    vreview["ready for vanguard review<br/>PR: any; auto if ready"]
   end
   subgraph working[Vanguard is working]
     researching["vanguard:researching<br/>posts findings, rests"]
@@ -19,7 +19,7 @@ flowchart LR
   end
   subgraph turn[Your turn]
     info["needs info<br/>triage: too vague"]
-    humanreview["vanguard:needs-human-review<br/>the draft PR is open"]
+    humanreview["vanguard:needs-human-review<br/>the PR is open"]
     reviewed["vanguard:reviewed<br/>review comment posted"]
   end
 
