@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "factoryBranchPrefix": "chore/vanguard-",
+  "requiredChecks": [
+    { "name": "build", "appId": 15368 },
+    { "name": "dependency-review", "appId": 15368 }
+  ],
+  "reviewAuthors": ["github-actions[bot]", "spietrza", "pawelkrystkiewicz"],
+  "testGlobs": ["**/*.test.ts"],
+  "pathRules": {
+    "ci-config": [".github/**", ".gitlab-ci.yml", ".gitlab/**"],
+    "dependencies": ["**/package.json", "**/pnpm-lock.yaml", "**/Cargo.*", "apps/desktop/src-tauri/**"],
+    "migration-deploy": ["docker/**", "**/*migration*"],
+    "security-surface": ["src/sandbox/**", "src/core/vanguard.ts", "src/core/secret-scan.ts", "src/context/**", "src/agents/**"],
+    "review-pipeline": [
+      "src/runners/pr-review.ts", "src/runners/pr-watch.ts", "src/runners/pr-feedback.ts",
+      "src/runners/revise-pr.ts", "src/runners/review-prompt.ts", "src/runners/deliver-change.ts",
+      "src/runners/source-adapter.ts",
+      "src/pipeline/review-publish.ts", "src/pipeline/conformance-gate.ts", "src/pipeline/verify.ts",
+      "src/pipeline/remote-branch.ts", "src/pipeline/repair-gate.ts",
+      "src/approver/**", ".vanguard/approver.json"
+    ],
+    "gate-config": ["vitest.config.ts", "eslint.config.js", "tsconfig*.json"],
+    "agent-instructions": ["skills/**", "CLAUDE.md", "AGENTS.md"],
+    "release-config": ["release-please-config.json", ".release-please-manifest.json"]
+  },
+  "shape": { "maxLines": 150, "maxFiles": 5 },
+  "ledger": { "windowDays": 7, "maxLines": 300 },
+  "auditSample": { "p": 0.1 }
+}

@@ -268,6 +268,7 @@ export type Command =
     }
   | { kind: 'stats'; repoPath: string; json: boolean; /** Read the metrics file from this remote branch instead of the local .vanguard/runs. */ branch?: string }
   | { kind: 'metrics'; action: 'push'; repoPath: string; branch?: string }
+  | { kind: 'approve'; prNumber: number; repoSlug: string; repoPath: string; mode: 'shadow'; json: boolean; dryRun: boolean; branch?: string }
   | { kind: 'memory'; repoPath: string; limit?: number; json: boolean }
   | {
       kind: 'eval';
@@ -521,6 +522,8 @@ export function parseCli(argv: string[], cwd: string): Command {
         // stats --branch / metrics push --branch: the orphan branch that holds durable metrics
         branch: { type: 'string' },
         limit: { type: 'string' },
+        // approve
+        mode: { type: 'string' },
         // eval
         'judge-model': { type: 'string' },
         'produce-model': { type: 'string' },
@@ -623,6 +626,27 @@ export function parseCli(argv: string[], cwd: string): Command {
       kind: 'stats',
       repoPath,
       json: values.json === true,
+      ...(typeof values.branch === 'string' ? { branch: values.branch } : {}),
+    };
+  }
+
+  if (positionals[0] === 'approve') {
+    const prRaw = typeof values.pr === 'string' ? values.pr : positionals[1];
+    const prNumber = prRaw !== undefined ? Number(prRaw) : NaN;
+    const repoSlug = typeof values['github-repo'] === 'string' ? values['github-repo'] : undefined;
+    if (repoSlug === undefined) return fail('approve requires --github-repo <owner/repo>.');
+    if (!Number.isInteger(prNumber) || prNumber < 1) return fail(`approve requires a positive --pr <n>, got "${String(prRaw)}".`);
+    const modeRaw = typeof values.mode === 'string' ? values.mode : 'shadow';
+    if (modeRaw === 'live') return fail('approve: live mode is not implemented (shadow only in v1).');
+    if (modeRaw !== 'shadow') return fail(`approve: unknown --mode "${modeRaw}" (shadow only in v1).`);
+    return {
+      kind: 'approve',
+      prNumber,
+      repoSlug,
+      repoPath,
+      mode: 'shadow',
+      json: values.json === true,
+      dryRun: values['dry-run'] === true,
       ...(typeof values.branch === 'string' ? { branch: values.branch } : {}),
     };
   }
@@ -1175,6 +1199,9 @@ Commands:
          per model, probe); --branch reads the durable copy from the metrics branch instead.
   metrics push  Append this checkout's metrics.jsonl lines to the orphan vanguard-metrics branch and
          push, so an ephemeral CI run leaves a durable trace (idempotent; needs push rights).
+  approve Compute a deterministic APPROVE/ESCALATE decision for a factory PR from typed facts and the
+         base-branch policy; publish a neutral check run + PR comment and record the decision
+         (shadow mode: never merges, approves, or edits labels).
   memory Refresh .vanguard/memory/retrospective.md from run artifacts and print it.
   eval   Run the committed eval corpus and print a per-kind pass-rate report.
   gc     Reap stale sandbox containers, prune worktrees, and (with --remote) delete merged
@@ -1422,6 +1449,15 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
   metrics push options:
     --repo <path>          Repo whose .vanguard/runs/metrics.jsonl to persist (default: cwd)
     --branch <name>        Target branch (default: vanguard-metrics)
+
+  approve options:
+    --pr <n>               Required: PR number (bare positional also accepted)
+    --github-repo <o/r>    Required repo slug — the approver never infers the repo it judges
+    --mode <shadow>        Only "shadow" is implemented in v1
+    --repo <path>          Local git repo checked out from the base branch (default: cwd)
+    --branch <name>        Metrics branch override (default: vanguard-metrics)
+    --json                 Print the decision record to stdout
+    --dry-run              Compute and print the decision; publish and record nothing (backtest/local inspection)
 
   memory options:
     --repo <path>          Repo to read run artifacts from (default: cwd)

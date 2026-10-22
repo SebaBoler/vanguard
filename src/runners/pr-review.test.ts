@@ -14,6 +14,7 @@ import {
   VERDICT_CONTRADICTION_LOG,
   incompleteReviewReason,
   PullRequestReviewIncompleteError,
+  pullRequestReviewMarkerShas,
   reviewPullRequest,
 } from './pr-review.js';
 import type { GhRunner } from '../tasks/github.js';
@@ -484,6 +485,33 @@ describe('review prompt and comment formatting', () => {
     ].join('\n');
 
     expect(hasPullRequestReviewMarker(body, 'abc123')).toBe(true);
+  });
+});
+
+describe('pullRequestReviewMarkerShas', () => {
+  it('returns [] for a body with no marker', () => {
+    expect(pullRequestReviewMarkerShas('## Vanguard Review\n\nNo blocking findings.')).toEqual([]);
+  });
+
+  it('returns one SHA for the real body shape', () => {
+    const body = '## Vanguard Review\n\nNo blocking findings.\n\n<!-- vanguard-pr-review: abc123 -->';
+    expect(pullRequestReviewMarkerShas(body)).toEqual(['abc123']);
+  });
+
+  it('returns both SHAs for a body carrying two distinct markers, so the approver can reject it', () => {
+    const body = [
+      '## Vanguard Review',
+      '',
+      '<!-- vanguard-pr-review: deadbeef -->',
+      '',
+      '<!-- vanguard-pr-review: abc123 -->',
+    ].join('\n');
+    expect(pullRequestReviewMarkerShas(body)).toEqual(['deadbeef', 'abc123']);
+  });
+
+  it('does not return an inline (non-whole-line) marker', () => {
+    const body = 'See <!-- vanguard-pr-review: abc123 --> inline, which is not a dedupe marker.';
+    expect(pullRequestReviewMarkerShas(body)).toEqual([]);
   });
 });
 

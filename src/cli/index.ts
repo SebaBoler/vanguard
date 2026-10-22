@@ -94,6 +94,11 @@ async function main(): Promise<void> {
     await metricsCommand(command);
     return;
   }
+  if (command.kind === 'approve') {
+    const { approveCommand } = await import('./approve.js');
+    await approveCommand(command);
+    return;
+  }
   if (command.kind === 'stats') {
     await statsCommand(command);
     return;

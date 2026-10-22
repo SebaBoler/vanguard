@@ -199,7 +199,16 @@ export function pullRequestReviewMarker(headRefOid: string): string {
 }
 
 export function hasPullRequestReviewMarker(body: string, headRefOid: string): boolean {
-  return Array.from(body.matchAll(PR_REVIEW_MARKER_RE)).some((marker) => marker[1] === headRefOid);
+  return pullRequestReviewMarkerShas(body).includes(headRefOid);
+}
+
+/**
+ * Every head-SHA marker a review body carries, whole-line only (same grammar as hasPullRequestReviewMarker).
+ * The approver uses this to find the review that speaks for a given head, and to reject a body that plants
+ * more than one distinct marker SHA (a legitimate review carries exactly one).
+ */
+export function pullRequestReviewMarkerShas(body: string): string[] {
+  return Array.from(body.matchAll(PR_REVIEW_MARKER_RE)).map((marker) => marker[1]!);
 }
 
 export const PR_REVIEW_INCOMPLETE_NOTICE =

@@ -3,7 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
-import { pushMetrics, readBranchMetrics, METRICS_BRANCH_DEFAULT } from './metrics-branch.js';
+import { pushMetrics, readBranchMetrics, appendBranchLines, readBranchFile, METRICS_BRANCH_DEFAULT } from './metrics-branch.js';
 
 let root: string;
 let origin: string;
@@ -86,4 +86,59 @@ describe('pushMetrics / readBranchMetrics', () => {
     expect(await readBranchMetrics(repo, { branch: 'team-metrics' })).toContain('"taskId":"a"');
     expect(await readBranchMetrics(repo)).toBe('');
   });
+});
+
+describe('appendBranchLines', () => {
+  it('preserves sibling tree entries when appending a different file', async () => {
+    await writeMetrics(repo, [line('a', '2026-10-08T10:00:00.000Z')]);
+    await pushMetrics(repo);
+
+    const decision = (pr: number, sha: string): string => JSON.stringify({ prNumber: pr, headSha: sha, verdict: 'APPROVE' });
+    await appendBranchLines(repo, [decision(1, 'sha1')], {
+      file: 'decisions.jsonl',
+      key: (r) => `${r.prNumber}:${r.headSha}`,
+    });
+
+    const tree = (await execa('git', ['-C', repo, 'ls-tree', '--name-only', `origin/${METRICS_BRANCH_DEFAULT}`])).stdout;
+    expect(tree.trim().split('\n').sort()).toEqual(['decisions.jsonl', 'metrics.jsonl']);
+    expect(await readBranchMetrics(repo)).toContain('"taskId":"a"');
+    expect(await readBranchFile(repo, { file: 'decisions.jsonl' })).toContain('"prNumber":1');
+
+    // metrics push afterwards must not drop decisions.jsonl.
+    await writeMetrics(repo, [line('a', '2026-10-08T10:00:00.000Z'), line('b', '2026-10-08T10:01:00.000Z')]);
+    await pushMetrics(repo);
+    const tree2 = (await execa('git', ['-C', repo, 'ls-tree', '--name-only', `origin/${METRICS_BRANCH_DEFAULT}`])).stdout;
+    expect(tree2.trim().split('\n').sort()).toEqual(['decisions.jsonl', 'metrics.jsonl']);
+    expect(await readBranchFile(repo, { file: 'decisions.jsonl' })).toContain('"prNumber":1');
+  });
+
+  it('dedupes by key, skipping a record with the same key but a different timestamp', async () => {
+    const decision = (pr: number, sha: string, ts: string): string =>
+      JSON.stringify({ prNumber: pr, headSha: sha, timestamp: ts });
+    const opts = { file: 'decisions.jsonl', key: (r: Record<string, unknown>) => `${r.prNumber}:${r.headSha}` };
+    await appendBranchLines(repo, [decision(1, 'sha1', 't0')], opts);
+    const again = await appendBranchLines(repo, [decision(1, 'sha1', 't1')], opts);
+    expect(again).toMatchObject({ pushed: 0, total: 1 });
+    const text = await readBranchFile(repo, { file: 'decisions.jsonl' });
+    expect(text.trim().split('\n')).toHaveLength(1);
+    expect(text).toContain('"timestamp":"t0"');
+  });
+
+  it('dedupes by exact line when no key is given, same as the original metrics semantics', async () => {
+    const opts = { file: 'other.jsonl' };
+    await appendBranchLines(repo, [line('a', '2026-10-08T10:00:00.000Z')], opts);
+    const again = await appendBranchLines(repo, [line('a', '2026-10-08T10:00:00.000Z')], opts);
+    expect(again).toMatchObject({ pushed: 0, total: 1 });
+    const fresh = await appendBranchLines(repo, [line('b', '2026-10-08T10:01:00.000Z')], opts);
+    expect(fresh).toMatchObject({ pushed: 1, total: 2 });
+  });
+});
+
+it('ignores non-object JSON input before invoking a record key', async () => {
+  const result = await appendBranchLines(repo, ['null', '[]', '1', '"text"', '{"id":1}'], {
+    file: 'decisions.jsonl',
+    key: (record) => String(record.id),
+  });
+  expect(result).toMatchObject({ pushed: 1, total: 1 });
+  expect((await readBranchFile(repo, { file: 'decisions.jsonl' })).trim()).toBe('{"id":1}');
 });
