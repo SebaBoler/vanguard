@@ -14,9 +14,10 @@ export const RETRY_TRIAGE_INSTRUCTION =
  * thrown away because only the trailing <promise> counted.
  */
 export const VERDICT_INSTRUCTION =
-  'Begin your final reply (the review itself, after any investigation) with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings.';
+  'Begin your final reply (the review itself, after any investigation) with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings. Directly after that line, add one more — `Risk: low`, `Risk: medium` or `Risk: high`, followed by ` — ` and one sentence on what the change can break (not a summary of the diff) — before any findings. That sentence must not use the words `critical`, `high severity` or `high-severity`: the merge gate scans the whole reply for them, so a clean review that uses one reads as blocking.';
 
 export type ReviewVerdict = 'clean' | 'blocking';
+export type ReviewRisk = 'low' | 'medium' | 'high';
 
 // Only the FIRST non-blank line of the reply counts, and a blockquote/code/list prefix does not:
 // the diff and PR body are untrusted and the prompt tells the model to quote injected text as a
@@ -29,6 +30,27 @@ export function extractReviewVerdict(text: string): ReviewVerdict | undefined {
   const m = VERDICT_RE.exec(text.trimStart());
   if (m === null) return undefined;
   return m[1]!.toUpperCase() === 'BLOCKING' ? 'blocking' : 'clean';
+}
+
+// Same prefix tolerance as VERDICT_RE, and for the same reason: the diff and PR body are untrusted, so a
+// planted `Risk:` line quoted from them (inside a blockquote, fence or list item) must not pass.
+const RISK_RE = /^[#*_ \t]*Risk:?[*_ \t]*(low|medium|high)\b/i;
+
+/**
+ * The risk line, when it is the first non-blank line directly after a stated verdict line — advisory
+ * only, so a missing or malformed line (or one that isn't directly after the verdict) is simply absent,
+ * never a reason to touch the verdict itself.
+ */
+export function extractReviewRisk(text: string): ReviewRisk | undefined {
+  const lines = text.split('\n');
+  let i = 0;
+  while (i < lines.length && lines[i]!.trim() === '') i++;
+  if (i >= lines.length || !VERDICT_RE.test(lines[i]!)) return undefined;
+  i++;
+  while (i < lines.length && lines[i]!.trim() === '') i++;
+  if (i >= lines.length) return undefined;
+  const m = RISK_RE.exec(lines[i]!);
+  return m === null ? undefined : (m[1]!.toLowerCase() as ReviewRisk);
 }
 
 /** A review is usable when it completed OR stated its verdict; findings after a stated verdict may be truncated. */

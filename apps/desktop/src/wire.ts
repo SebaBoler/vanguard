@@ -233,6 +233,8 @@ export interface BoardTask {
   column: 'queued' | 'claimed' | 'running' | 'verify-failed' | 'review' | 'done';
   /** The chip: first label else provider state (github/gitlab); the workflow state (Linear). */
   state: string;
+  /** Waiting for the factory: carries a trigger label and is still `queued`. Absent when false. */
+  waiting?: boolean;
 }
 
 /** One adversary-stage finding (the `<findings>` block item shape). */

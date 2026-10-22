@@ -20,6 +20,20 @@ function hasWord(t: string, word: string): boolean {
 }
 
 /**
+ * The human-applied triggers a watch loop polls for (`--spec-label` / `--agent-label` defaults,
+ * src/cli/args.ts:362-363). Separator-tolerant so `ready-for-spec` reads the same; bounded both
+ * sides so `ready for speccing` is NOT a trigger.
+ */
+const TRIGGER_SOURCE = String.raw`(?<![a-z0-9])ready[^a-z0-9]+for[^a-z0-9]+(?:spec|agent)(?![a-z0-9])`;
+const TRIGGER_STRIP = new RegExp(TRIGGER_SOURCE, 'g'); // replace() — never .test() (lastIndex)
+const TRIGGER_MATCH = new RegExp(TRIGGER_SOURCE); // predicate — no /g, so stateless
+
+/** True if `label` is one of the factory trigger labels (`ready for agent` / `ready for spec`). */
+export function isTriggerLabel(label: string): boolean {
+  return TRIGGER_MATCH.test(label.toLowerCase());
+}
+
+/**
  * Best-effort mapping of a task's state/labels to a board column, following Vanguard's real label
  * vocabulary (`vanguard:running`, `vanguard::verify-failed`, `vanguard:speccing`,
  * `vanguard::secret-blocked`, Linear states). A TERMINAL state wins first: a closed issue whose
@@ -27,7 +41,10 @@ function hasWord(t: string, word: string): boolean {
  * `secret-blocked` stays a qualified `includes` so a generic dependency-`blocked` label is ignored.
  */
 export function columnFor(text: string): 'queued' | 'claimed' | 'running' | 'verify-failed' | 'review' | 'done' {
-  const t = text.toLowerCase();
+  // Trigger labels are a HUMAN request, not a claim: drop them before the word scan, or
+  // `ready for spec` matches the `spec` rule meant for `vanguard:speccing` and a waiting task
+  // reads as taken. Lifecycle labels and terminal states still win — they survive the strip.
+  const t = text.toLowerCase().replace(TRIGGER_STRIP, ' ');
   const w = (word: string): boolean => hasWord(t, word);
   if (w('done') || w('closed') || w('merged') || w('complete') || w('completed')) return 'done';
   if (w('running')) return 'running';
@@ -92,10 +109,15 @@ export function resolveTaskRef(taskId: string): ResolvedTaskRef | undefined {
 export function toBoardTask(source: BoardSource, task: Task): BoardTask {
   const state = task.state ?? '';
   const combined = `${task.labels.join(' ')} ${state}`;
+  const column = columnFor(combined);
+  // Waiting = a human asked for the factory and nothing has claimed it yet. LABEL-sourced, not
+  // state-sourced: the flag answers "is this queued for a trigger-label watch loop".
+  const waiting = column === 'queued' && task.labels.some(isTriggerLabel);
   return {
     id: mintBoardId(source, task.ref ?? task.id),
     title: task.title,
-    column: columnFor(combined),
+    column,
     state: source === 'linear' ? state : (task.labels[0] ?? state),
+    ...(waiting ? { waiting: true } : {}),
   };
 }

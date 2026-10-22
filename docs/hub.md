@@ -37,7 +37,11 @@ This opens a browser at the printed URL.
    [onboarding-another-repo.md](onboarding-another-repo.md); the callers must pass
    `upload-run-records: true`) and use the hub read-only: Remote lists the repo's CI runs,
    **Fetch records** imports a run's `vanguard-runs` artifact into `.vanguard/remote-runs/<id>`, and
-   the records open like local ones. No token, no Docker, no sandbox on this machine.
+   the records open like local ones. No token, no Docker, no sandbox on this machine. The Task board
+   header counts the factory's work from issue labels — `Running N` (claimed or running) and
+   `Waiting K` (labelled `ready for agent`/`ready for spec`, not yet picked up) — so it shows the CI
+   backlog too. A `+` (`12+`) means the board holds only its first page of issues and the count is a
+   lower bound.
 3. **Self-hosted.** Build `docker/hub.Dockerfile`, run it on a VPS (Coolify, Hetzner) behind Tailscale
    or an authenticating reverse proxy, and reach it from a laptop or a phone. Agent code runs on
    that host, so it needs Docker and the token there. Local mode has no login of its own: never
