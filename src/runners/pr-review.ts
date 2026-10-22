@@ -9,6 +9,7 @@ import {
   VERDICT_INSTRUCTION,
   VERDICT_WITHOUT_COMPLETION_NOTE,
   diffLineCount,
+  extractReviewRisk,
   extractReviewVerdict,
   neutralizePromptTags,
   omitGeneratedFiles,
@@ -18,7 +19,7 @@ import {
   VERDICT_CONTRADICTION_LOG,
   verdictContradictsFindings,
 } from './review-prompt.js';
-import type { ReviewVerdict } from './review-prompt.js';
+import type { ReviewRisk, ReviewVerdict } from './review-prompt.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestReviewTarget {
@@ -65,6 +66,8 @@ export interface ReviewPullRequestResult {
   commentBody: string;
   /** The stated verdict line; absent when the reviewer completed without stating one. */
   verdict?: ReviewVerdict;
+  /** The stated risk line directly after the verdict; absent when the reply did not carry one. */
+  risk?: ReviewRisk;
 }
 
 interface GhPullRequestView {
@@ -374,5 +377,6 @@ export async function reviewPullRequest(ref: string, deps: ReviewPullRequestDeps
     deps.log?.(`review-pr ${id}: ${VERDICT_CONTRADICTION_LOG} — ${deps.publish !== false ? 'posted as written' : 'not posted (publish disabled)'}`);
   }
   const verdict = extractReviewVerdict(outcome.text);
-  return { pr, commentBody, ...(verdict !== undefined ? { verdict } : {}) };
+  const risk = extractReviewRisk(outcome.text);
+  return { pr, commentBody, ...(verdict !== undefined ? { verdict } : {}), ...(risk !== undefined ? { risk } : {}) };
 }

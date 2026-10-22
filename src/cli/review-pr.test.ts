@@ -49,6 +49,33 @@ describe('reviewPrCommand', () => {
     vi.mocked(runAgent).mockReset();
   });
 
+  it.each(['Risk: high — authentication can fail.', ''])('carries optional risk through the runner into the job summary: %s', async (riskLine) => {
+    const dir = await mkdtemp(join(tmpdir(), 'vg-review-summary-'));
+    const summaryPath = join(dir, 'summary.md');
+    vi.stubEnv('GITHUB_STEP_SUMMARY', summaryPath);
+    try {
+      const gh: GhRunner = async (args) => {
+        if (args[1] === 'view') return JSON.stringify({ number: 12, headRefOid: 'abc123' });
+        return '';
+      };
+      await reviewPrCommand(
+        { kind: 'review-pr', prRef: 'o/r#12', repoPath: '/repo', egress: false },
+        {
+          reviewer: async () => ({ text: `Verdict: NO BLOCKING FINDINGS\n${riskLine}`, completed: true }),
+          reviewPullRequest: (ref, deps) => reviewPullRequest(ref, { ...deps, gh }),
+          log: () => undefined,
+        },
+      );
+      const summary = await readFile(summaryPath, 'utf8');
+      expect(summary).toContain('- Verdict: clean');
+      if (riskLine) expect(summary).toContain('- Verdict: clean\n- Risk: high');
+      else expect(summary).not.toContain('- Risk:');
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('delegates to the PR review runner and preserves operator logs', async () => {
     const logs: string[] = [];
     const reviewer = vi.fn().mockResolvedValue({ text: 'No blocking findings.', completed: true });
