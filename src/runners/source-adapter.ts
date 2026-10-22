@@ -571,6 +571,7 @@ export async function runSourcedIssue(
       // Verification participates in the Closes/Part-of decision alongside conformance: a red result
       // forces the declared-partial path even when conformance itself passed.
       const verificationFailed = verification !== undefined && !verification.passed;
+      const visualProofFailed = visualProof !== undefined && !visualProof.passed;
       const partial = !gatePassed;
       const baseBody = reviewRequestBody(task.id, {
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
@@ -598,7 +599,8 @@ export async function runSourcedIssue(
           title: `${task.title} (${task.id})`,
           bugLabel: task.labels.includes('bug'),
           ...(scope !== undefined ? { scope } : {}),
-          draft: true,
+          // Ready for review only after verification and every configured proof passed.
+          draft: partial || verifyCmd === undefined || visualProofFailed,
           ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
           // Same PAT revise pushes with: a PR it opens fires the repo's pull_request workflows (CI).
           ...(process.env.VANGUARD_PUSH_TOKEN ? { prToken: process.env.VANGUARD_PUSH_TOKEN } : {}),
@@ -653,7 +655,7 @@ export async function runSourcedIssue(
       await writer.writeStages(outcomes, { ...runMeta, prUrl: pr.prUrl });
       await stepSummary(verificationFailed ? 'verify-failed' : 'completed', { prUrl: pr.prUrl });
       if (verification !== undefined && !verification.passed) await adapter.addFailureLabel(pr.prUrl, 'verify');
-      if (visualProof !== undefined && !visualProof.passed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
+      if (visualProofFailed) await adapter.addFailureLabel(pr.prUrl, 'visual-proof');
       if (!whiteLabel) await adapter.linkPr(issueRef, task, pr.prUrl);
       deps.onEvent?.({ type: 'run-end', prUrl: pr.prUrl });
       return { task, prUrl: pr.prUrl };

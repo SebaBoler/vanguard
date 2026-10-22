@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Autonomous software factory</b> — fetches tasks from GitHub, GitLab, or Linear,<br/>
-  implements them with an AI agent pipeline in an isolated sandbox, and opens draft PRs/MRs for human review.
+  implements them with an AI agent pipeline in an isolated sandbox, and opens PRs/MRs for human review — ready for review when every gate passed, draft otherwise.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <code>Task ticket&nbsp;&nbsp;→&nbsp;&nbsp;Agent pipeline (plan · implement · review · repair)&nbsp;&nbsp;→&nbsp;&nbsp;Draft PR</code>
+  <code>Task ticket&nbsp;&nbsp;→&nbsp;&nbsp;Agent pipeline (plan · implement · review · repair)&nbsp;&nbsp;→&nbsp;&nbsp;PR (draft unless every gate passed)</code>
 </p>
 
 ## What is Vanguard?
@@ -27,7 +27,7 @@ Vanguard turns work items into reviewed code changes — autonomously:
 1. **Fetch** — pulls a Task from a pluggable Task Source: GitHub Issues, GitLab Issues, or Linear.
 2. **Run** — an AI agent pipeline (implementer → reviewer → simplifier by default, planner → implementer → reviewer with `--plan`) implements it inside an isolated Docker sandbox.
 3. **Verify** — a Proof-of-Work command runs after the agent finishes; failures flag the PR/MR instead of silently passing.
-4. **Deliver** — opens a **draft PR/MR**. Humans review and merge; Vanguard does the toil.
+4. **Deliver** — opens the **PR/MR**, ready for review when every gate passed, draft otherwise. Humans review and merge; Vanguard does the toil.
 
 <p align="center">
   <picture>
@@ -101,7 +101,7 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 **Loop v1 adds a layered two-pass flow before each implementation run:**
 
 1. **Spec pass (Planner)** — Polls the spec-trigger (label or state). Runs triage: rejects vague tickets to needs-info before spending any model budget. If the ticket passes, runs `techSpecStage` (read-only: no code is written), posts the result as a `<tech_spec>` comment, then advances the ticket to the agent-trigger. A freshly-specced ticket is implemented on the **next poll** — the human has a window to review the spec before the agent runs.
-2. **Agent pass (Implementer → Reviewer → Simplifier)** — Polls the agent-trigger. Runs triage again in `agent` mode: rejects tickets that lack acceptance criteria or a spec comment before spending implement budget. If the ticket passes, runs the full stage pipeline and opens a draft PR or MR.
+2. **Agent pass (Implementer → Reviewer → Simplifier)** — Polls the agent-trigger. Runs triage again in `agent` mode: rejects tickets that lack acceptance criteria or a spec comment before spending implement budget. If the ticket passes, runs the full stage pipeline and opens a PR or MR — draft only when a gate or configured visual proof failed, or no verify command ran.
 
 The agent runs inside the sandbox. The host owns all file sync (`copyIn` / `copyFileOut`) and secrets. A run stops when the agent emits `<promise>COMPLETE</promise>`.
 
@@ -141,7 +141,7 @@ const fetcher = new GitHubProjectFetcher({ owner, projectNumber, repo });// GitH
 
 GitHub is also the review surface: `publishForReview` opens a PR, and `linkPullRequest` / `linkLinearIssue` comment the PR link back onto the source issue.
 
-A Linear task in a repo whose `origin` is on gitlab.com, or on the self-hosted host named by `GITLAB_HOST`, opens a draft GitLab MR through `glab` instead, and the review verdict lands as an MR note. A self-hosted host needs `GITLAB_HOST` even when `glab auth login` already knows it; preflight stops a run whose origin host glab is logged in to but `GITLAB_HOST` does not name. That check never sends `GITLAB_TOKEN` to the origin host, so a job with only a token relies on `GITLAB_HOST`. Host detection reads the hostname in `origin` as written, so a remote that uses an SSH config alias is not recognised: `git@gitlab.com-work:group/project.git` takes the GitHub route on the Linear path, and `--source gitlab` accepts an alias such as `github.com-work` as a GitLab host and fails later in `glab`. Use the real hostname in `origin`. Agent runs never write CI config: `.github/workflows/`, local actions under `.github/actions/` (an action kept elsewhere is not covered), `.gitlab-ci.yml` and every `.yml`/`.yaml` under `.gitlab/`, including insights, dashboards and Kubernetes agent config, are dropped on copy-back with a warning, so a task that only edits those files ends with no changes; make such edits by hand. When a run changed any of them, the PR or MR description (or the `revise-pr` summary comment) lists those files under **Not included**. `vanguard review-mr` skips an MR head it already reviewed, so a CI retry after a completed review posts no second review. Two runs on the same head that overlap can both post, since the check runs before the review and the note is posted after it. Only a marker in a note by the user `glab` runs as counts, so another participant cannot suppress the review by posting a marker. An MR author who can change the job definition can still suppress it, as [External PR review](#external-pr-review) explains. After a switch to a token of another user, earlier reviews stop counting and each open MR head is reviewed once more. A running `watch-mrs` keeps the user it read first, so restart it after such a switch. When it cannot read that user (the token needs `GET /user`) or the MR notes, it fails and posts nothing, and the error says which. The reviewer states a `Verdict:` line first, so a reply cut off before its completion signal still counts as a review (posted with a truncation note). A reply with no verdict is retried once with a larger budget and a verdict-first triage instruction; if the retry has no verdict either, `review-mr` posts nothing and exits non-zero, so the head is never marked as reviewed, and both discarded replies' tails are in the job log.
+A Linear task in a repo whose `origin` is on gitlab.com, or on the self-hosted host named by `GITLAB_HOST`, opens a GitLab MR through `glab` instead (draft only when a gate or configured visual proof failed, or no verify command ran), and the review verdict lands as an MR note. A self-hosted host needs `GITLAB_HOST` even when `glab auth login` already knows it; preflight stops a run whose origin host glab is logged in to but `GITLAB_HOST` does not name. That check never sends `GITLAB_TOKEN` to the origin host, so a job with only a token relies on `GITLAB_HOST`. Host detection reads the hostname in `origin` as written, so a remote that uses an SSH config alias is not recognised: `git@gitlab.com-work:group/project.git` takes the GitHub route on the Linear path, and `--source gitlab` accepts an alias such as `github.com-work` as a GitLab host and fails later in `glab`. Use the real hostname in `origin`. Agent runs never write CI config: `.github/workflows/`, local actions under `.github/actions/` (an action kept elsewhere is not covered), `.gitlab-ci.yml` and every `.yml`/`.yaml` under `.gitlab/`, including insights, dashboards and Kubernetes agent config, are dropped on copy-back with a warning, so a task that only edits those files ends with no changes; make such edits by hand. When a run changed any of them, the PR or MR description (or the `revise-pr` summary comment) lists those files under **Not included**. `vanguard review-mr` skips an MR head it already reviewed, so a CI retry after a completed review posts no second review. Two runs on the same head that overlap can both post, since the check runs before the review and the note is posted after it. Only a marker in a note by the user `glab` runs as counts, so another participant cannot suppress the review by posting a marker. An MR author who can change the job definition can still suppress it, as [External PR review](#external-pr-review) explains. After a switch to a token of another user, earlier reviews stop counting and each open MR head is reviewed once more. A running `watch-mrs` keeps the user it read first, so restart it after such a switch. When it cannot read that user (the token needs `GET /user`) or the MR notes, it fails and posts nothing, and the error says which. The reviewer states a `Verdict:` line first, so a reply cut off before its completion signal still counts as a review (posted with a truncation note). A reply with no verdict is retried once with a larger budget and a verdict-first triage instruction; if the retry has no verdict either, `review-mr` posts nothing and exits non-zero, so the head is never marked as reviewed, and both discarded replies' tails are in the job log.
 
 `LinearCliTaskFetcher` drives Linear entirely through the `linear` CLI (from schpet/linear-cli; authenticate with `linear auth login` or set `LINEAR_API_KEY`), covering fetch/list/comment with no SDK dependency. The CLI's skill (SKILL.md in that repo) can be injected via `skillRegistryFromDirectory` so the agent uses it directly. Confirm the `linear issue query --json` field shape against your workspace before relying on it.
 
@@ -512,7 +512,7 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 | Routing label | What happens |
 |---|---|
 | `ready for spec` | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + relabelled `needs info` (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue relabelled `ready for agent`. If `--label` is supplied, the issue must also carry that ownership label. |
-| `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → draft PR. If `--label` is supplied, the issue must also carry that ownership label. |
+| `ready for agent` | Agent pass triggers (next poll after spec, or immediately for directly-labelled issues). Triage runs again — no spec or acceptance criteria → `needs info`. Valid tickets: full Implementer → Reviewer → Simplifier pipeline → PR (draft only when a gate or configured visual proof failed, or no verify command ran). If `--label` is supplied, the issue must also carry that ownership label. |
 | `needs info` | Parked. Human updates the ticket and moves it back. |
 
 > **Note on the issue template:** The [Vanguard Task template](.github/ISSUE_TEMPLATE/vanguard-task.md) defaults to `ready for agent` only. The spec loop runs when a human downgrades the label to `ready for spec` (for high-level ideas that need a research + planning pass first). Leaving the label as `ready for agent` skips the spec pass and goes straight to implementation — this is intentional, not a bug. Add an ownership label such as `vanguard` only when your watcher is started with `--label vanguard`.
@@ -528,7 +528,7 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 
 `ready for ...` / `needs ...` are **triggers you add by hand**; `vanguard:...` are **states Vanguard sets itself**. On GitHub Actions, issue-side triggers fire `issues: labeled` workflows; PR-side triggers fire `pull_request_target: labeled` workflows.
 
-These are the GitHub names. GitLab (`watch --source gitlab`) uses the same `ready for spec`, `ready for agent` and `needs info` triggers but writes its states with a double colon: `vanguard::speccing`, `vanguard::running`, `vanguard::review` once the draft MR is open, and `vanguard::reviewing` / `vanguard::reviewed` for `watch-mrs`, whose trigger label you pass with `--label`. GitLab has no `needs research` or `needs revision` pass. Linear routes by workflow states (table below), and a GitHub Projects board by its Status column.
+These are the GitHub names. GitLab (`watch --source gitlab`) uses the same `ready for spec`, `ready for agent` and `needs info` triggers but writes its states with a double colon: `vanguard::speccing`, `vanguard::running`, `vanguard::review` once the MR is open, and `vanguard::reviewing` / `vanguard::reviewed` for `watch-mrs`, whose trigger label you pass with `--label`. GitLab has no `needs research` or `needs revision` pass. Linear routes by workflow states (table below), and a GitHub Projects board by its Status column.
 
 | Label | On | Kind | Triggers / means |
 |---|---|---|---|
@@ -537,11 +537,11 @@ These are the GitHub names. GitLab (`watch --source gitlab`) uses the same `read
 | `needs research` | issue | trigger | external research → posts a findings comment → **rests** (no auto-advance; you set spec/agent next) |
 | `needs info` | issue | triage (resting) | parked — ticket too vague |
 | `ready for vanguard review` | **PR** | trigger | adversarial **read-only** review → posts a comment; never edits code |
-| `needs revision` | **PR** (a Vanguard draft) | trigger | reads your review comments → fixes on the PR branch → pushes → un-drafts → back to `needs-human-review` |
+| `needs revision` | **PR** (opened by Vanguard) | trigger | reads your review comments → fixes on the PR branch → pushes → un-drafts if still a draft → back to `needs-human-review` |
 | `vanguard:speccing` · `:running` · `:researching` · `:revising` · `:reviewing` | issue/PR | transient state | Vanguard is working (seconds–minutes) |
 | `vanguard:needs-human-review` · `:reviewed` · `:verify-failed` · `:visual-proof-failed` | issue/PR | resting state | waiting on a human |
 
-The word "review" means two things: `ready for vanguard review` (PR) is **Vanguard reviewing your PR** (read-only comment); `needs revision` (PR) is **Vanguard acting on your review of its own draft** (edits + pushes). `vanguard:needs-human-review` is the post-build resting state — your turn to review the draft.
+The word "review" means two things: `ready for vanguard review` (PR) is **Vanguard reviewing your PR** (read-only comment); `needs revision` (PR) is **Vanguard acting on your review of its own PR** (edits + pushes). `vanguard:needs-human-review` is the post-build resting state — your turn to review the PR.
 
 ```bash
 # GitHub Loop v1.1 defaults
@@ -566,7 +566,7 @@ vanguard watch --source github --github-repo owner/repo \
 | State condition | What happens |
 |---|---|
 | State TYPE matches `--spec-state` (e.g. `triage`) + label | Spec pass triggers. Triage runs first — vague tickets get a clarification comment + moved to Needs Info state (no model budget spent). Valid tickets: `techSpecStage` posts a `<tech_spec>` comment, issue moved to the agent-trigger state (`--agent-state`, default `Todo`). |
-| State TYPE matches `--trigger-state` (default `unstarted`) + label | Agent pass triggers (next poll after spec, or for any pre-specced issue). Triage runs in `agent` mode — vague tickets moved to `--needs-info-state`. Valid tickets: Implementer → Reviewer → Simplifier → draft PR. |
+| State TYPE matches `--trigger-state` (default `unstarted`) + label | Agent pass triggers (next poll after spec, or for any pre-specced issue). Triage runs in `agent` mode — vague tickets moved to `--needs-info-state`. Valid tickets: Implementer → Reviewer → Simplifier → PR (draft only when a gate or configured visual proof failed, or no verify command ran). |
 | Needs Info state | Parked. Human updates the ticket and moves it back. |
 
 The two-flag split is Linear-specific: `--agent-state` sets the **state name** the spec pass moves the ticket to (`Todo`), while `--trigger-state` matches the **state type** the agent pass fires on (`unstarted`). The default `Todo` is of type `unstarted`, so they line up out of the box and `--trigger-state` rarely needs setting (hence its absence from the example below) — unlike GitHub, where a single `--agent-label` is both the move target and the trigger.
