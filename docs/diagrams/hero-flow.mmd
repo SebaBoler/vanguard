@@ -1,0 +1,20 @@
+%% README hero: the topology behind hero-flow-light.svg / hero-flow-dark.svg (top of README).
+%% Change it here first, mirror it in hero-flow.archify.json, then re-render with archify (github.com/tt-a1i/archify):
+%%   node archify/bin/archify.mjs deliver architecture docs/diagrams/hero-flow.archify.json <out>.html --quality showcase
+%% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg hero-flow
+flowchart LR
+  ticket["Task ticket<br/>GitHub · GitLab · Linear"]
+  subgraph sandbox[Agent pipeline in Docker sandbox]
+    plan["Plan<br/>read-only tech spec"]
+    implement["Implement<br/>writes the change"]
+    review["Review<br/>fresh context"]
+    verify{"Verify<br/>proof-of-work gate"}
+    repair["Repair<br/>max 2 rounds"]
+  end
+  ready["PR ready<br/>every gate passed"]
+  draft["Draft PR<br/>a gate failed"]
+
+  ticket --> plan --> implement --> review --> verify --> ready
+  verify -- red --> repair
+  repair -. re-verify .-> verify
+  repair -- still red --> draft

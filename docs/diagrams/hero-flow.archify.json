@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Vanguard at a glance",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "legend": { "mode": "hidden" },
+    "viewBox": [1052, 290]
+  },
+  "components": [
+    { "id": "ticket", "type": "external", "label": "Task ticket", "sublabel": "GitHub · GitLab · Linear", "pos": [24, 72], "size": [124, 56] },
+    { "id": "plan", "type": "backend", "label": "Plan", "sublabel": "read-only tech spec", "pos": [212, 72], "size": [124, 56] },
+    { "id": "implement", "type": "backend", "label": "Implement", "sublabel": "writes the change", "pos": [368, 72], "size": [124, 56] },
+    { "id": "review", "type": "backend", "label": "Review", "sublabel": "fresh context", "pos": [524, 72], "size": [124, 56] },
+    { "id": "verify", "type": "security", "label": "Verify", "sublabel": "proof-of-work gate", "pos": [680, 72], "size": [124, 56] },
+    { "id": "repair", "type": "backend", "label": "Repair", "sublabel": "max 2 rounds", "pos": [680, 208], "size": [124, 56] },
+    { "id": "ready", "type": "frontend", "label": "PR ready", "sublabel": "every gate passed", "pos": [904, 72], "size": [124, 56] },
+    { "id": "draft", "type": "cloud", "label": "Draft PR", "sublabel": "a gate failed", "pos": [904, 208], "size": [124, 56] }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "Agent pipeline in Docker sandbox", "wraps": ["plan", "implement", "review", "verify", "repair"] }
+  ],
+  "connections": [
+    { "id": "ticket-plan", "from": "ticket", "to": "plan", "variant": "emphasis" },
+    { "id": "plan-implement", "from": "plan", "to": "implement", "variant": "emphasis" },
+    { "id": "implement-review", "from": "implement", "to": "review", "variant": "emphasis" },
+    { "id": "review-verify", "from": "review", "to": "verify", "variant": "emphasis" },
+    { "id": "verify-ready", "from": "verify", "to": "ready", "variant": "emphasis" },
+    { "id": "verify-repair", "from": "verify", "to": "repair", "label": "red", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelDy": 24, "labelDx": 30 },
+    { "id": "repair-verify", "from": "repair", "to": "verify", "label": "re-verify", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelDx": -38 },
+    { "id": "repair-draft", "from": "repair", "to": "draft", "label": "still red", "variant": "security", "labelDx": 14 }
+  ]
+}
