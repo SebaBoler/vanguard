@@ -73,7 +73,7 @@ matches everything under a directory but not the bare directory name.
 
 ## Rules that need no configuration
 
-These fire from the facts alone and have no policy knob: `draft`, `review-missing`, `review-stale`,
+These fire from the facts alone and have no policy knob: `not-open` (the PR is closed or merged), `draft`, `review-missing`, `review-stale`,
 `review-blocking`, `review-incomplete`, `merge-conflict`, `head-moved`, `git-facts-failed`,
 `new-dependency` (a manifest key the base branch does not have), `public-api-changed` (a removed
 export outside test files), plus the two short-circuits `stopped` and `policy-unreadable`. Any single

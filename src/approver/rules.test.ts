@@ -33,6 +33,11 @@ describe('decide — one rule at a time', () => {
     facts.pr = { ...facts.pr, isDraft: true };
     expect(decide(facts, policy, 's').rulesFired).toContain('draft');
   });
+  it.each(['CLOSED', 'MERGED', ''])('not-open (state %j)', (state) => {
+    const facts = cleanFacts();
+    facts.pr = { ...facts.pr, state };
+    expect(decide(facts, policy, 's').rulesFired).toEqual(['not-open']);
+  });
   it('check-missing:<name> one id per failing check', () => {
     const facts = cleanFacts({ checks: [{ name: 'build', appId: 15368, conclusion: 'failure' }, { name: 'dependency-review', appId: 15368, conclusion: 'success' }] });
     expect(decide(facts, policy, 's').rulesFired).toEqual(['check-missing:build']);

@@ -161,7 +161,9 @@ export async function collectDiffFacts(input: CollectDiffFactsInput): Promise<Di
 
   let baseTip: string;
   try {
-    const ref = await resolveRemoteBaseRef(repoPath, baseRefName, { label: 'approver' });
+    // Same as loadPolicy: the remote base always wins, so a local branch that is ahead (a dev box,
+    // the backtest) cannot shrink or grow the diff the decision is about.
+    const ref = await resolveRemoteBaseRef(repoPath, baseRefName, { label: 'approver', keepLocalIfAhead: false });
     baseTip = (await git(repoPath, ['rev-parse', ref])).trim();
   } catch {
     return emptyDiffFacts(apiHeadSha);

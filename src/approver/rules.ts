@@ -43,6 +43,7 @@ export function decide(facts: ApproverFacts, policy: ApproverPolicy, seedInput: 
   };
 
   if (!facts.isFactoryPr) fire('not-factory-pr');
+  if (facts.pr.state !== 'OPEN') fire('not-open');
   if (facts.pr.isDraft) fire('draft');
   for (const check of facts.checks) if (check.conclusion !== 'success') fire(`check-missing:${check.name}`);
 

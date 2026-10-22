@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -80,6 +80,22 @@ afterEach(async () => {
 });
 
 describe('collectDiffFacts', () => {
+  it('diffs against the remote base even outside CI, where a local base that is ahead would otherwise win', async () => {
+    vi.stubEnv('CI', '');
+    try {
+      const head = await pushHead(async (cwd) => { await write(cwd, 'src/b.ts', 'export const c = 3;\n'); });
+      // A local `main` fast-forwarded onto the PR head is ahead of origin/main; used as the base, the
+      // merge base would be the head itself and the diff would shrink to nothing.
+      await git(repo, ['fetch', '--quiet', 'origin', 'refs/pull/1/head']);
+      await git(repo, ['checkout', '--quiet', 'main']);
+      await git(repo, ['merge', '--quiet', '--ff-only', 'FETCH_HEAD']);
+      const facts = await collect(head, head);
+      expect(facts).toMatchObject({ files: 1, paths: ['src/b.ts'] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('counts files, lines and paths against the merge base, and resolves a same-SHA review', async () => {
     const head = await pushHead(async (cwd) => { await write(cwd, 'src/b.ts', 'export const c = 3;\n'); });
     const facts = await collect(head, head);

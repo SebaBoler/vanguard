@@ -63,11 +63,23 @@ export function buildDecisionRecord(input: BuildDecisionRecordInput): DecisionRe
   };
 }
 
-/** Append one decision record to decisions.jsonl on the metrics branch; a rerun for the same (PR, head SHA) appends nothing. */
+const SHORT_CIRCUIT_RULES = new Set(['stopped', 'policy-unreadable']);
+
+/**
+ * Dedupe key: (PR, head SHA, kind). A short-circuited placeholder (stop switch, unreadable policy) gets
+ * its own kind, so once the stop is lifted the full decision for the same head is still recorded.
+ */
+export function decisionKey(r: Record<string, unknown>): string {
+  const rules = Array.isArray(r.rulesFired) ? r.rulesFired : [];
+  const kind = rules.some((id) => typeof id === 'string' && SHORT_CIRCUIT_RULES.has(id)) ? 'short' : 'full';
+  return `${String(r.prNumber)}:${String(r.headSha)}:${kind}`;
+}
+
+/** Append one decision record to decisions.jsonl on the metrics branch; a rerun for the same (PR, head SHA, kind) appends nothing. */
 export async function appendDecision(repoPath: string, record: DecisionRecord, opts: { branch?: string } = {}): Promise<void> {
   await appendBranchLines(repoPath, [JSON.stringify(record)], {
     ...(opts.branch !== undefined ? { branch: opts.branch } : {}),
     file: DECISIONS_FILE,
-    key: (r) => `${String(r.prNumber)}:${String(r.headSha)}`,
+    key: decisionKey,
   });
 }

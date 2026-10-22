@@ -201,6 +201,18 @@ describe('runApprover — end to end', () => {
     }
   });
 
+  it('a stop placeholder does not block the full decision for the same head once the stop is lifted', async () => {
+    process.env.VANGUARD_APPROVER_STOP = '1';
+    try {
+      await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]) });
+    } finally {
+      delete process.env.VANGUARD_APPROVER_STOP;
+    }
+    await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]) });
+    const lines = (await readBranchFile(repo, { file: 'decisions.jsonl' })).trim().split('\n');
+    expect(lines.map((l) => (JSON.parse(l) as { rulesFired: string[] }).rulesFired)).toEqual([['stopped'], []]);
+  });
+
   it('dry-run computes the decision but publishes and records nothing', async () => {
     const { record } = await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]), dryRun: true });
     expect(record.verdict).toBe('APPROVE');
