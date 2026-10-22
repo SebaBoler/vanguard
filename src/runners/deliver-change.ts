@@ -33,6 +33,7 @@ export type DeliveryTarget =
       body: (info: { commitLeaks: CommitClosingLeak[] }) => string;
       draft?: boolean;
       cli?: PublishOptions['cli'];
+      prToken?: PublishOptions['prToken'];
       /** Injected git/gh runner (tests). */
       runner?: CommandRunner;
     }
@@ -125,6 +126,7 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
       body: target.body({ commitLeaks }),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
+      ...(target.prToken !== undefined ? { prToken: target.prToken } : {}),
       ...(target.runner !== undefined ? { runner: target.runner } : {}),
       // Same identity as the commit: the pre-push rebase replays the commits.
       ...identity,

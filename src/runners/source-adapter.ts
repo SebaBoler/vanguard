@@ -600,6 +600,8 @@ export async function runSourcedIssue(
           ...(scope !== undefined ? { scope } : {}),
           draft: true,
           ...(adapter.reviewCli !== undefined ? { cli: adapter.reviewCli } : {}),
+          // Same PAT revise pushes with: a PR it opens fires the repo's pull_request workflows (CI).
+          ...(process.env.VANGUARD_PUSH_TOKEN ? { prToken: process.env.VANGUARD_PUSH_TOKEN } : {}),
           body: ({ commitLeaks }) => whiteLabel
             ? baseBody
             : [

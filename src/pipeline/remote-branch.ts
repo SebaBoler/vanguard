@@ -10,10 +10,11 @@ import type { RunContext } from '../core/vanguard.js';
  * commitStage lives here; pipeline.ts keeps stages, prompts, budget and assembly.
  */
 
-export type CommandRunner = (file: string, args: string[], cwd: string) => Promise<string>;
+/** `env` is merged over the process env for this one command. */
+export type CommandRunner = (file: string, args: string[], cwd: string, env?: Record<string, string>) => Promise<string>;
 
-const defaultRunner: CommandRunner = async (file: string, args: string[], cwd: string): Promise<string> =>
-  (await execa(file, args, { cwd })).stdout;
+const defaultRunner: CommandRunner = async (file, args, cwd, env): Promise<string> =>
+  (await execa(file, args, { cwd, ...(env !== undefined ? { env } : {}) })).stdout;
 
 export interface PublishOptions {
   title: string;
@@ -25,6 +26,12 @@ export interface PublishOptions {
   remote?: string;
   /** CLI tool to use for PR/MR creation. Default 'gh' (GitHub). Use 'glab' for GitLab MRs. */
   cli?: 'gh' | 'glab';
+  /**
+   * gh only: open the PR as this token's owner (GH_TOKEN for `gh pr create`). A PR opened with the
+   * workflow's GITHUB_TOKEN fires no `pull_request` workflows (recursion guard), so it sits with no CI
+   * until someone pushes. Refused (e.g. no Pull requests: write) → opens with the ambient credential.
+   */
+  prToken?: string;
   /** Injected for tests; defaults to running git/gh via execa. */
   runner?: CommandRunner;
 }
@@ -178,6 +185,17 @@ export function rebasedNote(remote: string, base: string): string {
   return `Rebased onto \`${remote}/${base}\` before publishing: the base moved while this change was being prepared.`;
 }
 
+/** Open the PR/MR. With a prToken (gh only) try as the token's owner first: a refused token must not lose the run's work. */
+async function openReview(run: CommandRunner, tool: string, args: string[], ctx: RunContext, opts: PublishOptions): Promise<string> {
+  if (tool !== 'gh' || opts.prToken === undefined || opts.prToken === '') return run(tool, args, ctx.worktreePath);
+  try {
+    return await run(tool, args, ctx.worktreePath, { GH_TOKEN: opts.prToken });
+  } catch (cause) {
+    ctx.log.warn({ branch: ctx.branch }, `publish: opening the PR with the push token failed, using the ambient credential (the PR gets no CI until a push): ${errorMessage(cause)}`);
+    return run(tool, args, ctx.worktreePath);
+  }
+}
+
 /**
  * Merger review output: push the worktree branch and open a GitHub PR for human/CI review.
  * Outward-facing and opt-in — call after commitStage and before disposeContext. GitHub is the
@@ -230,7 +248,7 @@ export async function publishForReview(ctx: RunContext, opts: PublishOptions): P
     ];
     if (opts.draft === true) args.push('--draft');
   }
-  const out = await run(tool, args, ctx.worktreePath);
+  const out = await openReview(run, tool, args, ctx, opts);
   const prUrl =
     out
       .split('\n')

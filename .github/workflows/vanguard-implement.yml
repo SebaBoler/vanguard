@@ -30,14 +30,14 @@ concurrency:
 jobs:
   implement:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.actor == 'SebaBoler') ||
+      (github.event_name == 'workflow_dispatch' && github.actor == 'spietrza') ||
       (github.event_name == 'issues' &&
       contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
-      contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
-      contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login))
     uses: ./.github/workflows/implement.yml
     with:
-      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
+      allowed-actors: '["spietrza","pawelkrystkiewicz"]'
       # Cross-provider self-review: Opus plans the spec, Sonnet implements, Codex reviews.
       # No llm-proxy: Codex runs on a ChatGPT subscription (CODEX_AUTH_JSON), which talks to the
       # ChatGPT backend directly — the proxy allowlist only covers the api.openai.com (API-key) path.
@@ -56,3 +56,6 @@ jobs:
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_AUTH_TOKEN: ${{ secrets.CLOUDFLARE_AUTH_TOKEN }}
+      # PAT that opens the PR: a PR opened with GITHUB_TOKEN fires no workflows (recursion guard),
+      # so it would sit with no CI until someone pushes. Same token as revise.
+      VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
