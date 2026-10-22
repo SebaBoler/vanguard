@@ -19,6 +19,9 @@ flowchart TB
     autoreview["Vanguard review<br/>opt-in, GitHub only"]
     revise["Revise (GitHub)<br/>fix review comments"]
   end
+  subgraph github[GitHub only, opt-in]
+    approver{"Approver (shadow)<br/>records, never merges"}
+  end
 
   issue --> triage
   triage --> info -->|human edits| issue
@@ -26,4 +29,5 @@ flowchart TB
   triage -->|agent trigger| build
   build --> pr --> review --> merge
   pr -->|ready PR| autoreview -.->|verdict| pr
+  autoreview -->|review done| approver -.->|check + comment| review
   review -->|needs revision| revise -->|push fixes| pr

@@ -2,10 +2,15 @@
 %% Change it here first, mirror it in security.archify.json, then re-render with archify (github.com/tt-a1i/archify):
 %%   node archify/bin/archify.mjs deliver architecture docs/diagrams/security.archify.json <out>.html --quality showcase
 %% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg security
-%% Dashed = opt-in: --llm-proxy (on in the review and revise workflows) and --egress.
+%% Dashed = opt-in: --llm-proxy (on in the review and revise workflows), --egress, and the shadow approver's writes (GitHub only).
 flowchart TB
+  subgraph approverjob[Default-branch job, write token]
+    approver{"Approver (shadow)<br/>allowlisted gh calls"}
+  end
   subgraph forge[GitHub · GitLab · Linear]
     input["Issue / PR / MR<br/>untrusted text"]
+    policy["approver.json<br/>base branch only"]
+    metrics["decisions.jsonl<br/>vanguard-metrics branch"]
     pr["PR / MR<br/>pushed by host only"]
   end
   subgraph host[Host: CI job or watch loop, holds the GitHub/GitLab token]
@@ -28,3 +33,5 @@ flowchart TB
   agent -->|changed files| copyback --> scan -->|push| pr
   agent -.->|nonce| llmproxy -.->|real key| model
   agent -.->|CONNECT| egress -.-> hosts
+  pr -->|git objects only| approver -.->|check + comment| pr
+  policy --> approver -.->|append| metrics

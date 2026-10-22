@@ -1,4 +1,4 @@
-<svg viewBox="0 0 728 420" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" style="" width="728" height="420" xmlns="http://www.w3.org/2000/svg"><style>
+<svg viewBox="0 0 760 556" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" style="" width="760" height="556" xmlns="http://www.w3.org/2000/svg"><style>
 /*
 JetBrains Mono variable WOFF2 subsets from Google Fonts service revision v24.
 These fixed bytes are shared by the viewer and its SVG/raster exports.
@@ -446,6 +446,8 @@ rect.c-bg-rect { fill: var(--bg); }
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" data-composition-frame-label="Agent in Docker sandbox" x="6" y="294" width="716" height="106" rx="8" class="c-security-group" stroke-width="1"/>
 
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="3" data-composition-frame-label="GitHub only, opt-in" x="350" y="430" width="200" height="106" rx="12" class="c-region" stroke-width="1"/>
+
         <!-- Connection paths (before components for correct z-order) -->
         <path data-edge-from="issue" data-edge-to="triage" data-edge-key="0" data-edge-id="issue-triage" data-composition-points="106,108;106,188" d="M 106 108 L 106 188" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="triage" data-edge-to="info" data-edge-key="1" data-edge-id="triage-info" data-composition-points="176,216;208,216" d="M 176 216 L 208 216" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
@@ -460,6 +462,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <path data-edge-from="review" data-edge-to="merge" data-edge-key="10" data-edge-id="review-merge" data-composition-points="552,73;520,73" d="M 552 73 L 520 73" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="review" data-edge-to="revise" data-edge-label="needs revision" data-edge-key="11" data-edge-id="review-revise" data-composition-points="622,108;622,324" d="M 622 108 L 622 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="revise" data-edge-to="pr" data-edge-label="push fixes" data-edge-key="12" data-edge-id="revise-pr" data-composition-points="552,352;536,352;536,223;520,223" d="M 552 352 L 544 352 Q 536 352 536 344 L 536 231 Q 536 223 528 223 L 520 223" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="autoreview" data-edge-to="approver" data-edge-label="review done" data-edge-key="13" data-edge-id="autoreview-approver" data-composition-points="450,380;450,460" d="M 450 380 L 450 460" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="approver" data-edge-to="review" data-edge-label="check + comment" data-edge-key="14" data-edge-id="approver-review" data-composition-points="520,488;716,488;716,80;692,80" d="M 520 488 L 708 488 Q 716 488 716 480 L 716 88 Q 716 80 708 80 L 692 80" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-issue" data-node-id="issue" data-node-label="Issue" tabindex="0" role="button" aria-label="Focus Issue, trigger: label or state, Human" aria-pressed="false" data-node-kind="external" data-node-sublabel="trigger: label or state" data-node-context="Human">
@@ -577,6 +581,18 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="622" y="366" class="t-muted" font-size="9" text-anchor="middle">fix review comments</text>
         </g>
 
+        <g id="node-approver" data-node-id="approver" data-node-label="Approver (shadow)" tabindex="0" role="button" aria-label="Focus Approver (shadow), records, never merges, GitHub only, opt-in" aria-pressed="false" data-node-kind="security" data-node-sublabel="records, never merges" data-node-context="GitHub only, opt-in">
+          <title>Approver (shadow) · records, never merges · GitHub only, opt-in</title>
+          <rect x="380" y="460" width="140" height="56" rx="6" class="c-mask"/>
+          <rect x="380" y="460" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(386 466) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" x="450" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Approver (shadow)</text>
+        <text x="450" y="502" class="t-muted" font-size="9" text-anchor="middle">records, never merges</text>
+        </g>
+
         <!-- Connection labels -->
 
 
@@ -612,6 +628,14 @@ rect.c-bg-rect { fill: var(--bg); }
           <rect x="507" y="267.5" width="58" height="14" rx="3" class="c-mask"/>
           <text x="536" y="277.5" class="t-messagebus" font-size="8" text-anchor="middle">push fixes</text>
         </g>
+        <g data-edge-from="autoreview" data-edge-to="approver" data-edge-label="review done" data-edge-key="13" data-edge-id="autoreview-approver">
+          <rect x="418.6" y="394" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="450" y="404" class="t-muted" font-size="8" text-anchor="middle">review done</text>
+        </g>
+        <g data-edge-from="approver" data-edge-to="review" data-edge-label="check + comment" data-edge-key="14" data-edge-id="approver-review">
+          <rect x="675" y="264" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="716" y="274" class="t-messagebus" font-size="8" text-anchor="middle">check + comment</text>
+        </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Human">
@@ -627,6 +651,11 @@ rect.c-bg-rect { fill: var(--bg); }
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Agent in Docker sandbox">
           <rect data-graph-role="structural-frame-label-mask" x="10" y="304" width="134.2" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="14" y="317" class="t-security" font-size="9" font-weight="600">Agent in Docker sandbox</text>
+        </g>
+
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="3" data-composition-frame-kind="region" data-composition-frame-label="GitHub only, opt-in">
+          <rect data-graph-role="structural-frame-label-mask" x="354" y="440" width="112.6" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="358" y="453" class="t-cloud" font-size="9" font-weight="600">GitHub only, opt-in</text>
         </g>
 
         <!-- Legend -->
