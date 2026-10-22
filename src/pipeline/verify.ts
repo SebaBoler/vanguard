@@ -21,12 +21,15 @@ const TYPECHECK_SCRIPTS = ['typecheck', 'check-types', 'type-check'];
 
 /**
  * Resolve the verification command. Precedence: explicit cmd (CLI flag) > VANGUARD_VERIFY_CMD env >
- * auto-detect from the worktree package.json > auto-detect Python (pytest) markers > undefined
- * (skip Proof of Work entirely — the caller must render that skip visibly, not drop it silently).
- * JS auto-detect: if package.json has a `test` script, build "<pm> install --frozen-lockfile && <pm>
- * run typecheck && <pm> test", including the first of typecheck/check-types/type-check that exists; pm from the
- * `packageManager` field (pnpm/yarn/npm), default npm. Python auto-detect: pyproject.toml/pytest.ini/
- * setup.cfg present -> "pytest".
+ * a `verify` script in the worktree package.json > auto-detect from package.json's test/typecheck
+ * scripts > auto-detect Python (pytest) markers > undefined (skip Proof of Work entirely — the
+ * caller must render that skip visibly, not drop it silently).
+ * JS auto-detect: if package.json has a `verify` script, build "<pm> install --frozen-lockfile &&
+ * <pm> run verify" so the gate matches whatever a repo declares (e.g. the CI build job) instead of
+ * our guess. Otherwise, if it has a `test` script, build "<pm> install --frozen-lockfile && <pm>
+ * run typecheck && <pm> test", including the first of typecheck/check-types/type-check that exists;
+ * pm from the `packageManager` field (pnpm/yarn/npm), default npm. Python auto-detect:
+ * pyproject.toml/pytest.ini/setup.cfg present -> "pytest".
  */
 export async function resolveVerifyCommand(
   worktreePath: string,
@@ -46,10 +49,12 @@ export async function resolveVerifyCommand(
     try {
       const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string>; packageManager?: string };
       const scripts = pkg.scripts ?? {};
-      if (scripts.test === undefined) return undefined;
       const field = pkg.packageManager ?? '';
       const pm = field.startsWith('pnpm') ? 'pnpm' : field.startsWith('yarn') ? 'yarn' : 'npm';
-      const parts = [`${pm} install --frozen-lockfile`];
+      const install = `${pm} install --frozen-lockfile`;
+      if (scripts.verify !== undefined) return `${install} && ${pm} run verify`;
+      if (scripts.test === undefined) return undefined;
+      const parts = [install];
       // Turborepo-style monorepos name it check-types; without this the gate never type-checks them.
       const typecheck = TYPECHECK_SCRIPTS.find((name) => scripts[name] !== undefined);
       if (typecheck !== undefined) parts.push(`${pm} run ${typecheck}`);
