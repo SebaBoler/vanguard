@@ -23,6 +23,13 @@ const TASKS: BoardTask[] = [
   { id: 't-d1', title: 'Done one', column: 'done', state: 'done' },
 ];
 
+const COUNTS_TASKS: BoardTask[] = [
+  { id: 't-c1', title: 'Claimed one', column: 'claimed', state: 'speccing' },
+  { id: 't-r1', title: 'Running one', column: 'running', state: 'In Progress' },
+  { id: 't-w1', title: 'Waiting one', column: 'queued', state: 'ready for spec', waiting: true },
+  { id: 't-w2', title: 'Waiting two', column: 'queued', state: 'ready for agent', waiting: true },
+];
+
 describe('TaskBoard', () => {
   test('renders all six workflow columns', async () => {
     mockListTasks.mockResolvedValue({ tasks: [], capped: false });
@@ -69,6 +76,26 @@ describe('TaskBoard', () => {
     mockListTasks.mockRejectedValue('boom');
     render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     expect(await screen.findByText(/No task board/)).toBeInTheDocument();
+  });
+
+  test('an uncapped list shows exact header counts, as a single text run', async () => {
+    mockListTasks.mockResolvedValue({ tasks: COUNTS_TASKS, capped: false });
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+    expect(await screen.findByText('Running 2 · Waiting 2')).toBeInTheDocument();
+  });
+
+  test('a capped list makes both header counts a lower bound', async () => {
+    mockListTasks.mockResolvedValue({ tasks: COUNTS_TASKS, capped: true });
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+    expect(await screen.findByText('Running 2+ · Waiting 2+')).toBeInTheDocument();
+  });
+
+  test('error branch renders no Running/Waiting text', async () => {
+    mockListTasks.mockRejectedValue('boom');
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+    await screen.findByText(/No task board/);
+    expect(screen.queryByText(/Running/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Waiting/)).not.toBeInTheDocument();
   });
 });
 

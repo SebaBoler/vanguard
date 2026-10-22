@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnFor, mintBoardId, resolveTaskRef, toBoardTask } from './board.js';
+import { columnFor, isTriggerLabel, mintBoardId, resolveTaskRef, toBoardTask } from './board.js';
 import { boardFilterFor, BOARD_FETCH_CAP, fetchTaskSpec, listBoardTasks, readBoardConfig } from './board-list.js';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,8 +31,53 @@ describe('columnFor (Rust table 1:1)', () => {
     ['vanguard::reviewing', 'review'],
     ['vanguard::reviewed', 'review'],
     ['completed', 'done'],
+    // Trigger labels are a human request, not a claim (S10 / waiting feature).
+    ['ready for spec', 'queued'],
+    ['ready for agent', 'queued'],
+    ['ready for spec vanguard:running', 'running'],
+    ['ready for spec closed', 'done'],
+    ['ready for speccing', 'claimed'],
+    ['ready for spec review', 'review'],
   ])('%s → %s', (text, column) => {
     expect(columnFor(text)).toBe(column);
+  });
+});
+
+// ── isTriggerLabel: the shared predicate behind columnFor's strip and toBoardTask's waiting flag ─
+describe('isTriggerLabel', () => {
+  it.each([
+    ['ready for agent', true],
+    ['Ready For Spec', true],
+    ['ready-for-spec', true],
+    ['vanguard:speccing', false],
+    ['ready for speccing', false],
+    ['', false],
+  ])('%s → %s', (label, expected) => {
+    expect(isTriggerLabel(label)).toBe(expected);
+    // called twice on the same input — catches a /g-with-.test() lastIndex regression
+    expect(isTriggerLabel(label)).toBe(expected);
+  });
+});
+
+// ── toBoardTask waiting flag: label-sourced, present only for trigger-labelled + queued ─────────
+describe('toBoardTask waiting flag', () => {
+  const base: Task = { id: 'x', title: 'T', description: '', labels: [], children: [], comments: [] };
+
+  it('a trigger-labelled queued task is waiting', () => {
+    const t = toBoardTask('github', { ...base, ref: '904', state: 'open', labels: ['ready for spec'] });
+    expect(t).toEqual({ id: 'gh-904', title: 'T', column: 'queued', state: 'ready for spec', waiting: true });
+  });
+
+  it('an unlabelled open issue has no waiting property', () => {
+    const t = toBoardTask('github', { ...base, ref: '905', state: 'open' });
+    expect(t).toEqual({ id: 'gh-905', title: 'T', column: 'queued', state: 'open' });
+    expect('waiting' in t).toBe(false);
+  });
+
+  it('a trigger-labelled task that is also running is not waiting', () => {
+    const t = toBoardTask('github', { ...base, ref: '906', state: 'open', labels: ['ready for spec', 'vanguard:running'] });
+    expect(t.column).toBe('running');
+    expect('waiting' in t).toBe(false);
   });
 });
 
