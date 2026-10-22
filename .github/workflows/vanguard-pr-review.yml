@@ -4,7 +4,8 @@ name: Vanguard PR Review
 
 on:
   pull_request_target:
-    types: [labeled]
+    # labeled: someone asks for a review. opened / ready_for_review: a factory PR that is ready gets one too.
+    types: [labeled, opened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -12,18 +13,42 @@ permissions:
   pull-requests: write
   issues: write
 
-concurrency:
-  group: vanguard-pr-review-${{ github.repository }}
-  cancel-in-progress: false
-
 jobs:
-  review:
+  # A factory PR (a Vanguard branch in this repo, opened by an allowed login) that is not a draft gets the
+  # trigger label here, so the review below runs without anyone labelling it. A label added with
+  # GITHUB_TOKEN starts no new run (recursion guard), so this cannot trigger the review twice.
+  label-factory-pr:
     if: >-
+      contains(fromJSON('["opened","ready_for_review"]'), github.event.action) &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'chore/vanguard-') &&
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the review trigger label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/labels" -f 'labels[]=ready for vanguard review' --silent
+
+  review:
+    needs: label-factory-pr
+    if: >-
+      !cancelled() && (
       github.event_name == 'workflow_dispatch' ||
-      (github.event.label.name == 'ready for vanguard review' &&
+      needs.label-factory-pr.result == 'success' ||
+      (github.event.action == 'labeled' &&
+      github.event.label.name == 'ready for vanguard review' &&
       github.event.pull_request.draft == false &&
       contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
-      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login))
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login)))
+    # Job-level, not workflow-level: a run whose jobs are all skipped (any other label, any other opened PR)
+    # never joins the group, so it cannot cancel a review that is waiting in it.
+    concurrency:
+      group: vanguard-pr-review-${{ github.repository }}
+      cancel-in-progress: false
     uses: ./.github/workflows/pr-review.yml
     with:
       allowed-actors: '["spietrza","pawelkrystkiewicz"]'

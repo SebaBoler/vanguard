@@ -113,6 +113,15 @@ describe('eventPullRequestHint', () => {
     expect(eventPullRequestHint('ready for vanguard review', '/event.json', read)).toBe(316);
   });
 
+  it('returns the PR number for a just-opened or just-readied PR (labelled by an earlier job)', () => {
+    for (const action of ['opened', 'ready_for_review']) {
+      const read = (): string => JSON.stringify({ action, pull_request: { number: 548 } });
+      expect(eventPullRequestHint('ready for vanguard review', '/event.json', read)).toBe(548);
+    }
+    const synchronize = (): string => JSON.stringify({ action: 'synchronize', pull_request: { number: 548 } });
+    expect(eventPullRequestHint('ready for vanguard review', '/event.json', synchronize)).toBeUndefined();
+  });
+
   it('ignores other labels, missing paths, junk payloads, and non-PR events', () => {
     expect(
       eventPullRequestHint('ready for vanguard review', '/event.json', () =>

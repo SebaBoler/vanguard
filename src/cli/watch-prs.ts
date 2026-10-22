@@ -14,15 +14,20 @@ export type WatchPullRequestsRunner = (
   opts: WatchPullRequestsLoopOptions,
 ) => Promise<PullRequestWatchTick | undefined>;
 
-interface LabeledPullRequestEventPayload {
+interface PullRequestEventPayload {
+  action?: string;
   label?: { name?: string };
   pull_request?: { number?: number };
 }
 
+/** A caller labels a just-opened or just-readied factory PR in an earlier job, then reviews it here. */
+const READY_ACTIONS = new Set(['opened', 'ready_for_review']);
+
 /**
  * PR number from the Actions event that triggered this run. The label-filtered scan is search-backed
  * and eventually consistent — a PR labeled seconds before the run can be invisible to it, turning the
- * run into a silent no-op. Only trusts the payload when its label matches the trigger label.
+ * run into a silent no-op. Only trusts the payload when its label matches the trigger label, or when the
+ * PR was just opened or marked ready; either way the hinted PR is fetched live and must carry the label.
  */
 export function eventPullRequestHint(
   label: string,
@@ -31,8 +36,8 @@ export function eventPullRequestHint(
 ): number | undefined {
   if (eventPath === undefined || eventPath === '') return undefined;
   try {
-    const payload = JSON.parse(readFile(eventPath)) as LabeledPullRequestEventPayload;
-    if (payload.label?.name !== label) return undefined;
+    const payload = JSON.parse(readFile(eventPath)) as PullRequestEventPayload;
+    if (payload.label?.name !== label && !READY_ACTIONS.has(payload.action ?? '')) return undefined;
     const number = payload.pull_request?.number;
     return typeof number === 'number' && Number.isInteger(number) && number >= 1 ? number : undefined;
   } catch {
