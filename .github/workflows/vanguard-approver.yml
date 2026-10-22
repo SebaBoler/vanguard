@@ -1,0 +1,102 @@
+name: Vanguard Approver (shadow)
+
+# Deterministic APPROVE / ESCALATE for a factory PR, in shadow mode: it decides from typed facts, appends
+# the decision to decisions.jsonl on the vanguard-metrics branch, and posts a neutral `vanguard/approver`
+# check and a comment. It never merges, approves or labels (docs/approver-policy.md, #513).
+#
+# Trigger: the external review finishing. The job then waits for the required CI checks, so the decision
+# sees complete inputs exactly once. Triggering on CI as well would let whichever finished first record
+# a premature "review-missing" decision that the per-head dedupe then keeps. Not `check_suite` (never
+# fires for suites GitHub Actions created) and not `pull_request_review` (reviews posted with
+# GITHUB_TOKEN start no workflow).
+#
+# Trust: workflow_run runs the default branch's copy of this file with a write token. It builds the CLI
+# from that checkout and never checks out or runs PR code; the approver reads the PR head only as git
+# objects, reads its policy from the base branch, and its gh calls are allowlisted.
+
+on:
+  workflow_run:
+    workflows: ["Vanguard PR Review"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr: { description: "PR number", required: true }
+
+permissions:
+  contents: write        # append decisions.jsonl to the vanguard-metrics branch
+  checks: write          # the vanguard/approver check run
+  pull-requests: write   # the decision comment
+  issues: write
+
+jobs:
+  approve:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.actor == 'spietrza') ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'chore/vanguard-'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: vanguard-approver-${{ github.event.workflow_run.head_branch || inputs.pr }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Full history: the merge base, patch-ids and merge-tree need it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the PR
+        id: pr
+        env:
+          IN_PR: ${{ inputs.pr }}
+          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          pr="${IN_PR:-$RUN_PR}"
+          if [ -z "$pr" ] && [ -n "$HEAD_BRANCH" ]; then
+            pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number // empty')
+          fi
+          if ! [[ "$pr" =~ ^[1-9][0-9]*$ ]]; then
+            echo "No open PR for this run; nothing to decide."
+            exit 0
+          fi
+          # The approver reads its policy from the PR's base branch, so only a PR into the default branch is
+          # judged; another base could carry a weaker policy and pollute the shadow data.
+          base=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+          if [ "$base" != "$DEFAULT_BRANCH" ]; then
+            echo "PR #$pr targets '$base', not '$DEFAULT_BRANCH'; nothing to decide."
+            exit 0
+          fi
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the required checks
+        if: steps.pr.outputs.number != ''
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+        # A red or missing check is an input, not an error: the approver records it as ESCALATE.
+        run: gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --required --watch --interval 30 || true
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.pr.outputs.number != ''
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        if: steps.pr.outputs.number != ''
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - if: steps.pr.outputs.number != ''
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+
+      - name: Decide (shadow)
+        if: steps.pr.outputs.number != ''
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          # Emergency stop: set the repo variable to any value. The in-repo switch is `enabled` in the policy.
+          VANGUARD_APPROVER_STOP: ${{ vars.VANGUARD_APPROVER_STOP }}
+        run: node dist/cli/index.js approve --pr "$PR" --github-repo "$GITHUB_REPOSITORY" --mode shadow
