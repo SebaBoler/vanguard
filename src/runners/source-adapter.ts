@@ -26,7 +26,7 @@ import { resolveAndRunVisualProof, visualProofBlock } from '../pipeline/visual-p
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { reviewRequestBody } from './review-body.js';
 import { repairUntilGreen } from '../pipeline/repair-gate.js';
-import { deliverChange } from './deliver-change.js';
+import { deliverChange, conventionalPrTitle } from './deliver-change.js';
 import {
   parseSpecManifest,
   primaryModuleScope,
@@ -235,11 +235,6 @@ function branchIdFromTaskId(taskId: string): string {
   return slug === '' ? 'task' : slug;
 }
 
-/**
- * Conventional-Commits-safe commit message for white-label mode: `feat: <lower-case subject> (#<issue>)`
- * with a header ≤100 chars. Lower-casing the whole subject is the reliable way to pass commitlint's
- * `subject-case` (never sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
- */
 /** Issue label that pins the implementer-tier model for ONE task: `vanguard:model=<model>`. */
 export const MODEL_LABEL_PREFIX = 'vanguard:model=';
 
@@ -271,13 +266,20 @@ export function modelFromLabels(labels: ReadonlyArray<string>, onInvalid?: (labe
   return model;
 }
 
-export function conventionalCommitMessage(title: string, taskId: string): string {
-  const prefix = 'feat: ';
+/**
+ * Conventional-Commits-safe commit message for white-label mode: `<type>(<scope>)?: <lower-case
+ * subject> (#<issue>)` with a header ≤100 chars. Reuses `conventionalPrTitle` so a title that already
+ * carries a type (e.g. `refactor(hub): …`) keeps it instead of getting a second `feat: ` prefix.
+ * Lower-casing the whole subject is the reliable way to pass commitlint's `subject-case` (never
+ * sentence/start/pascal/upper-case); the trailing `#<n>` satisfies task-number rules.
+ */
+export function conventionalCommitMessage(title: string, taskId: string, opts: { bugLabel?: boolean } = {}): string {
+  const prefixed = conventionalPrTitle(title, opts);
   const suffix = ` (#${branchIdFromTaskId(taskId)})`;
-  const subject = title.toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
-  const room = 100 - prefix.length - suffix.length;
+  const subject = prefixed.toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim();
+  const room = 100 - suffix.length;
   const clipped = subject.length > room ? subject.slice(0, room).trimEnd() : subject;
-  return `${prefix}${clipped}${suffix}`;
+  return `${clipped}${suffix}`;
 }
 
 /**
@@ -585,19 +587,22 @@ export async function runSourcedIssue(
       // leaks as a blocking warning. White-label mode keeps the body to just the Closes/Part-of line —
       // no automated proof-of-work blocks — so the PR reads like a plain human PR.
       const scope = primaryModuleScope(manifest);
+      const bugLabel = task.labels.includes('bug');
       const delivery = await deliverChange(ctx, {
         taskId: task.id,
-        // White-label mode uses a Conventional-Commits-safe message so a target repo's commitlint passes
-        // (≤100-char header, lower-case subject, trailing #issue). Default keeps the readable form.
+        // Default and white-label share the same type/scope logic as the PR title (conventionalPrTitle):
+        // no second prefix when the title already has one, `fix:` for a `bug` label, `feat:` otherwise.
+        // White-label additionally lower-cases the subject and caps the header at 100 chars so a target
+        // repo's commitlint passes.
         commitMessage: whiteLabel
-          ? conventionalCommitMessage(task.title, adapter.taskId(task))
-          : `feat: ${task.title} (${task.id})`,
+          ? conventionalCommitMessage(task.title, adapter.taskId(task), { bugLabel })
+          : `${conventionalPrTitle(task.title, { bugLabel, ...(scope !== undefined ? { scope } : {}) })} (${task.id})`,
         ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
         ...(partial ? { closingKeywordScan: true } : {}),
         target: {
           kind: 'new-pr',
           title: `${task.title} (${task.id})`,
-          bugLabel: task.labels.includes('bug'),
+          bugLabel,
           ...(scope !== undefined ? { scope } : {}),
           // Ready for review only after verification and every configured proof passed.
           draft: partial || verifyCmd === undefined || visualProofFailed,
