@@ -7,6 +7,7 @@
 
 * **decision-model:** default to clef instead of clef-flash ([#541](https://github.com/spietrza/vanguard/issues/541)) ([024cefe](https://github.com/spietrza/vanguard/commit/024cefead604baad844cb566ac0f637b7008522c))
 * **factory:** open the PR ready for review when every gate passed ([#549](https://github.com/spietrza/vanguard/issues/549)) ([dcf0334](https://github.com/spietrza/vanguard/commit/dcf03341904f224240d189833e8fac7020523c4d))
+* **pr-review:** `watch-prs` also takes the PR from `opened` / `ready_for_review` events, so a caller can review a factory PR as soon as it is ready; Vanguard's own caller now does that without a label, and CI's `build` runs `pnpm verify` ([#550](https://github.com/spietrza/vanguard/issues/550)) ([8e1e412](https://github.com/spietrza/vanguard/commit/8e1e412ffb3e9f413fb22f5db24c9139b897ff8e))
 * **verify:** run the repo's verify script so the gate matches CI ([#548](https://github.com/spietrza/vanguard/issues/548)) ([21d81d0](https://github.com/spietrza/vanguard/commit/21d81d03644f0cbf5cace9f273daadd74cc57bf4))
 
 
@@ -22,6 +23,14 @@
 * **cursor:** GitHub Actions does not support cursor yet ([#539](https://github.com/spietrza/vanguard/issues/539)) ([05e6a46](https://github.com/spietrza/vanguard/commit/05e6a46944064dd8cb5feaa008b515e8227570ca))
 * diagrams cover GitLab and Linear, not just GitHub ([#545](https://github.com/spietrza/vanguard/issues/545)) ([bb7cfa0](https://github.com/spietrza/vanguard/commit/bb7cfa010026381cdaaf0aba62a22c684a2213d3))
 * diagrams show ready PRs and the automatic review ([#551](https://github.com/spietrza/vanguard/issues/551)) ([1d0e5dd](https://github.com/spietrza/vanguard/commit/1d0e5ddfddbc5e17eefb6d3dc90f4536baaccd2c))
+
+
+### Upgrade notes (callers on `@v1`)
+
+* **Ready PRs:** a factory PR now opens ready for review when every gate passed. It stays a draft only when a gate or the visual proof failed, or no verify command ran ([#549](https://github.com/spietrza/vanguard/issues/549)).
+* **CI on factory PRs:** map `VANGUARD_PUSH_TOKEN` in your implement caller's `secrets:`, with Contents and Pull requests: Read and write. Without it nothing changes: the PR opens with `GITHUB_TOKEN` and gets no CI until a push ([#543](https://github.com/spietrza/vanguard/issues/543)).
+* **`verify` script:** a `verify` script in your `package.json` now takes precedence over the typecheck/test auto-detect ([#548](https://github.com/spietrza/vanguard/issues/548)).
+* **Repository name:** the repository is `spietrza/vanguard`. Change `uses: SebaBoler/vanguard/...` to `uses: spietrza/vanguard/...`, because the old owner name only resolves through GitHub's rename redirect ([#543](https://github.com/spietrza/vanguard/issues/543)).
 
 ## [1.10.1](https://github.com/SebaBoler/vanguard/compare/v1.10.0...v1.10.1) (2026-10-20)
 
