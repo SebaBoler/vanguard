@@ -4,24 +4,26 @@
 %% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg factory-loop
 flowchart TB
   subgraph human[Human]
-    issue["Issue<br/>ready for spec / agent"]
+    issue["Issue<br/>trigger: label or state"]
     merge["Merge<br/>humans only"]
     review["Review<br/>approve or revise"]
   end
-  subgraph host[Vanguard on GitHub Actions]
+  subgraph host[Vanguard host: CI job or watch loop]
     triage{"Triage<br/>acceptance criteria?"}
     info["needs info<br/>too vague, no spend"]
-    pr["Draft PR<br/>needs-human-review"]
+    pr["PR / MR<br/>draft if a gate failed"]
   end
   subgraph sandbox[Agent in Docker sandbox]
     spec["Tech spec<br/>read-only planner"]
     build["Build<br/>implement · review · simplify"]
-    revise["Revise<br/>fix review comments"]
+    autoreview["Vanguard review<br/>opt-in, GitHub only"]
+    revise["Revise (GitHub)<br/>fix review comments"]
   end
 
   issue --> triage
   triage --> info -->|human edits| issue
-  triage -->|ready for spec| spec --> build
-  triage -->|ready for agent| build
+  triage -->|spec trigger| spec --> build
+  triage -->|agent trigger| build
   build --> pr --> review --> merge
+  pr -->|ready PR| autoreview -.->|verdict| pr
   review -->|needs revision| revise -->|push fixes| pr

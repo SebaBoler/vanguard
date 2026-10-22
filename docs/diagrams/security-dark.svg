@@ -440,9 +440,9 @@ rect.c-bg-rect { fill: var(--bg); }
         <rect width="100%" height="100%" fill="url(#grid)"/>
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="GitHub" x="24" y="28" width="680" height="96" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="GitHub · GitLab · Linear" x="24" y="28" width="680" height="96" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Host: GitHub Actions runner, holds the GitHub token" x="24" y="140" width="680" height="96" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Host: CI job or watch loop, holds the GitHub/GitLab token" x="24" y="140" width="680" height="96" rx="12" class="c-region" stroke-width="1"/>
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" data-composition-frame-label="Docker sandbox: non-root, cap-drop ALL, noexec tmpfs" x="136" y="252" width="284" height="96" rx="8" class="c-security-group" stroke-width="1"/>
 
@@ -457,36 +457,36 @@ rect.c-bg-rect { fill: var(--bg); }
         <path data-edge-from="scan" data-edge-to="pr" data-edge-label="push" data-edge-key="5" data-edge-id="scan-pr" data-composition-points="622,164;622,104" d="M 622 164 L 622 104" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="agent" data-edge-to="llmproxy" data-edge-label="nonce" data-edge-key="6" data-edge-id="agent-llmproxy" data-composition-points="278,328;278,388" d="M 278 328 L 278 388" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="llmproxy" data-edge-to="model" data-edge-label="real key" data-edge-key="7" data-edge-id="llmproxy-model" data-composition-points="278,440;278,500" d="M 278 440 L 278 500" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="agent" data-edge-to="egress" data-edge-label="CONNECT" data-edge-key="8" data-edge-id="agent-egress" data-composition-points="408,309;622,309;622,388" d="M 408 309 L 614 309 Q 622 309 622 317 L 622 388" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="egress" data-edge-to="hosts" data-edge-key="9" data-edge-id="egress-hosts" data-composition-points="622,440;622,500" d="M 622 440 L 622 500" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="agent" data-edge-to="egress" data-edge-label="CONNECT" data-edge-key="8" data-edge-id="agent-egress" data-composition-points="408,309;612,309;612,388" d="M 408 309 L 604 309 Q 612 309 612 317 L 612 388" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="egress" data-edge-to="hosts" data-edge-key="9" data-edge-id="egress-hosts" data-composition-points="612,440;612,500" d="M 612 440 L 612 500" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-input" data-node-id="input" data-node-label="Issue / PR text" tabindex="0" role="button" aria-label="Focus Issue / PR text, untrusted input, GitHub" aria-pressed="false" data-node-kind="external" data-node-sublabel="untrusted input" data-node-context="GitHub">
-          <title>Issue / PR text · untrusted input · GitHub</title>
+        <g id="node-input" data-node-id="input" data-node-label="Issue / PR / MR" tabindex="0" role="button" aria-label="Focus Issue / PR / MR, untrusted text, GitHub · GitLab · Linear" aria-pressed="false" data-node-kind="external" data-node-sublabel="untrusted text" data-node-context="GitHub · GitLab · Linear">
+          <title>Issue / PR / MR · untrusted text · GitHub · GitLab · Linear</title>
           <rect x="36" y="52" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="36" y="52" width="140" height="52" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(42 58) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" x="106" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Issue / PR text</text>
-        <text x="106" y="92" class="t-muted" font-size="9" text-anchor="middle">untrusted input</text>
+          <text data-node-label="" x="106" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Issue / PR / MR</text>
+        <text x="106" y="92" class="t-muted" font-size="9" text-anchor="middle">untrusted text</text>
         </g>
 
-        <g id="node-pr" data-node-id="pr" data-node-label="Branch + draft PR" tabindex="0" role="button" aria-label="Focus Branch + draft PR, pushed by host only, GitHub" aria-pressed="false" data-node-kind="external" data-node-sublabel="pushed by host only" data-node-context="GitHub">
-          <title>Branch + draft PR · pushed by host only · GitHub</title>
+        <g id="node-pr" data-node-id="pr" data-node-label="PR / MR" tabindex="0" role="button" aria-label="Focus PR / MR, pushed by host only, GitHub · GitLab · Linear" aria-pressed="false" data-node-kind="external" data-node-sublabel="pushed by host only" data-node-context="GitHub · GitLab · Linear">
+          <title>PR / MR · pushed by host only · GitHub · GitLab · Linear</title>
           <rect x="552" y="52" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="552" y="52" width="140" height="52" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(558 58) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" x="622" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Branch + draft PR</text>
+          <text data-node-label="" x="622" y="76" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PR / MR</text>
         <text x="622" y="92" class="t-muted" font-size="9" text-anchor="middle">pushed by host only</text>
         </g>
 
-        <g id="node-gate" data-node-id="gate" data-node-label="Author gate" tabindex="0" role="button" aria-label="Focus Author gate, author + sender, Host: GitHub Actions runner, holds the GitHub token" aria-pressed="false" data-node-kind="security" data-node-sublabel="author + sender" data-node-context="Host: GitHub Actions runner, holds the GitHub token">
-          <title>Author gate · author + sender · Host: GitHub Actions runner, holds the GitHub token</title>
+        <g id="node-gate" data-node-id="gate" data-node-label="Author gate" tabindex="0" role="button" aria-label="Focus Author gate, GitHub Actions only, Host: CI job or watch loop, holds the GitHub/GitLab token" aria-pressed="false" data-node-kind="security" data-node-sublabel="GitHub Actions only" data-node-context="Host: CI job or watch loop, holds the GitHub/GitLab token">
+          <title>Author gate · GitHub Actions only · Host: CI job or watch loop, holds the GitHub/GitLab token</title>
           <rect x="36" y="164" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="36" y="164" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(42 170) scale(0.6875)">
@@ -494,11 +494,11 @@ rect.c-bg-rect { fill: var(--bg); }
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" x="106" y="188" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Author gate</text>
-        <text x="106" y="204" class="t-muted" font-size="9" text-anchor="middle">author + sender</text>
+        <text x="106" y="204" class="t-muted" font-size="9" text-anchor="middle">GitHub Actions only</text>
         </g>
 
-        <g id="node-prompt" data-node-id="prompt" data-node-label="Prompt" tabindex="0" role="button" aria-label="Focus Prompt, untrusted &lt;tags&gt; escaped, Host: GitHub Actions runner, holds the GitHub token" aria-pressed="false" data-node-kind="backend" data-node-sublabel="untrusted &lt;tags&gt; escaped" data-node-context="Host: GitHub Actions runner, holds the GitHub token">
-          <title>Prompt · untrusted &lt;tags&gt; escaped · Host: GitHub Actions runner, holds the GitHub token</title>
+        <g id="node-prompt" data-node-id="prompt" data-node-label="Prompt" tabindex="0" role="button" aria-label="Focus Prompt, untrusted &lt;tags&gt; escaped, Host: CI job or watch loop, holds the GitHub/GitLab token" aria-pressed="false" data-node-kind="backend" data-node-sublabel="untrusted &lt;tags&gt; escaped" data-node-context="Host: CI job or watch loop, holds the GitHub/GitLab token">
+          <title>Prompt · untrusted &lt;tags&gt; escaped · Host: CI job or watch loop, holds the GitHub/GitLab token</title>
           <rect x="208" y="164" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="208" y="164" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(214 170) scale(0.6875)">
@@ -508,8 +508,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="278" y="204" class="t-muted" font-size="9" text-anchor="middle">untrusted &lt;tags&gt; escaped</text>
         </g>
 
-        <g id="node-copyback" data-node-id="copyback" data-node-label="Copy-back" tabindex="0" role="button" aria-label="Focus Copy-back, CI config dropped, Host: GitHub Actions runner, holds the GitHub token" aria-pressed="false" data-node-kind="security" data-node-sublabel="CI config dropped" data-node-context="Host: GitHub Actions runner, holds the GitHub token">
-          <title>Copy-back · CI config dropped · Host: GitHub Actions runner, holds the GitHub token</title>
+        <g id="node-copyback" data-node-id="copyback" data-node-label="Copy-back" tabindex="0" role="button" aria-label="Focus Copy-back, CI config dropped, Host: CI job or watch loop, holds the GitHub/GitLab token" aria-pressed="false" data-node-kind="security" data-node-sublabel="CI config dropped" data-node-context="Host: CI job or watch loop, holds the GitHub/GitLab token">
+          <title>Copy-back · CI config dropped · Host: CI job or watch loop, holds the GitHub/GitLab token</title>
           <rect x="380" y="164" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="380" y="164" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(386 170) scale(0.6875)">
@@ -520,8 +520,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="450" y="204" class="t-muted" font-size="9" text-anchor="middle">CI config dropped</text>
         </g>
 
-        <g id="node-scan" data-node-id="scan" data-node-label="Secret scan" tabindex="0" role="button" aria-label="Focus Secret scan, hit: nothing pushed, Host: GitHub Actions runner, holds the GitHub token" aria-pressed="false" data-node-kind="security" data-node-sublabel="hit: nothing pushed" data-node-context="Host: GitHub Actions runner, holds the GitHub token">
-          <title>Secret scan · hit: nothing pushed · Host: GitHub Actions runner, holds the GitHub token</title>
+        <g id="node-scan" data-node-id="scan" data-node-label="Secret scan" tabindex="0" role="button" aria-label="Focus Secret scan, hit: nothing pushed, Host: CI job or watch loop, holds the GitHub/GitLab token" aria-pressed="false" data-node-kind="security" data-node-sublabel="hit: nothing pushed" data-node-context="Host: CI job or watch loop, holds the GitHub/GitLab token">
+          <title>Secret scan · hit: nothing pushed · Host: CI job or watch loop, holds the GitHub/GitLab token</title>
           <rect x="552" y="164" width="140" height="52" rx="6" class="c-mask"/>
           <rect x="552" y="164" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(558 170) scale(0.6875)">
@@ -532,15 +532,15 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="622" y="204" class="t-muted" font-size="9" text-anchor="middle">hit: nothing pushed</text>
         </g>
 
-        <g id="node-agent" data-node-id="agent" data-node-label="Agent CLI" tabindex="0" role="button" aria-label="Focus Agent CLI, no GitHub token, Docker sandbox: non-root, cap-drop ALL, noexec tmpfs" aria-pressed="false" data-node-kind="backend" data-node-sublabel="no GitHub token" data-node-context="Docker sandbox: non-root, cap-drop ALL, noexec tmpfs">
-          <title>Agent CLI · no GitHub token · Docker sandbox: non-root, cap-drop ALL, noexec tmpfs</title>
+        <g id="node-agent" data-node-id="agent" data-node-label="Agent CLI" tabindex="0" role="button" aria-label="Focus Agent CLI, no GitHub/GitLab token; gets the Linear key, Docker sandbox: non-root, cap-drop ALL, noexec tmpfs" aria-pressed="false" data-node-kind="backend" data-node-sublabel="no GitHub/GitLab token; gets the Linear key" data-node-context="Docker sandbox: non-root, cap-drop ALL, noexec tmpfs">
+          <title>Agent CLI · no GitHub/GitLab token; gets the Linear key · Docker sandbox: non-root, cap-drop ALL, noexec tmpfs</title>
           <rect x="148" y="276" width="260" height="52" rx="6" class="c-mask"/>
           <rect x="148" y="276" width="260" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(154 282) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" x="278" y="300" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Agent CLI</text>
-        <text x="278" y="316" class="t-muted" font-size="9" text-anchor="middle">no GitHub token</text>
+        <text x="278" y="316" class="t-muted" font-size="9" text-anchor="middle">no GitHub/GitLab token; gets the Linear key</text>
         </g>
 
         <g id="node-llmproxy" data-node-id="llmproxy" data-node-label="LLM proxy" tabindex="0" role="button" aria-label="Focus LLM proxy, real key; agent: nonce, Opt-in sidecars" aria-pressed="false" data-node-kind="security" data-node-sublabel="real key; agent: nonce" data-node-context="Opt-in sidecars">
@@ -557,14 +557,14 @@ rect.c-bg-rect { fill: var(--bg); }
 
         <g id="node-egress" data-node-id="egress" data-node-label="Egress proxy" tabindex="0" role="button" aria-label="Focus Egress proxy, host allowlist, Opt-in sidecars" aria-pressed="false" data-node-kind="security" data-node-sublabel="host allowlist" data-node-context="Opt-in sidecars">
           <title>Egress proxy · host allowlist · Opt-in sidecars</title>
-          <rect x="552" y="388" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="552" y="388" width="140" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(558 394) scale(0.6875)">
+          <rect x="532" y="388" width="160" height="52" rx="6" class="c-mask"/>
+          <rect x="532" y="388" width="160" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(538 394) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" x="622" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Egress proxy</text>
-        <text x="622" y="428" class="t-muted" font-size="9" text-anchor="middle">host allowlist</text>
+          <text data-node-label="" x="612" y="412" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Egress proxy</text>
+        <text x="612" y="428" class="t-muted" font-size="9" text-anchor="middle">host allowlist</text>
         </g>
 
         <g id="node-model" data-node-id="model" data-node-label="Model API" tabindex="0" role="button" aria-label="Focus Model API, Anthropic, OpenAI, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Anthropic, OpenAI" data-node-context="Architecture component">
@@ -578,15 +578,15 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="278" y="540" class="t-muted" font-size="9" text-anchor="middle">Anthropic, OpenAI</text>
         </g>
 
-        <g id="node-hosts" data-node-id="hosts" data-node-label="Allowed hosts" tabindex="0" role="button" aria-label="Focus Allowed hosts, npm, PyPI, GitHub, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="npm, PyPI, GitHub" data-node-context="Architecture component">
-          <title>Allowed hosts · npm, PyPI, GitHub · Architecture component</title>
-          <rect x="552" y="500" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="552" y="500" width="140" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(558 506) scale(0.6875)">
+        <g id="node-hosts" data-node-id="hosts" data-node-label="Allowed hosts" tabindex="0" role="button" aria-label="Focus Allowed hosts, Linear, GitHub, npm, PyPI, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="Linear, GitHub, npm, PyPI" data-node-context="Architecture component">
+          <title>Allowed hosts · Linear, GitHub, npm, PyPI · Architecture component</title>
+          <rect x="532" y="500" width="160" height="52" rx="6" class="c-mask"/>
+          <rect x="532" y="500" width="160" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(538 506) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" x="622" y="524" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Allowed hosts</text>
-        <text x="622" y="540" class="t-muted" font-size="9" text-anchor="middle">npm, PyPI, GitHub</text>
+          <text data-node-label="" x="612" y="524" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Allowed hosts</text>
+        <text x="612" y="540" class="t-muted" font-size="9" text-anchor="middle">Linear, GitHub, npm, PyPI</text>
         </g>
 
         <!-- Connection labels -->
@@ -611,20 +611,20 @@ rect.c-bg-rect { fill: var(--bg); }
           <text x="278" y="454" class="t-messagebus" font-size="8" text-anchor="middle">real key</text>
         </g>
         <g data-edge-from="agent" data-edge-to="egress" data-edge-label="CONNECT" data-edge-key="8" data-edge-id="agent-egress">
-          <rect x="600.2" y="328.5" width="43.6" height="14" rx="3" class="c-mask"/>
-          <text x="622" y="338.5" class="t-messagebus" font-size="8" text-anchor="middle">CONNECT</text>
+          <rect x="590.2" y="328.5" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="612" y="338.5" class="t-messagebus" font-size="8" text-anchor="middle">CONNECT</text>
         </g>
 
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="GitHub">
-          <rect data-graph-role="structural-frame-label-mask" x="28" y="32" width="42.4" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="32" y="45" class="t-cloud" font-size="9" font-weight="600">GitHub</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="GitHub · GitLab · Linear">
+          <rect data-graph-role="structural-frame-label-mask" x="28" y="32" width="139.6" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="32" y="45" class="t-cloud" font-size="9" font-weight="600">GitHub · GitLab · Linear</text>
         </g>
 
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Host: GitHub Actions runner, holds the GitHub token">
-          <rect data-graph-role="structural-frame-label-mask" x="28" y="144" width="285.4" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="32" y="157" class="t-cloud" font-size="9" font-weight="600">Host: GitHub Actions runner, holds the GitHub token</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Host: CI job or watch loop, holds the GitHub/GitLab token">
+          <rect data-graph-role="structural-frame-label-mask" x="28" y="144" width="317.8" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="32" y="157" class="t-cloud" font-size="9" font-weight="600">Host: CI job or watch loop, holds the GitHub/GitLab token</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Docker sandbox: non-root, cap-drop ALL, noexec tmpfs">

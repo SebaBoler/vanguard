@@ -440,7 +440,7 @@ rect.c-bg-rect { fill: var(--bg); }
         <rect width="100%" height="100%" fill="url(#grid)"/>
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Host: GitHub Actions runner" x="6" y="22" width="716" height="106" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Host: CI job or watch loop" x="6" y="22" width="716" height="106" rx="12" class="c-region" stroke-width="1"/>
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="Agent in Docker sandbox" x="6" y="158" width="716" height="242" rx="8" class="c-security-group" stroke-width="1"/>
 
@@ -456,8 +456,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <path data-edge-from="scan" data-edge-to="pr" data-edge-key="8" data-edge-id="scan-pr" data-composition-points="520,80;552,80" d="M 520 80 L 552 80" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
 
         <!-- Components -->
-        <g id="node-triage" data-node-id="triage" data-node-label="Claim + triage" tabindex="0" role="button" aria-label="Focus Claim + triage, no model call, Host: GitHub Actions runner" aria-pressed="false" data-node-kind="security" data-node-sublabel="no model call" data-node-context="Host: GitHub Actions runner">
-          <title>Claim + triage · no model call · Host: GitHub Actions runner</title>
+        <g id="node-triage" data-node-id="triage" data-node-label="Claim + triage" tabindex="0" role="button" aria-label="Focus Claim + triage, no model call, Host: CI job or watch loop" aria-pressed="false" data-node-kind="security" data-node-sublabel="no model call" data-node-context="Host: CI job or watch loop">
+          <title>Claim + triage · no model call · Host: CI job or watch loop</title>
           <rect x="36" y="52" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="36" y="52" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(42 58) scale(0.6875)">
@@ -468,8 +468,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="106" y="94" class="t-muted" font-size="9" text-anchor="middle">no model call</text>
         </g>
 
-        <g id="node-info" data-node-id="info" data-node-label="needs info" tabindex="0" role="button" aria-label="Focus needs info, too vague, no spend, Host: GitHub Actions runner" aria-pressed="false" data-node-kind="security" data-node-sublabel="too vague, no spend" data-node-context="Host: GitHub Actions runner">
-          <title>needs info · too vague, no spend · Host: GitHub Actions runner</title>
+        <g id="node-info" data-node-id="info" data-node-label="needs info" tabindex="0" role="button" aria-label="Focus needs info, too vague, no spend, Host: CI job or watch loop" aria-pressed="false" data-node-kind="security" data-node-sublabel="too vague, no spend" data-node-context="Host: CI job or watch loop">
+          <title>needs info · too vague, no spend · Host: CI job or watch loop</title>
           <rect x="208" y="52" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="208" y="52" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(214 58) scale(0.6875)">
@@ -480,8 +480,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="278" y="94" class="t-muted" font-size="9" text-anchor="middle">too vague, no spend</text>
         </g>
 
-        <g id="node-scan" data-node-id="scan" data-node-label="Secret scan" tabindex="0" role="button" aria-label="Focus Secret scan, hit: secret-blocked, Host: GitHub Actions runner" aria-pressed="false" data-node-kind="security" data-node-sublabel="hit: secret-blocked" data-node-context="Host: GitHub Actions runner">
-          <title>Secret scan · hit: secret-blocked · Host: GitHub Actions runner</title>
+        <g id="node-scan" data-node-id="scan" data-node-label="Secret scan" tabindex="0" role="button" aria-label="Focus Secret scan, hit: nothing pushed, Host: CI job or watch loop" aria-pressed="false" data-node-kind="security" data-node-sublabel="hit: nothing pushed" data-node-context="Host: CI job or watch loop">
+          <title>Secret scan · hit: nothing pushed · Host: CI job or watch loop</title>
           <rect x="380" y="52" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="380" y="52" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(386 58) scale(0.6875)">
@@ -489,19 +489,19 @@ rect.c-bg-rect { fill: var(--bg); }
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" x="450" y="78" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Secret scan</text>
-        <text x="450" y="94" class="t-muted" font-size="9" text-anchor="middle">hit: secret-blocked</text>
+        <text x="450" y="94" class="t-muted" font-size="9" text-anchor="middle">hit: nothing pushed</text>
         </g>
 
-        <g id="node-pr" data-node-id="pr" data-node-label="Push + draft PR" tabindex="0" role="button" aria-label="Focus Push + draft PR, red: verify-failed, Host: GitHub Actions runner" aria-pressed="false" data-node-kind="external" data-node-sublabel="red: verify-failed" data-node-context="Host: GitHub Actions runner">
-          <title>Push + draft PR · red: verify-failed · Host: GitHub Actions runner</title>
+        <g id="node-pr" data-node-id="pr" data-node-label="Push + open PR/MR" tabindex="0" role="button" aria-label="Focus Push + open PR/MR, red: draft, verify-failed, Host: CI job or watch loop" aria-pressed="false" data-node-kind="external" data-node-sublabel="red: draft, verify-failed" data-node-context="Host: CI job or watch loop">
+          <title>Push + open PR/MR · red: draft, verify-failed · Host: CI job or watch loop</title>
           <rect x="552" y="52" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="552" y="52" width="140" height="56" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(558 58) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" x="622" y="78" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Push + draft PR</text>
-        <text x="622" y="94" class="t-muted" font-size="9" text-anchor="middle">red: verify-failed</text>
+          <text data-node-label="" x="622" y="78" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Push + open PR/MR</text>
+        <text x="622" y="94" class="t-muted" font-size="8.8" text-anchor="middle">red: draft, verify-failed</text>
         </g>
 
         <g id="node-implement" data-node-id="implement" data-node-label="Implement" tabindex="0" role="button" aria-label="Focus Implement, writes the change, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="writes the change" data-node-context="Agent in Docker sandbox">
@@ -537,8 +537,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="450" y="230" class="t-muted" font-size="9" text-anchor="middle">fresh context</text>
         </g>
 
-        <g id="node-verify" data-node-id="verify" data-node-label="Verify" tabindex="0" role="button" aria-label="Focus Verify, proof-of-work cmd, Agent in Docker sandbox" aria-pressed="false" data-node-kind="security" data-node-sublabel="proof-of-work cmd" data-node-context="Agent in Docker sandbox">
-          <title>Verify · proof-of-work cmd · Agent in Docker sandbox</title>
+        <g id="node-verify" data-node-id="verify" data-node-label="Verify" tabindex="0" role="button" aria-label="Focus Verify, verify script or tests, Agent in Docker sandbox" aria-pressed="false" data-node-kind="security" data-node-sublabel="verify script or tests" data-node-context="Agent in Docker sandbox">
+          <title>Verify · verify script or tests · Agent in Docker sandbox</title>
           <rect x="552" y="188" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="552" y="188" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(558 194) scale(0.6875)">
@@ -546,7 +546,7 @@ rect.c-bg-rect { fill: var(--bg); }
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" x="622" y="214" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Verify</text>
-        <text x="622" y="230" class="t-muted" font-size="9" text-anchor="middle">proof-of-work cmd</text>
+        <text x="622" y="230" class="t-muted" font-size="9" text-anchor="middle">verify script or tests</text>
         </g>
 
         <g id="node-repair" data-node-id="repair" data-node-label="Repair" tabindex="0" role="button" aria-label="Focus Repair, 2nd: stronger model, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="2nd: stronger model" data-node-context="Agent in Docker sandbox">
@@ -581,9 +581,9 @@ rect.c-bg-rect { fill: var(--bg); }
 
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Host: GitHub Actions runner">
-          <rect data-graph-role="structural-frame-label-mask" x="10" y="32" width="155.79999999999998" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="14" y="45" class="t-cloud" font-size="9" font-weight="600">Host: GitHub Actions runner</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Host: CI job or watch loop">
+          <rect data-graph-role="structural-frame-label-mask" x="10" y="32" width="150.4" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="14" y="45" class="t-cloud" font-size="9" font-weight="600">Host: CI job or watch loop</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="Agent in Docker sandbox">

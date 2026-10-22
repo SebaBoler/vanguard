@@ -9,29 +9,32 @@
     "viewBox": [728, 420]
   },
   "components": [
-    { "id": "issue", "type": "external", "label": "Issue", "sublabel": "ready for spec / agent", "pos": [36, 52], "size": [140, 56] },
+    { "id": "issue", "type": "external", "label": "Issue", "sublabel": "trigger: label or state", "pos": [36, 52], "size": [140, 56] },
     { "id": "merge", "type": "external", "label": "Merge", "sublabel": "humans only", "pos": [380, 52], "size": [140, 56] },
     { "id": "review", "type": "external", "label": "Review", "sublabel": "approve or revise", "pos": [552, 52], "size": [140, 56] },
     { "id": "triage", "type": "security", "label": "Triage", "sublabel": "acceptance criteria?", "pos": [36, 188], "size": [140, 56] },
     { "id": "info", "type": "security", "label": "needs info", "sublabel": "too vague, no spend", "pos": [208, 188], "size": [140, 56] },
-    { "id": "pr", "type": "backend", "label": "Draft PR", "sublabel": "needs-human-review", "pos": [380, 188], "size": [140, 56] },
+    { "id": "pr", "type": "backend", "label": "PR / MR", "sublabel": "draft if a gate failed", "pos": [380, 188], "size": [140, 56] },
     { "id": "spec", "type": "backend", "label": "Tech spec", "sublabel": "read-only planner", "pos": [36, 324], "size": [140, 56] },
     { "id": "build", "type": "backend", "label": "Build", "sublabel": "implement · review · simplify", "pos": [208, 324], "size": [140, 56] },
-    { "id": "revise", "type": "backend", "label": "Revise", "sublabel": "fix review comments", "pos": [552, 324], "size": [140, 56] }
+    { "id": "autoreview", "type": "backend", "label": "Vanguard review", "sublabel": "opt-in, GitHub only", "pos": [380, 324], "size": [140, 56] },
+    { "id": "revise", "type": "backend", "label": "Revise (GitHub)", "sublabel": "fix review comments", "pos": [552, 324], "size": [140, 56] }
   ],
   "boundaries": [
     { "kind": "region", "label": "Human", "wraps": ["issue", "merge", "review"] },
-    { "kind": "region", "label": "Vanguard on GitHub Actions", "wraps": ["triage", "info", "pr"] },
-    { "kind": "security-group", "label": "Agent in Docker sandbox", "wraps": ["spec", "build", "revise"] }
+    { "kind": "region", "label": "Vanguard host: CI job or watch loop", "wraps": ["triage", "info", "pr"] },
+    { "kind": "security-group", "label": "Agent in Docker sandbox", "wraps": ["spec", "build", "autoreview", "revise"] }
   ],
   "connections": [
     { "id": "issue-triage", "from": "issue", "to": "triage", "variant": "emphasis" },
     { "id": "triage-info", "from": "triage", "to": "info", "variant": "security", "fromSide": "right", "toSide": "left" },
     { "id": "info-issue", "from": "info", "to": "issue", "label": "human edits", "variant": "dashed", "fromSide": "top", "toSide": "right" },
-    { "id": "triage-spec", "from": "triage", "to": "spec", "label": "ready for spec", "variant": "emphasis", "labelDy": 66 },
-    { "id": "triage-build", "from": "triage", "to": "build", "label": "ready for agent", "fromSide": "bottom", "toSide": "top" },
+    { "id": "triage-spec", "from": "triage", "to": "spec", "label": "spec trigger", "variant": "emphasis", "labelDy": 66 },
+    { "id": "triage-build", "from": "triage", "to": "build", "label": "agent trigger", "fromSide": "bottom", "toSide": "top" },
     { "id": "spec-build", "from": "spec", "to": "build", "variant": "emphasis" },
     { "id": "build-pr", "from": "build", "to": "pr", "variant": "emphasis" },
+    { "id": "pr-autoreview", "from": "pr", "to": "autoreview", "label": "ready PR", "fromSide": "bottom", "toSide": "top", "labelDy": 24, "labelDx": 34 },
+    { "id": "autoreview-pr", "from": "autoreview", "to": "pr", "label": "verdict", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelDx": -32 },
     { "id": "pr-review", "from": "pr", "to": "review", "variant": "emphasis" },
     { "id": "review-merge", "from": "review", "to": "merge", "variant": "emphasis" },
     { "id": "review-revise", "from": "review", "to": "revise", "label": "needs revision", "labelDy": 24 },

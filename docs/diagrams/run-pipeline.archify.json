@@ -11,16 +11,16 @@
   "components": [
     { "id": "triage", "type": "security", "label": "Claim + triage", "sublabel": "no model call", "pos": [36, 52], "size": [140, 56] },
     { "id": "info", "type": "security", "label": "needs info", "sublabel": "too vague, no spend", "pos": [208, 52], "size": [140, 56] },
-    { "id": "scan", "type": "security", "label": "Secret scan", "sublabel": "hit: secret-blocked", "pos": [380, 52], "size": [140, 56] },
-    { "id": "pr", "type": "external", "label": "Push + draft PR", "sublabel": "red: verify-failed", "pos": [552, 52], "size": [140, 56] },
+    { "id": "scan", "type": "security", "label": "Secret scan", "sublabel": "hit: nothing pushed", "pos": [380, 52], "size": [140, 56] },
+    { "id": "pr", "type": "external", "label": "Push + open PR/MR", "sublabel": "red: draft, verify-failed", "pos": [552, 52], "size": [140, 56] },
     { "id": "implement", "type": "backend", "label": "Implement", "sublabel": "writes the change", "pos": [36, 188], "size": [140, 56] },
     { "id": "review", "type": "backend", "label": "Review", "sublabel": "Codex, fresh context", "pos": [208, 188], "size": [140, 56] },
     { "id": "simplify", "type": "backend", "label": "Simplify", "sublabel": "fresh context", "pos": [380, 188], "size": [140, 56] },
-    { "id": "verify", "type": "security", "label": "Verify", "sublabel": "proof-of-work cmd", "pos": [552, 188], "size": [140, 56] },
+    { "id": "verify", "type": "security", "label": "Verify", "sublabel": "verify script or tests", "pos": [552, 188], "size": [140, 56] },
     { "id": "repair", "type": "backend", "label": "Repair", "sublabel": "2nd: stronger model", "pos": [552, 324], "size": [140, 56] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Host: GitHub Actions runner", "wraps": ["triage", "info", "scan", "pr"] },
+    { "kind": "region", "label": "Host: CI job or watch loop", "wraps": ["triage", "info", "scan", "pr"] },
     { "kind": "security-group", "label": "Agent in Docker sandbox", "wraps": ["implement", "review", "simplify", "verify", "repair"] }
   ],
   "connections": [

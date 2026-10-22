@@ -4,25 +4,25 @@
 %% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg security
 %% Dashed = opt-in: --llm-proxy (on in the review and revise workflows) and --egress.
 flowchart TB
-  subgraph github[GitHub]
-    input["Issue / PR text<br/>untrusted input"]
-    pr["Branch + draft PR<br/>pushed by host only"]
+  subgraph forge[GitHub · GitLab · Linear]
+    input["Issue / PR / MR<br/>untrusted text"]
+    pr["PR / MR<br/>pushed by host only"]
   end
-  subgraph host[Host: GitHub Actions runner, holds the GitHub token]
-    gate{"Author gate<br/>author + sender"}
+  subgraph host[Host: CI job or watch loop, holds the GitHub/GitLab token]
+    gate{"Author gate<br/>GitHub Actions only"}
     prompt["Prompt<br/>untrusted &lt;tags&gt; escaped"]
     copyback["Copy-back<br/>CI config dropped"]
     scan{"Secret scan<br/>hit: nothing pushed"}
   end
   subgraph sandbox[Docker sandbox: non-root, cap-drop ALL, noexec tmpfs]
-    agent["Agent CLI<br/>no GitHub token"]
+    agent["Agent CLI<br/>no GitHub/GitLab token; gets the Linear key"]
   end
   subgraph sidecars[Opt-in sidecars]
     llmproxy["LLM proxy<br/>real key; agent: nonce"]
     egress["Egress proxy<br/>host allowlist"]
   end
   model["Model API<br/>Anthropic, OpenAI"]
-  hosts["Allowed hosts<br/>npm, PyPI, GitHub"]
+  hosts["Allowed hosts<br/>Linear, GitHub, npm, PyPI"]
 
   input --> gate --> prompt --> agent
   agent -->|changed files| copyback --> scan -->|push| pr

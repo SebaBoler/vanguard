@@ -442,7 +442,7 @@ rect.c-bg-rect { fill: var(--bg); }
         <!-- Boundaries (behind everything) -->
         <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Human" x="6" y="22" width="716" height="106" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Vanguard on GitHub Actions" x="6" y="158" width="544" height="106" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="Vanguard host: CI job or watch loop" x="6" y="158" width="544" height="106" rx="12" class="c-region" stroke-width="1"/>
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="2" data-composition-frame-label="Agent in Docker sandbox" x="6" y="294" width="716" height="106" rx="8" class="c-security-group" stroke-width="1"/>
 
@@ -450,18 +450,20 @@ rect.c-bg-rect { fill: var(--bg); }
         <path data-edge-from="issue" data-edge-to="triage" data-edge-key="0" data-edge-id="issue-triage" data-composition-points="106,108;106,188" d="M 106 108 L 106 188" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="triage" data-edge-to="info" data-edge-key="1" data-edge-id="triage-info" data-composition-points="176,216;208,216" d="M 176 216 L 208 216" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="info" data-edge-to="issue" data-edge-label="human edits" data-edge-key="2" data-edge-id="info-issue" data-composition-points="278,188;278,164;200,164;200,80;176,80" d="M 278 188 L 278 172 Q 278 164 270 164 L 208 164 Q 200 164 200 156 L 200 88 Q 200 80 192 80 L 176 80" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="triage" data-edge-to="spec" data-edge-label="ready for spec" data-edge-key="3" data-edge-id="triage-spec" data-composition-points="99,244;99,324" d="M 99 244 L 99 324" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="triage" data-edge-to="build" data-edge-label="ready for agent" data-edge-key="4" data-edge-id="triage-build" data-composition-points="113,244;113,284;278,284;278,324" d="M 113 244 L 113 276 Q 113 284 121 284 L 270 284 Q 278 284 278 292 L 278 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="triage" data-edge-to="spec" data-edge-label="spec trigger" data-edge-key="3" data-edge-id="triage-spec" data-composition-points="99,244;99,324" d="M 99 244 L 99 324" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="triage" data-edge-to="build" data-edge-label="agent trigger" data-edge-key="4" data-edge-id="triage-build" data-composition-points="113,244;113,284;278,284;278,324" d="M 113 244 L 113 276 Q 113 284 121 284 L 270 284 Q 278 284 278 292 L 278 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="spec" data-edge-to="build" data-edge-key="5" data-edge-id="spec-build" data-composition-points="176,352;208,352" d="M 176 352 L 208 352" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="build" data-edge-to="pr" data-edge-key="6" data-edge-id="build-pr" data-composition-points="348,352;364,352;364,216;380,216" d="M 348 352 L 356 352 Q 364 352 364 344 L 364 224 Q 364 216 372 216 L 380 216" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="pr" data-edge-to="review" data-edge-key="7" data-edge-id="pr-review" data-composition-points="520,209;536,209;536,87;552,87" d="M 520 209 L 528 209 Q 536 209 536 201 L 536 95 Q 536 87 544 87 L 552 87" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="review" data-edge-to="merge" data-edge-key="8" data-edge-id="review-merge" data-composition-points="552,73;520,73" d="M 552 73 L 520 73" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="review" data-edge-to="revise" data-edge-label="needs revision" data-edge-key="9" data-edge-id="review-revise" data-composition-points="622,108;622,324" d="M 622 108 L 622 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="revise" data-edge-to="pr" data-edge-label="push fixes" data-edge-key="10" data-edge-id="revise-pr" data-composition-points="552,352;536,352;536,223;520,223" d="M 552 352 L 544 352 Q 536 352 536 344 L 536 231 Q 536 223 528 223 L 520 223" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="pr" data-edge-to="autoreview" data-edge-label="ready PR" data-edge-key="7" data-edge-id="pr-autoreview" data-composition-points="457,244;457,324" d="M 457 244 L 457 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="autoreview" data-edge-to="pr" data-edge-label="verdict" data-edge-key="8" data-edge-id="autoreview-pr" data-composition-points="443,324;443,244" d="M 443 324 L 443 244" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="pr" data-edge-to="review" data-edge-key="9" data-edge-id="pr-review" data-composition-points="520,209;536,209;536,87;552,87" d="M 520 209 L 528 209 Q 536 209 536 201 L 536 95 Q 536 87 544 87 L 552 87" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="review" data-edge-to="merge" data-edge-key="10" data-edge-id="review-merge" data-composition-points="552,73;520,73" d="M 552 73 L 520 73" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="review" data-edge-to="revise" data-edge-label="needs revision" data-edge-key="11" data-edge-id="review-revise" data-composition-points="622,108;622,324" d="M 622 108 L 622 324" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="revise" data-edge-to="pr" data-edge-label="push fixes" data-edge-key="12" data-edge-id="revise-pr" data-composition-points="552,352;536,352;536,223;520,223" d="M 552 352 L 544 352 Q 536 352 536 344 L 536 231 Q 536 223 528 223 L 520 223" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-issue" data-node-id="issue" data-node-label="Issue" tabindex="0" role="button" aria-label="Focus Issue, ready for spec / agent, Human" aria-pressed="false" data-node-kind="external" data-node-sublabel="ready for spec / agent" data-node-context="Human">
-          <title>Issue · ready for spec / agent · Human</title>
+        <g id="node-issue" data-node-id="issue" data-node-label="Issue" tabindex="0" role="button" aria-label="Focus Issue, trigger: label or state, Human" aria-pressed="false" data-node-kind="external" data-node-sublabel="trigger: label or state" data-node-context="Human">
+          <title>Issue · trigger: label or state · Human</title>
           <rect x="36" y="52" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="36" y="52" width="140" height="56" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(42 58) scale(0.6875)">
@@ -469,7 +471,7 @@ rect.c-bg-rect { fill: var(--bg); }
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
           <text data-node-label="" x="106" y="78" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Issue</text>
-        <text x="106" y="94" class="t-muted" font-size="9" text-anchor="middle">ready for spec / agent</text>
+        <text x="106" y="94" class="t-muted" font-size="9" text-anchor="middle">trigger: label or state</text>
         </g>
 
         <g id="node-merge" data-node-id="merge" data-node-label="Merge" tabindex="0" role="button" aria-label="Focus Merge, humans only, Human" aria-pressed="false" data-node-kind="external" data-node-sublabel="humans only" data-node-context="Human">
@@ -496,8 +498,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="622" y="94" class="t-muted" font-size="9" text-anchor="middle">approve or revise</text>
         </g>
 
-        <g id="node-triage" data-node-id="triage" data-node-label="Triage" tabindex="0" role="button" aria-label="Focus Triage, acceptance criteria?, Vanguard on GitHub Actions" aria-pressed="false" data-node-kind="security" data-node-sublabel="acceptance criteria?" data-node-context="Vanguard on GitHub Actions">
-          <title>Triage · acceptance criteria? · Vanguard on GitHub Actions</title>
+        <g id="node-triage" data-node-id="triage" data-node-label="Triage" tabindex="0" role="button" aria-label="Focus Triage, acceptance criteria?, Vanguard host: CI job or watch loop" aria-pressed="false" data-node-kind="security" data-node-sublabel="acceptance criteria?" data-node-context="Vanguard host: CI job or watch loop">
+          <title>Triage · acceptance criteria? · Vanguard host: CI job or watch loop</title>
           <rect x="36" y="188" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="36" y="188" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(42 194) scale(0.6875)">
@@ -508,8 +510,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="106" y="230" class="t-muted" font-size="9" text-anchor="middle">acceptance criteria?</text>
         </g>
 
-        <g id="node-info" data-node-id="info" data-node-label="needs info" tabindex="0" role="button" aria-label="Focus needs info, too vague, no spend, Vanguard on GitHub Actions" aria-pressed="false" data-node-kind="security" data-node-sublabel="too vague, no spend" data-node-context="Vanguard on GitHub Actions">
-          <title>needs info · too vague, no spend · Vanguard on GitHub Actions</title>
+        <g id="node-info" data-node-id="info" data-node-label="needs info" tabindex="0" role="button" aria-label="Focus needs info, too vague, no spend, Vanguard host: CI job or watch loop" aria-pressed="false" data-node-kind="security" data-node-sublabel="too vague, no spend" data-node-context="Vanguard host: CI job or watch loop">
+          <title>needs info · too vague, no spend · Vanguard host: CI job or watch loop</title>
           <rect x="208" y="188" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="208" y="188" width="140" height="56" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(214 194) scale(0.6875)">
@@ -520,15 +522,15 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="278" y="230" class="t-muted" font-size="9" text-anchor="middle">too vague, no spend</text>
         </g>
 
-        <g id="node-pr" data-node-id="pr" data-node-label="Draft PR" tabindex="0" role="button" aria-label="Focus Draft PR, needs-human-review, Vanguard on GitHub Actions" aria-pressed="false" data-node-kind="backend" data-node-sublabel="needs-human-review" data-node-context="Vanguard on GitHub Actions">
-          <title>Draft PR · needs-human-review · Vanguard on GitHub Actions</title>
+        <g id="node-pr" data-node-id="pr" data-node-label="PR / MR" tabindex="0" role="button" aria-label="Focus PR / MR, draft if a gate failed, Vanguard host: CI job or watch loop" aria-pressed="false" data-node-kind="backend" data-node-sublabel="draft if a gate failed" data-node-context="Vanguard host: CI job or watch loop">
+          <title>PR / MR · draft if a gate failed · Vanguard host: CI job or watch loop</title>
           <rect x="380" y="188" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="380" y="188" width="140" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(386 194) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="450" y="214" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Draft PR</text>
-        <text x="450" y="230" class="t-muted" font-size="9" text-anchor="middle">needs-human-review</text>
+          <text data-node-label="" x="450" y="214" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PR / MR</text>
+        <text x="450" y="230" class="t-muted" font-size="9" text-anchor="middle">draft if a gate failed</text>
         </g>
 
         <g id="node-spec" data-node-id="spec" data-node-label="Tech spec" tabindex="0" role="button" aria-label="Focus Tech spec, read-only planner, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="read-only planner" data-node-context="Agent in Docker sandbox">
@@ -553,14 +555,25 @@ rect.c-bg-rect { fill: var(--bg); }
         <text x="278" y="366" class="t-muted" font-size="7.5" text-anchor="middle">implement · review · simplify</text>
         </g>
 
-        <g id="node-revise" data-node-id="revise" data-node-label="Revise" tabindex="0" role="button" aria-label="Focus Revise, fix review comments, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="fix review comments" data-node-context="Agent in Docker sandbox">
-          <title>Revise · fix review comments · Agent in Docker sandbox</title>
+        <g id="node-autoreview" data-node-id="autoreview" data-node-label="Vanguard review" tabindex="0" role="button" aria-label="Focus Vanguard review, opt-in, GitHub only, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="opt-in, GitHub only" data-node-context="Agent in Docker sandbox">
+          <title>Vanguard review · opt-in, GitHub only · Agent in Docker sandbox</title>
+          <rect x="380" y="324" width="140" height="56" rx="6" class="c-mask"/>
+          <rect x="380" y="324" width="140" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(386 330) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="450" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Vanguard review</text>
+        <text x="450" y="366" class="t-muted" font-size="9" text-anchor="middle">opt-in, GitHub only</text>
+        </g>
+
+        <g id="node-revise" data-node-id="revise" data-node-label="Revise (GitHub)" tabindex="0" role="button" aria-label="Focus Revise (GitHub), fix review comments, Agent in Docker sandbox" aria-pressed="false" data-node-kind="backend" data-node-sublabel="fix review comments" data-node-context="Agent in Docker sandbox">
+          <title>Revise (GitHub) · fix review comments · Agent in Docker sandbox</title>
           <rect x="552" y="324" width="140" height="56" rx="6" class="c-mask"/>
           <rect x="552" y="324" width="140" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(558 330) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="622" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Revise</text>
+          <text data-node-label="" x="622" y="350" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Revise (GitHub)</text>
         <text x="622" y="366" class="t-muted" font-size="9" text-anchor="middle">fix review comments</text>
         </g>
 
@@ -571,23 +584,31 @@ rect.c-bg-rect { fill: var(--bg); }
           <rect x="207.6" y="144" width="62.8" height="14" rx="3" class="c-mask"/>
           <text x="239" y="154" class="t-messagebus" font-size="8" text-anchor="middle">human edits</text>
         </g>
-        <g data-edge-from="triage" data-edge-to="spec" data-edge-label="ready for spec" data-edge-key="3" data-edge-id="triage-spec">
-          <rect x="60.4" y="290" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="99" y="300" class="t-backend" font-size="8" text-anchor="middle">ready for spec</text>
+        <g data-edge-from="triage" data-edge-to="spec" data-edge-label="spec trigger" data-edge-key="3" data-edge-id="triage-spec">
+          <rect x="65.2" y="290" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="99" y="300" class="t-backend" font-size="8" text-anchor="middle">spec trigger</text>
         </g>
-        <g data-edge-from="triage" data-edge-to="build" data-edge-label="ready for agent" data-edge-key="4" data-edge-id="triage-build">
-          <rect x="154.5" y="264" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="195.5" y="274" class="t-muted" font-size="8" text-anchor="middle">ready for agent</text>
+        <g data-edge-from="triage" data-edge-to="build" data-edge-label="agent trigger" data-edge-key="4" data-edge-id="triage-build">
+          <rect x="159.3" y="264" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="195.5" y="274" class="t-muted" font-size="8" text-anchor="middle">agent trigger</text>
         </g>
 
 
+        <g data-edge-from="pr" data-edge-to="autoreview" data-edge-label="ready PR" data-edge-key="7" data-edge-id="pr-autoreview">
+          <rect x="466.8" y="248" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="491" y="258" class="t-muted" font-size="8" text-anchor="middle">ready PR</text>
+        </g>
+        <g data-edge-from="autoreview" data-edge-to="pr" data-edge-label="verdict" data-edge-key="8" data-edge-id="autoreview-pr">
+          <rect x="389.2" y="304" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="411" y="314" class="t-messagebus" font-size="8" text-anchor="middle">verdict</text>
+        </g>
 
 
-        <g data-edge-from="review" data-edge-to="revise" data-edge-label="needs revision" data-edge-key="9" data-edge-id="review-revise">
+        <g data-edge-from="review" data-edge-to="revise" data-edge-label="needs revision" data-edge-key="11" data-edge-id="review-revise">
           <rect x="583.4" y="112" width="77.2" height="14" rx="3" class="c-mask"/>
           <text x="622" y="122" class="t-muted" font-size="8" text-anchor="middle">needs revision</text>
         </g>
-        <g data-edge-from="revise" data-edge-to="pr" data-edge-label="push fixes" data-edge-key="10" data-edge-id="revise-pr">
+        <g data-edge-from="revise" data-edge-to="pr" data-edge-label="push fixes" data-edge-key="12" data-edge-id="revise-pr">
           <rect x="507" y="267.5" width="58" height="14" rx="3" class="c-mask"/>
           <text x="536" y="277.5" class="t-messagebus" font-size="8" text-anchor="middle">push fixes</text>
         </g>
@@ -598,9 +619,9 @@ rect.c-bg-rect { fill: var(--bg); }
           <text data-boundary-label="" x="14" y="45" class="t-cloud" font-size="9" font-weight="600">Human</text>
         </g>
 
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Vanguard on GitHub Actions">
-          <rect data-graph-role="structural-frame-label-mask" x="10" y="168" width="150.4" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="14" y="181" class="t-cloud" font-size="9" font-weight="600">Vanguard on GitHub Actions</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="Vanguard host: CI job or watch loop">
+          <rect data-graph-role="structural-frame-label-mask" x="10" y="168" width="199" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="14" y="181" class="t-cloud" font-size="9" font-weight="600">Vanguard host: CI job or watch loop</text>
         </g>
 
         <g data-graph-role="structural-frame-label" data-composition-frame-id="2" data-composition-frame-kind="security-group" data-composition-frame-label="Agent in Docker sandbox">
