@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractReviewVerdict, extractReviewRisk, reviewOutcomeUsable, outputTail, verdictContradictsFindings, hasBlockingFinding } from './review-prompt.js';
+import { extractReviewVerdict, extractReviewRisk, reviewOutcomeUsable, outputTail, verdictContradictsFindings, hasBlockingFinding, VERDICT_INSTRUCTION } from './review-prompt.js';
 import { adversarySystemPrompt } from '../pipeline/pipeline.js';
 import { renderConformanceSection } from '../pipeline/review-publish.js';
 import { publishGitlabVerdict } from './gitlab.js';
@@ -342,6 +342,14 @@ describe('extractReviewVerdict', () => {
     expect(hasBlockingFinding('+- [high] quoted from the diff')).toBe(false);
     expect(hasBlockingFinding('the author wrote [high] in a sentence')).toBe(false);
     expect(hasBlockingFinding('one high-severity leak')).toBe(true);
+  });
+
+  it('VERDICT_INSTRUCTION warns the risk sentence off every prose keyword the gate scans as blocking', () => {
+    // The risk sentence is prose the gate scans, so a clean review that uses one of these reads as blocking.
+    for (const keyword of ['critical', 'high severity', 'high-severity']) {
+      expect(hasBlockingFinding(keyword)).toBe(true);
+      expect(VERDICT_INSTRUCTION).toContain(`\`${keyword}\``);
+    }
   });
 
   it('verdictContradictsFindings flags a clean verdict followed by a high/critical finding in any form the gate recognises', () => {

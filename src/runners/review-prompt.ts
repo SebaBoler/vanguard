@@ -14,7 +14,7 @@ export const RETRY_TRIAGE_INSTRUCTION =
  * thrown away because only the trailing <promise> counted.
  */
 export const VERDICT_INSTRUCTION =
-  'Begin your final reply (the review itself, after any investigation) with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings. Directly after that line, add one more — `Risk: low`, `Risk: medium` or `Risk: high`, followed by ` — ` and one sentence on what the change can break (not a summary of the diff) — before any findings.';
+  'Begin your final reply (the review itself, after any investigation) with exactly one line — `Verdict: NO BLOCKING FINDINGS` or `Verdict: BLOCKING` — before any findings. Directly after that line, add one more — `Risk: low`, `Risk: medium` or `Risk: high`, followed by ` — ` and one sentence on what the change can break (not a summary of the diff) — before any findings. That sentence must not use the words `critical`, `high severity` or `high-severity`: the merge gate scans the whole reply for them, so a clean review that uses one reads as blocking.';
 
 export type ReviewVerdict = 'clean' | 'blocking';
 export type ReviewRisk = 'low' | 'medium' | 'high';
