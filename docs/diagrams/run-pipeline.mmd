@@ -7,13 +7,13 @@ flowchart LR
     triage{"Claim + triage<br/>no model call"}
     info["needs info<br/>too vague, no spend"]
     scan{"Secret scan<br/>hit: nothing pushed"}
-    pr["Push + draft PR/MR<br/>red: verify-failed"]
+    pr["Push + open PR/MR<br/>red: draft, verify-failed"]
   end
   subgraph sandbox[Agent in Docker sandbox]
     implement["Implement<br/>writes the change"]
     review["Review<br/>Codex, fresh context"]
     simplify["Simplify<br/>fresh context"]
-    verify{"Verify<br/>proof-of-work cmd"}
+    verify{"Verify<br/>verify script or tests"}
     repair["Repair<br/>2nd: stronger model"]
   end
 

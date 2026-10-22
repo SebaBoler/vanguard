@@ -10,7 +10,7 @@
   },
   "components": [
     { "id": "input", "type": "external", "label": "Issue / PR / MR", "sublabel": "untrusted text", "pos": [36, 52], "size": [140, 52] },
-    { "id": "pr", "type": "external", "label": "Draft PR / MR", "sublabel": "pushed by host only", "pos": [552, 52], "size": [140, 52] },
+    { "id": "pr", "type": "external", "label": "PR / MR", "sublabel": "pushed by host only", "pos": [552, 52], "size": [140, 52] },
     { "id": "gate", "type": "security", "label": "Author gate", "sublabel": "GitHub Actions only", "pos": [36, 164], "size": [140, 52] },
     { "id": "prompt", "type": "backend", "label": "Prompt", "sublabel": "untrusted <tags> escaped", "pos": [208, 164], "size": [140, 52] },
     { "id": "copyback", "type": "security", "label": "Copy-back", "sublabel": "CI config dropped", "pos": [380, 164], "size": [140, 52] },

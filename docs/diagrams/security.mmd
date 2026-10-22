@@ -6,7 +6,7 @@
 flowchart TB
   subgraph forge[GitHub · GitLab · Linear]
     input["Issue / PR / MR<br/>untrusted text"]
-    pr["Draft PR / MR<br/>pushed by host only"]
+    pr["PR / MR<br/>pushed by host only"]
   end
   subgraph host[Host: CI job or watch loop, holds the GitHub/GitLab token]
     gate{"Author gate<br/>GitHub Actions only"}

@@ -11,11 +11,12 @@ flowchart TB
   subgraph host[Vanguard host: CI job or watch loop]
     triage{"Triage<br/>acceptance criteria?"}
     info["needs info<br/>too vague, no spend"]
-    pr["Draft PR / MR<br/>awaits human review"]
+    pr["PR / MR<br/>draft if a gate failed"]
   end
   subgraph sandbox[Agent in Docker sandbox]
     spec["Tech spec<br/>read-only planner"]
     build["Build<br/>implement · review · simplify"]
+    autoreview["Vanguard review<br/>opt-in, GitHub only"]
     revise["Revise (GitHub)<br/>fix review comments"]
   end
 
@@ -24,4 +25,5 @@ flowchart TB
   triage -->|spec trigger| spec --> build
   triage -->|agent trigger| build
   build --> pr --> review --> merge
+  pr -->|ready PR| autoreview -.->|verdict| pr
   review -->|needs revision| revise -->|push fixes| pr
