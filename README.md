@@ -17,7 +17,10 @@
 </p>
 
 <p align="center">
-  <code>Task ticket&nbsp;&nbsp;→&nbsp;&nbsp;Agent pipeline (plan · implement · review · repair)&nbsp;&nbsp;→&nbsp;&nbsp;PR (draft unless every gate passed)</code>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/hero-flow-dark.svg" />
+    <img src="docs/diagrams/hero-flow-light.svg" width="100%" alt="Vanguard at a glance: a task ticket from GitHub, GitLab, or Linear enters the agent pipeline in a Docker sandbox: plan (a read-only tech spec), implement, review in a fresh context, then the verify gate. Green opens a PR ready for review; red sends the change to repair, at most two rounds, which re-verifies, and if it is still red the PR opens as a draft." />
+  </picture>
 </p>
 
 ## What is Vanguard?
