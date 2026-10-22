@@ -22,11 +22,11 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'needs research' &&
-       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
-       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
+       contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.issue.user.login) &&
+       contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login))
     uses: ./.github/workflows/research.yml
     with:
-      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
+      allowed-actors: '["spietrza","pawelkrystkiewicz"]'
       number: ${{ github.event.issue.number || inputs.issue }}
       provider: claude
     secrets:

@@ -23,11 +23,11 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'needs revision' &&
-       contains(fromJSON('["SebaBoler","github-actions[bot]","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
-       contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
+       contains(fromJSON('["spietrza","github-actions[bot]","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
+       contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login))
     uses: ./.github/workflows/revise.yml
     with:
-      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
+      allowed-actors: '["spietrza","pawelkrystkiewicz"]'
       number: ${{ github.event.pull_request.number || inputs.pr }}
       llm-proxy: true
       upload-run-records: true

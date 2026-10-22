@@ -102,6 +102,9 @@ on:
         required: false
       CLOUDFLARE_AUTH_TOKEN:
         required: false
+      VANGUARD_PUSH_TOKEN:
+        description: 'PAT that opens the PR (needs Pull requests: write). A PR opened with GITHUB_TOKEN fires no workflows (recursion guard), so it gets no CI until a push. Falls back to the workflow token.'
+        required: false
 
 jobs:
   implement:
@@ -144,7 +147,7 @@ jobs:
       # the CLI at the same revision as the YAML.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          repository: ${{ job.workflow_repository || 'SebaBoler/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
+          repository: ${{ job.workflow_repository || 'spietrza/vanguard' }}   # the repo that holds THIS reusable workflow (a fork builds itself)
           ref: ${{ inputs.vanguard-ref || job.workflow_sha }}
           path: .vanguard-src
 
@@ -185,6 +188,8 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+          # Host-side only (never forwarded into the sandbox): `gh pr create` runs as its owner.
+          VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
           # The decision probe ships issue text off the host; its credentials only reach the run when opted in.
           CLOUDFLARE_ACCOUNT_ID: ${{ inputs.decision-probe && secrets.CLOUDFLARE_ACCOUNT_ID || '' }}
           CLOUDFLARE_AUTH_TOKEN: ${{ inputs.decision-probe && secrets.CLOUDFLARE_AUTH_TOKEN || '' }}

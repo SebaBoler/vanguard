@@ -22,11 +22,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'ready for vanguard review' &&
       github.event.pull_request.draft == false &&
-      contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
-      contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.sender.login))
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.pull_request.user.login) &&
+      contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.sender.login))
     uses: ./.github/workflows/pr-review.yml
     with:
-      allowed-actors: '["SebaBoler","pawelkrystkiewicz"]'
+      allowed-actors: '["spietrza","pawelkrystkiewicz"]'
       llm-proxy: true
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

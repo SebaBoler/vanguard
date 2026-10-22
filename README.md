@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml"><img src="https://github.com/SebaBoler/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/spietrza/vanguard/actions/workflows/ci.yml"><img src="https://github.com/spietrza/vanguard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-8B5CF6.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2024-22D3EE" alt="Node >= 24">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6" alt="TypeScript">
@@ -227,7 +227,7 @@ Keep your domain skills in the target repo under `.github/vanguard-skills/`:
   release/SKILL.md
 ```
 
-That is the whole setup. Vanguard injects every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/` into `run` and `watch` on every source (GitHub, GitLab, Projects, Linear), the spec pass (`spec`, and `watch` loop-v1), `revise-pr`, and the reviewers (`review-pr`, `watch-prs`, `review-mr`, `watch-mrs`). `research` runs without skills. Reviewers take repo skills from the PR's base branch, so a PR cannot change the skills of its own review. The implement workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
+That is the whole setup. Vanguard injects every skill in the `--skills` dir plus every skill in the target repo's `.github/vanguard-skills/` into `run` and `watch` on every source (GitHub, GitLab, Projects, Linear), the spec pass (`spec`, and `watch` loop-v1), `revise-pr`, and the reviewers (`review-pr`, `watch-prs`, `review-mr`, `watch-mrs`). `research` runs without skills. Reviewers take repo skills from the PR's base branch, so a PR cannot change the skills of its own review. The implement workflow passes the bundled `skills/`, so the agent keeps `ponytail`/`code-review`/`simplify` and gains yours. A thin `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` caller needs no extra step or input. Leave the workflow's `skills` input at its default: pointing it at `.github/vanguard-skills` would drop the bundled skills the review and simplify stages use.
 
 A repo skill with the same directory name as a bundled one replaces it, so a repo can ship its own `code-review`; the run log names every skill replaced this way. Skill directories that are symlinks are skipped, and so are `SKILL.md` files that are symlinks, with a warning in the run log. A `.github/vanguard-skills` that is not a directory, or that resolves outside the repo, fails the run.
 
@@ -348,7 +348,7 @@ What it does not give you: text. It cannot write code, a review, or explain its 
 What a live call looks like (recorded 2026-10-07, `clef-flash`, 485 input tokens, 518 ms):
 
 ```
-vanguard: SebaBoler/vanguard#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
+vanguard: spietrza/vanguard#999 difficulty probe (clef-flash, 518ms): first-try 0.58, difficulty 1.59/4, spec clear 0.79
 ```
 
 and the judge on a refusal case: an output that charges ahead scores `P(acceptable)=0.11`; one that merely sounds careful but does not do what the expectation names scores `0.48` — the judge reads the expectation, not the tone. The fork scorer gives a small, tested diff `0.91` and an empty diff `0.03`.
@@ -695,7 +695,7 @@ watch-prs owner/repo#123: reviewed -> marked
 
 **Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
 
-**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. Because Flow B is read-only (it reviews the diff in a sandbox and only posts a comment), the job gate is an **author + sender allow-list** rather than a single login: `contains(fromJSON('["SebaBoler","pawelkrystkiewicz"]'), github.event.pull_request.user.login)` **and** the same check on `github.event.sender.login` — a trusted person labels a trusted person's PR. Widen the list to add reviewers; keep it tight because each entry can trigger a run on the repo's review credit. (The sibling `vanguard-revise.yml` flow, which *pushes* code, keeps its author gate to the bot/owner only — see Flow C.)
+**Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. Because Flow B is read-only (it reviews the diff in a sandbox and only posts a comment), the job gate is an **author + sender allow-list** rather than a single login: `contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.pull_request.user.login)` **and** the same check on `github.event.sender.login` — a trusted person labels a trusted person's PR. Widen the list to add reviewers; keep it tight because each entry can trigger a run on the repo's review credit. (The sibling `vanguard-revise.yml` flow, which *pushes* code, keeps its author gate to the bot/owner only — see Flow C.)
 
 **Behavior:** each label event runs `watch-prs --once` (the gate, not an `--author` filter, controls which PRs are eligible), reviewing PRs carrying the trigger label. This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
 
@@ -741,7 +741,7 @@ The job runs `vanguard watch --source github --once` **once**: a `ready for spec
 
 #### Run it on another repo
 
-The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
+The target repo does not need Vanguard installed: add the `CLAUDE_CODE_OAUTH_TOKEN` secret, enable the PR-creation setting above, and drop in a ~25-line caller that does `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` — the full caller, the secret mapping and the input tables are in **[docs/onboarding-another-repo.md](docs/onboarding-another-repo.md)**.
 
 Notes: the repo needs at least one commit (an empty repo has no `main` to open a PR against). The sandbox agent reads the target repo's `CLAUDE.md`, so put design/stack rules there to steer output — Vanguard does not inject your local Claude Code skills. The reusable workflow passes `--skills .vanguard-src/skills`, which injects Vanguard's bundled skills (`ponytail`, `code-review`, `simplify`), plus any skills the repo keeps in `.github/vanguard-skills/` (see [Custom skills](#custom-skills-bring-your-own)). Don't run this **and** an always-on GitHub watcher on the same labels — pick one per repo (a Linear watcher does not clash). The reusable workflow installs Vanguard with `--ignore-workspace`, so it also works when the target repo is a **pnpm workspace** (monorepo).
 
@@ -760,7 +760,7 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 **2. Set the providers and drop `llm-proxy`.** Map the secret in the caller's `secrets:` block and pick a provider per stage in `with:`:
 
 ```yaml
-    uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+    uses: spietrza/vanguard/.github/workflows/implement.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       spec-model: opus

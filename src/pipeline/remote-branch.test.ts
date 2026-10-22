@@ -158,6 +158,26 @@ describe('publishForReview', () => {
     await disposeContext(ctx);
   });
 
+  it('opens the PR as the prToken owner and falls back to the ambient credential when it is refused', async () => {
+    const wm = new WorktreeManager(repo, undefined, () => 'r1');
+    const ctx = await prepareContext({ taskId: 'pr-token', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });
+    const ghEnvs: Array<Record<string, string> | undefined> = [];
+    const runnerFor = (refuse: boolean) => async (file: string, _args: string[], _cwd: string, env?: Record<string, string>): Promise<string> => {
+      if (file !== 'gh') return '';
+      ghEnvs.push(env);
+      if (refuse && env !== undefined) throw new Error('HTTP 403: Resource not accessible by personal access token');
+      return 'https://github.com/o/r/pull/7';
+    };
+
+    expect((await publishForReview(ctx, { title: 'PR', prToken: 'pat', runner: runnerFor(false) })).prUrl).toBe('https://github.com/o/r/pull/7');
+    expect(ghEnvs).toEqual([{ GH_TOKEN: 'pat' }]);
+
+    ghEnvs.length = 0;
+    expect((await publishForReview(ctx, { title: 'PR', prToken: 'pat', runner: runnerFor(true) })).prUrl).toBe('https://github.com/o/r/pull/7');
+    expect(ghEnvs).toEqual([{ GH_TOKEN: 'pat' }, undefined]);
+    await disposeContext(ctx);
+  });
+
   it('keeps a line of a GitLab MR description from running as a quick action', async () => {
     const wm = new WorktreeManager(repo, undefined, () => 'r1');
     const ctx = await prepareContext({ taskId: 'qa-desc', localRepoPath: repo, baseBranch: 'main', start: 'base', sandbox: makeSandbox() }, { worktrees: wm });

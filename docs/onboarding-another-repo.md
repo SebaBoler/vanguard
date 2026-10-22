@@ -1,6 +1,6 @@
 # Run Vanguard on your own repo (GitHub Actions)
 
-Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `SebaBoler/vanguard`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
+Label a GitHub issue, get back a reviewed draft PR. The target repo does not need Vanguard installed and does not carry the workflow steps: each workflow in your repo is a **thin caller** (triggers, permissions, an actor gate, a `uses:` line) of a **reusable workflow** that lives in `spietrza/vanguard`. The reusable workflow checks Vanguard out beside your code, builds it, and runs it in a Docker sandbox on the GitHub runner.
 
 You drop in **one or two thin callers** (implement, plus the optional doctor), set **one secret** and **one repo setting**, run the doctor once, then label an issue. A ready-made **issue template** is optional — it is just a convenient way to produce issues that pass triage; bring your own or none, as long as your issues meet [the triage contract](#what-an-issue-must-contain-the-triage-contract).
 
@@ -12,7 +12,7 @@ You drop in **one or two thin callers** (implement, plus the optional doctor), s
 
 ### How it fits together
 
-| You own (in your repo) | Vanguard owns (`SebaBoler/vanguard/.github/workflows/`) |
+| You own (in your repo) | Vanguard owns (`spietrza/vanguard/.github/workflows/`) |
 |---|---|
 | `on:` triggers, `permissions`, `concurrency` | the steps: checkout, build, label bootstrap, the CLI call |
 | the `if:` actor gate, the `allowed-actors` list | timeouts, runner, flag assembly |
@@ -22,7 +22,7 @@ When Vanguard changes a default or a step, you get it on your next run (or when 
 
 Things to know before copying:
 
-- **Pin the ref.** `uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
+- **Pin the ref.** `uses: spietrza/vanguard/.github/workflows/implement.yml@v1` follows the moving `v1` tag (moved by hand once Vanguard's own factory is green on `main`). `@main` follows the tip immediately — a bad change then hits every repo at once, so prefer `@v1`.
 - **`vanguard-ref` follows the workflow ref.** Leave the `vanguard-ref` input empty and the CLI is built at the same revision as the YAML, so a caller pinned `@v1` builds Vanguard at `v1` too. Set it only to build a different revision (for example to test a branch). On GitHub Enterprise Server `job.workflow_sha` / `job.workflow_repository` are not available, so set `vanguard-ref` explicitly there or the run fails at the "Resolve vanguard source ref" guard.
 - **No `secrets: inherit`.** Each secret is mapped explicitly in the caller, so you can see exactly which credentials reach the run. Every secret is optional on the reusable side; map only what your setup needs.
 - **`allowed-actors` is mandatory.** It is a JSON array of GitHub logins, passed as a string. The reusable workflow checks `github.event.sender.login` against it as a backstop to your own `if:`; a caller that omits it fails at startup, and a sender not in the list fails the run loudly (red, with an error) rather than skipping it, so a typo in the list cannot hide as a green no-op. Keep your caller's `if:` as well — it also gates on the issue or PR author, which the backstop does not.
@@ -66,7 +66,7 @@ jobs:
       contains(fromJSON('["ready for spec","ready for agent"]'), github.event.label.name) &&
       github.event.issue.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
-    uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+    uses: spietrza/vanguard/.github/workflows/implement.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       llm-proxy: true
@@ -130,7 +130,7 @@ concurrency:
 jobs:
   doctor:
     if: github.actor == 'YOUR_LOGIN'
-    uses: SebaBoler/vanguard/.github/workflows/doctor.yml@v1
+    uses: spietrza/vanguard/.github/workflows/doctor.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
     secrets:
@@ -167,7 +167,7 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.user.login == 'YOUR_LOGIN' &&
       github.event.sender.login == 'YOUR_LOGIN')
-    uses: SebaBoler/vanguard/.github/workflows/pr-review.yml@v1
+    uses: spietrza/vanguard/.github/workflows/pr-review.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       author: YOUR_LOGIN
@@ -184,7 +184,7 @@ Inputs: `allowed-actors` (required), `provider`, `review-model`, `fallback-provi
 
 ### `vanguard-research.yml` and `vanguard-revise.yml` (optional)
 
-Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, plus `uses: SebaBoler/vanguard/.github/workflows/research.yml@v1` or `.../revise.yml@v1`.
+Same shape: a caller with its triggers, permissions, `concurrency` and `if:`, plus `uses: spietrza/vanguard/.github/workflows/research.yml@v1` or `.../revise.yml@v1`.
 
 | Workflow | Inputs | Secrets |
 |---|---|---|
@@ -217,7 +217,7 @@ jobs:
       (github.event.label.name == 'needs revision' &&
        contains(fromJSON('["YOUR_LOGIN","github-actions[bot]"]'), github.event.pull_request.user.login) &&
        github.event.sender.login == 'YOUR_LOGIN')
-    uses: SebaBoler/vanguard/.github/workflows/revise.yml@v1
+    uses: spietrza/vanguard/.github/workflows/revise.yml@v1
     with:
       allowed-actors: '["YOUR_LOGIN"]'
       number: ${{ github.event.pull_request.number || inputs.pr }}
@@ -268,21 +268,21 @@ assignees: ''
 1. **Secret `CLAUDE_CODE_OAUTH_TOKEN`** — Settings → Secrets and variables → Actions → New repository secret. Generate it locally with `claude setup-token`.
 2. **Repo setting** — Settings → Actions → General → Workflow permissions → enable **"Allow GitHub Actions to create and approve pull requests"**. Without it the agent does all the work and then `gh pr create` fails. (CLI: `gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow -F can_approve_pull_request_reviews=true`.)
 3. (Full tier only) **Secret `CODEX_AUTH_JSON`** — see below.
-4. (Recommended) **Secret `VANGUARD_PUSH_TOKEN`** — see [CI on revision pushes](#optional-vanguard_push_token--ci-on-revision-pushes).
+4. (Recommended) **Secret `VANGUARD_PUSH_TOKEN`** — see [CI on factory PRs and revision pushes](#optional-vanguard_push_token--ci-on-factory-prs-and-revision-pushes).
 
 Replace `YOUR_LOGIN` in the callers with your GitHub login, and set `allowed-actors` to the logins that may trigger runs. The `if:` gate restricts runs to your own issues, so a stranger labelling an issue cannot start a run; `allowed-actors` is the second lock behind it.
 
-### Optional: `VANGUARD_PUSH_TOKEN` — CI on revision pushes
+### Optional: `VANGUARD_PUSH_TOKEN` — CI on factory PRs and revision pushes
 
-**When you need it:** your default branch is protected **and** its required status checks gate merges. Only then does this token buy hands-free revision merges. No branch protection, or no required checks? Skip this section; revisions still merge, they just miss a fresh CI run.
+**When you need it:** your default branch is protected **and** its required status checks gate merges. Only then does this token buy hands-free CI on factory PRs and revisions. No branch protection, or no required checks? Skip this section; PRs still merge, they just miss a CI run.
 
-**The problem.** The revise pass (`needs revision` label) pushes fix commits with the workflow's built-in `GITHUB_TOKEN` — and GitHub's recursion guard means **events created by `GITHUB_TOKEN` trigger no workflows**. A revised PR therefore gets no fresh CI run. If the repo has branch protection with required checks, the PR sits `BLOCKED` until a human nudges it (close/reopen); without protection it can be merged with stale CI. Either way, revisions land unvalidated.
+**The problem.** GitHub's recursion guard means **events created by `GITHUB_TOKEN` trigger no workflows**. The implement pass opens its PR with the workflow's built-in `GITHUB_TOKEN`, so a new factory PR gets no CI run; the revise pass (`needs revision` label) pushes fix commits with it, so a revised PR gets no fresh CI run either. If the repo has branch protection with required checks, the PR sits `BLOCKED` until a human nudges it (an empty commit, or close/reopen); without protection it can be merged with stale or no CI.
 
-**The fix.** A fine-grained Personal Access Token: pushes made with a PAT count as user events, so `pull_request: synchronize` fires and CI runs normally. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
+**The fix.** A fine-grained Personal Access Token: a PR opened and pushes made with a PAT count as user events, so `pull_request: opened` / `synchronize` fire and CI runs normally. The factory PR then shows the PAT's owner as its author (the commit author is unchanged), and that account cannot approve it if your branch protection requires approvals. This is **provider-independent** — it is about the git push, not about which model (Claude, Codex, …) wrote the revision. Do not confuse it with `CODEX_AUTH_JSON` (LLM auth for the Codex reviewer); they are unrelated secrets.
 
-1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** — nothing else (Metadata: Read is added automatically). Do **not** grant Workflows: that would let the autonomous reviser rewrite the very workflows that carry its actor gates and secrets. A revision that touches `.github/workflows/` is rejected by GitHub by design; apply such edits by hand. Set an expiration (e.g. 90 days).
+1. Create the PAT: github.com → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate. Repository access: **Only select repositories** → this repo (add every repo that runs Vanguard if you want one token for all of them). Permissions: **Contents → Read and write** and **Pull requests → Read and write** (to open the factory PR) — nothing else (Metadata: Read is added automatically). Do **not** grant Workflows: that would let the autonomous reviser rewrite the very workflows that carry its actor gates and secrets. A revision that touches `.github/workflows/` is rejected by GitHub by design; apply such edits by hand. Set an expiration (e.g. 90 days).
 2. Store it: `gh secret set VANGUARD_PUSH_TOKEN --repo OWNER/REPO` (repeat per repo — Actions secrets are per-repo, even when the PAT itself covers several).
-3. Map it in your revise caller's `secrets:` block:
+3. Map it in the `secrets:` block of your implement and revise callers:
 
    ```yaml
    secrets:
@@ -290,11 +290,11 @@ Replace `YOUR_LOGIN` in the callers with your GitHub login, and set `allowed-act
      VANGUARD_PUSH_TOKEN: ${{ secrets.VANGUARD_PUSH_TOKEN }}
    ```
 
-The revise CLI picks it up automatically when present and falls back to `GITHUB_TOKEN` when absent (pushes still work — they just don't trigger CI). Push errors are redacted so the token cannot leak into logs or comments.
+Both runs pick it up automatically when present, on the host only (it never enters the sandbox), and fall back to `GITHUB_TOKEN` when absent (PRs and pushes still work — they just don't trigger CI). A token without Pull requests write makes the implement run log a warning and open the PR with `GITHUB_TOKEN`. Push errors are redacted so the token cannot leak into logs or comments.
 
 **Renewal.** Fine-grained PATs expire; GitHub emails you before expiry. Renew = generate a new token with the same scope and re-run `gh secret set` for each repo. Nothing else to change.
 
-**Trust note.** The PAT acts as you, limited to `contents: write` on the selected repos. It cannot edit workflows (no `workflow` scope) and cannot bypass branch protection required checks.
+**Trust note.** The PAT acts as you, limited to `contents: write` and `pull_requests: write` on the selected repos. It cannot edit workflows (no `workflow` scope) and cannot bypass branch protection required checks.
 
 ---
 
@@ -332,7 +332,7 @@ To run **Opus** spec / **Sonnet** impl / **Codex** review with Codex on a ChatGP
    ```
 2. In the implement caller, set the model inputs, map the secret, and **drop `llm-proxy`** (a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover):
    ```yaml
-       uses: SebaBoler/vanguard/.github/workflows/implement.yml@v1
+       uses: spietrza/vanguard/.github/workflows/implement.yml@v1
        with:
          allowed-actors: '["YOUR_LOGIN"]'
          provider: claude

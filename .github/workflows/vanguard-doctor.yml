@@ -19,10 +19,10 @@ concurrency:
 
 jobs:
   doctor:
-    if: github.actor == 'SebaBoler'
+    if: github.actor == 'spietrza'
     uses: ./.github/workflows/doctor.yml
     with:
-      allowed-actors: '["SebaBoler"]'
+      allowed-actors: '["spietrza"]'
       # Same providers as implement (Claude + Codex review), so it also validates the Codex credential.
       provider: claude
       review-provider: codex
