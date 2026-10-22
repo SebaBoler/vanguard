@@ -148,6 +148,11 @@ describe('collectReviewFacts', () => {
     expect(collectReviewFacts(prFacts({ reviews: [review(body)] }), policy)).toEqual({ verdict: null, sha: null, author: null });
   });
 
+  it.each(['Reviewed by :', 'Reviewed by', 'Reviewed by  @ abc1234:'])('treats an empty main-loop attribution "%s" as the main loop too', (line) => {
+    const body = `## Vanguard Review\n\n${line}\n\nVerdict: NO BLOCKING FINDINGS\n\n${pullRequestReviewMarker(SHA)}`;
+    expect(collectReviewFacts(prFacts({ reviews: [review(body)] }), policy)).toEqual({ verdict: null, sha: null, author: null });
+  });
+
   it('prefers the external review when the main-loop review for the same head is also on the PR', () => {
     const mainLoop = review(buildMainLoopReviewComment('Verdict: BLOCKING', { headRefOid: SHA, attribution: 'claude-opus-5' }), {
       submittedAt: '2026-10-20T02:00:00Z',
@@ -192,9 +197,9 @@ describe('collectReviewFacts', () => {
     });
   });
 
-  it('skips the author check when the allow-list is empty', () => {
+  it('accepts nobody when the allow-list is empty (fail closed, never "any author")', () => {
     const body = buildPullRequestReviewComment('Verdict: NO BLOCKING FINDINGS', SHA);
-    const open = { ...policy, reviewAuthors: [] };
-    expect(collectReviewFacts(prFacts({ reviews: [review(body, { author: 'anyone' })] }), open)).toMatchObject({ verdict: 'clean' });
+    const empty = { ...policy, reviewAuthors: [] };
+    expect(collectReviewFacts(prFacts({ reviews: [review(body, { author: 'anyone' })] }), empty)).toEqual({ verdict: null, sha: null, author: null });
   });
 });

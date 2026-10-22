@@ -7,6 +7,7 @@ import { readLedger } from './ledger.js';
 import { decide } from './rules.js';
 import { buildDecisionRecord, appendDecision } from './record.js';
 import { publishCheckRun, commentDecision, shadowSafeGhRunner } from './publish.js';
+import { VanguardError } from '../core/errors.js';
 import type { ApproverFacts, Decision, DecisionRecord } from './types.js';
 
 export interface RunApproverInput {
@@ -36,11 +37,23 @@ export async function runApprover(input: RunApproverInput): Promise<RunApproverR
   const timestamp = now.toISOString();
 
   const finish = async (facts: ApproverFacts | undefined, decision: Decision, policyHash: string, publishHeadSha: string): Promise<RunApproverResult> => {
-    const record = buildDecisionRecord({ mode: input.mode, repo: input.repoSlug, prNumber: input.prNumber, facts, decision, policyHash, timestamp });
-    if (!input.dryRun) {
-      await appendDecision(input.repoPath, record, input.branch !== undefined ? { branch: input.branch } : {});
-      await publishCheckRun(gh, input.repoSlug, publishHeadSha, input.prNumber, decision, record).catch(() => undefined);
-      await commentDecision(gh, input.repoSlug, input.prNumber, decision, record).catch(() => undefined);
+    const record = buildDecisionRecord({ mode: input.mode, repo: input.repoSlug, prNumber: input.prNumber, headSha: publishHeadSha, facts, decision, policyHash, timestamp });
+    if (input.dryRun) return { record };
+    // Publish first, record last, and run every step even when one fails: a failed record append must not
+    // hide the check run, and no failure is swallowed — they are reported together once all three ran.
+    const failures: string[] = [];
+    const attempt = async (step: string, run: () => Promise<void>): Promise<void> => {
+      try {
+        await run();
+      } catch (err) {
+        failures.push(`${step}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    await attempt('check run', () => publishCheckRun(gh, input.repoSlug, publishHeadSha, input.prNumber, decision, record));
+    await attempt('comment', () => commentDecision(gh, input.repoSlug, input.prNumber, decision, record));
+    await attempt('decision record', () => appendDecision(input.repoPath, record, input.branch !== undefined ? { branch: input.branch } : {}));
+    if (failures.length > 0) {
+      throw new VanguardError(`approver: ${decision.verdict} for #${input.prNumber} was decided, but ${failures.join('; ')}`);
     }
     return { record };
   };

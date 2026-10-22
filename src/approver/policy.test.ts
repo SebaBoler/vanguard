@@ -35,6 +35,13 @@ describe('approver policy', () => {
     expect(policy).toMatchObject({ shape: { maxLines: 150, maxFiles: 5 }, ledger: { windowDays: 7, maxLines: 300 }, auditSample: { p: 0.1 } });
   });
 
+  it('fails closed without a review-author allow-list: absent or empty is invalid, never "anyone"', () => {
+    const { reviewAuthors: _omit, ...withoutAuthors } = policy;
+    expect(approverPolicySchema.safeParse(withoutAuthors).success).toBe(false);
+    expect(approverPolicySchema.safeParse({ ...policy, reviewAuthors: [] }).success).toBe(false);
+    expect(approverPolicySchema.safeParse({ ...policy, reviewAuthors: [''] }).success).toBe(false);
+  });
+
   it('reads the remote base despite a planted working-tree or unpushed local policy', async () => {
     const repo = await fixture(raw);
     await writeFile(join(repo, '.vanguard/approver.json'), JSON.stringify({ ...policy, enabled: false }));

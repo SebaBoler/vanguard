@@ -3,30 +3,59 @@ import type { GhRunner } from '../tasks/github.js';
 import { VanguardError } from '../core/errors.js';
 import type { Decision, DecisionRecord } from './types.js';
 
-const DENY_PR_SUBCOMMANDS = new Set(['merge', 'ready', 'edit', 'close', 'reopen', 'review']);
+// gh api flags that take a value; the endpoint is the one positional argument left after them.
+const API_VALUE_FLAGS = new Set(['-X', '--method', '-f', '--raw-field', '-F', '--field', '-H', '--header', '--input', '-q', '--jq', '-t', '--template', '--cache', '--hostname', '-p', '--preview']);
+const API_BODY_FLAGS = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
+const REPO = '[^/?\\s]+/[^/?\\s]+';
+/** The only endpoints shadow mode may call: read check runs on a commit, create one, update one. */
+const ALLOWED_API: Record<string, RegExp> = {
+  GET: new RegExp(`^repos/${REPO}/commits/[^/?\\s]+/check-runs(\\?[^/\\s]*)?$`),
+  POST: new RegExp(`^repos/${REPO}/check-runs$`),
+  PATCH: new RegExp(`^repos/${REPO}/check-runs/\\d+$`),
+};
 
-/**
- * Denylist over argv for any gh call that could merge, approve, or change labels — shadow mode must
- * be structurally incapable of those actions. Applied by wrapping every GhRunner the engine uses.
- */
-export function assertShadowSafeGhArgs(args: string[]): void {
-  const [cmd, sub] = args;
-  const refuse = (): never => {
-    throw new VanguardError(`shadow mode: refusing gh call "${args.join(' ')}"`);
-  };
-  if (cmd === 'pr' && sub !== undefined && DENY_PR_SUBCOMMANDS.has(sub)) refuse();
-  if (cmd === 'label') refuse();
-  if (cmd === 'issue' && sub === 'edit') refuse();
-  if (args.some((a) => a === '--add-label' || a === '--remove-label' || a === '--approve' || a === '--request-changes')) refuse();
-  if (cmd === 'api') {
-    const methodIdx = args.findIndex((a) => a === '-X' || a === '--method');
-    const method = (methodIdx !== -1 ? args[methodIdx + 1] : 'GET')?.toUpperCase();
-    if (method !== undefined && !['GET', 'POST', 'PATCH'].includes(method)) refuse();
-    const path = args.find((a) => a.includes('/repos/') || a.startsWith('repos/'));
-    if (path !== undefined && (/\/labels(\?|$)/.test(path) || /\/merge(\?|$)/.test(path) || /\/reviews(\?|$)/.test(path) || /\/pulls\/\d+$/.test(path))) {
-      refuse();
+/** Method and endpoint of a `gh api` argv, the way gh resolves them: a body without -X means POST. */
+function parseApiCall(args: string[]): { method: string; endpoints: string[] } {
+  let method: string | undefined;
+  let hasBody = false;
+  const endpoints: string[] = [];
+  for (let i = 1; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (API_VALUE_FLAGS.has(a)) {
+      if (a === '-X' || a === '--method') method = args[i + 1];
+      if (API_BODY_FLAGS.has(a)) hasBody = true;
+      i += 1;
+    } else if (a.startsWith('--')) {
+      const [flag, value] = a.split('=', 2);
+      if (flag === '--method') method = value;
+      if (API_BODY_FLAGS.has(flag!)) hasBody = true;
+    } else if (a.startsWith('-') && a.length > 2) {
+      // short flag with its value attached (-XPOST, -fname=x)
+      if (a[1] === 'X') method = a.slice(2);
+      if (a[1] === 'f' || a[1] === 'F') hasBody = true;
+    } else if (!a.startsWith('-')) {
+      endpoints.push(a);
     }
   }
+  return { method: (method ?? (hasBody ? 'POST' : 'GET')).toUpperCase(), endpoints };
+}
+
+/**
+ * Allowlist over argv: shadow mode makes exactly three kinds of gh call — `pr view <n> --repo <r>
+ * --json <f>`, `pr comment <n> --repo <r> --body <b>`, and `api` on the check-runs endpoints above.
+ * Anything else (graphql, merges, refs, labels, reviews) throws, so a future edit cannot widen what
+ * shadow mode can do without changing this list. Applied by wrapping every GhRunner the engine uses.
+ */
+export function assertShadowSafeGhArgs(args: string[]): void {
+  const [cmd, sub, num, repoFlag, , valueFlag] = args;
+  if (cmd === 'pr' && args.length === 7 && /^\d+$/.test(num ?? '') && repoFlag === '--repo') {
+    if ((sub === 'view' && valueFlag === '--json') || (sub === 'comment' && valueFlag === '--body')) return;
+  }
+  if (cmd === 'api') {
+    const { method, endpoints } = parseApiCall(args);
+    if (endpoints.length === 1 && ALLOWED_API[method]?.test(endpoints[0]!) === true) return;
+  }
+  throw new VanguardError(`shadow mode: refusing gh call "${args.join(' ')}"`);
 }
 
 /** Wrap a GhRunner so any shadow-unsafe argv throws before it reaches gh — the second, independent guard layer. */
@@ -54,7 +83,7 @@ interface GhCheckRunsLookup {
 /**
  * `vanguard/approver` check run on the head SHA, conclusion `neutral` in shadow mode regardless of
  * verdict. Idempotent per (PR, head SHA) via `external_id`: PATCHes an existing run, else POSTs.
- * A `checks: write` permission failure is swallowed — the decision record is the primary artifact.
+ * A failure throws; runApprover still records the decision and then reports it.
  */
 export async function publishCheckRun(
   gh: GhRunner,
@@ -68,26 +97,23 @@ export async function publishCheckRun(
   const externalId = `${prNumber}:${headSha}`;
   const title = `${decision.verdict} (shadow)`;
   const summary = summaryBody(decision, record);
-  try {
-    const existing = await safeGh(['api', `repos/${repoSlug}/commits/${headSha}/check-runs?check_name=vanguard%2Fapprover`]);
-    const parsed = JSON.parse(existing) as GhCheckRunsLookup;
-    const match = (parsed.check_runs ?? []).find((r) => r.external_id === externalId);
-    const fields = [
-      '-f', 'name=vanguard/approver',
-      '-f', `head_sha=${headSha}`,
-      '-f', 'status=completed',
-      '-f', 'conclusion=neutral',
-      '-f', `external_id=${externalId}`,
-      '-f', `output[title]=${title}`,
-      '-f', `output[summary]=${summary}`,
-    ];
-    if (match !== undefined) {
-      await safeGh(['api', '--method', 'PATCH', `repos/${repoSlug}/check-runs/${match.id}`, ...fields]);
-    } else {
-      await safeGh(['api', '--method', 'POST', `repos/${repoSlug}/commits/${headSha}/check-runs`, ...fields]);
-    }
-  } catch {
-    // a checks:write permission failure (or any publish failure) must not abort the run.
+  const existing = await safeGh(['api', `repos/${repoSlug}/commits/${headSha}/check-runs?check_name=vanguard%2Fapprover`]);
+  const parsed = JSON.parse(existing) as GhCheckRunsLookup;
+  const match = (parsed.check_runs ?? []).find((r) => r.external_id === externalId);
+  const fields = [
+    '-f', 'name=vanguard/approver',
+    '-f', `head_sha=${headSha}`,
+    '-f', 'status=completed',
+    '-f', 'conclusion=neutral',
+    '-f', `external_id=${externalId}`,
+    '-f', `output[title]=${title}`,
+    '-f', `output[summary]=${summary}`,
+  ];
+  if (match !== undefined) {
+    await safeGh(['api', '--method', 'PATCH', `repos/${repoSlug}/check-runs/${match.id}`, ...fields]);
+  } else {
+    // Create is POST /repos/{owner}/{repo}/check-runs; /commits/{sha}/check-runs only lists.
+    await safeGh(['api', '--method', 'POST', `repos/${repoSlug}/check-runs`, ...fields]);
   }
 }
 

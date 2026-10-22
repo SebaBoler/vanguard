@@ -165,6 +165,42 @@ describe('runApprover — end to end', () => {
     }
   });
 
+  it('a failed record append still publishes the check run and the comment, then fails loudly', async () => {
+    // Reads (fetch) keep working; only the push of the decision record is rejected by the remote.
+    await writeFile(join(origin, 'hooks', 'pre-receive'), '#!/bin/sh\necho "read-only" >&2\nexit 1\n', { mode: 0o755 });
+    const calls: string[][] = [];
+    await expect(runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh(calls) })).rejects.toThrow(/decision record/);
+    expect(calls.some((a) => a[0] === 'api' && a.includes('POST') && a.includes('repos/o/r/check-runs'))).toBe(true);
+    expect(calls.some((a) => a[0] === 'pr' && a[1] === 'comment')).toBe(true);
+  });
+
+  it('a failed check run is reported, not swallowed, and the decision is still recorded', async () => {
+    const calls: string[][] = [];
+    const base = fakeGh(calls);
+    const gh: GhRunner = async (args) => {
+      if (args.includes('POST')) throw new Error('HTTP 403: Resource not accessible by integration');
+      return base(args);
+    };
+    await expect(runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh })).rejects.toThrow(/check run: HTTP 403/);
+    const text = await readBranchFile(repo, { file: 'decisions.jsonl' });
+    expect(text.trim().split('\n')).toHaveLength(1);
+  });
+
+  it('a short-circuited decision is keyed by its head SHA, so a new head gets its own record', async () => {
+    process.env.VANGUARD_APPROVER_STOP = '1';
+    try {
+      const { record } = await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]) });
+      expect(record.headSha).toBe(headSha);
+      const previous = headSha;
+      headSha = 'b'.repeat(40);
+      await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]) });
+      const lines = (await readBranchFile(repo, { file: 'decisions.jsonl' })).trim().split('\n');
+      expect(lines.map((l) => (JSON.parse(l) as { headSha: string }).headSha)).toEqual([previous, headSha]);
+    } finally {
+      delete process.env.VANGUARD_APPROVER_STOP;
+    }
+  });
+
   it('dry-run computes the decision but publishes and records nothing', async () => {
     const { record } = await runApprover({ repoPath: repo, repoSlug: 'o/r', prNumber: 1, mode: 'shadow', gh: fakeGh([]), dryRun: true });
     expect(record.verdict).toBe('APPROVE');

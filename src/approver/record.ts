@@ -6,6 +6,8 @@ export interface BuildDecisionRecordInput {
   mode: Mode;
   repo: string;
   prNumber: number;
+  /** Head SHA the decision is for; keeps a short-circuited record keyed per head, not one per PR forever. */
+  headSha?: string;
   /** Absent for a short-circuited decision (stopped / policy-unreadable): the record carries zeroed/empty signals. */
   facts: ApproverFacts | undefined;
   decision: Decision;
@@ -30,7 +32,7 @@ export function buildDecisionRecord(input: BuildDecisionRecordInput): DecisionRe
   if (facts === undefined) {
     return {
       ...base,
-      headSha: null,
+      headSha: input.headSha !== undefined && input.headSha !== '' ? input.headSha : null,
       baseSha: null,
       patchId: null,
       reviewedSha: null,

@@ -125,7 +125,8 @@ export async function collectCheckFacts(
 const REVIEW_HEADING = '## Vanguard Review';
 // `Reviewed by <attribution>[ @ <sha7>]:` — the main loop's own in-pipeline review
 // (buildMainLoopReviewComment), posted by the same identity and carrying the same head marker.
-const REVIEWED_BY_RE = /^Reviewed by \S/;
+// Word boundary, not `\S`: an empty attribution (`Reviewed by :` or a bare `Reviewed by`) is still the main loop's.
+const REVIEWED_BY_RE = /^Reviewed by\b/;
 
 /**
  * Peel the external review's framing off a published body: the `## Vanguard Review` heading, then
@@ -158,7 +159,7 @@ function peelReviewPrefix(body: string): string | undefined {
  * Select the review that speaks for the current content and extract its verdict. Candidates are
  * reviews in the external review format (see peelReviewPrefix) whose body carries exactly one
  * distinct marker SHA (zero = no marker, more than one = a planted marker, both rejected) and whose
- * author is on `policy.reviewAuthors` when that list is non-empty; the latest `submittedAt` among
+ * author is on `policy.reviewAuthors` (an empty list accepts nobody); the latest `submittedAt` among
  * survivors wins. Returns all-null when there is none.
  */
 export function collectReviewFacts(pr: PrFacts, policy: ApproverPolicy): ReviewFacts {
@@ -166,7 +167,7 @@ export function collectReviewFacts(pr: PrFacts, policy: ApproverPolicy): ReviewF
     const shas = [...new Set(pullRequestReviewMarkerShas(r.body))];
     const peeled = peelReviewPrefix(r.body);
     if (shas.length !== 1 || peeled === undefined) return [];
-    if (policy.reviewAuthors.length > 0 && !policy.reviewAuthors.includes(r.author)) return [];
+    if (!policy.reviewAuthors.includes(r.author)) return [];
     return [{ author: r.author, submittedAt: r.submittedAt, sha: shas[0]!, peeled }];
   });
   if (candidates.length === 0) return { verdict: null, sha: null, author: null };

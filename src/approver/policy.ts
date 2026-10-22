@@ -7,16 +7,16 @@ import type { ApproverPolicy } from './types.js';
 /**
  * `.vanguard/approver.json`, read from the base branch only (never the working tree or the PR
  * head) — see `loadPolicy` below. Unknown extra keys are tolerated (forward-compat); every field
- * other than schemaVersion/enabled/requiredChecks/pathRules/shape/ledger/auditSample has a default
- * so a minimal policy still validates.
+ * other than schemaVersion/enabled/requiredChecks/reviewAuthors/pathRules/shape/ledger/auditSample
+ * has a default so a minimal policy still validates. Security-relevant fields have no default.
  */
 export const approverPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
   factoryBranchPrefix: z.string().default('chore/vanguard-'),
   requiredChecks: z.array(z.object({ name: z.string(), appId: z.number().int() })),
-  /** Login allow-list for the review that carries the marker. Empty = no author check. */
-  reviewAuthors: z.array(z.string()).default([]),
+  /** Login allow-list for the review that carries the marker. Required and non-empty: a missing list fails closed (policy-unreadable). */
+  reviewAuthors: z.array(z.string().min(1)).min(1),
   testGlobs: z.array(z.string()).default(['**/*.test.ts']),
   pathRules: z.record(z.string(), z.array(z.string())),
   shape: z.object({ maxLines: z.number().int().positive(), maxFiles: z.number().int().positive() }),
