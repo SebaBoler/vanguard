@@ -222,6 +222,10 @@ const STAGES: PipelineStage[] = [
 describe('runSourcedIssue', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.mocked(resolveVerifyCommand).mockReset().mockResolvedValue(undefined);
+    vi.mocked(runVerification).mockReset();
+    vi.mocked(resolveAndRunVisualProof).mockReset().mockResolvedValue(undefined);
+    runAgent.mockReset();
     capturedSandboxOpts.length = 0;
     sandboxImage.mockReturnValue('vanguard-sandbox:latest');
     runStages.mockResolvedValue([stageOutcome('reviewer')]);
@@ -975,5 +979,51 @@ describe('runSourcedIssue', () => {
     expect(wmCommitMessages).not.toHaveBeenCalled();
     const body = publishForReview.mock.calls[0]?.[1]?.body as string;
     expect(body).not.toContain('Commit message closes the issue on rebase merge');
+  });
+
+  it('opens ready for review (no --draft) when the gate and verification both pass', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValueOnce({ passed: true } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: false }));
+  });
+
+  it('opens as a draft when the gate fails (partial scope)', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never)
+      .mockResolvedValueOnce({ passed: false } as never);
+    runAgent.mockResolvedValueOnce({ sessionId: 'sess-1' } as never).mockResolvedValueOnce({ sessionId: 'sess-1' } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: true }));
+  });
+
+  it('opens as a draft when no verify command ran, even though the gate passed', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    const result = await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(result.prUrl).toBe(MR_URL);
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: true }));
+  });
+
+  it('opens as a draft when verification passes but visual proof fails', async () => {
+    vi.mocked(resolveVerifyCommand).mockResolvedValueOnce('npm test');
+    vi.mocked(runVerification).mockResolvedValueOnce({ passed: true } as never);
+    vi.mocked(resolveAndRunVisualProof).mockResolvedValueOnce({ passed: false } as never);
+
+    const adapter = fakeAdapter([], STAGES);
+    await runSourcedIssue('group/project#1', { repoPath: '/repo' }, adapter);
+
+    expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: true }));
+    expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'visual-proof');
   });
 });

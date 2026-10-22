@@ -5,6 +5,7 @@ title: "[TASK] "
 labels: ready for agent
 assignees: ''
 ---
+<!-- Title tip: start it with a Conventional Commits type, e.g. `refactor(hub): …` or `fix(api): …` — Vanguard keeps a title that already starts with one as the PR title as is, so release notes get the right type. -->
 
 ## 🎯 What are we building? (Context & Goal)
 <!-- Describe in 1-2 sentences the main goal of this task. Why are we building or fixing this? -->
