@@ -6,7 +6,7 @@
     { "name": "build", "appId": 15368 },
     { "name": "dependency-review", "appId": 15368 }
   ],
-  "reviewAuthors": ["github-actions[bot]", "spietrza", "pawelkrystkiewicz"],
+  "reviewAuthors": ["github-actions"],
   "testGlobs": ["**/*.test.ts"],
   "pathRules": {
     "ci-config": [".github/**", ".gitlab-ci.yml", ".gitlab/**"],

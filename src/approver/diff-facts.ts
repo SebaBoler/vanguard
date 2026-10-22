@@ -53,14 +53,12 @@ interface NameStatusEntry {
   status: string;
   path: string;
 }
+/** `--name-status -z` separates the status from the path with a NUL, not a tab: read the fields in pairs. */
 function parseNameStatus(out: string): NameStatusEntry[] {
-  return out
-    .split('\0')
-    .filter((e) => e !== '')
-    .map((e) => {
-      const tab = e.indexOf('\t');
-      return { status: e.slice(0, tab), path: e.slice(tab + 1) };
-    });
+  const fields = out.split('\0').filter((e) => e !== '');
+  const entries: NameStatusEntry[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) entries.push({ status: fields[i]!, path: fields[i + 1]! });
+  return entries;
 }
 
 // Language-local heuristic over this repo's own Vitest style (see risk R8 in the tech spec): over-counts

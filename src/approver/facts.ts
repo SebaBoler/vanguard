@@ -123,27 +123,30 @@ export async function collectCheckFacts(
 }
 
 const REVIEW_HEADING = '## Vanguard Review';
-const REVIEWED_BY_RE = /^Reviewed by \S.*:$/;
+// `Reviewed by <attribution>[ @ <sha7>]:` — the main loop's own in-pipeline review
+// (buildMainLoopReviewComment), posted by the same identity and carrying the same head marker.
+const REVIEWED_BY_RE = /^Reviewed by \S/;
 
 /**
- * Peel the bot's own comment framing off a published review body: the `## Vanguard Review` heading,
- * then optionally a `Reviewed by ...:` attribution line, then optionally the exact "truncated" note —
- * skipping blank lines between them — before handing the remainder to extractReviewVerdict, the only
- * function that decides the verdict grammar. A body that does not open with the heading is returned
- * unpeeled, which simply means extractReviewVerdict finds no verdict (fails closed).
+ * Peel the external review's framing off a published body: the `## Vanguard Review` heading, then
+ * optionally the exact "truncated" note — skipping blank lines between them — before handing the
+ * remainder to extractReviewVerdict, the only function that decides the verdict grammar.
+ *
+ * Returns undefined for anything that is not that format, which disqualifies the review entirely:
+ * a body that does not open with the heading, or one whose first content line is the main loop's
+ * `Reviewed by ...:` attribution. The in-pipeline review is NOT independent — it runs before the
+ * simplifier and the repair loop and edits code itself — so its verdict must never be the
+ * approver's, even though it is indistinguishable by author and marker.
  */
-function peelReviewPrefix(body: string): string {
+function peelReviewPrefix(body: string): string | undefined {
   const lines = body.split('\n');
-  if (lines[0] !== REVIEW_HEADING) return body;
+  if (lines[0] !== REVIEW_HEADING) return undefined;
   let i = 1;
   const skipBlank = (): void => {
     while (i < lines.length && lines[i]!.trim() === '') i += 1;
   };
   skipBlank();
-  if (i < lines.length && REVIEWED_BY_RE.test(lines[i]!)) {
-    i += 1;
-    skipBlank();
-  }
+  if (i < lines.length && REVIEWED_BY_RE.test(lines[i]!)) return undefined;
   if (i < lines.length && lines[i] === VERDICT_WITHOUT_COMPLETION_NOTE) {
     i += 1;
     skipBlank();
@@ -153,20 +156,23 @@ function peelReviewPrefix(body: string): string {
 
 /**
  * Select the review that speaks for the current content and extract its verdict. Candidates are
- * reviews whose body carries exactly one distinct marker SHA (zero = no marker, more than one =
- * a planted marker, both rejected) and whose author is on `policy.reviewAuthors` when that list is
- * non-empty; the latest `submittedAt` among survivors wins. Returns all-null when there is none.
+ * reviews in the external review format (see peelReviewPrefix) whose body carries exactly one
+ * distinct marker SHA (zero = no marker, more than one = a planted marker, both rejected) and whose
+ * author is on `policy.reviewAuthors` when that list is non-empty; the latest `submittedAt` among
+ * survivors wins. Returns all-null when there is none.
  */
 export function collectReviewFacts(pr: PrFacts, policy: ApproverPolicy): ReviewFacts {
-  const candidates = pr.reviews
-    .map((r) => ({ ...r, shas: [...new Set(pullRequestReviewMarkerShas(r.body))] }))
-    .filter((r) => r.shas.length === 1)
-    .filter((r) => policy.reviewAuthors.length === 0 || policy.reviewAuthors.includes(r.author));
+  const candidates = pr.reviews.flatMap((r) => {
+    const shas = [...new Set(pullRequestReviewMarkerShas(r.body))];
+    const peeled = peelReviewPrefix(r.body);
+    if (shas.length !== 1 || peeled === undefined) return [];
+    if (policy.reviewAuthors.length > 0 && !policy.reviewAuthors.includes(r.author)) return [];
+    return [{ author: r.author, submittedAt: r.submittedAt, sha: shas[0]!, peeled }];
+  });
   if (candidates.length === 0) return { verdict: null, sha: null, author: null };
   candidates.sort((a, b) => a.submittedAt.localeCompare(b.submittedAt));
   const selected = candidates[candidates.length - 1]!;
-  const verdict = extractReviewVerdict(peelReviewPrefix(selected.body)) ?? null;
-  return { verdict, sha: selected.shas[0]!, author: selected.author };
+  return { verdict: extractReviewVerdict(selected.peeled) ?? null, sha: selected.sha, author: selected.author };
 }
 
 export { defaultGhRunner };

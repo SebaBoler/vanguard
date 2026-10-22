@@ -41,9 +41,8 @@ export async function readLedger(input: ReadLedgerInput): Promise<Record<string,
     const signals = record.signals as { lines?: unknown; paths?: unknown } | undefined;
     const lines = typeof signals?.lines === 'number' ? signals.lines : 0;
     const paths = Array.isArray(signals?.paths) ? (signals.paths as unknown[]) : [];
-    for (const path of paths) {
-      if (typeof path !== 'string') continue;
-      const mod = moduleOf(path);
+    const modules = new Set(paths.filter((path): path is string => typeof path === 'string').map(moduleOf));
+    for (const mod of modules) {
       if (!relevantModules.has(mod)) continue;
       totals[mod] = (totals[mod] ?? 0) + lines;
     }
