@@ -45,6 +45,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 
 ## What's new (October 2026)
 
+- **Factory backlog in the Hub** — the Task board header shows `Running N · Waiting K` (claimed or running tasks; tasks labelled `ready for agent`/`ready for spec` not yet picked up), Fleet shows `K waiting` next to its slot meter; `12+` marks a lower bound when the board holds only its first page. ([Hub](#hub))
 - **Risk line in PR/MR reviews** — after `Verdict:` the reviewer states `Risk: low|medium|high` and what the change can break; advisory, never gates. ([External PR review](#external-pr-review))
 - **Vanguard Hub** — `vanguard hub` serves the Inspector cockpit over HTTP/SSE: task board with **New Run**, live transcript, run records with proof of work, CI-run import, Add project by folder or by repository URL. Local mode, one instance per team; see [Hub](#hub) and [docs/hub.md](docs/hub.md).
 - **Reactive model escalation** — `--escalate-model <m>`: the first gate repair stays on the implementer model; a second red gate resumes the same session on a stronger one. Cheap by default, expensive only after an observed failure. ([Models](#models))
@@ -483,8 +484,9 @@ pnpm hub --repo /path/to/your/repo     # http://127.0.0.1:7777
 
 What you get per project: a **Dashboard** of projects with run counts and spend; a **Task board**
 of your tracker's issues (GitHub, GitLab, Linear) with **New Run** starting the pipeline in the
-sandbox and a live transcript; **Runs** with every stage's record, diff, transcript, proof of work and
-visual proof; **Remote**, which imports a CI run's `vanguard-runs` artifact and shows it like a local
+sandbox, a live transcript, and a `Running N · Waiting K` count in its header; **Fleet**, which runs a
+`watch` loop at the concurrency you set and shows slots in use and how many tasks wait; **Runs** with
+every stage's record, diff, transcript, proof of work and visual proof; **Remote**, which imports a CI run's `vanguard-runs` artifact and shows it like a local
 run; **Workflow** for the repo's `.vanguard/flows/*.hcl`; **Settings** for `.vanguard/app.json`.
 **Add project** takes an existing folder or a repository URL it clones for you.
 
