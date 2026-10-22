@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Vanguard routing labels",
+    "title": "Vanguard routing labels on GitHub",
     "locale": "en",
     "quality_profile": "showcase",
     "legend": { "mode": "hidden" },
@@ -24,7 +24,7 @@
     { "id": "reviewed", "type": "external", "label": "vanguard:reviewed", "sublabel": "review comment posted", "pos": [496, 428], "size": [190, 52] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "You add", "wraps": ["research", "spec", "agent", "revision", "vreview"], "pad": 12 },
+    { "kind": "region", "label": "You add: GitHub labels", "wraps": ["research", "spec", "agent", "revision", "vreview"], "pad": 12 },
     { "kind": "region", "label": "Vanguard is working", "wraps": ["researching", "speccing", "running", "revising", "reviewing"], "pad": 12 },
     { "kind": "region", "label": "Your turn", "wraps": ["info", "humanreview", "reviewed"], "pad": 12 }
   ],

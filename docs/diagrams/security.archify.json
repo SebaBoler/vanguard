@@ -9,21 +9,21 @@
     "viewBox": [728, 592]
   },
   "components": [
-    { "id": "input", "type": "external", "label": "Issue / PR text", "sublabel": "untrusted input", "pos": [36, 52], "size": [140, 52] },
-    { "id": "pr", "type": "external", "label": "Branch + draft PR", "sublabel": "pushed by host only", "pos": [552, 52], "size": [140, 52] },
-    { "id": "gate", "type": "security", "label": "Author gate", "sublabel": "author + sender", "pos": [36, 164], "size": [140, 52] },
+    { "id": "input", "type": "external", "label": "Issue / PR / MR", "sublabel": "untrusted text", "pos": [36, 52], "size": [140, 52] },
+    { "id": "pr", "type": "external", "label": "Draft PR / MR", "sublabel": "pushed by host only", "pos": [552, 52], "size": [140, 52] },
+    { "id": "gate", "type": "security", "label": "Author gate", "sublabel": "GitHub Actions only", "pos": [36, 164], "size": [140, 52] },
     { "id": "prompt", "type": "backend", "label": "Prompt", "sublabel": "untrusted <tags> escaped", "pos": [208, 164], "size": [140, 52] },
     { "id": "copyback", "type": "security", "label": "Copy-back", "sublabel": "CI config dropped", "pos": [380, 164], "size": [140, 52] },
     { "id": "scan", "type": "security", "label": "Secret scan", "sublabel": "hit: nothing pushed", "pos": [552, 164], "size": [140, 52] },
-    { "id": "agent", "type": "backend", "label": "Agent CLI", "sublabel": "no GitHub token", "pos": [148, 276], "size": [260, 52] },
+    { "id": "agent", "type": "backend", "label": "Agent CLI", "sublabel": "no GitHub/GitLab token; gets the Linear key", "pos": [148, 276], "size": [260, 52] },
     { "id": "llmproxy", "type": "security", "label": "LLM proxy", "sublabel": "real key; agent: nonce", "pos": [208, 388], "size": [140, 52] },
-    { "id": "egress", "type": "security", "label": "Egress proxy", "sublabel": "host allowlist", "pos": [552, 388], "size": [140, 52] },
+    { "id": "egress", "type": "security", "label": "Egress proxy", "sublabel": "host allowlist", "pos": [532, 388], "size": [160, 52] },
     { "id": "model", "type": "cloud", "label": "Model API", "sublabel": "Anthropic, OpenAI", "pos": [208, 500], "size": [140, 52] },
-    { "id": "hosts", "type": "cloud", "label": "Allowed hosts", "sublabel": "npm, PyPI, GitHub", "pos": [552, 500], "size": [140, 52] }
+    { "id": "hosts", "type": "cloud", "label": "Allowed hosts", "sublabel": "Linear, GitHub, npm, PyPI", "pos": [532, 500], "size": [160, 52] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "GitHub", "wraps": ["input", "pr"], "pad": 12 },
-    { "kind": "region", "label": "Host: GitHub Actions runner, holds the GitHub token", "wraps": ["gate", "prompt", "copyback", "scan"], "pad": 12 },
+    { "kind": "region", "label": "GitHub · GitLab · Linear", "wraps": ["input", "pr"], "pad": 12 },
+    { "kind": "region", "label": "Host: CI job or watch loop, holds the GitHub/GitLab token", "wraps": ["gate", "prompt", "copyback", "scan"], "pad": 12 },
     { "kind": "security-group", "label": "Docker sandbox: non-root, cap-drop ALL, noexec tmpfs", "wraps": ["agent"], "pad": 12 },
     { "kind": "region", "label": "Opt-in sidecars", "wraps": ["llmproxy", "egress"], "pad": 12 }
   ],
