@@ -9,7 +9,7 @@ import { SOURCES } from '../../sources';
 import { LaunchPanel, type Spawn } from '../inspector/LaunchPanel';
 import type { ActiveRun } from '../../vanguard-output';
 
-export function Fleet({ project, active }: { project: string; active: ActiveRun[] }) {
+export function Fleet({ project, active, waiting }: { project: string; active: ActiveRun[]; waiting: number | null }) {
   const [cfg] = useAppConfig(project);
   const [concurrency, setConcurrency] = useState(3);
   const [loopV1, setLoopV1] = useState(false);
@@ -156,7 +156,7 @@ export function Fleet({ project, active }: { project: string; active: ActiveRun[
           </label>
           <div className="ml-auto">
             <div className="text-xs text-muted-foreground">
-              Slots {active.length} / {concurrency} in use
+              Slots {active.length} / {concurrency} in use{waiting === null ? '' : ` · ${waiting} waiting`}
             </div>
             <div className="mt-1 h-1.5 w-40 rounded-full bg-muted">
               <div
