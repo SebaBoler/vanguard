@@ -1,10 +1,8 @@
 import { Button, Card, cn } from '@/ui';
 import { FilePlus } from 'lucide-react';
-import { useEffect } from 'react';
 import { listTasks } from '../../ipc';
 import { useAsync } from '../../hooks';
-import { boardCounts } from './counts';
-import type { BoardTask } from '../../wire';
+import { boardCountLabels } from './counts';
 
 // Each column owns a color identity used across its header dot, count pill, lane tint, and card
 // hover border. Classes are spelled out (not interpolated) so Tailwind's JIT keeps them — a
@@ -32,28 +30,24 @@ export function TaskBoard({
   project,
   onOpenTask,
   onNewTask,
-  onTasks,
 }: {
   project: string;
   onOpenTask: (taskId: string) => void;
   onNewTask: () => void;
-  onTasks?: (tasks: BoardTask[]) => void;
 }) {
   const { data, error, loading } = useAsync(() => listTasks(project), [project]);
   const tasks = data?.tasks;
 
-  // Success only — the error branch must not publish a stale/empty count.
-  useEffect(() => {
-    if (tasks !== undefined) onTasks?.(tasks);
-  }, [tasks]);
-
-  const counts = boardCounts(tasks);
+  // Capped comes from the response now (S9) — no more synced literal; the core fetch cap decides.
+  const capped = data?.capped === true;
+  const counts = boardCountLabels(data);
 
   // The board is where work starts (S10): authoring a task lives one click away even when the
   // list itself failed to load.
   const header = (
     <div className="mb-2 flex shrink-0 items-center">
-      {tasks !== undefined && (
+      {counts !== null && (
+        // A capped list is one page, so both numbers are lower bounds — `Running 3+ · Waiting 12+`.
         <span className="text-xs tabular-nums text-muted-foreground">
           Running {counts.running} · Waiting {counts.waiting}
         </span>
@@ -75,9 +69,6 @@ export function TaskBoard({
       </div>
     );
   }
-
-  // Capped comes from the response now (S9) — no more synced literal; the core fetch cap decides.
-  const capped = data?.capped === true;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

@@ -31,8 +31,6 @@ import { NewRunForm } from './NewRunForm';
 import { RunStrip } from './RunStrip';
 import { foldLiveEvent, reduceTypedRun, initialTypedRun, type TypedRunState, type RunEvent } from './typedRunReducer';
 import { useAppConfig } from '../../hooks';
-import { boardCounts } from '../board/counts';
-import type { BoardTask } from '../../wire';
 import type { RunSummary, RunDetail as RunDetailT, ActiveRun, RunRef, RunSource } from '../../vanguard-output';
 
 export function Inspector({
@@ -68,7 +66,6 @@ export function Inspector({
   const [tick, setTick] = useState(0);
   const [showNewRun, setShowNewRun] = useState(false);
   const [taskDetailId, setTaskDetailId] = useState<string | null>(null);
-  const [boardTasks, setBoardTasks] = useState<BoardTask[] | null>(null);
   // Typed run (S1): capabilities for the form, the single in-flight typed run, and the idle-check.
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [typedRun, setTypedRun] = useState<TypedRunState | null>(null);
@@ -431,7 +428,7 @@ export function Inspector({
           <RunList runs={runs} active={active} onSelect={open} onOpenActive={setLiveRun} />
         </div>
       ) : screen === 'board' ? (
-        <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} onTasks={setBoardTasks} />
+        <TaskBoard project={project} onOpenTask={setTaskDetailId} onNewTask={onNewTask} />
       ) : screen === 'remote' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           <RemoteRuns project={project} onOpenRun={open} />
@@ -439,7 +436,7 @@ export function Inspector({
       ) : screen === 'fleet' ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {canUseFleet() ? (
-            <Fleet project={project} active={active} waiting={boardTasks === null ? null : boardCounts(boardTasks).waiting} />
+            <Fleet project={project} active={active} />
           ) : (
             <div className="rounded border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
               Fleet is not available in hub mode — it spawns shell commands, which is remote code execution

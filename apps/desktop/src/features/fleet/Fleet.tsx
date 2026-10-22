@@ -2,20 +2,27 @@ import { useEffect, useState } from 'react';
 import { Button, Chip } from '@/ui';
 import { Minus, Plus } from 'lucide-react';
 import { subscribe as listen } from '../../transport';
-import { spawnRun, killRun, listSpawns, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
-import { useAppConfig } from '../../hooks';
+import { spawnRun, killRun, listSpawns, listTasks, SPAWN_OUTPUT_EVENT, SPAWN_EXIT_EVENT } from '../../ipc';
+import { useAppConfig, useAsync } from '../../hooks';
 import { watchCommand } from '../../command';
 import { SOURCES } from '../../sources';
+import { boardCountLabels } from '../board/counts';
 import { LaunchPanel, type Spawn } from '../inspector/LaunchPanel';
 import type { ActiveRun } from '../../vanguard-output';
 
-export function Fleet({ project, active, waiting }: { project: string; active: ActiveRun[]; waiting: number | null }) {
+export function Fleet({ project, active }: { project: string; active: ActiveRun[] }) {
   const [cfg] = useAppConfig(project);
   const [concurrency, setConcurrency] = useState(3);
   const [loopV1, setLoopV1] = useState(false);
   const [source, setSource] = useState('github');
   const [spawn, setSpawn] = useState<Spawn | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Fleet reads the board itself, once per project (no polling): a count handed down from the last
+  // board visit is stale the moment the factory claims a task, and Fleet is reachable without ever
+  // opening the board. Null while it loads or if it fails — nothing is honest there, `0` is not.
+  const board = useAsync(() => listTasks(project), [project]);
+  const waiting = boardCountLabels(board.data)?.waiting ?? null;
 
   // Seed the editable controls from saved config once it loads.
   useEffect(() => {

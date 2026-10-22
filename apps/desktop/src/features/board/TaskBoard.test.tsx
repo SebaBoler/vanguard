@@ -78,29 +78,24 @@ describe('TaskBoard', () => {
     expect(await screen.findByText(/No task board/)).toBeInTheDocument();
   });
 
-  test('header shows Running N · Waiting K as a single text run', async () => {
+  test('an uncapped list shows exact header counts, as a single text run', async () => {
     mockListTasks.mockResolvedValue({ tasks: COUNTS_TASKS, capped: false });
     render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     expect(await screen.findByText('Running 2 · Waiting 2')).toBeInTheDocument();
   });
 
-  test('error branch renders no Running/Waiting text and does not call onTasks', async () => {
+  test('a capped list makes both header counts a lower bound', async () => {
+    mockListTasks.mockResolvedValue({ tasks: COUNTS_TASKS, capped: true });
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
+    expect(await screen.findByText('Running 2+ · Waiting 2+')).toBeInTheDocument();
+  });
+
+  test('error branch renders no Running/Waiting text', async () => {
     mockListTasks.mockRejectedValue('boom');
-    const onTasks = vi.fn();
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} onTasks={onTasks} />);
+    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} />);
     await screen.findByText(/No task board/);
     expect(screen.queryByText(/Running/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Waiting/)).not.toBeInTheDocument();
-    expect(onTasks).not.toHaveBeenCalled();
-  });
-
-  test('onTasks is called once with the loaded task list after a successful load', async () => {
-    mockListTasks.mockResolvedValue({ tasks: TASKS, capped: false });
-    const onTasks = vi.fn();
-    render(<TaskBoard project="/repo" onOpenTask={() => {}} onNewTask={() => {}} onTasks={onTasks} />);
-    await screen.findByText('Queued one');
-    expect(onTasks).toHaveBeenCalledTimes(1);
-    expect(onTasks).toHaveBeenCalledWith(TASKS);
   });
 });
 
