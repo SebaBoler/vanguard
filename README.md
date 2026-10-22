@@ -696,13 +696,13 @@ watch-prs owner/repo#123: reviewed -> marked
 
 #### GitHub Actions trigger
 
-`.github/workflows/vanguard-pr-review.yml` fires on `pull_request_target` when the `ready for vanguard review` label is applied to a PR, and can also be triggered manually via `workflow_dispatch` to sweep all currently-labeled PRs.
+`.github/workflows/vanguard-pr-review.yml` fires on `pull_request_target` when the `ready for vanguard review` label is applied to a PR. It also fires when a factory PR (a `chore/vanguard-*` branch in this repo, opened by an allowed login) opens ready for review or leaves draft: a first job adds the label, so that PR is reviewed without anyone labelling it. It can also be triggered manually via `workflow_dispatch` to sweep all currently-labeled PRs.
 
 **Required secrets:** `CLAUDE_CODE_OAUTH_TOKEN` — the Claude subscription OAuth token. The built-in `GITHUB_TOKEN` provides PR/label write access automatically.
 
 **Security model:** the workflow uses `pull_request_target` because posting reviews requires repo secrets and write permissions. It checks out only the base branch — PR head code is never fetched or executed. The model credential stays inside the `--llm-proxy` sidecar, which also restricts sandbox egress to an allowlist, so the untrusted PR diff cannot exfiltrate the model credential. Because Flow B is read-only (it reviews the diff in a sandbox and only posts a comment), the job gate is an **author + sender allow-list** rather than a single login: `contains(fromJSON('["spietrza","pawelkrystkiewicz"]'), github.event.pull_request.user.login)` **and** the same check on `github.event.sender.login` — a trusted person labels a trusted person's PR. Widen the list to add reviewers; keep it tight because each entry can trigger a run on the repo's review credit. (The sibling `vanguard-revise.yml` flow, which *pushes* code, keeps its author gate to the bot/owner only — see Flow C.)
 
-**Behavior:** each label event runs `watch-prs --once` (the gate, not an `--author` filter, controls which PRs are eligible), reviewing PRs carrying the trigger label. This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
+**Behavior:** each run (a label event, or a factory PR that just became ready) runs `watch-prs --once` (the gate, not an `--author` filter, controls which PRs are eligible), reviewing PRs carrying the trigger label. This is idempotent: already-reviewed commits are skipped via the hidden `headRefOid` marker and the label swap.
 
 **Re-review:** after new commits land, remove and re-add `ready for vanguard review` to trigger a fresh pass.
 
