@@ -210,6 +210,30 @@ describe('parseCli', () => {
     expect(bad.kind === 'error' && bad.message).toMatch(/metrics expects a subcommand/);
   });
 
+  it('parses approve --pr with --github-repo and an optional --mode, and rejects a non-numeric --pr', () => {
+    expect(parseCli(['approve', '--pr', '7', '--github-repo', 'o/r'], '/work')).toEqual({
+      kind: 'approve', prNumber: 7, repoSlug: 'o/r', repoPath: '/work', mode: 'shadow', json: false, dryRun: false,
+    });
+    expect(parseCli(['approve', '7', '--github-repo', 'o/r', '--mode', 'shadow'], '/work')).toMatchObject({ prNumber: 7, mode: 'shadow' });
+    expect(parseCli(['approve', '--pr', '7', '--github-repo', 'o/r', '--repo', '/r', '--branch', 'b', '--json', '--dry-run'], '/work')).toMatchObject({
+      repoPath: '/r', branch: 'b', json: true, dryRun: true,
+    });
+    expect(parseCli(['approve', '--pr', '7', '--github-repo', 'o/r'], '/work')).not.toHaveProperty('branch');
+
+    for (const pr of ['abc', '0', '1.5', '']) {
+      const bad = parseCli(['approve', '--pr', pr, '--github-repo', 'o/r'], '/work');
+      expect(bad.kind === 'error' && bad.message).toMatch(/approve requires a positive --pr/);
+    }
+    const noPr = parseCli(['approve', '--github-repo', 'o/r'], '/work');
+    expect(noPr.kind === 'error' && noPr.message).toMatch(/approve requires a positive --pr/);
+    const noRepo = parseCli(['approve', '--pr', '7'], '/work');
+    expect(noRepo.kind === 'error' && noRepo.message).toMatch(/approve requires --github-repo/);
+    const live = parseCli(['approve', '--pr', '7', '--github-repo', 'o/r', '--mode', 'live'], '/work');
+    expect(live.kind === 'error' && live.message).toMatch(/live mode is not implemented/);
+    const unknownMode = parseCli(['approve', '--pr', '7', '--github-repo', 'o/r', '--mode', 'loud'], '/work');
+    expect(unknownMode.kind === 'error' && unknownMode.message).toMatch(/unknown --mode "loud"/);
+  });
+
   it('parses --fork-scorer on run, rejects it on watch and rejects unknown values', () => {
     const run = parseCli(['run', '--linear', 'TES-1', '--fork', '3', '--fork-scorer', 'decision'], '/work');
     expect(run.kind === 'run' && run.forkScorer).toBe('decision');

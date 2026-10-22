@@ -77,6 +77,7 @@ Status: Phase 1 (core engine), Phase 2 (task sources, pipeline, evals), and Phas
 - [Development](#development)
 - [Hub](#hub)
 - [Autonomous loop](#autonomous-loop) · [Loop v1 (two-pass)](#loop-v1--two-pass-autonomous-pipeline) · [External PR review](#external-pr-review) · [Implement issues via GitHub Actions](#implement-issues-via-github-actions)
+- [Approver (shadow mode)](#approver-shadow-mode)
 - [Cost & limits](#cost--limits)
 - [Retrospective memory](#retrospective-memory)
 - [Proof of work](#proof-of-work)
@@ -787,6 +788,35 @@ gh secret set CODEX_AUTH_JSON --repo OWNER/REPO < ~/.codex/auth.json
 `llm-proxy` is left off on purpose: a subscription talks to the ChatGPT backend, which the proxy allowlist does not cover (it routes the `api.openai.com` API-key path only). Without the proxy the Claude token sits in the sandbox directly — acceptable on a repo you own; if you need the proxy isolation, give Codex an `OPENAI_API_KEY` with active billing instead and keep `--llm-proxy`.
 
 One CI caveat: the stored `CODEX_AUTH_JSON` is a snapshot. Codex refreshes the short-lived access token from the embedded `refresh_token` on each run, so the secret must carry a live refresh token; re-run `gh secret set` if a run ever fails to authenticate. For long-running hosts (a `vanguard watch` on a server or NAS) the local file refreshes itself and this does not come up.
+
+## Approver (shadow mode)
+
+`vanguard approve` is the stage after review: it decides whether a factory PR is boring enough to merge without a human, deterministically and with no LLM in the loop. v1 runs in **shadow mode** — it computes and publishes the decision, and never merges, approves, or edits a label. The point is to collect a record of what it *would* have done next to what humans actually did.
+
+**What it decides.** One of two verdicts. `ESCALATE` if any rule fires, `APPROVE` only when the rule list comes back empty. The rules cover: not a same-repo `chore/vanguard-*` head, draft, a required check that is not `success` from the expected app, a missing / stale / blocking / verdict-less review, a merge conflict, a head that moved under the run, git facts that could not be computed, a changed path on a sensitive surface (CI config, dependencies, deploy/migrations, security surface, the review pipeline itself, gate config, agent instructions, release config), a diff over the size ceiling, a deleted test file or a net loss of test cases, a new dependency, a removed export — plus a deterministic audit sample (10%) that escalates a share of otherwise-clean PRs so humans keep seeing normal cases, and a trailing-week per-module line ledger that escalates a drip of individually-small changes.
+
+**Which typed facts it reads.** Only structured data, never free text from an issue, PR body, or comment. From `gh`: the PR record (`isDraft`, head/base refs and SHAs, head repo) and check runs on the head SHA matched by **both** name and app id. From the published review: the verdict line and the head-SHA marker of the latest review in the external review format whose author is on the allow-list — a body with no marker, or with more than one distinct marker SHA, is rejected, and the main loop's own in-pipeline review never counts. From git, read-only (fetch into `FETCH_HEAD`, then `show`/`diff`/`patch-id`/`merge-tree` against SHAs — the PR head is never checked out): changed files, lines and paths against the merge base, deleted test files and test-case delta, removed exports, new manifest dependencies, patch ids and ancestry, and merge-tree cleanliness. Any git fact that cannot be computed fails closed into `git-facts-failed`.
+
+**Where records go.** One JSON line per decision, appended to `decisions.jsonl` on the orphan `vanguard-metrics` branch (the same branch `vanguard metrics push` uses — the files coexist, nothing is rewritten). Append-only and idempotent per (PR, head SHA): a rerun at the same head adds nothing. Each record holds the verdict, every rule id that fired, the signals behind them, the audit draw and its seed, and the `sha256` of the policy that produced it, so any decision can be replayed. The decision is also published as a `neutral` check run (`vanguard/approver`) and a PR comment; both are best-effort, the record is the primary artifact.
+
+**How to run it.**
+
+```bash
+vanguard approve --pr 557 --github-repo spietrza/vanguard     # decide, publish, record
+vanguard approve --pr 557 --github-repo spietrza/vanguard --json      # print the decision record
+vanguard approve --pr 557 --github-repo spietrza/vanguard --dry-run   # decide and print only — publish and record nothing
+```
+
+`--github-repo` is required (the approver never infers the repo it judges), `--repo <path>` points at a local checkout of the base branch (default: cwd), and `--mode` accepts `shadow` only in v1.
+
+**Policy and kill switch.** Everything tunable lives in `.vanguard/approver.json`, read from the **base branch only** (`git show refs/remotes/origin/<base>:.vanguard/approver.json`) — never the working tree or the PR head, so a PR cannot widen the policy judging it; a PR that touches that file always escalates. An unreadable or invalid policy fails closed to `ESCALATE` (`policy-unreadable`). Field-by-field reference: [docs/approver-policy.md](docs/approver-policy.md).
+
+Two kill switches, either one short-circuits to `ESCALATE` (`stopped`) before any diff or ledger collection:
+
+```bash
+VANGUARD_APPROVER_STOP=1 vanguard approve --pr 557 --github-repo spietrza/vanguard   # per-run, env
+# or, repo-wide: set "enabled": false in .vanguard/approver.json on the base branch
+```
 
 ## Cost & limits
 
