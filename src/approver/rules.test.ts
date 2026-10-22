@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { decide, reviewValidity, auditSample } from './rules.js';
-import type { ApproverFacts, ApproverPolicy, DiffFacts } from './types.js';
+import { cleanDiff, cleanFacts } from './facts.fixture.js';
+import type { ApproverPolicy } from './types.js';
 
 const policy: ApproverPolicy = {
   schemaVersion: 1,
@@ -14,31 +15,6 @@ const policy: ApproverPolicy = {
   ledger: { windowDays: 7, maxLines: 300 },
   auditSample: { p: 0.1 },
 };
-
-function cleanDiff(overrides: Partial<DiffFacts> = {}): DiffFacts {
-  return {
-    files: 1, lines: 10, paths: ['src/foo.ts'],
-    testFilesDeleted: 0, testCasesDelta: 0, exportsRemoved: 0, newDependency: false,
-    baseSha: 'base', headSha: 'head', mergeBase: 'base',
-    headPatchId: 'p1', reviewedPatchId: undefined, reviewedIsAncestor: true,
-    mergeTreeHeadClean: true, mergeTreeReviewedClean: undefined,
-    headMoved: false, gitFactsFailed: false,
-    ...overrides,
-  };
-}
-
-function cleanFacts(overrides: Partial<ApproverFacts> = {}): ApproverFacts {
-  return {
-    pr: { number: 1, url: '', state: 'OPEN', isDraft: false, headSha: 'head', headRefName: 'chore/vanguard-1', baseRefName: 'main', apiBaseSha: 'base', headRepo: 'o/r' },
-    isFactoryPr: true,
-    checks: [{ name: 'build', appId: 15368, conclusion: 'success' }, { name: 'dependency-review', appId: 15368, conclusion: 'success' }],
-    review: { verdict: 'clean', sha: 'head', author: 'bot' },
-    diff: cleanDiff(),
-    ledger: {},
-    thisPrLines: 10,
-    ...overrides,
-  };
-}
 
 describe('decide — baseline', () => {
   it('APPROVE with no rules fired on an all-clean fixture', () => {
