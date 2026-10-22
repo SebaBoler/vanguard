@@ -32,7 +32,7 @@ Vanguard turns work items into reviewed code changes — autonomously:
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/factory-loop-dark.svg" />
-    <img src="docs/diagrams/factory-loop-light.svg" width="100%" alt="Vanguard factory loop: a human labels an issue ready for spec or ready for agent; Vanguard triages it on GitHub Actions (too vague goes to needs info until a human edits it); the agent writes a read-only tech spec and builds (implement, review, simplify) in a Docker sandbox; Vanguard opens a draft PR; a human reviews it and either merges or labels needs revision, which sends the agent to fix the review comments and push to the same PR." />
+    <img src="docs/diagrams/factory-loop-light.svg" width="100%" alt="Vanguard factory loop: a human sets the spec or agent trigger on an issue (a label on GitHub and GitLab, a workflow state on Linear); Vanguard triages it in a CI job or a watch loop (too vague goes to needs info until a human edits it); the agent writes a read-only tech spec and builds (implement, review, simplify) in a Docker sandbox; Vanguard opens a draft PR, or a draft MR on GitLab; a human reviews it and merges. On a GitHub PR, the needs revision label sends the agent to fix the review comments and push to the same PR; GitLab MRs have no revise pass. A GitHub Projects board skips triage and spec: moving a card to Todo starts the build." />
   </picture>
 </p>
 
@@ -94,14 +94,14 @@ Vanguard treats autonomous coding as an engineering system, not a prompt-and-pra
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/run-pipeline-dark.svg" />
-    <img src="docs/diagrams/run-pipeline-light.svg" width="100%" alt="One Vanguard run: on the GitHub Actions host, claim and triage (no model call; too vague goes to needs info). In the Docker sandbox: implement, review (Codex, fresh context, fixes), simplify (fresh context), then verify with the proof-of-work command; red sends it to repair (at most 2, the second on a stronger model) and back to verify. Green, or repairs used up, goes back to the host: secret scan (a hit means secret-blocked), then push and open a draft PR (still red adds verify-failed)." />
+    <img src="docs/diagrams/run-pipeline-light.svg" width="100%" alt="One Vanguard run: on the host (a CI job or a watch loop), claim and triage (no model call; too vague goes to needs info). In the Docker sandbox: implement, review (Codex, fresh context, fixes), simplify (fresh context), then verify with the proof-of-work command; red sends it to repair (at most 2, the second on a stronger model) and back to verify. Green, or repairs used up, goes back to the host: secret scan (a hit pushes nothing), then push and open a draft PR, or a draft MR on GitLab (still red adds verify-failed)." />
   </picture>
 </p>
 
 **Loop v1 adds a layered two-pass flow before each implementation run:**
 
 1. **Spec pass (Planner)** — Polls the spec-trigger (label or state). Runs triage: rejects vague tickets to needs-info before spending any model budget. If the ticket passes, runs `techSpecStage` (read-only: no code is written), posts the result as a `<tech_spec>` comment, then advances the ticket to the agent-trigger. A freshly-specced ticket is implemented on the **next poll** — the human has a window to review the spec before the agent runs.
-2. **Agent pass (Implementer → Reviewer → Simplifier)** — Polls the agent-trigger. Runs triage again in `agent` mode: rejects tickets that lack acceptance criteria or a spec comment before spending implement budget. If the ticket passes, runs the full stage pipeline and opens a draft PR.
+2. **Agent pass (Implementer → Reviewer → Simplifier)** — Polls the agent-trigger. Runs triage again in `agent` mode: rejects tickets that lack acceptance criteria or a spec comment before spending implement budget. If the ticket passes, runs the full stage pipeline and opens a draft PR or MR.
 
 The agent runs inside the sandbox. The host owns all file sync (`copyIn` / `copyFileOut`) and secrets. A run stops when the agent emits `<promise>COMPLETE</promise>`.
 
@@ -424,11 +424,11 @@ vanguard run --linear TES-1 --fork 3
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/security-dark.svg" />
-    <img src="docs/diagrams/security-light.svg" width="100%" alt="Vanguard security boundary: untrusted issue or PR text passes an author and sender gate on the GitHub Actions host, which builds the prompt with untrusted tags escaped. The agent CLI runs in a Docker sandbox (non-root, cap-drop ALL, noexec tmpfs) with no GitHub token. Changed files come back through copy-back, which drops CI config, then a secret scan; only the host pushes the branch and opens the draft PR. Opt-in sidecars: an LLM proxy holds the real model key while the agent gets a per-run nonce, and an egress proxy allows CONNECT only to allowlisted hosts (npm, PyPI, GitHub)." />
+    <img src="docs/diagrams/security-light.svg" width="100%" alt="Vanguard security boundary: untrusted issue, PR or MR text from GitHub, GitLab or Linear reaches the host (a CI job or a watch loop), which holds the GitHub or GitLab token. The GitHub Actions workflows first gate on the issue author and the sender; GitLab, Linear and watch-loop runs have no author gate. The host builds the prompt with untrusted tags escaped. The agent CLI runs in a Docker sandbox (non-root, cap-drop ALL, noexec tmpfs) with no GitHub or GitLab token; on a Linear task it gets the Linear API key to read the issue. Changed files come back through copy-back, which drops CI config, then a secret scan; only the host pushes the branch and opens the draft PR or MR. Opt-in sidecars: an LLM proxy holds the real model key while the agent gets a per-run nonce, and an egress proxy allows CONNECT only to allowlisted hosts (Linear, GitHub, npm, PyPI, plus the model APIs the LLM proxy does not front)." />
   </picture>
 </p>
 
-Dashed edges are opt-in: `--llm-proxy` (on in the review and revise workflows) and `--egress`. Without them the model token sits in the sandbox's noexec tmpfs and egress is open.
+Dashed edges are opt-in: `--llm-proxy` (on in this repo's GitHub Actions review and revise workflows) and `--egress`. Without them the model token sits in the sandbox's noexec tmpfs and egress is open.
 
 One opt-in feature sends data from the host itself: the [difficulty probe](#models) (`VANGUARD_DECISION_PROBE=1`) posts issue text to a decision-model endpoint from the host process, so neither the sandbox nor `--egress` and `--llm-proxy` cover it, and it skips white-label runs unless set to `all`. The sandbox is the blast radius, not the host. Secrets reach the sandbox through an in-RAM tmpfs file (POSIX-quoted, never in `docker inspect` or on disk), never via argv. Host subprocesses use argument arrays, never shell strings. `.env` is a template only; no secrets live in the repo. The base image is pinned by digest; SIGINT/SIGTERM destroy live sandboxes and a host concurrency limit caps how many run at once. Generate an image SBOM with `pnpm sbom` (needs syft). `vanguard run --egress` confines the sandbox to an internal docker network whose only route out is a proxy sidecar that tunnels just the allowlist (anthropic/github/linear/registries), so even a process that ignores the proxy has no route out.
 
@@ -522,11 +522,13 @@ Loop v1 adds a deterministic Spec pass before every Agent pass. Routing differs 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/labels-dark.svg" />
-    <img src="docs/diagrams/labels-light.svg" width="100%" alt="Vanguard routing labels in three columns: labels you add, labels Vanguard sets while working, and labels that mean it is your turn. needs research leads to vanguard:researching, which posts findings and rests until you pick the next label. ready for spec leads to vanguard:speccing, which posts the spec and moves the issue to ready for agent, or to needs info when triage finds it too vague. ready for agent leads to vanguard:running, then vanguard:needs-human-review once the draft PR is open, or needs info. needs revision on a Vanguard draft leads to vanguard:revising, which pushes fixes and returns to vanguard:needs-human-review. ready for vanguard review on any PR leads to vanguard:reviewing, then vanguard:reviewed." />
+    <img src="docs/diagrams/labels-light.svg" width="100%" alt="Vanguard routing labels on GitHub, in three columns: labels you add, labels Vanguard sets while working, and labels that mean it is your turn. needs research leads to vanguard:researching, which posts findings and rests until you pick the next label. ready for spec leads to vanguard:speccing, which posts the spec and moves the issue to ready for agent, or to needs info when triage finds it too vague. ready for agent leads to vanguard:running, then vanguard:needs-human-review once the draft PR is open, or needs info. needs revision on a Vanguard draft leads to vanguard:revising, which pushes fixes and returns to vanguard:needs-human-review. ready for vanguard review on any PR leads to vanguard:reviewing, then vanguard:reviewed. GitLab uses the same ready for spec, ready for agent and needs info labels, writes its states with a double colon (vanguard::speccing, vanguard::running, then vanguard::review once the draft MR is open) and has no research or revise pass; Linear routes by workflow states instead." />
   </picture>
 </p>
 
-`ready for ...` / `needs ...` are **triggers you add by hand**; `vanguard:...` are **states Vanguard sets itself**. Issue-side triggers fire `issues: labeled` workflows; PR-side triggers fire `pull_request_target: labeled` workflows.
+`ready for ...` / `needs ...` are **triggers you add by hand**; `vanguard:...` are **states Vanguard sets itself**. On GitHub Actions, issue-side triggers fire `issues: labeled` workflows; PR-side triggers fire `pull_request_target: labeled` workflows.
+
+These are the GitHub names. GitLab (`watch --source gitlab`) uses the same `ready for spec`, `ready for agent` and `needs info` triggers but writes its states with a double colon: `vanguard::speccing`, `vanguard::running`, `vanguard::review` once the draft MR is open, and `vanguard::reviewing` / `vanguard::reviewed` for `watch-mrs`, whose trigger label you pass with `--label`. GitLab has no `needs research` or `needs revision` pass. Linear routes by workflow states (table below), and a GitHub Projects board by its Status column.
 
 | Label | On | Kind | Triggers / means |
 |---|---|---|---|

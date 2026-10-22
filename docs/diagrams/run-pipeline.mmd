@@ -3,11 +3,11 @@
 %%   node archify/bin/archify.mjs deliver architecture docs/diagrams/run-pipeline.archify.json <out>.html --quality showcase
 %% Open <out>.html → Export → SVG, then: docs/diagrams/split-theme.sh <export>.svg run-pipeline
 flowchart LR
-  subgraph host[Host: GitHub Actions runner]
+  subgraph host[Host: CI job or watch loop]
     triage{"Claim + triage<br/>no model call"}
     info["needs info<br/>too vague, no spend"]
-    scan{"Secret scan<br/>hit: secret-blocked"}
-    pr["Push + draft PR<br/>red: verify-failed"]
+    scan{"Secret scan<br/>hit: nothing pushed"}
+    pr["Push + draft PR/MR<br/>red: verify-failed"]
   end
   subgraph sandbox[Agent in Docker sandbox]
     implement["Implement<br/>writes the change"]
