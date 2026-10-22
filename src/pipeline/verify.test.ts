@@ -118,6 +118,54 @@ describe('resolveVerifyCommand', () => {
     expect(result).toBe('yarn install --frozen-lockfile && yarn test');
   });
 
+  it('a verify script wins over the typecheck/test auto-detect', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({
+        scripts: { test: 'vitest', typecheck: 'tsc --noEmit', verify: 'tsc --noEmit && vitest run' },
+        packageManager: 'pnpm@9.15.9',
+      }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: {} });
+    expect(result).toBe('pnpm install --frozen-lockfile && pnpm run verify');
+  });
+
+  it('an explicit cmd still wins over a verify script', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ scripts: { verify: 'pnpm run verify' } }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { cmd: 'my-custom-cmd', env: {} });
+    expect(result).toBe('my-custom-cmd');
+  });
+
+  it('an explicit env cmd still wins over a verify script', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ scripts: { verify: 'pnpm run verify' } }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: { VANGUARD_VERIFY_CMD: 'env-cmd' } });
+    expect(result).toBe('env-cmd');
+  });
+
+  it('npm project with a verify script gets the npm command', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ scripts: { verify: 'npm run build' } }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: {} });
+    expect(result).toBe('npm install --frozen-lockfile && npm run verify');
+  });
+
+  it('yarn project with a verify script gets the yarn command', async () => {
+    await writeFile(
+      join(tmpDir, 'package.json'),
+      JSON.stringify({ scripts: { verify: 'yarn build' }, packageManager: 'yarn@3.0.0' }),
+    );
+    const result = await resolveVerifyCommand(tmpDir, { env: {} });
+    expect(result).toBe('yarn install --frozen-lockfile && yarn run verify');
+  });
+
   it('returns undefined when package.json has no test script', async () => {
     await writeFile(
       join(tmpDir, 'package.json'),
