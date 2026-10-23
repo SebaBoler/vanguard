@@ -332,14 +332,16 @@ type CheckedRunFlags = Exhaustive<
   Pick<SharedRunOptions, 'provider' | 'reviewProvider' | 'fallbackProvider' | 'fallbackModel' | 'commitAuthor' | 'flow' | 'maxTurns' | 'maxRepairIterations'>
 >;
 
+/** `--feedback-authors a, b ,A` -> ['a','b']; an empty or separator-only value -> undefined, not []. */
 function parseFeedbackAuthors(value: string | boolean | undefined): string[] | undefined {
   if (typeof value !== 'string') return undefined;
   const seen = new Set<string>();
-  return value.split(',').map((a) => a.trim()).filter((a) => {
+  const authors = value.split(',').map((a) => a.trim()).filter((a) => {
     if (!a || seen.has(a.toLowerCase())) return false;
     seen.add(a.toLowerCase());
     return true;
   });
+  return authors.length > 0 ? authors : undefined;
 }
 
 /** The one CLI → RunOptions mapping, used by run and watch so the two cannot drift. */
@@ -826,9 +828,10 @@ export function parseCli(argv: string[], cwd: string): Command {
         : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
     const maxRounds = parseLimit(values['max-rounds']);
+    const feedbackAuthors = parseFeedbackAuthors(values['feedback-authors']);
     return {
       kind: 'revise-pr',
-      ...(values['feedback-authors'] !== undefined ? { feedbackAuthors: parseFeedbackAuthors(values['feedback-authors'])! } : {}),
+      ...(feedbackAuthors !== undefined ? { feedbackAuthors } : {}),
       prRef,
       repoPath,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),

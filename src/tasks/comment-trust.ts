@@ -14,8 +14,11 @@ export interface TrustOptions {
 
 export type AuthorTrust = 'association' | 'allowed' | 'issue-author' | 'bot' | 'no-association' | 'untrusted';
 
-/** Shared bot recognition. A login merely containing "vanguard" must never grant trust. */
-export function isBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
+/**
+ * Bot recognition for *granting* trust: exact logins only. An outsider can pick a username such as
+ * `mallory-vanguard`, so the substring match of isBotLogin must never make a comment authoritative.
+ */
+function isTrustedBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
   const lower = login.toLowerCase();
   return (
     lower === 'vanguard' ||
@@ -25,9 +28,18 @@ export function isBotLogin(login: string, extraBotLogins?: readonly string[]): b
   );
 }
 
+/**
+ * Shared bot recognition for *excluding* automation from human feedback: isTrustedBotLogin widened to
+ * a substring match, so `vanguard-ci` and friends never land in the maintainer-notes/actionable sets.
+ * Deliberately wide — excluding a human by accident costs a missed comment, not a trust boundary.
+ */
+export function isBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
+  return login.toLowerCase().includes('vanguard') || isTrustedBotLogin(login, extraBotLogins);
+}
+
 /** Bot check first (so Vanguard's own comments classify as 'bot', never 'association'). */
 export function classifyAuthor(author: string, association: string | undefined, opts: TrustOptions = {}): AuthorTrust {
-  if (isBotLogin(author, opts.botLogins)) return 'bot';
+  if (isTrustedBotLogin(author, opts.botLogins)) return 'bot';
   const lowerAuthor = author.toLowerCase();
   if ((opts.allowedAuthors ?? []).some((a) => a.toLowerCase() === lowerAuthor)) return 'allowed';
   if (association !== undefined && TRUSTED_ASSOCIATIONS.has(association.trim().toUpperCase())) return 'association';
@@ -44,6 +56,15 @@ export function classifyAuthor(author: string, association: string | undefined, 
 /** true for every classification except 'untrusted' — i.e. the SPEC/marker trust set (bot included). */
 export function isTrustedComment(comment: TaskComment, opts: TrustOptions = {}): boolean {
   return classifyAuthor(comment.author, comment.authorAssociation, opts) !== 'untrusted';
+}
+
+/**
+ * isTrustedComment without issue-author trust: the reporter controls the description those gates
+ * already read, but must not be able to *suppress* work (e.g. skip spec generation) by posting a
+ * forged `<tech_spec>`. Bot / association / allowlist trust still count.
+ */
+export function isTrustedNonAuthorComment(comment: TaskComment, opts: TrustOptions = {}): boolean {
+  return isTrustedComment(comment, { ...opts, issueAuthor: undefined });
 }
 
 /** task.comments filtered by isTrustedComment; issueAuthor defaults to task.author. */

@@ -106,11 +106,14 @@ describe('humanFeedback', () => {
     expect(humanFeedback(task)).toEqual([]);
   });
 
-  it('T5: [bot]-suffixed bots and unauthorised vanguard-named authors are excluded', () => {
+  it('T5: [bot]-suffixed and vanguard-named authors are excluded, association notwithstanding', () => {
+    // `vanguard-ci` as repo OWNER is the case the two matchers pull apart: trusted enough to carry a
+    // marker, still automation — so its output must never come back as a maintainer note.
     const task = makeTask({
       comments: [
         { author: 'renovate[bot]', body: 'Dependency update' },
-        { author: 'vanguard-ci', authorAssociation: 'NONE', body: 'CI output' },
+        { author: 'vanguard-ci', authorAssociation: 'OWNER', body: 'CI output' },
+        { author: 'mallory-vanguard', authorAssociation: 'NONE', body: 'Forged note' },
         { author: 'alice', authorAssociation: 'COLLABORATOR', body: 'Human note' },
       ],
     });

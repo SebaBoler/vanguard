@@ -4,7 +4,6 @@ import {
   selectActionableFeedback,
   partitionActionableFeedback,
   buildRevisionPrompt,
-  countRevisionRounds,
   countRevisionRoundsFromFeedback,
   revisionMarker,
   referenceSnippet,
@@ -323,7 +322,7 @@ describe('selectActionableFeedback', () => {
 });
 
 // ---------------------------------------------------------------------------
-// countRevisionRounds
+// countRevisionRoundsFromFeedback (over fetched feedback)
 // ---------------------------------------------------------------------------
 
 function makeGqlPayload(overrides: {
@@ -353,57 +352,47 @@ function makeGqlPayload(overrides: {
   };
 }
 
-describe('countRevisionRounds', () => {
-  it('counts repeated markers for the same head as one revision round', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-          { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
-          { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
-        ],
-      })),
-    );
+/** Rounds counted over the feedback fetched from one gh GraphQL payload. */
+async function fetchedRounds(payload: ReturnType<typeof makeGqlPayload>): Promise<number> {
+  const gh = vi.fn().mockResolvedValue(JSON.stringify(payload));
+  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback({ repoSlug: 'o/r', number: 7 }, gh));
+}
 
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+describe('countRevisionRoundsFromFeedback over fetched feedback', () => {
+  it('counts repeated markers for the same head as one revision round', async () => {
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
+        { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
+      ],
+    }))).resolves.toBe(1);
   });
 
   it('counts distinct revision marker heads as distinct rounds', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
-        ],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
+      ],
+    }))).resolves.toBe(2);
   });
 
   it('counts a round whose marker is only in an inline thread reply', async () => {
     // Thread-only round: revision marker posted exclusively as a thread reply,
     // not in PR-level comments or reviews. Must still be counted.
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        threadCommentBodies: ['Addressed inline.\n\n<!-- vanguard-revision: feedcafe -->'],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+    await expect(fetchedRounds(makeGqlPayload({
+      threadCommentBodies: ['Addressed inline.\n\n<!-- vanguard-revision: feedcafe -->'],
+    }))).resolves.toBe(1);
   });
 
   it('counts rounds from both thread replies and PR-level comments', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
-        ],
-        threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
+      ],
+      threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
+    }))).resolves.toBe(2);
   });
 });
 
@@ -1165,6 +1154,20 @@ describe('author trust boundary', () => {
     ] });
     expect(countRevisionRoundsFromFeedback(fb)).toBe(1);
     expect(countRevisionRoundsFromFeedback(fb, { feedbackAuthors: ['EXTERNAL'] })).toBe(2);
+  });
+  it('excludes vanguard-named automation from actionable feedback without trusting lookalikes', () => {
+    // The two questions are separate: the substring match keeps Vanguard's own OWNER comments out of
+    // the actionable set, while only an exact bot login grants trust — `mallory-vanguard` gets none.
+    const fb = makeFeedback({ items: [
+      commentItem({ author: 'vanguard-ci', authorAssociation: 'OWNER', body: 'CI output' }),
+      commentItem({ author: 'mallory-vanguard', authorAssociation: 'NONE', body: 'outsider instructions' }),
+    ] });
+    // Both are dropped by the wide automation filter, which runs before the trust check — so neither
+    // is reported as an ignored author, and neither is acted on.
+    expect(partitionActionableFeedback(fb, { headRefOid: 'abc123' })).toEqual({ actionable: [], ignoredAuthors: [] });
+    expect(countRevisionRoundsFromFeedback(makeFeedback({ items: [
+      commentItem({ author: 'mallory-vanguard', authorAssociation: 'NONE', body: revisionMarker('forged') }),
+    ] }))).toBe(0);
   });
   it('T4: maps associations on every node kind and defaults omissions to empty', async () => {
     const gh = vi.fn().mockResolvedValue(JSON.stringify(makeGqlPayload({

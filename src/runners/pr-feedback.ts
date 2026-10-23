@@ -323,11 +323,6 @@ export function countRevisionRoundsFromFeedback(fb: PullRequestFeedback, opts: P
   return rounds.size;
 }
 
-/** Count how many revision rounds Vanguard has already completed on this PR. */
-export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
-  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback(target, gh));
-}
-
 /**
  * Marker embedded in revision replies for round-counting and non-recursion. White-label drops the
  * "vanguard" token from the visible source of a client-repo comment; both forms are recognised by
@@ -355,7 +350,7 @@ export function referenceSnippet(item: FeedbackItem): string {
 /**
  * Body for one non-threadable acknowledgement reply.
  * Includes a referencing snippet, commit SHA, and the revision marker so
- * selectActionableFeedback / countRevisionRounds skip this comment next round.
+ * selectActionableFeedback / countRevisionRoundsFromFeedback skip this comment next round.
  */
 export function buildItemReply(
   item: FeedbackItem,

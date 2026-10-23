@@ -1425,6 +1425,9 @@ describe('parseCli', () => {
     for (const argv of [['revise-pr', 'o/r#1'], ['run', '--github', 'o/r#1'], ['watch', '--source', 'github', '--label', 'vanguard']]) {
       expect(parseCli([...argv, '--feedback-authors', 'a, b ,A,,'], '/work')).toMatchObject({ feedbackAuthors: ['a', 'b'] });
       expect(parseCli(argv, '/work')).not.toHaveProperty('feedbackAuthors');
+      // An empty/separator-only value (the workflow passing through an empty allowed-actors) is the
+      // same as not passing the flag — never an empty allowlist.
+      for (const empty of ['', ' , ']) expect(parseCli([...argv, '--feedback-authors', empty], '/work')).not.toHaveProperty('feedbackAuthors');
     }
   });
 });

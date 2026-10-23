@@ -2,6 +2,7 @@ import { fanOut } from '../pipeline/fan-out.js';
 import { failureReason } from '../core/errors.js';
 import { hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
+import { isBotLogin } from '../tasks/comment-trust.js';
 import type { GhRunner } from '../tasks/github.js';
 
 export interface PullRequestWatchItem {
@@ -95,11 +96,6 @@ function authorLogin(author: GhPullRequestListItem['author']): string {
   return author?.login ?? '';
 }
 
-function isAutomationAuthor(login: string): boolean {
-  const lower = login.toLowerCase();
-  return lower.includes('vanguard') || lower.endsWith('[bot]') || lower === 'github-actions';
-}
-
 function eligiblePullRequests(
   parsed: GhPullRequestListItem[],
   repoSlug: string,
@@ -120,7 +116,7 @@ function eligiblePullRequests(
       labels,
     };
     if (pr.isDraft) return [];
-    if (isAutomationAuthor(author)) return [];
+    if (isBotLogin(author)) return [];
     if (onlyAuthor !== undefined && author !== onlyAuthor) return [];
     if (!labels.includes(triggerLabel)) return [];
     return [pr];

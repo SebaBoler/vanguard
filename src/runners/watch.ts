@@ -1,4 +1,4 @@
-import { trustedComments } from '../tasks/comment-trust.js';
+import { isTrustedNonAuthorComment } from '../tasks/comment-trust.js';
 import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
 import { GitLabTaskFetcher, editGitlabLabels, commentGitlabIssue, defaultGlabRunner } from '../tasks/gitlab.js';
@@ -421,8 +421,9 @@ async function runSpecCore(
   actions: RunSpecCoreActions,
 ): Promise<'advanced' | 'needs_info'> {
   // (a) Idempotent retry: if a Vanguard-generated spec is already posted skip regeneration and just
-  // advance — cheap, no duplicate spec comment / wasted sandbox+LLM.
-  if (trustedComments(task, { allowedAuthors: deps.feedbackAuthors }).some(isVanguardSpec)) {
+  // advance — cheap, no duplicate spec comment / wasted sandbox+LLM. Issue-author trust is excluded
+  // here: the reporter must not be able to skip spec generation with a forged <tech_spec>.
+  if (task.comments.some((c) => isTrustedNonAuthorComment(c, { allowedAuthors: deps.feedbackAuthors }) && isVanguardSpec(c))) {
     await actions.advance();
     return 'advanced';
   }

@@ -197,21 +197,44 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
   const notes = ignoredFeedback.map(({ author, association }) =>
     `revise-pr ${target.repoSlug}#${target.number}: ignored feedback from ${describeIgnoredAuthor(author, association)}`);
   for (const note of notes) log(note);
+
+  /**
+   * Explain on the PR why no revision was applied and hand the routing labels back to a human, so the
+   * PR never sits in `vanguard:revising` with no trace. Notices stay unbranded: a white-label run must
+   * not name the automation (or its flags) in a client repo.
+   */
+  const handBackWithNotice = async (reason: string, message: string): Promise<void> => {
+    log(`revise-pr ${target.repoSlug}#${target.number}: ${reason}, posting notice`);
+    await postPullRequestReview(target, message, 'comment', gh);
+    await handBackPrLabels(gh, target.repoSlug, target.number, log);
+  };
+
   if (actionable.length === 0) {
-    if (notes.length > 0) await appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
-      taskId: `${target.repoSlug}#${target.number}`, flow: 'revise-pr', provider: deps.provider ?? 'unknown',
-      exit: 'no-changes', outcomes: [], notes,
-    });
+    if (notes.length > 0) {
+      // Everything this round was gated out on author trust — hand it back exactly as the round cap
+      // does. --out is a dry-run that touches NEITHER the branch NOR the PR, so it only logs.
+      if (deps.out === undefined) {
+        await handBackWithNotice('all feedback untrusted', [
+          'No automated revision was applied: every review comment in this round came from an author whose feedback is not trusted for automated revisions.',
+          '',
+          ...ignoredFeedback.map(({ author, association }) => `- ${describeIgnoredAuthor(author, association)}`),
+          '',
+          'Trusted feedback comes from a repository OWNER, MEMBER or COLLABORATOR, or from an explicitly allowed login.',
+        ].join('\n'));
+      }
+      await appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
+        taskId: `${target.repoSlug}#${target.number}`, flow: 'revise-pr', provider: deps.provider ?? 'unknown',
+        exit: 'no-changes', outcomes: [], notes,
+      });
+    }
     log(`revise-pr ${target.repoSlug}#${target.number}: no actionable feedback — skipping`);
     return { pr, ignoredFeedback, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
   const rounds = countRevisionRoundsFromFeedback(fb, deps);
   if (rounds >= maxRounds) {
-    const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
-    log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);
-    await postPullRequestReview(target, capMsg, 'comment', gh);
-    await handBackPrLabels(gh, target.repoSlug, target.number, log);
+    await handBackWithNotice(`cap -> ${rounds} rounds`,
+      `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`);
     return { pr, ignoredFeedback, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 

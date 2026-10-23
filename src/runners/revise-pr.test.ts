@@ -1189,18 +1189,29 @@ describe('runRevisePullRequest — skills', () => {
   });
 });
 
-it('T10: all-untrusted feedback returns without any mutation or push', async () => {
+it('T10: all-untrusted feedback explains itself on the PR and hands the labels back, without a push', async () => {
   const push = vi.fn(async () => '');
   const gh = vi.fn(async (args: string[]) => {
     if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
     if (args[0] === 'pr' && args[1] === 'diff') return '';
     if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson().replaceAll('"alice"', '"mallory"').replaceAll('COLLABORATOR', 'NONE');
+    if (args[0] === 'pr' && args[1] === 'review') return '';
+    if (args[0] === 'label' && args[1] === 'create') return '';
+    if (args[0] === 'pr' && args[1] === 'edit') return '';
     throw new Error('Unexpected mutation: ' + args.join(' '));
   });
   const logs: string[] = [];
   const result = await runRevisePullRequest('7', { repoPath: repo, repoSlug: 'o/r', gh, _pushRunner: push, log: (line) => logs.push(line) });
   expect(result).toMatchObject({ addressed: 0, committed: false, pushed: false, undrafted: false, ignoredFeedback: [{ author: 'mallory', association: 'NONE' }] });
   expect(push).not.toHaveBeenCalled();
-  expect(gh.mock.calls.every(([args]) => !(args.includes('edit') || args.includes('ready') || args.some((arg) => arg.includes('mutation'))))).toBe(true);
+  // The maintainer sees why, and the PR leaves vanguard:revising for a human.
+  const notice = gh.mock.calls.map(([args]) => args).find((args) => args[0] === 'pr' && args[1] === 'review' && args.includes('--comment'));
+  expect(notice?.at(-1)).toContain('@mallory (NONE)');
+  expect(notice?.at(-1)).not.toContain('Vanguard');
+  const editCall = gh.mock.calls.map(([args]) => args).find((args) => args[0] === 'pr' && args[1] === 'edit');
+  expect(editCall?.join(' ')).toContain('vanguard:needs-human-review');
+  expect(editCall?.join(' ')).toContain('vanguard:revising');
+  // Still no thread reply/resolve mutation and no undraft.
+  expect(gh.mock.calls.every(([args]) => !(args.includes('ready') || args.some((arg) => arg.includes('mutation'))))).toBe(true);
   expect(logs.filter((line) => /ignored feedback from @mallory \(NONE\)/.test(line))).toHaveLength(1);
 });
