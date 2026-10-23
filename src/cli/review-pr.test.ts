@@ -37,6 +37,8 @@ function fakeResult(): ReviewPullRequestResult {
       headRefName: 'h',
       headRefOid: 'abc123',
       baseRefName: 'main',
+      isCrossRepository: false,
+      headRepositoryOwner: '',
       diff: 'diff',
     },
     commentBody: '## Vanguard Review\n\nNo blocking findings.',
@@ -83,21 +85,7 @@ describe('reviewPrCommand', () => {
       async (_ref: string, deps: ReviewPullRequestDeps): Promise<ReviewPullRequestResult> => {
         deps.log?.('review-pr o/r#12: fetch -> diff');
         deps.log?.('review-pr o/r#12: posted -> pr review');
-        return {
-          pr: {
-            repoSlug: 'o/r',
-            number: 12,
-            title: 'Fix auth',
-            body: '',
-            url: 'https://github.com/o/r/pull/12',
-            author: 'alice',
-            headRefName: 'h',
-            headRefOid: 'abc123',
-            baseRefName: 'main',
-            diff: 'diff',
-          },
-          commentBody: '## Vanguard Review\n\nNo blocking findings.',
-        };
+        return fakeResult();
       },
     );
     const cmd: Extract<Command, { kind: 'review-pr' }> = {

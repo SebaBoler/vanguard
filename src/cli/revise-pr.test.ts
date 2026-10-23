@@ -26,6 +26,8 @@ function makeResult(committed = true): ReviseGithubPrResult {
       headRefName: 'feature-branch',
       headRefOid: 'deadbeef',
       baseRefName: 'main',
+      isCrossRepository: false,
+      headRepositoryOwner: '',
       diff: 'diff',
     },
     addressed: committed ? 1 : 0,

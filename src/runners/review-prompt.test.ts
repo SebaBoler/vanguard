@@ -265,7 +265,7 @@ describe('neutralizePromptTags', () => {
         { retryTriage: true },
       ),
       buildPullRequestReviewPrompt(
-        { repoSlug: 'o/r', number: 1, title: '', body: '', url: '', author: '', headRefName: '', headRefOid: '', baseRefName: '', diff: '' },
+        { repoSlug: 'o/r', number: 1, title: '', body: '', url: '', author: '', headRefName: '', headRefOid: '', baseRefName: '', isCrossRepository: false, headRepositoryOwner: '', diff: '' },
         { retryTriage: true },
       ),
     ].join('\n');

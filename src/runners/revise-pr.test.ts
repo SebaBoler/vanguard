@@ -402,10 +402,69 @@ describe('runRevisePullRequest happy path', () => {
     expect(executed.some((c) => c.includes('PWNED'))).toBe(false);
   });
 
+  it('writes the refusal to the preview file for fork PRs in dry-run mode, posting nothing', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[1] === 'view') return makePrViewJson({ isCrossRepository: true, headRepositoryOwner: { login: 'fork-owner' } });
+      if (args[0] === 'api') return makeFeedbackJson();
+      return '';
+    };
+    const out = join(repo, 'preview.md');
+    const result = await runRevisePullRequest('7', { repoPath: repo, repoSlug: 'o/r', gh, out });
+    expect(calls.some((args) => ['review', 'edit', 'create'].includes(args[1] ?? ''))).toBe(false);
+    expect(result.dryRunOut).toBe(out);
+    expect(await readFile(out, 'utf8')).toContain("Cannot revise: this PR's head branch is on fork-owner's fork");
+  });
+
+  it('returns silently for a fork PR with no actionable feedback, posting no refusal', async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[1] === 'view') return makePrViewJson({ isCrossRepository: true });
+      if (args[0] === 'api') return makeFeedbackJson({ reviewThreads: { nodes: [] } });
+      return '';
+    };
+    await runRevisePullRequest('7', { repoPath: repo, repoSlug: 'o/r', gh });
+    expect(calls.some((args) => ['review', 'edit', 'create'].includes(args[1] ?? ''))).toBe(false);
+  });
+
+  it.each([
+    ['fork-owner', "fork-owner's fork"],
+    ['', 'a fork'],
+  ])('refuses fork PRs before worktree creation or push (owner: %s)', async (owner, expected) => {
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({
+        isCrossRepository: true, headRepositoryOwner: owner === '' ? null : { login: owner },
+      });
+      if (args[0] === 'api') return makeFeedbackJson();
+      return '';
+    };
+    const wm = new WorktreeManager(repo);
+    const create = vi.spyOn(wm, 'create');
+    const push = vi.fn(async () => '');
+    const inputs: AgentRunInput[] = [];
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo, repoSlug: 'o/r', gh, _worktrees: wm,
+      _pushRunner: push, _agent: agentThatCompletes(inputs), _sandbox: makeSandbox(),
+    });
+    expect(result).toMatchObject({ addressed: 0, committed: false, pushed: false, undrafted: false });
+    expect(create).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(inputs).toEqual([]);
+    const notice = calls.find((args) => args[1] === 'review')?.join(' ') ?? '';
+    expect(notice).toContain('Cannot revise:');
+    expect(notice).toContain(`head branch is on ${expected}`);
+    expect(calls.find((args) => args[1] === 'edit')).toContain('vanguard:needs-human-review');
+  });
+
   it('fetches refs/heads/<head> with --end-of-options, so a dash-led head ref cannot act as a git option', async () => {
     await execa('git', ['remote', 'add', 'origin', repo], { cwd: repo });
+    const featureSha = (await execa('git', ['rev-parse', 'feature-branch'], { cwd: repo })).stdout;
     const gh: GhRunner = async (args) => {
-      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefOid: featureSha });
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
         if (query.includes('reviewThreads')) return makeFeedbackJson();
@@ -428,9 +487,9 @@ describe('runRevisePullRequest happy path', () => {
     expect(vi.mocked(execa)).toHaveBeenCalledWith('git', ['fetch', '--end-of-options', 'origin', 'refs/heads/feature-branch'], expect.objectContaining({ cwd: repo }));
   });
 
-  it('fails with a clear error when the PR has no head ref', async () => {
+  it.each([{ headRefName: undefined }, { headRefOid: undefined }])('fails with a clear error when the PR has no head ref (%o)', async (missing) => {
     const gh: GhRunner = async (args) => {
-      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: undefined });
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson(missing);
       if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
       return '';
     };
@@ -449,6 +508,34 @@ describe('runRevisePullRequest happy path', () => {
     ).rejects.toThrow('PR o/r#7 has no head ref to fetch');
   });
 
+  it('hands the labels back and comments when the start cannot be resolved, instead of leaving the PR revising', async () => {
+    await execa('git', ['remote', 'add', 'origin', repo], { cwd: repo });
+    const calls: string[][] = [];
+    const gh: GhRunner = async (args) => {
+      calls.push(args);
+      // headRefOid is not the sha of feature-branch: resolveStartRef refuses the fetched head.
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+      if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson();
+      return '';
+    };
+
+    await expect(
+      runRevisePullRequest('7', {
+        repoPath: repo,
+        repoSlug: 'o/r',
+        gh,
+        _sandbox: makeSandbox(),
+        _agent: agentThatCompletes([]),
+        _worktrees: new WorktreeManager(repo),
+        _pushRunner: async () => '',
+        provider: 'claude',
+      }),
+    ).rejects.toThrow(/expected PR head/);
+
+    expect(calls.find((args) => args[1] === 'review')?.join(' ')).toContain('Cannot revise:');
+    expect(calls.find((args) => args[1] === 'edit')).toContain('vanguard:needs-human-review');
+  });
+
   it('revises the PR head, not main, when the head branch name starts with "+"', async () => {
     const git = (args: string[]): Promise<{ stdout: string }> => execa('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
     await git(['checkout', '-b', '+main']);
@@ -459,7 +546,7 @@ describe('runRevisePullRequest happy path', () => {
     await git(['checkout', 'main']);
     await git(['remote', 'add', 'origin', repo]);
     const gh: GhRunner = async (args) => {
-      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: '+main' });
+      if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson({ headRefName: '+main', headRefOid: prHead });
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
         if (query.includes('reviewThreads')) return makeFeedbackJson();

@@ -824,9 +824,21 @@ describe('vanguard.run base resolution (#429)', () => {
     expect(reuse.startRef).toBe(await sha(clone, 'refs/heads/main')); // the local copy, never fetched
     expect(reuse.startRef).not.toBe(base.startRef);
 
-    const head = await prepareContext({ taskId: 'start-head', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'feature' }, sandbox: makeSandbox().sandbox }, { worktrees: wm });
+    const head = await prepareContext({ taskId: 'start-head', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'feature', headRefOid: await sha(origin, 'feature') }, sandbox: makeSandbox().sandbox }, { worktrees: wm });
     await disposeContext(head);
     expect(head.startRef).toBe(await sha(origin, 'feature'));
+  });
+
+  it('rejects a fetched branch with a different PR head before creating a worktree', async () => {
+    const { origin, clone } = await originAndStaleClone();
+    const wm = new WorktreeManager(clone);
+    const create = vi.spyOn(wm, 'create');
+    await expect(prepareContext({
+      taskId: 'wrong-head', localRepoPath: clone, baseBranch: 'main',
+      start: { prHead: 'feature', headRefOid: await sha(origin, 'main') },
+      sandbox: makeSandbox().sandbox,
+    }, { worktrees: wm })).rejects.toThrow(/expected PR head/);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('fails loudly when the start cannot be resolved instead of landing on a default', async () => {
@@ -837,10 +849,10 @@ describe('vanguard.run base resolution (#429)', () => {
       prepareContext({ taskId: 'start-missing', localRepoPath: clone, baseBranch: 'no-such-branch', start: 'reuse', sandbox: makeSandbox().sandbox }, { worktrees: wm }),
     ).rejects.toThrow(/Failed to create worktree for start-missing/);
     await expect(
-      prepareContext({ taskId: 'start-nohead', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'no-such-branch' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+      prepareContext({ taskId: 'start-nohead', localRepoPath: clone, baseBranch: 'main', start: { prHead: 'no-such-branch', headRefOid: 'deadbeef' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
     ).rejects.toThrow(/no-such-branch/);
     await expect(
-      prepareContext({ taskId: 'start-unsafe', localRepoPath: clone, baseBranch: '--upload-pack=x', start: { prHead: 'feature' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
+      prepareContext({ taskId: 'start-unsafe', localRepoPath: clone, baseBranch: '--upload-pack=x', start: { prHead: 'feature', headRefOid: 'deadbeef' }, sandbox: makeSandbox().sandbox }, { worktrees: wm }),
     ).rejects.toThrow(/cannot start with "-"/);
   });
 
