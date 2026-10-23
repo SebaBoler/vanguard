@@ -6,23 +6,27 @@
     "locale": "en",
     "quality_profile": "showcase",
     "legend": { "mode": "hidden" },
-    "viewBox": [728, 592]
+    "viewBox": [728, 704]
   },
   "components": [
-    { "id": "input", "type": "external", "label": "Issue / PR / MR", "sublabel": "untrusted text", "pos": [36, 52], "size": [140, 52] },
-    { "id": "pr", "type": "external", "label": "PR / MR", "sublabel": "pushed by host only", "pos": [552, 52], "size": [140, 52] },
-    { "id": "gate", "type": "security", "label": "Author gate", "sublabel": "GitHub Actions only", "pos": [36, 164], "size": [140, 52] },
-    { "id": "prompt", "type": "backend", "label": "Prompt", "sublabel": "untrusted <tags> escaped", "pos": [208, 164], "size": [140, 52] },
-    { "id": "copyback", "type": "security", "label": "Copy-back", "sublabel": "CI config dropped", "pos": [380, 164], "size": [140, 52] },
-    { "id": "scan", "type": "security", "label": "Secret scan", "sublabel": "hit: nothing pushed", "pos": [552, 164], "size": [140, 52] },
-    { "id": "agent", "type": "backend", "label": "Agent CLI", "sublabel": "no GitHub/GitLab token; gets the Linear key", "pos": [148, 276], "size": [260, 52] },
-    { "id": "llmproxy", "type": "security", "label": "LLM proxy", "sublabel": "real key; agent: nonce", "pos": [208, 388], "size": [140, 52] },
-    { "id": "egress", "type": "security", "label": "Egress proxy", "sublabel": "host allowlist", "pos": [532, 388], "size": [160, 52] },
-    { "id": "model", "type": "cloud", "label": "Model API", "sublabel": "Anthropic, OpenAI", "pos": [208, 500], "size": [140, 52] },
-    { "id": "hosts", "type": "cloud", "label": "Allowed hosts", "sublabel": "Linear, GitHub, npm, PyPI", "pos": [532, 500], "size": [160, 52] }
+    { "id": "approver", "type": "security", "label": "Approver (shadow)", "sublabel": "allowlisted gh calls", "pos": [542, 52], "size": [160, 52] },
+    { "id": "input", "type": "external", "label": "Issue / PR / MR", "sublabel": "untrusted text", "pos": [36, 164], "size": [140, 52] },
+    { "id": "policy", "type": "external", "label": "approver.json", "sublabel": "base branch only", "pos": [208, 164], "size": [140, 52] },
+    { "id": "metrics", "type": "external", "label": "decisions.jsonl", "sublabel": "vanguard-metrics branch", "pos": [380, 164], "size": [140, 52] },
+    { "id": "pr", "type": "external", "label": "PR / MR", "sublabel": "pushed by host only", "pos": [552, 164], "size": [140, 52] },
+    { "id": "gate", "type": "security", "label": "Author gate", "sublabel": "GitHub Actions only", "pos": [36, 276], "size": [140, 52] },
+    { "id": "prompt", "type": "backend", "label": "Prompt", "sublabel": "untrusted <tags> escaped", "pos": [208, 276], "size": [140, 52] },
+    { "id": "copyback", "type": "security", "label": "Copy-back", "sublabel": "CI config dropped", "pos": [380, 276], "size": [140, 52] },
+    { "id": "scan", "type": "security", "label": "Secret scan", "sublabel": "hit: nothing pushed", "pos": [552, 276], "size": [140, 52] },
+    { "id": "agent", "type": "backend", "label": "Agent CLI", "sublabel": "no GitHub/GitLab token; gets the Linear key", "pos": [148, 388], "size": [260, 52] },
+    { "id": "llmproxy", "type": "security", "label": "LLM proxy", "sublabel": "real key; agent: nonce", "pos": [208, 500], "size": [140, 52] },
+    { "id": "egress", "type": "security", "label": "Egress proxy", "sublabel": "host allowlist", "pos": [532, 500], "size": [160, 52] },
+    { "id": "model", "type": "cloud", "label": "Model API", "sublabel": "Anthropic, OpenAI", "pos": [208, 612], "size": [140, 52] },
+    { "id": "hosts", "type": "cloud", "label": "Allowed hosts", "sublabel": "Linear, GitHub, npm, PyPI", "pos": [532, 612], "size": [160, 52] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "GitHub · GitLab · Linear", "wraps": ["input", "pr"], "pad": 12 },
+    { "kind": "region", "label": "Default-branch job, write token", "wraps": ["approver"], "pad": 12 },
+    { "kind": "region", "label": "GitHub · GitLab · Linear", "wraps": ["input", "policy", "metrics", "pr"], "pad": 12 },
     { "kind": "region", "label": "Host: CI job or watch loop, holds the GitHub/GitLab token", "wraps": ["gate", "prompt", "copyback", "scan"], "pad": 12 },
     { "kind": "security-group", "label": "Docker sandbox: non-root, cap-drop ALL, noexec tmpfs", "wraps": ["agent"], "pad": 12 },
     { "kind": "region", "label": "Opt-in sidecars", "wraps": ["llmproxy", "egress"], "pad": 12 }
@@ -37,6 +41,10 @@
     { "id": "agent-llmproxy", "from": "agent", "to": "llmproxy", "label": "nonce", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelDy": 20, "labelDx": 34 },
     { "id": "llmproxy-model", "from": "llmproxy", "to": "model", "label": "real key", "variant": "dashed", "labelDy": 24 },
     { "id": "agent-egress", "from": "agent", "to": "egress", "label": "CONNECT", "variant": "dashed", "fromSide": "right", "toSide": "top" },
-    { "id": "egress-hosts", "from": "egress", "to": "hosts", "variant": "dashed" }
+    { "id": "egress-hosts", "from": "egress", "to": "hosts", "variant": "dashed" },
+    { "id": "pr-approver", "from": "pr", "to": "approver", "label": "git objects only", "fromSide": "top", "toSide": "bottom", "labelDx": 46 },
+    { "id": "approver-pr", "from": "approver", "to": "pr", "label": "check + comment", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelDx": -46, "labelDy": 24 },
+    { "id": "policy-approver", "from": "policy", "to": "approver", "fromSide": "top", "toSide": "top", "via": [[278, 14], [622, 14]] },
+    { "id": "approver-metrics", "from": "approver", "to": "metrics", "label": "append", "variant": "dashed", "fromSide": "left", "toSide": "top" }
   ]
 }
