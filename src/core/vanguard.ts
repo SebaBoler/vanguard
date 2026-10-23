@@ -54,9 +54,11 @@ const IN_CI_DIR = /(^|[\\/])\.git(hub|lab)[\\/]/i;
  * Which commit a task starts from. `'base'`: origin's copy of `baseBranch` when it is ahead of the
  * local one (see resolveRemoteBaseRef; the local copy when it is kept). `'reuse'`: an existing run
  * branch keeps its own history, and the local `baseBranch` is only the baseline a fresh branch is cut
- * from and new commits are measured against. `{ prHead }`: that branch as it is on origin (revise-pr).
+ * from and new commits are measured against. `{ prHead }`: that branch as it is on origin (revise-pr),
+ * guarded by `headRefOid` — the PR's own head SHA — so a same-named but different branch (the
+ * same-named-branch case for a fork PR; see the comment in resolveStartRef) is never used as the start.
  */
-export type TaskStart = 'base' | 'reuse' | { prHead: string };
+export type TaskStart = 'base' | 'reuse' | { prHead: string; headRefOid: string };
 
 export interface PrepareOptions {
   taskId: string;
@@ -177,16 +179,23 @@ async function resolveStartRef(opts: PrepareOptions, log: VanguardLogger): Promi
     return undefined;
   } else {
     // The PR head as it is on origin, so a revision continues the PR, not the base. Same-repo PRs
-    // only: a fork PR's head is not on origin, so a same-named origin branch, or nothing, is fetched
-    // instead. The head ref name is author-controlled: --end-of-options keeps a "-"-led name from
-    // parsing as a git option, and the full refs/heads/ source keeps a "+"-led name (legal in git)
+    // only (callers must have refused a cross-repository PR already — see the isCrossRepository guard
+    // in revise-pr.ts): a fork PR's head is not on origin, so a same-named origin branch, or nothing, is
+    // fetched instead. The head ref name is author-controlled: --end-of-options keeps a "-"-led name
+    // from parsing as a git option, and the full refs/heads/ source keeps a "+"-led name (legal in git)
     // from reading as a force refspec.
     // No credential prompt from a daemon and a bounded wait, as in resolveRemoteBaseRef; the failure is
     // reported masked, never as raw git stderr.
     const fetch = await execa('git', ['fetch', '--end-of-options', 'origin', `refs/heads/${start.prHead}`], { cwd, reject: false, env: { GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
     if (fetch.exitCode !== 0) throw new WorktreeError(`Cannot fetch origin/${start.prHead} for ${opts.taskId}: ${redactGitError(fetch)}`);
-    ref = 'FETCH_HEAD';
-    what = `origin/${start.prHead}`;
+    const sha = await revParseCommit(cwd, 'FETCH_HEAD');
+    if (sha === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: origin/${start.prHead} (FETCH_HEAD) is not a commit in ${cwd}`);
+    // Belt-and-braces against the same-named-branch substitution above: even same-repo, FETCH_HEAD must
+    // be exactly the PR's own head SHA, not a stale or diverged copy of the ref by that name.
+    if (sha !== start.headRefOid) {
+      throw new WorktreeError(`Cannot start ${opts.taskId} from origin/${start.prHead}: fetched ${sha}, expected PR head ${start.headRefOid}`);
+    }
+    return sha;
   }
   const sha = await revParseCommit(cwd, ref);
   if (sha === '') throw new WorktreeError(`Cannot resolve the start commit for ${opts.taskId}: ${what} (${ref}) is not a commit in ${cwd}`);

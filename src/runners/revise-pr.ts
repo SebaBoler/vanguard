@@ -181,6 +181,20 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     fetchPullRequestFeedback(target, gh, log),
   ]);
 
+  if (pr.isCrossRepository) {
+    // A fork PR's head branch is not on origin: fetching refs/heads/<headRefName> there (resolveStartRef
+    // in vanguard.ts) would silently land on a same-named base-repo branch instead, and the push below
+    // would land on it too. Refuse before any fetch, worktree or push — there is no safe revise path
+    // for a fork head.
+    const notice = `Cannot revise: this PR's head branch is on ${pr.headRepositoryOwner !== '' ? `${pr.headRepositoryOwner}'s fork` : 'a fork'}, not ${target.repoSlug}. Automated revision only pushes to branches in this repository — please revise manually.`;
+    log(`revise-pr ${target.repoSlug}#${target.number}: cross-repo -> cannot revise`);
+    if (deps.out === undefined) {
+      await postPullRequestReview(target, notice, 'comment', gh);
+      await handBackPrLabels(gh, target.repoSlug, target.number, log);
+    }
+    return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
+  }
+
   const actionable = selectActionableFeedback(fb, {
     headRefOid: pr.headRefOid,
     ...(deps.botLogins !== undefined ? { botLogins: deps.botLogins } : {}),
@@ -249,7 +263,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         // for the same-repo caveat). Tests point it at a local branch instead, which has no origin.
         ...(deps._baseBranch !== undefined
           ? { baseBranch: deps._baseBranch, start: 'base' as const, keepLocalIfAhead: true }
-          : { baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`), start: { prHead: pr.headRefName } }),
+          : {
+              baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`),
+              start: { prHead: pr.headRefName, headRefOid: pr.headRefOid },
+            }),
       },
       { skills: await skillRegistryForRun(deps.skillsDir, deps.repoPath), ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
     );
