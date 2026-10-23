@@ -49,7 +49,7 @@ import { sandboxResourceLimits } from '../sandbox/limits.js';
 import { llmProxySandboxEnv } from '../sandbox/egress-proxy.js';
 import { startProviderProxies } from '../sandbox/llm-proxy.js';
 import { authSecrets } from '../agents/auth.js';
-import { selectAgents } from '../agents/registry.js';
+import { selectAgents, providerKeyEnvNames } from '../agents/registry.js';
 import { GITHUB_REVIEW_LABEL } from '../github-labels.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import { VanguardError } from '../core/errors.js';
@@ -340,7 +340,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
       // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
       // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
-      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push');
+      // A custom provider's key env var is repo-configured: the secret gate cannot know its name.
+      const secretEnvVars = providerKeyEnvNames(deps);
+      const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push', secretEnvVars);
       // Repair cost merged into the implementer outcome by the gate reaches `vanguard stats` only if
       // the outcomes are persisted — the first delivery does this in runSourcedIssue. Persisted after
       // the scan so a blocked round leaves no `.diff` / `.bundle` on disk (the diff holds the secret).
@@ -406,6 +408,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         taskId: `${target.repoSlug}#${target.number}`,
         commitMessage: `fix: address review feedback (${target.repoSlug}#${target.number})`,
         ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
+        secretEnvVars,
         target: {
           kind: 'existing-branch',
           prHeadRef: pr.headRefName,

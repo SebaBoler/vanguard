@@ -1,6 +1,6 @@
 import { commitStage } from '../pipeline/pipeline.js';
 import { publishForReview, pushToExistingBranch } from '../pipeline/remote-branch.js';
-import { injectedSecretValues, redactInjectedSecrets, scanForInjectedSecrets, scanForSecrets } from '../core/secret-scan.js';
+import { injectedLineSuffix, injectedSecretValues, redactInjectedSecrets, scanForInjectedSecrets, scanForSecrets } from '../core/secret-scan.js';
 import { scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { CommitClosingLeak } from '../pipeline/conformance-gate.js';
@@ -54,6 +54,11 @@ export interface DeliverChangeOptions {
   target: DeliveryTarget;
   /** Scan the new commits (`ctx.startRef..HEAD`) for `Closes #N` (a partial delivery must not auto-close). */
   closingKeywordScan?: boolean;
+  /**
+   * Extra env var names holding credentials this run injected, beyond the ones the gate knows
+   * statically — a custom provider's `keyEnv` is repo-configured (registry.providerKeyEnvNames).
+   */
+  secretEnvVars?: readonly string[];
 }
 
 export type DeliverChangeResult =
@@ -90,10 +95,16 @@ export function conventionalPrTitle(title: string, opts: { bugLabel?: boolean; s
  * Two layers run here: the pattern scan (scanForSecrets — exempts TEST_PATH_RULES and allowlist
  * markers) and an exact-value check against every secret Vanguard itself injected into the sandbox for
  * this run (scanForInjectedSecrets — ignores both exemptions, since a value match IS the credential).
+ * `secretEnvVars` names credentials the static list cannot know (a custom provider's `keyEnv`).
  */
-export function scanOutgoingForSecrets(outgoing: string, taskId: string, phase: 'publish' | 'revise push' = 'publish'): SecretBlock | undefined {
+export function scanOutgoingForSecrets(
+  outgoing: string,
+  taskId: string,
+  phase: 'publish' | 'revise push' = 'publish',
+  secretEnvVars: readonly string[] = [],
+): SecretBlock | undefined {
   try {
-    const values = injectedSecretValues();
+    const values = injectedSecretValues(process.env, secretEnvVars);
     const findings = scanForSecrets(redactInjectedSecrets(outgoing, values));
     const injected = scanForInjectedSecrets(outgoing, values);
     if (findings.length === 0 && injected.length === 0) return undefined;
@@ -106,7 +117,7 @@ export function scanOutgoingForSecrets(outgoing: string, taskId: string, phase: 
     if (injected.length > 0) {
       console.error(
         `vanguard: secret scan blocked ${phase} for ${taskId} (exact match on an injected credential):`,
-        injected.map((f) => `${f.file}:${f.line}`).join('; '),
+        injected.map((f) => `${f.file}${injectedLineSuffix(f)}`).join('; '),
       );
     }
     return { reason: 'findings', findings, ...(injected.length > 0 ? { injected } : {}) };
@@ -119,11 +130,21 @@ export function scanOutgoingForSecrets(outgoing: string, taskId: string, phase: 
 export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions): Promise<DeliverChangeResult> {
   // Gate before the commit: a push happens before any label can be attached, so the raw secret must
   // never reach a commit in the first place. Always the worktree's own diff — never a caller's snapshot.
-  const block = scanOutgoingForSecrets(await ctx.wm.diff(ctx.worktreePath), opts.taskId, opts.target.kind === 'new-pr' ? 'publish' : 'revise push');
+  const secretEnvVars = opts.secretEnvVars ?? [];
+  const block = scanOutgoingForSecrets(
+    await ctx.wm.diff(ctx.worktreePath),
+    opts.taskId,
+    opts.target.kind === 'new-pr' ? 'publish' : 'revise push',
+    secretEnvVars,
+  );
   if (block !== undefined) return { kind: 'secret-blocked', block };
 
+  // The commit message and the PR body are composed from agent/issue text too, so the same injected
+  // credentials can ride out through them. They are not a diff to gate: redact in place.
+  const secretValues = injectedSecretValues(process.env, secretEnvVars);
+  const redact = (text: string): string => redactInjectedSecrets(text, secretValues);
   const identity = opts.commitAuthor !== undefined ? { authorName: opts.commitAuthor.name, authorEmail: opts.commitAuthor.email } : {};
-  const commit = await commitStage(ctx, { message: opts.commitMessage, ...identity });
+  const commit = await commitStage(ctx, { message: redact(opts.commitMessage), ...identity });
   if (!commit.committed) return { kind: 'no-changes' };
   const sha = commit.sha ?? 'unknown';
 
@@ -137,7 +158,7 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   if (target.kind === 'new-pr') {
     const pr = await publishForReview(ctx, {
       title: conventionalPrTitle(target.title, target),
-      body: target.body({ commitLeaks }),
+      body: redact(target.body({ commitLeaks })),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
       ...(target.prToken !== undefined ? { prToken: target.prToken } : {}),

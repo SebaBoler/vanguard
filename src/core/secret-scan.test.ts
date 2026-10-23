@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { redactTokens, scanForSecrets, renderSecretBlockComment } from './secret-scan.js';
+import {
+  injectedSecretValues,
+  redactInjectedSecrets,
+  redactTokens,
+  scanForInjectedSecrets,
+  scanForSecrets,
+  renderSecretBlockComment,
+} from './secret-scan.js';
 
 const FAKE_JWT = 'eyJhbGciOiJSUzI1Ni19.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc-DEF_123';
 const FAKE_SK_KEY = 'sk-FAKEtestkeyABCDEFGHIJ1234567890';
@@ -321,6 +328,117 @@ describe('allowlist marker (global suppression)', () => {
       { path: 'src/config.ts', lines: [`+const token = "${FAKE_JWT}"; // Pragma: Allowlist Secret`] },
     ]);
     expect(scanForSecrets(diff2).some((f) => f.patternName === 'jwt')).toBe(false);
+  });
+});
+
+// A credential shaped like the real ones (long, high entropy) but matching no SECRET_PATTERNS entry:
+// only the exact-value check can catch it.
+const INJECTED = 'opaque-credential-92837';
+/** One-file diff whose single added line is `line`; the path is a test path by default (pattern-scan exempt). */
+const injectedDiff = (line: string, path = 'tests/example.ts'): string =>
+  `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,3 @@\n context\n-old\n+${line}\n+tail`;
+
+describe('injectedSecretValues', () => {
+  it('reads the watched env vars and dedupes a value present under two names', () => {
+    const values = injectedSecretValues({ OPENAI_API_KEY: INJECTED, GH_TOKEN: INJECTED });
+    expect(values).toEqual([INJECTED]);
+  });
+
+  it('skips a value too short to be a credential', () => {
+    expect(injectedSecretValues({ GH_TOKEN: 'short' })).toEqual([]);
+  });
+
+  it('skips a placeholder or low-entropy value (an injected hit has no allowlist escape)', () => {
+    expect(injectedSecretValues({ ANTHROPIC_API_KEY: 'placeholder-value' })).toEqual([]);
+    expect(injectedSecretValues({ ANTHROPIC_API_KEY: 'aaaaaaaaaaaaaaaa' })).toEqual([]);
+    expect(injectedSecretValues({ ANTHROPIC_API_KEY: '<your-key-here>' })).toEqual([]);
+  });
+
+  it('extracts the Codex credentials out of a pretty-printed auth.json', () => {
+    const values = injectedSecretValues({
+      CODEX_AUTH_JSON: JSON.stringify({ tokens: { access_token: INJECTED, refresh_token: 'refresh-92837xyz' } }, null, 2),
+    });
+    expect(values).toContain(INJECTED);
+    expect(values).toContain('refresh-92837xyz');
+  });
+
+  it('keeps an unparseable auth.json as a raw value', () => {
+    expect(injectedSecretValues({ CODEX_AUTH_JSON: 'invalid-json-xx' })).toEqual(['invalid-json-xx']);
+  });
+
+  it('reads caller-supplied extra env var names (a custom provider keyEnv the static list cannot know)', () => {
+    expect(injectedSecretValues({ ACME_LLM_KEY: INJECTED })).toEqual([]);
+    expect(injectedSecretValues({ ACME_LLM_KEY: INJECTED }, ['ACME_LLM_KEY'])).toEqual([INJECTED]);
+  });
+});
+
+describe('scanForInjectedSecrets', () => {
+  it('flags an added line in a test file carrying an allowlist marker (both exemptions ignored)', () => {
+    expect(scanForInjectedSecrets(injectedDiff(`${INJECTED} // gitleaks:allow`), [INJECTED])).toEqual([
+      { file: 'tests/example.ts', line: 2 },
+    ]);
+  });
+
+  it.each([
+    ['base64', (v: string): string => Buffer.from(v).toString('base64')],
+    ['url-encoded', encodeURIComponent],
+    ['json-escaped', (v: string): string => JSON.stringify(v).slice(1, -1)],
+  ])('flags the %s encoding of the same credential', (_name, encode) => {
+    const value = 'opaque"value\\92837';
+    expect(scanForInjectedSecrets(injectedDiff(encode(value)), [value])).toHaveLength(1);
+  });
+
+  it('flags a credential that appears only in the file path, with no line number', () => {
+    expect(scanForInjectedSecrets(injectedDiff('safe', `${INJECTED}.txt`), [INJECTED])).toEqual([
+      { file: '[REDACTED-INJECTED].txt' },
+    ]);
+  });
+
+  it('flags added content that resembles a file header', () => {
+    expect(scanForInjectedSecrets(injectedDiff(`++ ${INJECTED}`), [INJECTED])).toHaveLength(1);
+  });
+
+  it('ignores context and removed lines', () => {
+    expect(scanForInjectedSecrets(injectedDiff('safe').replace('-old', `-${INJECTED}`), [INJECTED])).toEqual([]);
+    expect(scanForInjectedSecrets(injectedDiff('safe').replace(' context', ` ${INJECTED}`), [INJECTED])).toEqual([]);
+  });
+
+  it('counts the new-file line number past a no-newline marker', () => {
+    const diff = injectedDiff('safe').replace('+safe\n+tail', `+safe\n\\ No newline at end of file\n+${INJECTED}`);
+    expect(scanForInjectedSecrets(diff, [INJECTED])).toEqual([{ file: 'tests/example.ts', line: 3 }]);
+  });
+
+  it('counts a context line whose leading space was stripped', () => {
+    const diff = `diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,3 @@\n\n+${INJECTED}`;
+    expect(scanForInjectedSecrets(diff, [INJECTED])).toEqual([{ file: 'src/a.ts', line: 2 }]);
+  });
+
+  it('ignores values below the plausibility floor', () => {
+    expect(scanForInjectedSecrets(injectedDiff('short'), ['', 'short'])).toEqual([]);
+  });
+});
+
+describe('redactInjectedSecrets', () => {
+  it('replaces the longest variant first, so no fragment of a longer credential survives', () => {
+    const shorter = 'abcdef-123456';
+    const longer = `${shorter}-xyz789`;
+    expect(redactInjectedSecrets(`key=${longer}`, [shorter, longer])).toBe('key=[REDACTED-INJECTED]');
+  });
+
+  it('leaves text without a known credential untouched', () => {
+    expect(redactInjectedSecrets('plain code', [INJECTED])).toBe('plain code');
+  });
+});
+
+describe('renderSecretBlockComment injected findings', () => {
+  it('lists file and line with no excerpt, and omits the line for a path match', () => {
+    const comment = renderSecretBlockComment({
+      reason: 'findings',
+      findings: [],
+      injected: [{ file: 'tests/example.ts', line: 2 }, { file: '[REDACTED-INJECTED].txt' }],
+    });
+    expect(comment).toContain('- `tests/example.ts`:2 [injected-secret] (exact match — value withheld)');
+    expect(comment).toContain('- `[REDACTED-INJECTED].txt` [injected-secret] (exact match — value withheld)');
   });
 });
 

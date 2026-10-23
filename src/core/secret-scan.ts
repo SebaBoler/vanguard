@@ -63,6 +63,15 @@ export function shannonEntropy(value: string): number {
 }
 
 /**
+ * Clear "not credential material" signals shared by both gates: placeholder text, a single repeated
+ * character, dictionary-level entropy.
+ */
+function isPlaceholderOrLowEntropy(value: string): boolean {
+  if (PLACEHOLDER_VALUE.test(value) || ANGLE_PLACEHOLDER.test(value) || SAME_CHAR_RUN.test(value)) return true;
+  return shannonEntropy(value) < ASSIGNMENT_ENTROPY_THRESHOLD;
+}
+
+/**
  * Conservative (fail-closed) heuristic for the broad `assignment` pattern: reject only on clear
  * non-secret signals (code/env reference, placeholder text, low entropy). Keeps ambiguous matches
  * as findings. The allowlist marker is handled globally in scanForSecrets, not here.
@@ -73,9 +82,7 @@ function isLikelyAssignedSecret(value: string, prefix?: string): boolean {
   if (UPPER_SNAKE_IDENTIFIER.test(value)) return false;
   const quoted = prefix !== undefined && /['"]$/.test(prefix);
   if (!quoted && CAMEL_IDENTIFIER.test(value)) return false;
-  if (PLACEHOLDER_VALUE.test(value) || ANGLE_PLACEHOLDER.test(value) || SAME_CHAR_RUN.test(value)) return false;
-  if (shannonEntropy(value) < ASSIGNMENT_ENTROPY_THRESHOLD) return false;
-  return true;
+  return !isPlaceholderOrLowEntropy(value);
 }
 
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
@@ -188,18 +195,31 @@ export function scanForSecrets(diff: string): SecretFinding[] {
 }
 
 /**
- * Smallest length worth treating as a real secret for the exact-value check below — guards against an
- * unset/near-empty env var producing spurious substring hits across an entire diff.
+ * Smallest length worth treating as a real secret for the exact-value check below — guards against a
+ * short or near-empty env var producing spurious substring hits across an entire diff. Same floor as
+ * the `assignment` pattern's value length; every credential Vanguard injects is far longer.
  */
-const MIN_INJECTED_SECRET_LENGTH = 6;
-const longEnough = (value: string): boolean => value.length >= MIN_INJECTED_SECRET_LENGTH;
+const MIN_INJECTED_SECRET_LENGTH = 12;
+
+/**
+ * Is this env value plausibly a real credential? An exact-value hit is unconditional — no allowlist
+ * marker or test path suppresses it — so a placeholder or dictionary value in one of the watched vars
+ * (a dev/self-hosted `ANTHROPIC_API_KEY=placeholder-value`) would otherwise block every publish whose
+ * diff contains that substring, with no escape hatch. Same placeholder/entropy signals the assignment
+ * gate uses; real credential material clears them comfortably.
+ */
+function isPlausibleInjectedSecret(value: string): boolean {
+  return value.length >= MIN_INJECTED_SECRET_LENGTH && !isPlaceholderOrLowEntropy(value);
+}
 
 /**
  * Env var names Vanguard reads to build the credentials it injects into the sandbox, or uses to push on
- * an agent's behalf: agents/auth.ts (SUBSCRIPTION_ENV/API_ENV), agents/registry.ts (per-provider
- * hostEnv), tasks/linear-cli.ts / LINEAR_API_KEY, and VANGUARD_PUSH_TOKEN in runners/revise-pr.ts and
- * source-adapter.ts. Named here directly rather than reading the sandbox secrets map, which is
- * assembled per-run deep in the runner call graph and unavailable where the outgoing diff is scanned.
+ * an agent's behalf: agents/auth.ts (SUBSCRIPTION_ENV/API_ENV), the built-in providers' hostEnv in
+ * agents/registry.ts, the tokens glab accepts (cli/preflight.ts GLAB_TOKEN_VARS), tasks/linear-cli.ts /
+ * LINEAR_API_KEY, and VANGUARD_PUSH_TOKEN in runners/revise-pr.ts and source-adapter.ts. Named here
+ * directly rather than reading the sandbox secrets map, which is assembled per-run deep in the runner
+ * call graph and unavailable where the outgoing diff is scanned. A custom provider's `keyEnv` is
+ * repo-configured, so no static list can hold it: callers pass those names to injectedSecretValues.
  */
 const INJECTED_SECRET_ENV_VARS = [
   'CLAUDE_CODE_OAUTH_TOKEN',
@@ -215,16 +235,22 @@ const INJECTED_SECRET_ENV_VARS = [
   'GH_TOKEN',
   'GITHUB_TOKEN',
   'GITLAB_TOKEN',
+  'GITLAB_ACCESS_TOKEN',
+  'OAUTH_TOKEN',
+  'CI_JOB_TOKEN',
   'VANGUARD_PUSH_TOKEN',
 ] as const;
 
 /**
  * Collect the secret values Vanguard itself injected into this run's sandbox (or used to push on its
- * behalf), from the env vars it reads to build them. Exported so a caller snapshots process.env once;
+ * behalf), from the env vars it reads to build them plus any `extraEnvVars` the caller resolved for
+ * this run (a custom provider's configured `keyEnv`). Exported so a caller snapshots process.env once;
  * tests pass explicit values straight to scanForInjectedSecrets instead of mutating the environment.
  */
-export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
-  const values = INJECTED_SECRET_ENV_VARS.map((name) => env[name]).filter((v): v is string => v !== undefined && longEnough(v));
+export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env, extraEnvVars: readonly string[] = []): string[] {
+  const values = [...INJECTED_SECRET_ENV_VARS, ...extraEnvVars]
+    .map((name) => env[name])
+    .filter((v): v is string => v !== undefined && isPlausibleInjectedSecret(v));
   // Codex writes auth.json; agents can copy individual credentials out of it.
   if (env.CODEX_AUTH_JSON !== undefined) {
     try {
@@ -233,7 +259,7 @@ export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env): stri
         tokens?: { access_token?: unknown; refresh_token?: unknown; id_token?: unknown };
       } | null;
       for (const value of [auth?.OPENAI_API_KEY, auth?.tokens?.access_token, auth?.tokens?.refresh_token, auth?.tokens?.id_token]) {
-        if (typeof value === 'string' && longEnough(value)) values.push(value);
+        if (typeof value === 'string' && isPlausibleInjectedSecret(value)) values.push(value);
       }
     } catch { /* Invalid auth JSON is still checked as a raw value. */ }
   }
@@ -249,9 +275,9 @@ function secretVariants(value: string): string[] {
   return [...new Set([value, Buffer.from(value, 'utf8').toString('base64'), encodeURIComponent(value), JSON.stringify(value).slice(1, -1)])];
 }
 
-/** Every encoded variant of every long-enough secret value, flattened — order doesn't matter to a caller that just tests inclusion. */
+/** Every encoded variant of every plausible secret value, flattened — order doesn't matter to a caller that just tests inclusion. */
 function injectedSecretVariants(secretValues: readonly string[]): string[] {
-  return secretValues.filter(longEnough).flatMap(secretVariants);
+  return secretValues.filter(isPlausibleInjectedSecret).flatMap(secretVariants);
 }
 
 /** Remove known credentials even where the pattern redactor cannot recognize them. */
@@ -267,8 +293,13 @@ export function redactInjectedSecrets(text: string, secretValues: readonly strin
 export interface InjectedSecretFinding {
   /** Repo-relative path from the diff's `+++ b/<path>` header, or '(unknown)'. */
   file: string;
-  /** 1-based line number in the new file version. */
-  line: number;
+  /** 1-based line number in the new file version; absent when the match is in the path itself. */
+  line?: number;
+}
+
+/** `:<line>`, or '' for a path match that has no line. One place encodes the optional line, for log and comment alike. */
+export function injectedLineSuffix(finding: InjectedSecretFinding): string {
+  return finding.line !== undefined ? `:${finding.line}` : '';
 }
 
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
@@ -277,13 +308,16 @@ const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
  * Exact-value gate on the outgoing diff: does an added line contain a secret Vanguard itself injected
  * into the sandbox (or used to push), byte-for-byte or in an obvious encoding? Unlike scanForSecrets,
  * this is unconditional — it ignores TEST_PATH_RULES and ALLOWLIST_MARKER, because a value match here
- * IS the credential, not a pattern that might merely resemble one. Findings never carry the matched
- * value, only file + line, so a hit can be reported without ever printing the secret.
+ * IS the credential, not a pattern that might merely resemble one. The file PATH is checked too: a
+ * credential can be exfiltrated as a filename, where no added line carries it. Findings never carry
+ * the matched value, only file + line, so a hit can be reported without ever printing the secret.
  */
 export function scanForInjectedSecrets(diff: string, secretValues: readonly string[]): InjectedSecretFinding[] {
   const variants = injectedSecretVariants(secretValues);
   if (variants.length === 0) return [];
+  const carriesSecret = (text: string): boolean => variants.some((variant) => text.includes(variant));
   const findings: InjectedSecretFinding[] = [];
+  // Redacted once per header: every finding reports the path, and none of them may print the secret.
   let currentFile = '(unknown)';
   let newLine = 0;
   let inHunk = false;
@@ -291,7 +325,10 @@ export function scanForInjectedSecrets(diff: string, secretValues: readonly stri
     if (line.startsWith('diff --git ')) inHunk = false;
     if (!inHunk && line.startsWith('+++ ')) {
       const m = ADDED_FILE_HEADER.exec(line);
-      if (m !== null && m[1] !== undefined) currentFile = m[1];
+      if (m !== null && m[1] !== undefined) {
+        currentFile = redactInjectedSecrets(m[1], secretValues);
+        if (carriesSecret(m[1])) findings.push({ file: currentFile });
+      }
       continue;
     }
     const hunk = HUNK_HEADER.exec(line);
@@ -302,14 +339,13 @@ export function scanForInjectedSecrets(diff: string, secretValues: readonly stri
     }
     if (!inHunk) continue;
     if (line.startsWith('+')) {
-      const added = line.slice(1);
-      if (variants.some((variant) => added.includes(variant))) {
-        findings.push({ file: redactInjectedSecrets(currentFile, secretValues), line: newLine });
-      }
+      if (carriesSecret(line.slice(1))) findings.push({ file: currentFile, line: newLine });
       newLine++;
       continue;
     }
-    if (line.startsWith(' ')) newLine++;
+    // An empty line is a context line whose leading space some producers strip; counting it keeps the
+    // reported line numbers aligned with the new file version.
+    if (line.startsWith(' ') || line === '') newLine++;
   }
   return findings;
 }
@@ -346,7 +382,7 @@ export function renderSecretBlockComment(block: SecretBlock, stage: SecretBlockS
     `${outcome} Findings are **masked**; review the listed lines.`;
   const lines = [
     ...block.findings.map((f) => `- \`${f.file}\` [${f.patternName}] ${f.masked}`),
-    ...(block.injected ?? []).map((f) => `- \`${f.file}\`:${f.line} [injected-secret] (exact match — value withheld)`),
+    ...(block.injected ?? []).map((f) => `- \`${f.file}\`${injectedLineSuffix(f)} [injected-secret] (exact match — value withheld)`),
   ];
   return [header, '', ...lines].join('\n');
 }
