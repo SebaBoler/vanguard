@@ -18,6 +18,7 @@ import {
 } from './pr-feedback.js';
 import type { FeedbackItem } from './pr-feedback.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
+import type { RunContext } from '../core/vanguard.js';
 import { baseBranchOrDefault } from '../core/base-branch.js';
 import { literalPrompt } from '../context/prompt-engine.js';
 import { skillRegistryForRun } from '../context/skill-registry.js';
@@ -181,19 +182,15 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     fetchPullRequestFeedback(target, gh, log),
   ]);
 
-  if (pr.isCrossRepository) {
-    // A fork PR's head branch is not on origin: fetching refs/heads/<headRefName> there (resolveStartRef
-    // in vanguard.ts) would silently land on a same-named base-repo branch instead, and the push below
-    // would land on it too. Refuse before any fetch, worktree or push — there is no safe revise path
-    // for a fork head.
-    const notice = `Cannot revise: this PR's head branch is on ${pr.headRepositoryOwner !== '' ? `${pr.headRepositoryOwner}'s fork` : 'a fork'}, not ${target.repoSlug}. Automated revision only pushes to branches in this repository — please revise manually.`;
-    log(`revise-pr ${target.repoSlug}#${target.number}: cross-repo -> cannot revise`);
-    if (deps.out === undefined) {
-      await postPullRequestReview(target, notice, 'comment', gh);
-      await handBackPrLabels(gh, target.repoSlug, target.number, log);
-    }
-    return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
-  }
+  // --out: a dry run that touches NEITHER the branch NOR the PR — the preview goes to the operator's
+  // file and the absolute path comes back for `dryRunOut`.
+  const writeDryRun = async (out: string, preview: string): Promise<string> => {
+    const path = resolve(out);
+    await mkdir(dirname(out), { recursive: true });
+    await writeFile(out, preview, 'utf8');
+    log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${path} (nothing pushed or commented)`);
+    return path;
+  };
 
   const actionable = selectActionableFeedback(fb, {
     headRefOid: pr.headRefOid,
@@ -210,6 +207,25 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
     log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);
     await postPullRequestReview(target, capMsg, 'comment', gh);
+    await handBackPrLabels(gh, target.repoSlug, target.number, log);
+    return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
+  }
+
+  if (pr.isCrossRepository) {
+    // A fork PR's head branch is not on origin: fetching refs/heads/<headRefName> there (resolveStartRef
+    // in vanguard.ts) would silently land on a same-named base-repo branch instead, and the push below
+    // would land on it too. Refuse before any fetch, worktree or push — there is no safe revise path
+    // for a fork head. Placed after the early returns above so a re-run with nothing actionable left,
+    // or one past the round cap, stays as quiet here as it is for a same-repo PR.
+    const notice = `Cannot revise: this PR's head branch is on ${pr.headRepositoryOwner !== '' ? `${pr.headRepositoryOwner}'s fork` : 'a fork'}, not ${target.repoSlug}. Automated revision only pushes to branches in this repository — please revise manually.`;
+    log(`revise-pr ${target.repoSlug}#${target.number}: cross-repo -> cannot revise`);
+    if (deps.out !== undefined) {
+      // --out was asked for a file: write the refusal there too, so the operator never gets a silent
+      // "no changes" with no preview.
+      const dryRunOut = await writeDryRun(deps.out, `# Revision dry run: ${target.repoSlug}#${target.number}\n\n${notice}\n`);
+      return { pr, addressed: 0, committed: false, pushed: false, undrafted: false, dryRunOut };
+    }
+    await postPullRequestReview(target, notice, 'comment', gh);
     await handBackPrLabels(gh, target.repoSlug, target.number, log);
     return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
@@ -245,31 +261,11 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         ...(deps.network !== undefined ? { network: deps.network } : {}),
       });
 
-    if (deps._baseBranch === undefined && pr.headRefName === '') {
-      throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
-    }
     const taskId = `revise-pr-${target.repoSlug.replace(/[^a-zA-Z0-9]/g, '-')}-${target.number}`;
     // One RunWriter for the whole revision round, shared by the two (mutually exclusive) writeStages
     // calls below, for consistency with runSourcedIssue's writer.
     const writer = beginRun(deps.repoPath, taskId);
     const revisionStageMeta = { flow: 'revise', provider: agents.agent.name };
-    const ctx = await prepareContext(
-      {
-        taskId,
-        localRepoPath: deps.repoPath,
-        sandbox,
-        agentName: agents.agent.name,
-        // The worktree starts from the PR head as fetched from origin, not the base (see prepareContext
-        // for the same-repo caveat). Tests point it at a local branch instead, which has no origin.
-        ...(deps._baseBranch !== undefined
-          ? { baseBranch: deps._baseBranch, start: 'base' as const, keepLocalIfAhead: true }
-          : {
-              baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`),
-              start: { prHead: pr.headRefName, headRefOid: pr.headRefOid },
-            }),
-      },
-      { skills: await skillRegistryForRun(deps.skillsDir, deps.repoPath), ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
-    );
     let outcomes: StageOutcome[] = [];
     // One block per revision in the Actions job's Summary tab (no GITHUB_STEP_SUMMARY ⇒ no-op).
     const stepSummary = (exit: StepSummaryExit, extra: Pick<StepSummary, 'error'> = {}): Promise<void> => {
@@ -285,6 +281,43 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         ...extra,
       });
     };
+
+    // Starting the worktree can fail before there is a context to dispose: gh reported no head ref or
+    // no head sha, or the head moved between `gh pr view` and the fetch (resolveStartRef pins the PR's
+    // own sha, so a moved head is refused rather than revised). Report it and hand the labels back like
+    // every other giving-up path, instead of leaving the PR in `vanguard:revising` with no comment.
+    let ctx: RunContext;
+    try {
+      if (deps._baseBranch === undefined && (pr.headRefName === '' || pr.headRefOid === '')) {
+        throw new VanguardError(`PR ${target.repoSlug}#${target.number} has no head ref to fetch`);
+      }
+      ctx = await prepareContext(
+        {
+          taskId,
+          localRepoPath: deps.repoPath,
+          sandbox,
+          agentName: agents.agent.name,
+          // The worktree starts from the PR head as fetched from origin, not the base (see prepareContext
+          // for the same-repo caveat). Tests point it at a local branch instead, which has no origin.
+          ...(deps._baseBranch !== undefined
+            ? { baseBranch: deps._baseBranch, start: 'base' as const, keepLocalIfAhead: true }
+            : {
+                baseBranch: baseBranchOrDefault(pr.baseRefName, `PR ${target.repoSlug}#${target.number}`),
+                start: { prHead: pr.headRefName, headRefOid: pr.headRefOid },
+              }),
+        },
+        { skills: await skillRegistryForRun(deps.skillsDir, deps.repoPath), ...(deps._worktrees !== undefined ? { worktrees: deps._worktrees } : {}) },
+      );
+    } catch (error) {
+      await stepSummary('error', { error: String(error) });
+      // --out is a dry run that touches neither the branch nor the PR.
+      if (deps.out === undefined) {
+        const notice = `Cannot revise: could not start from this PR's head branch (\`${pr.headRefName}\` at \`${pr.headRefOid}\`) — it may have moved while this run was reading the PR. Re-label \`${NEEDS_REVISION_LABEL}\` to try again.`;
+        await postPullRequestReview(target, notice, 'comment', gh).catch(() => undefined);
+        await handBackPrLabels(gh, target.repoSlug, target.number, log);
+      }
+      throw error;
+    }
     try {
       const allStages = implementReviewSimplifyStages();
       const base = deps.noSimplify === true ? allStages.filter((s) => s.name !== STAGE.SIMPLIFIER) : allStages;
@@ -396,9 +429,8 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       const pointFor = (item: FeedbackItem): string =>
         guardedPoint(describeItemChange(item, diffFiles) || globalPoint, revisionDiff);
 
-      // --out: dry-run. Write the diff + the reply we would post to each addressed item to a local file
-      // and touch NEITHER the branch NOR the PR. The operator reviews it, then re-runs without --out to
-      // apply. No commit / push / comment happens on this path.
+      // --out: dry-run. Write the diff + the reply we would post to each addressed item to a local file.
+      // The operator reviews it, then re-runs without --out to apply. No commit / push / comment here.
       if (deps.out !== undefined) {
         const status = verification === undefined ? 'unknown' : verification.passed ? 'pass' : 'fail';
         const preview = buildRevisionDryRun({
@@ -409,11 +441,9 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           items: actionable.map((item) => ({ item, point: pointFor(item) })),
           verification: { typecheck: status, test: status },
         });
-        await mkdir(dirname(deps.out), { recursive: true });
-        await writeFile(deps.out, preview, 'utf8');
-        log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
+        const dryRunOut = await writeDryRun(deps.out, preview);
         await stepSummary(verificationFailed ? 'verify-failed' : 'completed');
-        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
+        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut };
       }
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);

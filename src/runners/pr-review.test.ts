@@ -32,7 +32,8 @@ function ghPrView(overrides: Record<string, unknown> = {}): string {
     headRefOid: 'abc123',
     baseRefName: 'main',
     isCrossRepository: false,
-    headRepositoryOwner: '',
+    // The nested shape gh actually returns, so the `?.login` extraction is exercised.
+    headRepositoryOwner: { login: 'o' },
     ...overrides,
   });
 }
@@ -50,7 +51,7 @@ function prForReview(overrides: Partial<PullRequestForReview> = {}): PullRequest
     headRefOid: 'abc123',
     baseRefName: 'main',
     isCrossRepository: false,
-    headRepositoryOwner: '',
+    headRepositoryOwner: 'o',
     diff: 'diff --git a/auth.ts b/auth.ts',
     ...overrides,
   };
