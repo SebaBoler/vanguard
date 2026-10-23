@@ -1,6 +1,6 @@
 import { commitStage } from '../pipeline/pipeline.js';
 import { publishForReview, pushToExistingBranch } from '../pipeline/remote-branch.js';
-import { scanForSecrets } from '../core/secret-scan.js';
+import { injectedSecretValues, redactInjectedSecrets, scanForInjectedSecrets, scanForSecrets } from '../core/secret-scan.js';
 import { scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { CommitClosingLeak } from '../pipeline/conformance-gate.js';
@@ -86,16 +86,30 @@ export function conventionalPrTitle(title: string, opts: { bugLabel?: boolean; s
  * The secret gate: scan an outgoing diff, log the masked findings, and return the block to report.
  * Nothing with a secret ever reaches a commit; a scan error blocks too, as a precaution. Exported so a
  * caller that must gate earlier than the commit (revise's --out preview) runs the same scan.
+ *
+ * Two layers run here: the pattern scan (scanForSecrets — exempts TEST_PATH_RULES and allowlist
+ * markers) and an exact-value check against every secret Vanguard itself injected into the sandbox for
+ * this run (scanForInjectedSecrets — ignores both exemptions, since a value match IS the credential).
  */
 export function scanOutgoingForSecrets(outgoing: string, taskId: string, phase: 'publish' | 'revise push' = 'publish'): SecretBlock | undefined {
   try {
-    const findings = scanForSecrets(outgoing);
-    if (findings.length === 0) return undefined;
-    console.error(
-      `vanguard: secret scan blocked ${phase} for ${taskId}:`,
-      findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
-    );
-    return { reason: 'findings', findings };
+    const values = injectedSecretValues();
+    const findings = scanForSecrets(redactInjectedSecrets(outgoing, values));
+    const injected = scanForInjectedSecrets(outgoing, values);
+    if (findings.length === 0 && injected.length === 0) return undefined;
+    if (findings.length > 0) {
+      console.error(
+        `vanguard: secret scan blocked ${phase} for ${taskId}:`,
+        findings.map((f) => `${f.file} [${f.patternName}] ${f.masked}`).join('; '),
+      );
+    }
+    if (injected.length > 0) {
+      console.error(
+        `vanguard: secret scan blocked ${phase} for ${taskId} (exact match on an injected credential):`,
+        injected.map((f) => `${f.file}:${f.line}`).join('; '),
+      );
+    }
+    return { reason: 'findings', findings, ...(injected.length > 0 ? { injected } : {}) };
   } catch (err) {
     console.error(`vanguard: secret scan failed for ${taskId}, blocking ${phase} as a precaution:`, err);
     return { reason: 'scan-error', message: err instanceof Error ? err.message : String(err) };

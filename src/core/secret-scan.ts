@@ -187,8 +187,137 @@ export function scanForSecrets(diff: string): SecretFinding[] {
   return findings;
 }
 
+/**
+ * Smallest length worth treating as a real secret for the exact-value check below — guards against an
+ * unset/near-empty env var producing spurious substring hits across an entire diff.
+ */
+const MIN_INJECTED_SECRET_LENGTH = 6;
+const longEnough = (value: string): boolean => value.length >= MIN_INJECTED_SECRET_LENGTH;
+
+/**
+ * Env var names Vanguard reads to build the credentials it injects into the sandbox, or uses to push on
+ * an agent's behalf: agents/auth.ts (SUBSCRIPTION_ENV/API_ENV), agents/registry.ts (per-provider
+ * hostEnv), tasks/linear-cli.ts / LINEAR_API_KEY, and VANGUARD_PUSH_TOKEN in runners/revise-pr.ts and
+ * source-adapter.ts. Named here directly rather than reading the sandbox secrets map, which is
+ * assembled per-run deep in the runner call graph and unavailable where the outgoing diff is scanned.
+ */
+const INJECTED_SECRET_ENV_VARS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'CODEX_API_KEY',
+  'OPENAI_API_KEY',
+  'CURSOR_API_KEY',
+  'ZAI_API_KEY',
+  'OPENROUTER_API_KEY',
+  'MERIDIAN_API_KEY',
+  'CODEX_AUTH_JSON',
+  'LINEAR_API_KEY',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GITLAB_TOKEN',
+  'VANGUARD_PUSH_TOKEN',
+] as const;
+
+/**
+ * Collect the secret values Vanguard itself injected into this run's sandbox (or used to push on its
+ * behalf), from the env vars it reads to build them. Exported so a caller snapshots process.env once;
+ * tests pass explicit values straight to scanForInjectedSecrets instead of mutating the environment.
+ */
+export function injectedSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
+  const values = INJECTED_SECRET_ENV_VARS.map((name) => env[name]).filter((v): v is string => v !== undefined && longEnough(v));
+  // Codex writes auth.json; agents can copy individual credentials out of it.
+  if (env.CODEX_AUTH_JSON !== undefined) {
+    try {
+      const auth = JSON.parse(env.CODEX_AUTH_JSON) as {
+        OPENAI_API_KEY?: unknown;
+        tokens?: { access_token?: unknown; refresh_token?: unknown; id_token?: unknown };
+      } | null;
+      for (const value of [auth?.OPENAI_API_KEY, auth?.tokens?.access_token, auth?.tokens?.refresh_token, auth?.tokens?.id_token]) {
+        if (typeof value === 'string' && longEnough(value)) values.push(value);
+      }
+    } catch { /* Invalid auth JSON is still checked as a raw value. */ }
+  }
+  return [...new Set(values)];
+}
+
+/**
+ * A secret value plus the encodings it is likely to survive in on its way into a diff: base64,
+ * URL-encoded, JSON-escaped. Matching any of these is still matching the same credential. Each
+ * encoding is the same length as `value` or longer, so none needs a fresh length check.
+ */
+function secretVariants(value: string): string[] {
+  return [...new Set([value, Buffer.from(value, 'utf8').toString('base64'), encodeURIComponent(value), JSON.stringify(value).slice(1, -1)])];
+}
+
+/** Every encoded variant of every long-enough secret value, flattened — order doesn't matter to a caller that just tests inclusion. */
+function injectedSecretVariants(secretValues: readonly string[]): string[] {
+  return secretValues.filter(longEnough).flatMap(secretVariants);
+}
+
+/** Remove known credentials even where the pattern redactor cannot recognize them. */
+export function redactInjectedSecrets(text: string, secretValues: readonly string[]): string {
+  // Longest first: a shorter variant must not pre-empt a longer one that contains it.
+  const variants = injectedSecretVariants(secretValues).sort((a, b) => b.length - a.length);
+  for (const variant of variants) {
+    text = text.split(variant).join('[REDACTED-INJECTED]');
+  }
+  return text;
+}
+
+export interface InjectedSecretFinding {
+  /** Repo-relative path from the diff's `+++ b/<path>` header, or '(unknown)'. */
+  file: string;
+  /** 1-based line number in the new file version. */
+  line: number;
+}
+
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/**
+ * Exact-value gate on the outgoing diff: does an added line contain a secret Vanguard itself injected
+ * into the sandbox (or used to push), byte-for-byte or in an obvious encoding? Unlike scanForSecrets,
+ * this is unconditional — it ignores TEST_PATH_RULES and ALLOWLIST_MARKER, because a value match here
+ * IS the credential, not a pattern that might merely resemble one. Findings never carry the matched
+ * value, only file + line, so a hit can be reported without ever printing the secret.
+ */
+export function scanForInjectedSecrets(diff: string, secretValues: readonly string[]): InjectedSecretFinding[] {
+  const variants = injectedSecretVariants(secretValues);
+  if (variants.length === 0) return [];
+  const findings: InjectedSecretFinding[] = [];
+  let currentFile = '(unknown)';
+  let newLine = 0;
+  let inHunk = false;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) inHunk = false;
+    if (!inHunk && line.startsWith('+++ ')) {
+      const m = ADDED_FILE_HEADER.exec(line);
+      if (m !== null && m[1] !== undefined) currentFile = m[1];
+      continue;
+    }
+    const hunk = HUNK_HEADER.exec(line);
+    if (hunk !== null && hunk[1] !== undefined) {
+      inHunk = true;
+      newLine = Number(hunk[1]);
+      continue;
+    }
+    if (!inHunk) continue;
+    if (line.startsWith('+')) {
+      const added = line.slice(1);
+      if (variants.some((variant) => added.includes(variant))) {
+        findings.push({ file: redactInjectedSecrets(currentFile, secretValues), line: newLine });
+      }
+      newLine++;
+      continue;
+    }
+    if (line.startsWith(' ')) newLine++;
+  }
+  return findings;
+}
+
 /** Why publish was blocked by the secret scan: real findings, or the scan itself failing (precautionary block). */
-export type SecretBlock = { reason: 'findings'; findings: SecretFinding[] } | { reason: 'scan-error'; message: string };
+export type SecretBlock =
+  | { reason: 'findings'; findings: SecretFinding[]; injected?: InjectedSecretFinding[] }
+  | { reason: 'scan-error'; message: string };
 
 /** What the block stopped: the first delivery opens a PR; a revision pushes onto an existing one. */
 export type SecretBlockStage = 'first-delivery' | 'revision';
@@ -200,8 +329,9 @@ const OUTCOME: Record<SecretBlockStage, string> = {
 
 /**
  * Render the GitHub/GitLab/Linear comment body for a secret-scan block. Uses only
- * `SecretFinding.file/patternName/masked` (already redactTokens-masked) — the raw secret is
- * structurally unreachable — and never interpolates the raw diff or exception payload.
+ * `SecretFinding.file/patternName/masked` (already redactTokens-masked) and `InjectedSecretFinding.file/line`
+ * (no excerpt at all — an exact-value hit IS the credential) — the raw secret is structurally
+ * unreachable — and never interpolates the raw diff or exception payload.
  */
 export function renderSecretBlockComment(block: SecretBlock, stage: SecretBlockStage = 'first-delivery'): string {
   const outcome = OUTCOME[stage];
@@ -214,6 +344,9 @@ export function renderSecretBlockComment(block: SecretBlock, stage: SecretBlockS
   const header =
     '🔒 Vanguard blocked publish — the secret scan found credential-shaped content in the outgoing diff. ' +
     `${outcome} Findings are **masked**; review the listed lines.`;
-  const lines = block.findings.map((f) => `- \`${f.file}\` [${f.patternName}] ${f.masked}`);
+  const lines = [
+    ...block.findings.map((f) => `- \`${f.file}\` [${f.patternName}] ${f.masked}`),
+    ...(block.injected ?? []).map((f) => `- \`${f.file}\`:${f.line} [injected-secret] (exact match — value withheld)`),
+  ];
   return [header, '', ...lines].join('\n');
 }
