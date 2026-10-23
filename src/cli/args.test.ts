@@ -1420,6 +1420,13 @@ describe('parseCli', () => {
       message: '--spec-only is only supported with watch and doctor.',
     });
   });
+
+  it('T26: parses feedback authors consistently and preserves first spelling', () => {
+    for (const argv of [['revise-pr', 'o/r#1'], ['run', '--github', 'o/r#1'], ['watch', '--source', 'github', '--label', 'vanguard']]) {
+      expect(parseCli([...argv, '--feedback-authors', 'a, b ,A,,'], '/work')).toMatchObject({ feedbackAuthors: ['a', 'b'] });
+      expect(parseCli(argv, '/work')).not.toHaveProperty('feedbackAuthors');
+    }
+  });
 });
 
 describe('parseCli revise-pr', () => {
@@ -1650,11 +1657,4 @@ describe('parseCli hub', () => {
     expect(parseCli([], '/work').kind).toBe('help');
     expect(parseCli(['frobnicate'], '/work').kind).toBe('help');
   });
-});
-
-it('T26: parses feedback authors consistently and preserves first spelling', () => {
-  for (const argv of [['revise-pr', 'o/r#1'], ['run', '--github', 'o/r#1'], ['watch', '--source', 'github', '--label', 'vanguard']]) {
-    expect(parseCli([...argv, '--feedback-authors', 'a, b ,A,,'], '/work')).toMatchObject({ feedbackAuthors: ['a', 'b'] });
-    expect(parseCli(argv, '/work')).not.toHaveProperty('feedbackAuthors');
-  }
 });

@@ -30,7 +30,6 @@ import { repairUntilGreen } from '../pipeline/repair-gate.js';
 import { deliverChange, conventionalPrTitle } from './deliver-change.js';
 import {
   parseSpecManifest,
-  hasSpecManifestTag,
   primaryModuleScope,
   checkConformance,
   renderConformanceFeedback,
@@ -505,8 +504,9 @@ export async function runSourcedIssue(
       const trust = { allowedAuthors: deps.feedbackAuthors, issueAuthor: task.author };
       const specText = trustedSpecText(task, trust);
       const manifest = parseSpecManifest(specText);
+      // A *parseable* manifest only: prose that merely names the tag must not downgrade delivery.
       const untrustedManifestDropped = manifest === undefined && task.comments.some(
-        (c) => !isTrustedComment(c, trust) && hasSpecManifestTag(c.body),
+        (c) => !isTrustedComment(c, trust) && parseSpecManifest(c.body) !== undefined,
       );
       if (untrustedManifestDropped) console.log(`vanguard: ${task.id} ignoring <spec_manifest> from untrusted comment author(s) — declaring partial scope (Part of)`);
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});

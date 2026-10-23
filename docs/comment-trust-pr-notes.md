@@ -2,9 +2,22 @@
 
 Autonomous revision, manifest, readiness and research decisions now reject unauthorised comment authors. GitHub associations OWNER/MEMBER/COLLABORATOR, explicit allowlists and (for issue specifications) the issue author establish trust. Bot comments supply specifications and iteration markers but are excluded from actionable revision feedback.
 
-The shared bot matcher uses an exact `vanguard` login rather than a substring: an outsider can choose a username such as `mallory-vanguard`. Custom bot logins can be supplied explicitly. GitHub issue comments retain the existing `gh issue view --json comments` source: GitHub CLI's [Comment definition](https://github.com/cli/cli/blob/trunk/api/queries_comments.go) includes `authorAssociation`. Live authenticated verification was unavailable in this checkout.
+The shared bot matcher uses an exact `vanguard` login rather than a substring: an outsider can choose a username such as `mallory-vanguard`. Custom bot logins can be supplied explicitly. Research iteration markers are gated on trust rather than on a bot login, so the white-label/PAT configuration (findings posted under a human-looking name) still advances the iteration counter.
 
-GitLab notes have no association: maintainers who did not open the issue must be allowlisted. Linear comments are treated as MEMBER because workspace membership gates commenting; guest/public commenting would require revisiting that assumption.
+GitHub issue comments retain the existing `gh issue view --json comments` source: GitHub CLI's [Comment definition](https://github.com/cli/cli/blob/trunk/api/queries_comments.go) includes `authorAssociation`. Live authenticated verification was unavailable in this checkout, so `toTask` warns when an issue has comments and none carries an association — the case where trust could not be enforced.
+
+## Providers that model no association
+
+GitLab notes carry no association at all, so there is no signal to gate on. A comment whose association field is *absent* therefore classifies as `no-association` and stays trusted: failing closed there would reject Vanguard's own `<tech_spec>`/research notes, parking ready tickets as "needs info", re-posting specs and shipping every MR as a declared-partial PR. GitLab consequently keeps its pre-gate behaviour and gains a boundary only through `--feedback-authors`. A *supplied* association fails closed, including the empty string GitHub's GraphQL omission maps to.
+
+Linear comments are treated as MEMBER because workspace membership gates commenting; guest/public commenting would require revisiting that assumption.
+
+## Residual trust widening
+
+- `linear-cli.ts` stamps every comment MEMBER, so Linear gains no boundary from this change.
+- `issue-author` trust means an outsider who opens an issue stays trusted for that issue's `<spec_manifest>` and acceptance criteria — they already control the description those gates read, so the comment adds no reach.
+
+Both are defensible because runs are human-triggered, but they are trust, not verification.
 
 ## Manual workflow edits
 

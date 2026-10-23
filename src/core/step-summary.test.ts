@@ -61,6 +61,13 @@ describe('renderStepSummary', () => {
     expect(md).not.toContain('model');
     expect(md).not.toContain('PR:');
   });
+
+  it('T13: notes extend the trailer without altering summaries that omit them', () => {
+    const plain = renderStepSummary(summary);
+    expect(renderStepSummary({ ...summary, notes: [] })).toBe(plain);
+    const noted = renderStepSummary({ ...summary, notes: ['ignored feedback from @mallory (NONE)'] });
+    expect(noted.replace('- Note: ignored feedback from @mallory (NONE)\n', '')).toBe(plain);
+  });
 });
 
 describe('appendStepSummary', () => {
@@ -78,11 +85,4 @@ describe('appendStepSummary', () => {
     await appendStepSummary('', summary);
     expect(await readdir(dir)).toEqual([]);
   });
-});
-
-it('T13: notes extend the trailer without altering summaries that omit them', () => {
-  const plain = renderStepSummary(summary);
-  expect(renderStepSummary({ ...summary, notes: [] })).toBe(plain);
-  const noted = renderStepSummary({ ...summary, notes: ['ignored feedback from @mallory (NONE)'] });
-  expect(noted.replace('- Note: ignored feedback from @mallory (NONE)\n', '')).toBe(plain);
 });

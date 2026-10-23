@@ -67,6 +67,11 @@ describe('pickRunOptions', () => {
     expect('maxTurns' in withoutOverrides).toBe(false);
     expect('maxRepairIterations' in withoutOverrides).toBe(false);
   });
+
+  it('T15: feedback authors survive run option copying and stay omitted when absent', () => {
+    expect(pickRunOptions({ feedbackAuthors: ['Alice'] })).toEqual({ feedbackAuthors: ['Alice'] });
+    expect(pickRunOptions({})).not.toHaveProperty('feedbackAuthors');
+  });
 });
 
 // --- Integration-style coverage of runSourcedIssue with a fully faked SourceAdapter. ---
@@ -237,7 +242,6 @@ describe('runSourcedIssue', () => {
     scanForSecrets.mockImplementation(actual.scanForSecrets);
   });
 
-
   it('T14: an untrusted-only manifest forces partial delivery without enforcing its files', async () => {
     const adapter = fakeAdapter([], STAGES);
     vi.mocked(adapter.prepare).mockResolvedValueOnce({ task: { ...task, comments: [
@@ -251,6 +255,17 @@ describe('runSourcedIssue', () => {
     expect(body).not.toContain('Closes');
     expect(wmCommitMessages).toHaveBeenCalledWith('/wt', '0000sha');
     expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('an untrusted comment that merely names the tag does not downgrade delivery', async () => {
+    const adapter = fakeAdapter([], STAGES);
+    vi.mocked(adapter.prepare).mockResolvedValueOnce({ task: { ...task, comments: [
+      { author: 'mallory', authorAssociation: 'NONE', body: 'should <spec_manifest> gating be author-scoped?' },
+    ] } });
+    await runSourcedIssue(task.id, { repoPath: '/repo' }, adapter);
+    const body = publishForReview.mock.calls[0]?.[1]?.body as string;
+    expect(body).toContain('Closes ' + task.id);
+    expect(body).not.toContain('unauthorised comment author');
   });
 
   it('T16: a local spec-file manifest remains trusted with no tracker comments', async () => {
@@ -1085,9 +1100,4 @@ describe('runSourcedIssue', () => {
     expect(publishForReview.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ draft: true }));
     expect(adapter.addFailureLabel).toHaveBeenCalledWith(MR_URL, 'visual-proof');
   });
-});
-
-it('T15: feedback authors survive run option copying and stay omitted when absent', () => {
-  expect(pickRunOptions({ feedbackAuthors: ['Alice'] })).toEqual({ feedbackAuthors: ['Alice'] });
-  expect(pickRunOptions({})).not.toHaveProperty('feedbackAuthors');
 });

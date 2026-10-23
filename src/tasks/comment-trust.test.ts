@@ -5,7 +5,9 @@ import type { Task } from './fetcher.js';
 describe('comment trust', () => {
   it('T1: fails closed and honours explicit author trust', () => {
     for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR', ' owner ']) expect(classifyAuthor('alice', association)).toBe('association');
-    for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'NONE', undefined, '']) expect(classifyAuthor('mallory', association)).toBe('untrusted');
+    for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'NONE', '']) expect(classifyAuthor('mallory', association)).toBe('untrusted');
+    // An absent association is "the provider models none" (GitLab), not "outsider".
+    expect(classifyAuthor('mallory', undefined)).toBe('no-association');
     expect(classifyAuthor('Alice', 'NONE', { allowedAuthors: ['ALICE'] })).toBe('allowed');
     expect(classifyAuthor('Alice', undefined, { issueAuthor: 'ALICE' })).toBe('issue-author');
     for (const author of ['vanguard', 'foo[bot]', 'github-actions', 'custom']) {
@@ -15,7 +17,7 @@ describe('comment trust', () => {
   });
   it('T2: derives issue author, preserves order and excludes outsider text', () => {
     const task: Task = { id: '1', title: '', description: '', labels: [], children: [], author: 'Alice', comments: [
-      { author: 'alice', body: 'first' }, { author: 'mallory', body: 'attack' },
+      { author: 'alice', authorAssociation: 'NONE', body: 'first' }, { author: 'mallory', authorAssociation: 'NONE', body: 'attack' },
       { author: 'maintainer', authorAssociation: 'OWNER', body: 'last' },
     ] };
     expect(trustedComments(task)).toEqual([task.comments[0], task.comments[2]]);

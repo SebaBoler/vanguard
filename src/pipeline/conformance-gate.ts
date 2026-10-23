@@ -26,11 +26,6 @@ export const specManifestSchema = z.object({
 
 export type SpecManifest = z.infer<typeof specManifestSchema>;
 
-/** True when `body` carries a `<spec_manifest>` tag (full block or a bare opening tag). */
-export function hasSpecManifestTag(body: string): boolean {
-  return body.includes(`<${SPEC_MANIFEST_TAG}`);
-}
-
 /** Parse the `<spec_manifest>` block from a tech spec. Returns undefined for legacy specs (no manifest) — never throws, so absence is always advisory-only, never a hard fail. */
 export function parseSpecManifest(specText: string): SpecManifest | undefined {
   try {

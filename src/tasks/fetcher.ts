@@ -9,7 +9,7 @@ export interface SubTask {
 export interface TaskComment {
   author: string;
   body: string;
-  /** Provider's author association, upper-case (GitHub CommentAuthorAssociation). Absent ⇒ untrusted. */
+  /** Provider's author association, upper-case (GitHub CommentAuthorAssociation). Absent ⇒ the provider models none (GitLab). */
   authorAssociation?: string;
 }
 

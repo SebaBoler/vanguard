@@ -32,8 +32,18 @@ export function isResearchComment(comment: TaskComment): boolean {
   return comment.body.includes(`<!-- ${RESEARCH_MARKER}:`) || comment.body.includes(`<!-- ${WHITE_LABEL_RESEARCH_MARKER}:`);
 }
 
+/**
+ * A research comment counts towards the iteration counter and the feedback watermark only from an
+ * authorised author — but not necessarily a bot: in white-label / PAT mode the findings are posted
+ * under a human-looking login, so requiring `isBotLogin` would freeze the counter at 1 and replay
+ * every old maintainer note as fresh.
+ */
+function isTrustedResearchComment(task: Task, comment: TaskComment): boolean {
+  return isTrustedComment(comment, { issueAuthor: task.author }) && isResearchComment(comment);
+}
+
 export function priorResearchFindings(task: Task): string[] {
-  return task.comments.filter((c) => isBotLogin(c.author) && isResearchComment(c)).map((c) => c.body);
+  return task.comments.filter((c) => isTrustedResearchComment(task, c)).map((c) => c.body);
 }
 
 /**
@@ -42,7 +52,7 @@ export function priorResearchFindings(task: Task): string[] {
  * When no research comment exists yet (iteration 1), all human comments qualify.
  */
 export function humanFeedback(task: Task): string[] {
-  const watermark = task.comments.findLastIndex((c) => isBotLogin(c.author) && isResearchComment(c));
+  const watermark = task.comments.findLastIndex((c) => isTrustedResearchComment(task, c));
   return task.comments
     .slice(watermark + 1)
     .filter((c) => !isBotLogin(c.author) && isTrustedComment(c, { issueAuthor: task.author }))

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { GitHubTaskFetcher, linkPullRequest } from './github.js';
 import type { GhRunner } from './github.js';
 
@@ -48,6 +48,38 @@ describe('GitHubTaskFetcher', () => {
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
     expect(task.comments).toEqual([]);
   });
+
+  it('T19: fetch sources the issue author and comment association', async () => {
+    const calls: string[][] = [];
+    const fetcher = new GitHubTaskFetcher('o/r', async (args) => {
+      calls.push(args);
+      return JSON.stringify({ number: 1, title: '', body: '', labels: [], author: { login: 'reporter' },
+        comments: [{ author: { login: 'maintainer' }, authorAssociation: 'OWNER', body: 'spec' }] });
+    });
+    const task = await fetcher.fetch('1');
+    expect(task.author).toBe('reporter');
+    expect(task.comments[0]?.authorAssociation).toBe('OWNER');
+    expect(calls[0]?.at(-1)?.split(',')).toContain('author');
+  });
+
+  // Trust gating rides on authorAssociation, and only a live gh proves it is populated: warn rather
+  // than silently widen trust if a future gh drops the field.
+  it('warns when an issue has comments but gh returned no association at all', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const gh = async (): Promise<string> =>
+        JSON.stringify({ number: 1, title: '', body: '', labels: [], comments: [{ author: { login: 'alice' }, body: 'hi' }] });
+      await new GitHubTaskFetcher('o/r', gh).fetch('1');
+      expect(warn.mock.calls[0]?.[0]).toContain('no authorAssociation');
+      warn.mockClear();
+      const withAssociation = async (): Promise<string> =>
+        JSON.stringify({ number: 1, title: '', body: '', labels: [], comments: [{ author: { login: 'alice' }, authorAssociation: 'NONE', body: 'hi' }] });
+      await new GitHubTaskFetcher('o/r', withAssociation).fetch('1');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('linkPullRequest', () => {
@@ -83,17 +115,4 @@ it('list() with limit adds -L and the state field to --json (the board call)', a
   const tasks = await new GitHubTaskFetcher('o/r', gh).list({ state: 'all', limit: 50 });
   expect(calls[0]).toEqual(['issue', 'list', '--repo', 'o/r', '--json', 'number,title,body,labels,state', '--state', 'all', '-L', '50']);
   expect(tasks[0]).toMatchObject({ ref: '9', state: 'closed' });
-});
-
-it('T19: fetch sources the issue author and comment association', async () => {
-  const calls: string[][] = [];
-  const fetcher = new GitHubTaskFetcher('o/r', async (args) => {
-    calls.push(args);
-    return JSON.stringify({ number: 1, title: '', body: '', labels: [], author: { login: 'reporter' },
-      comments: [{ author: { login: 'maintainer' }, authorAssociation: 'OWNER', body: 'spec' }] });
-  });
-  const task = await fetcher.fetch('1');
-  expect(task.author).toBe('reporter');
-  expect(task.comments[0]?.authorAssociation).toBe('OWNER');
-  expect(calls[0]?.at(-1)?.split(',')).toContain('author');
 });

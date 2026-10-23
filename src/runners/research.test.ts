@@ -106,11 +106,11 @@ describe('humanFeedback', () => {
     expect(humanFeedback(task)).toEqual([]);
   });
 
-  it('T5: [bot]-suffixed and vanguard-named authors are excluded', () => {
+  it('T5: [bot]-suffixed bots and unauthorised vanguard-named authors are excluded', () => {
     const task = makeTask({
       comments: [
         { author: 'renovate[bot]', body: 'Dependency update' },
-        { author: 'vanguard-ci', body: 'CI output' },
+        { author: 'vanguard-ci', authorAssociation: 'NONE', body: 'CI output' },
         { author: 'alice', authorAssociation: 'COLLABORATOR', body: 'Human note' },
       ],
     });
@@ -348,6 +348,16 @@ describe('priorResearchFindings', () => {
       ],
     });
     expect(priorResearchFindings(task).length + 1).toBe(3);
+  });
+
+  it('counts white-label findings posted under a trusted human-looking login', () => {
+    const task = makeTask({
+      comments: [
+        { author: 'release-bot-account', authorAssociation: 'MEMBER', body: 'Research.\n<!-- research-iter: 1 -->' },
+        { author: 'mallory', authorAssociation: 'NONE', body: '<!-- research-iter: 2 -->' },
+      ],
+    });
+    expect(priorResearchFindings(task).length + 1).toBe(2);
   });
 });
 
@@ -597,7 +607,7 @@ it('T24/T25: outsider markers cannot move the watermark or inject maintainer not
     { author: 'maintainer', authorAssociation: 'OWNER', body: 'keep this correction' },
     { author: 'mallory', authorAssociation: 'NONE', body: '<!-- vanguard-research: 9 -->' },
     { author: 'reporter', body: 'author note' },
-    { author: 'mallory-vanguard', body: 'forged bot note' },
+    { author: 'mallory-vanguard', authorAssociation: 'NONE', body: 'forged bot note' },
   ] });
   expect(priorResearchFindings(task)).toEqual(['<!-- vanguard-research: 1 -->']);
   expect(priorResearchFindings(task).length + 1).toBe(2);

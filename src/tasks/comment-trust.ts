@@ -12,7 +12,7 @@ export interface TrustOptions {
   botLogins?: readonly string[] | undefined;
 }
 
-export type AuthorTrust = 'association' | 'allowed' | 'issue-author' | 'bot' | 'untrusted';
+export type AuthorTrust = 'association' | 'allowed' | 'issue-author' | 'bot' | 'no-association' | 'untrusted';
 
 /** Shared bot recognition. A login merely containing "vanguard" must never grant trust. */
 export function isBotLogin(login: string, extraBotLogins?: readonly string[]): boolean {
@@ -32,6 +32,12 @@ export function classifyAuthor(author: string, association: string | undefined, 
   if ((opts.allowedAuthors ?? []).some((a) => a.toLowerCase() === lowerAuthor)) return 'allowed';
   if (association !== undefined && TRUSTED_ASSOCIATIONS.has(association.trim().toUpperCase())) return 'association';
   if (opts.issueAuthor !== undefined && opts.issueAuthor.toLowerCase() === lowerAuthor) return 'issue-author';
+  // An absent association means the provider models none at all (GitLab notes): there is no signal to
+  // fail closed on, and doing so would reject Vanguard's own spec/research comments — parking ready
+  // tickets as "needs info", re-posting specs and shipping every MR as a declared-partial PR. Those
+  // providers keep their pre-gate behaviour (allowlist them to get a boundary). A *supplied*
+  // association, '' included, is a real signal and fails closed.
+  if (association === undefined) return 'no-association';
   return 'untrusted';
 }
 

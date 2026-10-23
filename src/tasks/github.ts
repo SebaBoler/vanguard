@@ -46,6 +46,12 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     body: comment.body ?? '',
     ...(comment.authorAssociation !== undefined ? { authorAssociation: comment.authorAssociation } : {}),
   }));
+  // Comment-author trust rides on authorAssociation; gh populates it on `issue view --json comments`.
+  // If a future gh stops doing so the field goes absent, which degrades to no-signal rather than
+  // failing closed (see classifyAuthor) — so say it out loud instead of silently widening trust.
+  if (comments.length > 0 && comments.every((c) => c.authorAssociation === undefined)) {
+    console.warn(`vanguard: ${repo}#${issue.number} — gh returned no authorAssociation on any comment; comment-author trust cannot be enforced`);
+  }
   return {
     id: `${repo}#${issue.number}`,
     title: issue.title,
