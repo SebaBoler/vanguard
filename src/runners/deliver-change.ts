@@ -1,6 +1,13 @@
 import { commitStage } from '../pipeline/pipeline.js';
 import { publishForReview, pushToExistingBranch } from '../pipeline/remote-branch.js';
-import { injectedLineSuffix, injectedSecretValues, redactInjectedSecrets, scanForInjectedSecrets, scanForSecrets } from '../core/secret-scan.js';
+import {
+  INJECTED_REDACTION,
+  injectedLineSuffix,
+  injectedSecretValues,
+  redactInjectedSecrets,
+  scanForInjectedSecrets,
+  scanForSecrets,
+} from '../core/secret-scan.js';
 import { scanCommitClosingKeywords } from '../pipeline/conformance-gate.js';
 import type { SecretBlock } from '../core/secret-scan.js';
 import type { CommitClosingLeak } from '../pipeline/conformance-gate.js';
@@ -139,12 +146,20 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   );
   if (block !== undefined) return { kind: 'secret-blocked', block };
 
-  // The commit message and the PR body are composed from agent/issue text too, so the same injected
-  // credentials can ride out through them. They are not a diff to gate: redact in place.
+  // The commit message, the PR title (including its scope) and the PR body are composed from
+  // agent/issue text too, so the same injected credentials can ride out through them. They are not a
+  // diff to gate: redact in place, and log that it happened as a count only — never the value.
   const secretValues = injectedSecretValues(process.env, secretEnvVars);
-  const redact = (text: string): string => redactInjectedSecrets(text, secretValues);
+  const redact = (text: string, field: 'commit message' | 'PR title' | 'PR body'): string => {
+    const redacted = redactInjectedSecrets(text, secretValues);
+    const count = redacted.split(INJECTED_REDACTION).length - text.split(INJECTED_REDACTION).length;
+    if (count > 0) {
+      console.error(`vanguard: redacted ${count} injected credential occurrence(s) from the ${field} for ${opts.taskId} (values withheld)`);
+    }
+    return redacted;
+  };
   const identity = opts.commitAuthor !== undefined ? { authorName: opts.commitAuthor.name, authorEmail: opts.commitAuthor.email } : {};
-  const commit = await commitStage(ctx, { message: redact(opts.commitMessage), ...identity });
+  const commit = await commitStage(ctx, { message: redact(opts.commitMessage, 'commit message'), ...identity });
   if (!commit.committed) return { kind: 'no-changes' };
   const sha = commit.sha ?? 'unknown';
 
@@ -157,8 +172,8 @@ export async function deliverChange(ctx: RunContext, opts: DeliverChangeOptions)
   const { target } = opts;
   if (target.kind === 'new-pr') {
     const pr = await publishForReview(ctx, {
-      title: conventionalPrTitle(target.title, target),
-      body: redact(target.body({ commitLeaks })),
+      title: redact(conventionalPrTitle(target.title, target), 'PR title'),
+      body: redact(target.body({ commitLeaks }), 'PR body'),
       ...(target.draft !== undefined ? { draft: target.draft } : {}),
       ...(target.cli !== undefined ? { cli: target.cli } : {}),
       ...(target.prToken !== undefined ? { prToken: target.prToken } : {}),

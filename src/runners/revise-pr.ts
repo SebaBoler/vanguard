@@ -338,8 +338,10 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       // Same gate as the first delivery (runSourcedIssue): a secret in the agent's diff must never reach
       // a commit, the PR branch, or the --out preview a human will read and share. A scan error blocks
       // too. The block is made visible the same way: masked comment on the PR (not in white-label mode)
-      // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gap,
-      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath).
+      // and the routing labels handed back, so the PR does not sit in `vanguard:revising`. Residual gaps,
+      // shared with the first delivery: scanForSecrets skips `*.test.ts` / `tests/**` (isTestPath), and
+      // neither layer can see inside a binary file — `git diff` renders it as `Binary files … differ`,
+      // so a credential written into a binary's bytes is not detected (only its path is checked).
       // A custom provider's key env var is repo-configured: the secret gate cannot know its name.
       const secretEnvVars = providerKeyEnvNames(deps);
       const block = scanOutgoingForSecrets(revisionDiff, `${target.repoSlug}#${target.number}`, 'revise push', secretEnvVars);

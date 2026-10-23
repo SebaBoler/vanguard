@@ -280,18 +280,21 @@ function injectedSecretVariants(secretValues: readonly string[]): string[] {
   return secretValues.filter(isPlausibleInjectedSecret).flatMap(secretVariants);
 }
 
+/** What redactInjectedSecrets substitutes for a known credential. Exported so a caller can count substitutions. */
+export const INJECTED_REDACTION = '[REDACTED-INJECTED]';
+
 /** Remove known credentials even where the pattern redactor cannot recognize them. */
 export function redactInjectedSecrets(text: string, secretValues: readonly string[]): string {
   // Longest first: a shorter variant must not pre-empt a longer one that contains it.
   const variants = injectedSecretVariants(secretValues).sort((a, b) => b.length - a.length);
   for (const variant of variants) {
-    text = text.split(variant).join('[REDACTED-INJECTED]');
+    text = text.split(variant).join(INJECTED_REDACTION);
   }
   return text;
 }
 
 export interface InjectedSecretFinding {
-  /** Repo-relative path from the diff's `+++ b/<path>` header, or '(unknown)'. */
+  /** Repo-relative path from the diff's `diff --git` / `+++ b/<path>` header, or '(unknown)'. */
   file: string;
   /** 1-based line number in the new file version; absent when the match is in the path itself. */
   line?: number;
@@ -303,14 +306,24 @@ export function injectedLineSuffix(finding: InjectedSecretFinding): string {
 }
 
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const DIFF_GIT_PREFIX = 'diff --git ';
+// Greedy old path: the split is the LAST ' b/' in the header, as git itself writes it.
+const DIFF_GIT_HEADER = /^diff --git a\/.+ b\/(.+)$/;
 
 /**
  * Exact-value gate on the outgoing diff: does an added line contain a secret Vanguard itself injected
  * into the sandbox (or used to push), byte-for-byte or in an obvious encoding? Unlike scanForSecrets,
  * this is unconditional — it ignores TEST_PATH_RULES and ALLOWLIST_MARKER, because a value match here
  * IS the credential, not a pattern that might merely resemble one. The file PATH is checked too: a
- * credential can be exfiltrated as a filename, where no added line carries it. Findings never carry
- * the matched value, only file + line, so a hit can be reported without ever printing the secret.
+ * credential can be exfiltrated as a filename, where no added line carries it. `+++ b/<path>` alone
+ * is not enough for that: `git diff` omits it for a pure rename (`similarity index 100%`) and for a
+ * binary file, so the new path is taken from `diff --git a/… b/…`, which precedes every file's
+ * remaining headers. Findings never carry the matched value, only file + line, so a hit can be
+ * reported without ever printing the secret.
+ *
+ * Not covered: a credential written INSIDE a binary file. `git diff` renders such a file as
+ * `Binary files … differ` with no content, so its bytes are out of reach of this scan — only the
+ * binary's path is checked.
  */
 export function scanForInjectedSecrets(diff: string, secretValues: readonly string[]): InjectedSecretFinding[] {
   const variants = injectedSecretVariants(secretValues);
@@ -321,14 +334,24 @@ export function scanForInjectedSecrets(diff: string, secretValues: readonly stri
   let currentFile = '(unknown)';
   let newLine = 0;
   let inHunk = false;
+  // The same path is announced by several headers (`diff --git` then `+++ b/`): report it once.
+  const reported = new Set<string>();
+  const notePath = (path: string): void => {
+    currentFile = redactInjectedSecrets(path, secretValues);
+    if (!carriesSecret(path) || reported.has(currentFile)) return;
+    reported.add(currentFile);
+    findings.push({ file: currentFile });
+  };
   for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git ')) inHunk = false;
+    if (line.startsWith(DIFF_GIT_PREFIX)) {
+      inHunk = false;
+      // An unparseable header (a path containing ' b/' splits ambiguously): take it whole (fail closed).
+      notePath(DIFF_GIT_HEADER.exec(line)?.[1] ?? line.slice(DIFF_GIT_PREFIX.length));
+      continue;
+    }
     if (!inHunk && line.startsWith('+++ ')) {
-      const m = ADDED_FILE_HEADER.exec(line);
-      if (m !== null && m[1] !== undefined) {
-        currentFile = redactInjectedSecrets(m[1], secretValues);
-        if (carriesSecret(m[1])) findings.push({ file: currentFile });
-      }
+      const path = ADDED_FILE_HEADER.exec(line)?.[1];
+      if (path !== undefined) notePath(path);
       continue;
     }
     const hunk = HUNK_HEADER.exec(line);

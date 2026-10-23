@@ -362,6 +362,14 @@ describe('injectedSecretValues', () => {
     expect(values).toContain('refresh-92837xyz');
   });
 
+  it('dedupes a value present both in auth.json and under its own env var', () => {
+    const values = injectedSecretValues({
+      CODEX_AUTH_JSON: JSON.stringify({ tokens: { access_token: INJECTED } }),
+      OPENAI_API_KEY: INJECTED,
+    });
+    expect(values.filter((v) => v === INJECTED)).toHaveLength(1);
+  });
+
   it('keeps an unparseable auth.json as a raw value', () => {
     expect(injectedSecretValues({ CODEX_AUTH_JSON: 'invalid-json-xx' })).toEqual(['invalid-json-xx']);
   });
@@ -388,10 +396,29 @@ describe('scanForInjectedSecrets', () => {
     expect(scanForInjectedSecrets(injectedDiff(encode(value)), [value])).toHaveLength(1);
   });
 
-  it('flags a credential that appears only in the file path, with no line number', () => {
+  it('flags a credential that appears only in the file path once, with no line number, though two headers announce it', () => {
     expect(scanForInjectedSecrets(injectedDiff('safe', `${INJECTED}.txt`), [INJECTED])).toEqual([
       { file: '[REDACTED-INJECTED].txt' },
     ]);
+  });
+
+  it('flags a pure rename onto a credential-named path (no `+++ b/` header at all)', () => {
+    const diff =
+      `diff --git a/notes.md b/${INJECTED}.md\nsimilarity index 100%\nrename from notes.md\nrename to ${INJECTED}.md`;
+    expect(scanForInjectedSecrets(diff, [INJECTED])).toEqual([{ file: '[REDACTED-INJECTED].md' }]);
+  });
+
+  it('ignores a rename away from a credential-named path (the old path is not new content)', () => {
+    const diff =
+      `diff --git a/${INJECTED}.md b/notes.md\nsimilarity index 100%\nrename from ${INJECTED}.md\nrename to notes.md`;
+    expect(scanForInjectedSecrets(diff, [INJECTED])).toEqual([]);
+  });
+
+  it('flags a new binary file whose path carries the credential (content is unreachable in a diff)', () => {
+    const diff =
+      `diff --git a/${INJECTED}.png b/${INJECTED}.png\nnew file mode 100644\nindex 0000000..1a2b3c4\n` +
+      `Binary files /dev/null and b/${INJECTED}.png differ`;
+    expect(scanForInjectedSecrets(diff, [INJECTED])).toEqual([{ file: '[REDACTED-INJECTED].png' }]);
   });
 
   it('flags added content that resembles a file header', () => {

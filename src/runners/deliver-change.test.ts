@@ -138,6 +138,48 @@ describe('deliverChange', () => {
     expect(gh?.[gh.indexOf('--body') + 1]).toMatch(/leaks=[1-9]/);
     expect(calls.some((c) => c[0] === 'git' && c[1] === 'push')).toBe(true);
   });
+
+  it('redacts an injected credential out of the commit message, the PR title (scope included) and the body, logging counts only', async () => {
+    const credential = 'opaque-credential-92837';
+    const logged: string[] = [];
+    const log = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { logged.push(args.join(' ')); });
+    const calls: string[][] = [];
+    try {
+      vi.stubEnv('OPENAI_API_KEY', credential);
+      await withWork('work', async (ctx) => {
+        const r = await deliverChange(ctx, {
+          taskId: 'o/r#7',
+          commitMessage: `feat: thing ${credential}`,
+          target: {
+            kind: 'new-pr',
+            title: `thing ${credential}`,
+            scope: credential,
+            body: () => `body ${credential}`,
+            runner: async (file, a) => {
+              calls.push([file, ...a]);
+              return file === 'gh' ? 'https://github.com/o/r/pull/9' : '';
+            },
+          },
+        });
+        expect(r.kind).toBe('delivered-pr');
+        expect((await execa('git', ['log', '-1', '--format=%s'], { cwd: ctx.worktreePath })).stdout).toBe('feat: thing [REDACTED-INJECTED]');
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      log.mockRestore();
+    }
+    const gh = calls.find((c) => c[0] === 'gh');
+    expect(gh?.[gh.indexOf('--title') + 1]).toBe('feat([REDACTED-INJECTED]): thing [REDACTED-INJECTED]');
+    expect(gh?.[gh.indexOf('--body') + 1]).toBe('body [REDACTED-INJECTED]');
+    expect(JSON.stringify(calls)).not.toContain(credential);
+    // One count-only line per redacted field (commit message, PR title, PR body), never the value.
+    expect(logged.filter((l) => l.includes('redacted'))).toEqual([
+      'vanguard: redacted 1 injected credential occurrence(s) from the commit message for o/r#7 (values withheld)',
+      'vanguard: redacted 2 injected credential occurrence(s) from the PR title for o/r#7 (values withheld)',
+      'vanguard: redacted 1 injected credential occurrence(s) from the PR body for o/r#7 (values withheld)',
+    ]);
+    expect(logged.join('\n')).not.toContain(credential);
+  });
 });
 
 describe('scanOutgoingForSecrets: injected credentials', () => {
