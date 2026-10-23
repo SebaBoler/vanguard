@@ -130,7 +130,7 @@ function makeFeedbackJson(overrides: Record<string, unknown> = {}): string {
                 comments: {
                   nodes: [
                     {
-                      author: { login: 'alice' },
+                      author: { login: 'alice' }, authorAssociation: 'COLLABORATOR',
                       body: 'Please rename this.',
                       createdAt: '2024-01-11T10:00:00Z',
                     },
@@ -173,7 +173,7 @@ function makeFeedbackJsonWithNonThreadItems(): string {
           reviews: {
             nodes: [
               {
-                author: { login: 'alice' },
+                author: { login: 'alice' }, authorAssociation: 'COLLABORATOR',
                 body: 'Overall LGTM but please address the naming.',
                 state: 'COMMENTED',
                 submittedAt: '2024-01-11T10:00:00Z',
@@ -183,7 +183,7 @@ function makeFeedbackJsonWithNonThreadItems(): string {
           comments: {
             nodes: [
               {
-                author: { login: 'bob' },
+                author: { login: 'bob' }, authorAssociation: 'COLLABORATOR',
                 body: 'Can you add a test?',
                 createdAt: '2024-01-11T10:01:00Z',
               },
@@ -291,10 +291,14 @@ describe('runRevisePullRequest secret gate', () => {
 });
 
 describe('runRevisePullRequest happy path', () => {
-  it('applies fixes, pushes, replies+resolves threads, undrafts, and flips labels', async () => {
+  it.each([
+    { name: 'T11: applies only trusted feedback in a mixed round', feedbackAuthors: undefined },
+    { name: 'T12: an explicit allowlist promotes outsider feedback end to end', feedbackAuthors: ['ALICE'] },
+  ])('$name', async ({ feedbackAuthors }) => {
     const ghCalls: string[][] = [];
     const pushCalls: Array<{ file: string; args: string[]; cwd: string }> = [];
     const agentInputs: AgentRunInput[] = [];
+    const logs: string[] = [];
 
     const gh: GhRunner = async (args) => {
       ghCalls.push(args);
@@ -307,7 +311,11 @@ describe('runRevisePullRequest happy path', () => {
       // graphql (feedback query or mutations)
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
-        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('reviewThreads') && feedbackAuthors !== undefined) return makeFeedbackJson().replaceAll('COLLABORATOR', 'NONE');
+        if (query.includes('reviewThreads')) return makeFeedbackJson({ comments: { nodes: [
+          { author: { login: 'mallory' }, authorAssociation: 'NONE', body: 'outsider instructions', createdAt: '2024-01-11T10:00:00Z' },
+          { author: { login: 'mallory' }, authorAssociation: 'NONE', body: 'another outsider request', createdAt: '2024-01-11T10:01:00Z' },
+        ] } });
         // reply mutation
         if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
         // resolve mutation
@@ -339,8 +347,13 @@ describe('runRevisePullRequest happy path', () => {
       _pushRunner: pushRunner,
       _baseBranch: 'feature-branch',
       provider: 'claude',
+      ...(feedbackAuthors !== undefined ? { feedbackAuthors } : {}),
+      log: (line) => logs.push(line),
     });
 
+    expect(logs.filter((line) => line.includes('ignored feedback from @mallory (NONE)'))).toHaveLength(feedbackAuthors === undefined ? 1 : 0);
+    expect(result.ignoredFeedback).toEqual(feedbackAuthors === undefined ? [{ author: 'mallory', association: 'NONE' }] : []);
+    expect(agentInputs[0]?.prompt).not.toContain('outsider instructions');
     expect(result.pr.repoSlug).toBe('o/r');
     expect(result.pr.number).toBe(7);
     expect(agentInputs).toHaveLength(3);
@@ -363,6 +376,7 @@ describe('runRevisePullRequest happy path', () => {
     expect(editCall).toContain('needs revision');
   });
 
+
   it('passes review comments to the agent verbatim: no !`cmd` runs and no {{KEY}} is blanked', async () => {
     const agentInputs: AgentRunInput[] = [];
     const executed: string[] = [];
@@ -379,7 +393,7 @@ describe('runRevisePullRequest happy path', () => {
       if (args[0] === 'api' && args[1] === 'graphql') {
         const query = args.find((a) => a.startsWith('query=')) ?? '';
         if (query.includes('reviewThreads')) {
-          return makeFeedbackJson({ comments: { nodes: [{ author: { login: 'mallory' }, body, createdAt: '2024-01-11T10:02:00Z' }] } });
+          return makeFeedbackJson({ comments: { nodes: [{ author: { login: 'mallory' }, authorAssociation: 'COLLABORATOR', body, createdAt: '2024-01-11T10:02:00Z' }] } });
         }
         return JSON.stringify({ data: {} });
       }
@@ -1173,4 +1187,20 @@ describe('runRevisePullRequest — skills', () => {
       await rm(bundled, { recursive: true, force: true });
     }
   });
+});
+
+it('T10: all-untrusted feedback returns without any mutation or push', async () => {
+  const push = vi.fn(async () => '');
+  const gh = vi.fn(async (args: string[]) => {
+    if (args[0] === 'pr' && args[1] === 'view') return makePrViewJson();
+    if (args[0] === 'pr' && args[1] === 'diff') return '';
+    if (args[0] === 'api' && args[1] === 'graphql') return makeFeedbackJson().replaceAll('"alice"', '"mallory"').replaceAll('COLLABORATOR', 'NONE');
+    throw new Error('Unexpected mutation: ' + args.join(' '));
+  });
+  const logs: string[] = [];
+  const result = await runRevisePullRequest('7', { repoPath: repo, repoSlug: 'o/r', gh, _pushRunner: push, log: (line) => logs.push(line) });
+  expect(result).toMatchObject({ addressed: 0, committed: false, pushed: false, undrafted: false, ignoredFeedback: [{ author: 'mallory', association: 'NONE' }] });
+  expect(push).not.toHaveBeenCalled();
+  expect(gh.mock.calls.every(([args]) => !(args.includes('edit') || args.includes('ready') || args.some((arg) => arg.includes('mutation'))))).toBe(true);
+  expect(logs.filter((line) => /ignored feedback from @mallory \(NONE\)/.test(line))).toHaveLength(1);
 });

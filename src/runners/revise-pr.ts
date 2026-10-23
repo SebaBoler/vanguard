@@ -1,9 +1,10 @@
+import { describeIgnoredAuthor } from '../tasks/comment-trust.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { parsePullRequestRef, fetchPullRequestForReview, postPullRequestReview, commentPullRequest } from './pr-review.js';
 import {
   fetchPullRequestFeedback,
-  selectActionableFeedback,
+  partitionActionableFeedback,
   buildRevisionPrompt,
   replyAndResolveThread,
   countRevisionRoundsFromFeedback,
@@ -73,6 +74,7 @@ const HAND_BACK_LABELS = { remove: [NEEDS_REVISION_LABEL, VANGUARD_REVISING_LABE
 const MAX_VERIFY_REPAIRS = 1;
 
 export interface ReviseGithubPrDeps extends ProviderChoice {
+  feedbackAuthors?: string[];
   auth?: AgentAuth;
   repoPath: string;
   repoSlug?: string;
@@ -121,6 +123,7 @@ export interface ReviseGithubPrDeps extends ProviderChoice {
 }
 
 export interface ReviseGithubPrResult {
+  ignoredFeedback?: Array<{ author: string; association: string }>;
   pr: PullRequestForReview;
   /** Number of feedback items addressed this round (threads replied+resolved, non-thread items commented on). */
   addressed: number;
@@ -181,23 +184,35 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
     fetchPullRequestFeedback(target, gh, log),
   ]);
 
-  const actionable = selectActionableFeedback(fb, {
+  const { actionable, ignoredAuthors } = partitionActionableFeedback(fb, {
+    feedbackAuthors: deps.feedbackAuthors,
     headRefOid: pr.headRefOid,
     ...(deps.botLogins !== undefined ? { botLogins: deps.botLogins } : {}),
   });
 
+  const ignoredFeedback = [...new Map(ignoredAuthors.map((item) => [
+    `${item.author} ${item.authorAssociation}`,
+    { author: item.author, association: item.authorAssociation },
+  ])).values()];
+  const notes = ignoredFeedback.map(({ author, association }) =>
+    `revise-pr ${target.repoSlug}#${target.number}: ignored feedback from ${describeIgnoredAuthor(author, association)}`);
+  for (const note of notes) log(note);
   if (actionable.length === 0) {
+    if (notes.length > 0) await appendStepSummary(process.env.GITHUB_STEP_SUMMARY, {
+      taskId: `${target.repoSlug}#${target.number}`, flow: 'revise-pr', provider: deps.provider ?? 'unknown',
+      exit: 'no-changes', outcomes: [], notes,
+    });
     log(`revise-pr ${target.repoSlug}#${target.number}: no actionable feedback — skipping`);
-    return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
+    return { pr, ignoredFeedback, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
-  const rounds = countRevisionRoundsFromFeedback(fb);
+  const rounds = countRevisionRoundsFromFeedback(fb, deps);
   if (rounds >= maxRounds) {
     const capMsg = `Revision cap reached (${rounds}/${maxRounds} rounds). No further automated revisions will be applied.`;
     log(`revise-pr ${target.repoSlug}#${target.number}: cap -> ${rounds} rounds, posting notice`);
     await postPullRequestReview(target, capMsg, 'comment', gh);
     await handBackPrLabels(gh, target.repoSlug, target.number, log);
-    return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
+    return { pr, ignoredFeedback, addressed: 0, committed: false, pushed: false, undrafted: false };
   }
 
   const agents: SelectedAgents =
@@ -263,6 +278,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         provider: agents.agent.name,
         ...(model !== undefined ? { model } : {}),
         outcomes,
+        notes,
         exit,
         prUrl: pr.url,
         ...extra,
@@ -369,7 +385,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
           }
         }
         await stepSummary('secret-blocked');
-        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
+        return { pr, ignoredFeedback, addressed: actionable.length, committed: false, pushed: false, undrafted: false, secretBlocked: true };
       }
 
       // Diff-true "what changed" point per feedback item — uses the diff, not a commit sha, so the
@@ -396,7 +412,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
         await writeFile(deps.out, preview, 'utf8');
         log(`revise-pr ${target.repoSlug}#${target.number}: dry-run -> ${resolve(deps.out)} (nothing pushed or commented)`);
         await stepSummary(verificationFailed ? 'verify-failed' : 'completed');
-        return { pr, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
+        return { pr, ignoredFeedback, addressed: actionable.length, committed: false, pushed: false, undrafted: false, dryRunOut: resolve(deps.out) };
       }
 
       log(`revise-pr ${target.repoSlug}#${target.number}: commit -> staging`);
@@ -422,7 +438,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       if (delivery.kind === 'no-changes') {
         log(`revise-pr ${target.repoSlug}#${target.number}: no changes — skipping push`);
         await stepSummary('no-changes');
-        return { pr, addressed: 0, committed: false, pushed: false, undrafted: false };
+        return { pr, ignoredFeedback, addressed: 0, committed: false, pushed: false, undrafted: false };
       }
       if (delivery.kind !== 'delivered-push') throw new VanguardError(`unexpected delivery outcome ${delivery.kind} for an existing-branch target`);
       log(`revise-pr ${target.repoSlug}#${target.number}: pushed -> ${pr.headRefName}${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
@@ -489,6 +505,7 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       await stepSummary(verificationFailed ? 'verify-failed' : 'completed');
       return {
         pr,
+        ignoredFeedback,
         addressed: actionable.length,
         committed: true,
         pushed: true,

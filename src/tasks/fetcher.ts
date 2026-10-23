@@ -9,6 +9,8 @@ export interface SubTask {
 export interface TaskComment {
   author: string;
   body: string;
+  /** Provider's author association, upper-case (GitHub CommentAuthorAssociation). Absent ⇒ untrusted. */
+  authorAssociation?: string;
 }
 
 export interface Task {
@@ -22,6 +24,8 @@ export interface Task {
   ref?: string;
   /** Provider lifecycle state (`open`/`closed`/`opened`/Linear state name) — the board's column input (S9). */
   state?: string;
+  /** Issue/PR author login (GitHub `author.login`, GitLab `author.username`). Absent ⇒ no issue-author trust. */
+  author?: string;
 }
 
 export interface TaskFilter {

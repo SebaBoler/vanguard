@@ -66,7 +66,7 @@ describe('LinearCliTaskFetcher', () => {
       comments: { nodes: [{ body: 'A spec comment', user: { name: 'alice' } }, { body: '' }] },
     };
     const task = await new LinearCliTaskFetcher({ linear: runner(issue) }).fetch('TES-1');
-    expect(task.comments).toEqual([{ author: 'alice', body: 'A spec comment' }]);
+    expect(task.comments).toEqual([{ author: 'alice', authorAssociation: 'MEMBER', body: 'A spec comment' }]);
   });
 
   it('maps comments in the array shape (author from author.displayName)', async () => {
@@ -76,7 +76,7 @@ describe('LinearCliTaskFetcher', () => {
       comments: [{ body: 'Another comment', author: { displayName: 'Bob Builder' } }],
     };
     const task = await new LinearCliTaskFetcher({ linear: runner(issue) }).fetch('TES-1');
-    expect(task.comments).toEqual([{ author: 'Bob Builder', body: 'Another comment' }]);
+    expect(task.comments).toEqual([{ author: 'Bob Builder', authorAssociation: 'MEMBER', body: 'Another comment' }]);
   });
 
   it('throws when the issue is not found', async () => {

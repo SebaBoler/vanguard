@@ -93,3 +93,13 @@ describe('revisePrCommand', () => {
     );
   });
 });
+
+it('T27: forwards feedback authors and prints ignored authors before the outcome', async () => {
+  const logs: string[] = [];
+  const revisePullRequest = vi.fn(async () => ({ ...makeResult(false), ignoredFeedback: [
+    { author: 'mallory', association: 'NONE' }, { author: 'outsider', association: '' },
+  ] }));
+  await revisePrCommand(makeCmd({ feedbackAuthors: ['Alice'] }), { revisePullRequest, log: (line) => logs.push(line) });
+  expect(revisePullRequest).toHaveBeenCalledWith('7', expect.objectContaining({ feedbackAuthors: ['Alice'] }));
+  expect(logs.slice(0, 2)).toEqual(['revise-pr o/r#7: ignored feedback from @mallory (NONE)', 'revise-pr o/r#7: ignored feedback from @outsider (none)']);
+});

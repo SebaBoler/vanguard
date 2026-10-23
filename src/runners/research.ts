@@ -1,3 +1,4 @@
+import { isBotLogin, isTrustedComment } from '../tasks/comment-trust.js';
 import { defaultGhRunner, commentGithubIssue, editGithubLabels, GitHubTaskFetcher } from '../tasks/github.js';
 import { GITHUB_NEEDS_RESEARCH_LABEL, GITHUB_RESEARCHING_LABEL } from '../github-labels.js';
 import { escapePromptTags } from '../context/escape.js';
@@ -32,12 +33,7 @@ export function isResearchComment(comment: TaskComment): boolean {
 }
 
 export function priorResearchFindings(task: Task): string[] {
-  return task.comments.filter(isResearchComment).map((c) => c.body);
-}
-
-function isBotComment(comment: TaskComment): boolean {
-  const a = comment.author.toLowerCase();
-  return a.includes('vanguard') || a.endsWith('[bot]') || a === 'github-actions';
+  return task.comments.filter((c) => isBotLogin(c.author) && isResearchComment(c)).map((c) => c.body);
 }
 
 /**
@@ -46,10 +42,10 @@ function isBotComment(comment: TaskComment): boolean {
  * When no research comment exists yet (iteration 1), all human comments qualify.
  */
 export function humanFeedback(task: Task): string[] {
-  const watermark = task.comments.findLastIndex(isResearchComment);
+  const watermark = task.comments.findLastIndex((c) => isBotLogin(c.author) && isResearchComment(c));
   return task.comments
     .slice(watermark + 1)
-    .filter((c) => !isBotComment(c))
+    .filter((c) => !isBotLogin(c.author) && isTrustedComment(c, { issueAuthor: task.author }))
     .map((c) => c.body.trim())
     .filter(Boolean);
 }

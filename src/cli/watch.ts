@@ -113,6 +113,7 @@ export async function watchLinearSource(
     const specStateName = cmd.specStateName!;
     const needsInfoState = cmd.needsInfoState!;
     const specDeps: RunSpecGeneratorDeps = {
+      ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new LinearCliTaskFetcher({
@@ -203,6 +204,7 @@ export async function watchGithubSource(
     const needsInfoLabel = cmd.needsInfoLabel!;
     const repoSlug = deps.repoSlug;
     const specDeps: RunSpecGeneratorDeps = {
+      ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitHubTaskFetcher(repoSlug),
@@ -305,6 +307,7 @@ export async function watchGitlabSource(
       throw new Error('--agent-label and --needs-info-label are required with --spec-label for gitlab loop-v1');
     }
     const specDeps: RunSpecGeneratorDeps = {
+      ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
       ...(auth !== undefined ? { auth } : {}),
       repoPath: cmd.repoPath,
       fetcher: new GitLabTaskFetcher(deps.project),

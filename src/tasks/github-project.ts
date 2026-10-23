@@ -40,7 +40,7 @@ export class GitHubProjectFetcher implements TaskFetcher {
   async fetch(id: string): Promise<Task> {
     const hashIndex = id.indexOf('#');
     const repo = hashIndex > 0 && id.slice(0, hashIndex).includes('/') ? id.slice(0, hashIndex) : this.options.repo;
-    const out = await this.gh(['issue', 'view', issueNumber(id), '--repo', repo, '--json', 'number,title,body,labels,comments']);
+    const out = await this.gh(['issue', 'view', issueNumber(id), '--repo', repo, '--json', 'number,title,body,labels,comments,author']);
     return toTask(repo, JSON.parse(out) as GitHubIssue);
   }
 

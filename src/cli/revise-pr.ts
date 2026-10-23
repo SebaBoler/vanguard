@@ -1,3 +1,4 @@
+import { describeIgnoredAuthor } from '../tasks/comment-trust.js';
 import { agentAuthFromEnv } from '../agents/auth.js';
 import { startSandboxContext } from '../sandbox/sandbox-context.js';
 import { runRevisePullRequest } from '../runners/revise-pr.js';
@@ -23,6 +24,7 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   const baseDeps = {
+    ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
     repoPath: cmd.repoPath,
     signal: controller.signal,
     ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
@@ -63,6 +65,7 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
 
 function logResult(result: ReviseGithubPrResult, log: (line: string) => void): void {
   const id = `${result.pr.repoSlug}#${result.pr.number}`;
+  for (const item of result.ignoredFeedback ?? []) log(`revise-pr ${id}: ignored feedback from ${describeIgnoredAuthor(item.author, item.association)}`);
   if (result.secretBlocked === true) {
     log(`revise-pr ${id}: BLOCKED — the revision diff carries a secret; nothing pushed (${result.addressed} item(s) abandoned)`);
     return;

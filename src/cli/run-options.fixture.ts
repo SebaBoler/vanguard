@@ -28,4 +28,5 @@ export const RUN_OPTIONS = {
   maxRepairIterations: 5,
   escalateModel: 'claude-fable-5',
   skillsDir: '/skills',
+  feedbackAuthors: ['maintainer'] as string[],
 } as const satisfies Exhaustive<SharedRunOptions>;

@@ -253,7 +253,7 @@ describe('parseCli', () => {
       '--provider-model', 'gpt-5', '--review-model', 'claude-opus', '--escalate-model', 'claude-fable-5',
       '--no-simplify', '--verify', 'pnpm test', '--visual-proof', 'pnpm shot', '--conformance', '--conformance-model', 'opus',
       '--commit-author', 'Seba <seba@example.com>', '--flow', 'flow-b', '--base', 'dev', '--max-turns', '80', '--max-repair-iterations', '5',
-      '--skills', '/skills',
+      '--skills', '/skills', '--feedback-authors', 'maintainer',
     ];
     // Required<>: a RunOptions field added without an entry here fails to compile, as it does in parseRunOptions.
     // --plan is asserted separately because it excludes --flow.
@@ -276,6 +276,7 @@ describe('parseCli', () => {
       maxTurns: 80,
       maxRepairIterations: 5,
       skillsDir: '/skills',
+      feedbackAuthors: ['maintainer'],
     };
     const run = parseCli(['run', '--github', 'o/r#1', ...shared], '/work');
     const watch = parseCli(['watch', '--source', 'github', '--label', 'vanguard', ...shared], '/work');
@@ -1649,4 +1650,11 @@ describe('parseCli hub', () => {
     expect(parseCli([], '/work').kind).toBe('help');
     expect(parseCli(['frobnicate'], '/work').kind).toBe('help');
   });
+});
+
+it('T26: parses feedback authors consistently and preserves first spelling', () => {
+  for (const argv of [['revise-pr', 'o/r#1'], ['run', '--github', 'o/r#1'], ['watch', '--source', 'github', '--label', 'vanguard']]) {
+    expect(parseCli([...argv, '--feedback-authors', 'a, b ,A,,'], '/work')).toMatchObject({ feedbackAuthors: ['a', 'b'] });
+    expect(parseCli(argv, '/work')).not.toHaveProperty('feedbackAuthors');
+  }
 });

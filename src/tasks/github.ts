@@ -13,6 +13,8 @@ export interface GitHubComment {
   author: GitHubCommentAuthor | null; // gh returns null for deleted accounts; justifies optional chaining in toTask()
   body: string;
   createdAt: string;
+  /** GitHub CommentAuthorAssociation (e.g. OWNER/MEMBER/COLLABORATOR/CONTRIBUTOR/NONE). */
+  authorAssociation?: string;
 }
 
 export interface GitHubIssue {
@@ -23,6 +25,8 @@ export interface GitHubIssue {
   comments?: GitHubComment[];
   /** Present only when list() requests it (S9 board). */
   state?: string;
+  /** Issue author; added to fetch()'s --json field list (never on list(), which fetches no comments either). */
+  author?: GitHubCommentAuthor | null;
 }
 
 /** Runs a `gh` subcommand and returns its stdout. Injected so unit tests never call real gh. */
@@ -40,6 +44,7 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
   const comments: TaskComment[] = (issue.comments ?? []).map((comment) => ({
     author: comment.author?.login ?? '',
     body: comment.body ?? '',
+    ...(comment.authorAssociation !== undefined ? { authorAssociation: comment.authorAssociation } : {}),
   }));
   return {
     id: `${repo}#${issue.number}`,
@@ -50,6 +55,7 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     comments,
     ref: String(issue.number),
     ...(issue.state !== undefined ? { state: issue.state } : {}),
+    ...(issue.author?.login !== undefined ? { author: issue.author.login } : {}),
   };
 }
 
@@ -62,7 +68,7 @@ export class GitHubTaskFetcher implements TaskFetcher {
 
   async fetch(id: string): Promise<Task> {
     const number = issueNumber(id);
-    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels,comments']);
+    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels,comments,author']);
     return toTask(this.repo, JSON.parse(out) as GitHubIssue);
   }
 

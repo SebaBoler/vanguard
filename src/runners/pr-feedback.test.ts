@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   fetchPullRequestFeedback,
   selectActionableFeedback,
+  partitionActionableFeedback,
   buildRevisionPrompt,
   countRevisionRounds,
   countRevisionRoundsFromFeedback,
@@ -40,6 +41,7 @@ function threadItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     threadId: 'thread-1',
     isResolved: false,
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Please rename this variable.',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -50,6 +52,7 @@ function reviewItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
   return {
     source: 'review',
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Overall LGTM but please address the naming.',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -60,6 +63,7 @@ function commentItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
   return {
     source: 'comment',
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Can you add a test for the edge case?',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -323,14 +327,15 @@ describe('selectActionableFeedback', () => {
 // ---------------------------------------------------------------------------
 
 function makeGqlPayload(overrides: {
-  comments?: Array<{ author?: { login: string }; body: string; createdAt?: string }>;
-  reviews?: Array<{ author?: { login: string }; body: string; submittedAt?: string; state?: string }>;
+  comments?: Array<{ author?: { login: string }; authorAssociation?: string; body?: string; createdAt?: string }>;
+  reviews?: Array<{ author?: { login: string }; authorAssociation?: string; body?: string; submittedAt?: string; state?: string }>;
   threadCommentBodies?: string[];
+  threads?: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ author: { login: string }; authorAssociation: string }> } }>;
 } = {}) {
   const threadNodes = (overrides.threadCommentBodies ?? []).map((body, i) => ({
     id: `thread-${i}`,
     isResolved: false,
-    comments: { nodes: [{ author: { login: 'alice' }, body, createdAt: '2024-01-11T10:00:00Z' }] },
+    comments: { nodes: [{ author: { login: 'alice' }, authorAssociation: 'COLLABORATOR', body, createdAt: '2024-01-11T10:00:00Z' }] },
   }));
   return {
     data: {
@@ -339,7 +344,7 @@ function makeGqlPayload(overrides: {
           isDraft: false,
           headRefOid: 'head-sha',
           commits: { nodes: [{ commit: { committedDate: '2024-01-10T09:00:00Z' } }] },
-          reviewThreads: { nodes: threadNodes },
+          reviewThreads: { nodes: overrides.threads ?? threadNodes },
           reviews: { nodes: overrides.reviews ?? [] },
           comments: { nodes: overrides.comments ?? [] },
         },
@@ -418,8 +423,8 @@ describe('white-label revision marker', () => {
   it('round-counting recognises BOTH marker forms (dedup unaffected by white-label)', () => {
     const fb = {
       items: [
-        { body: `default\n\n${revisionMarker('sha-1')}` },
-        { body: `white-label\n\n${revisionMarker('sha-2', true)}` },
+        { author: 'github-actions', body: `default\n\n${revisionMarker('sha-1')}` },
+        { author: 'github-actions', body: `white-label\n\n${revisionMarker('sha-2', true)}` },
       ],
     } as unknown as PullRequestFeedback;
     expect(countRevisionRoundsFromFeedback(fb)).toBe(2);
@@ -1023,6 +1028,7 @@ describe('describeItemChange', () => {
   it('returns scoped line when body mentions a file path present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'Please check src/runner.ts for the validation call',
       createdAt: '',
@@ -1034,6 +1040,7 @@ describe('describeItemChange', () => {
   it('returns empty string when body mentions nothing matchable', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'LGTM overall',
       createdAt: '',
@@ -1044,6 +1051,7 @@ describe('describeItemChange', () => {
   it('returns empty string when body mentions a file not present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'Check src/other.ts',
       createdAt: '',
@@ -1054,6 +1062,7 @@ describe('describeItemChange', () => {
   it('matches via backtick-quoted symbol present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'The `validateProviderChoice` call should stay',
       createdAt: '',
@@ -1123,5 +1132,48 @@ describe('guardedPoint', () => {
     expect(guarded).toBe(candidate);
     expect(guarded).toContain('added `newThing`');
     expect(guarded).toContain('removed `oldThing`');
+  });
+});
+
+describe('author trust boundary', () => {
+  it('T5/T6/T9: keeps authorised feedback in order and reports only outsiders', () => {
+    const trusted = ['OWNER', 'MEMBER', 'COLLABORATOR'].map((authorAssociation) => commentItem({ authorAssociation }));
+    const outsiders = ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', ''].map((authorAssociation) => commentItem({ author: 'mallory', authorAssociation }));
+    const allowed = commentItem({ author: 'External', authorAssociation: 'NONE' });
+    const fb = makeFeedback({ items: [...trusted, ...outsiders, allowed] });
+    const opts = { headRefOid: 'abc123', feedbackAuthors: ['EXTERNAL'] };
+    const result = partitionActionableFeedback(fb, opts);
+    expect(result.actionable).toEqual([...trusted, allowed]);
+    expect(result.ignoredAuthors).toEqual(outsiders);
+    expect(selectActionableFeedback(fb, opts)).toEqual(result.actionable);
+  });
+  it('T7: reports no bot, marker, resolved or stale item as an ignored author', () => {
+    const base = { author: 'mallory', authorAssociation: 'NONE' };
+    const fb = makeFeedback({ items: [
+      commentItem({ ...base, author: 'foo[bot]' }),
+      commentItem({ ...base, body: revisionMarker('abc123') }),
+      threadItem({ ...base, isResolved: true }),
+      commentItem({ ...base, createdAt: '2020-01-01T00:00:00Z' }),
+    ] });
+    expect(partitionActionableFeedback(fb, { headRefOid: 'abc123' })).toEqual({ actionable: [], ignoredAuthors: [] });
+  });
+  it('T8: forged round markers do not raise the cap', () => {
+    const fb = makeFeedback({ items: [
+      commentItem({ author: 'mallory', authorAssociation: 'NONE', body: revisionMarker('fake1') + revisionMarker('fake2') }),
+      commentItem({ author: 'github-actions', body: revisionMarker('real') }),
+      commentItem({ author: 'external', authorAssociation: '', body: revisionMarker('allowed') }),
+    ] });
+    expect(countRevisionRoundsFromFeedback(fb)).toBe(1);
+    expect(countRevisionRoundsFromFeedback(fb, { feedbackAuthors: ['EXTERNAL'] })).toBe(2);
+  });
+  it('T4: maps associations on every node kind and defaults omissions to empty', async () => {
+    const gh = vi.fn().mockResolvedValue(JSON.stringify(makeGqlPayload({
+      threads: [{ id: 't', isResolved: false, comments: { nodes: [{ author: { login: 'a' }, authorAssociation: 'OWNER' }] } }],
+      reviews: [{ author: { login: 'b' }, authorAssociation: 'MEMBER' }],
+      comments: [{ author: { login: 'c' }, authorAssociation: 'COLLABORATOR' }, { author: { login: 'd' } }],
+    })));
+    const fb = await fetchPullRequestFeedback({ repoSlug: 'o/r', number: 7 }, gh);
+    expect(fb.items.map((i) => i.authorAssociation)).toEqual(['OWNER', 'MEMBER', 'COLLABORATOR', '']);
+    expect(gh.mock.calls[0]?.[0]?.join(' ').match(/authorAssociation/g)).toHaveLength(3);
   });
 });

@@ -58,3 +58,10 @@ describe('reviewRequestBody', () => {
     expect(body).toBe('Closes owner/repo#42\n\nAutomated implementation of owner/repo#42 by Vanguard.');
   });
 });
+
+it('T17: explains an untrusted manifest even when no conformance ran', () => {
+  const body = reviewRequestBody('o/r#1', { closeIssueOnMerge: true, untrustedManifest: true });
+  expect(body).toContain('Part of o/r#1');
+  expect(body).toContain('came from an unauthorised comment author');
+  expect(body).not.toContain('Closes');
+});

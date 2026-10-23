@@ -84,3 +84,16 @@ it('list() with limit adds -L and the state field to --json (the board call)', a
   expect(calls[0]).toEqual(['issue', 'list', '--repo', 'o/r', '--json', 'number,title,body,labels,state', '--state', 'all', '-L', '50']);
   expect(tasks[0]).toMatchObject({ ref: '9', state: 'closed' });
 });
+
+it('T19: fetch sources the issue author and comment association', async () => {
+  const calls: string[][] = [];
+  const fetcher = new GitHubTaskFetcher('o/r', async (args) => {
+    calls.push(args);
+    return JSON.stringify({ number: 1, title: '', body: '', labels: [], author: { login: 'reporter' },
+      comments: [{ author: { login: 'maintainer' }, authorAssociation: 'OWNER', body: 'spec' }] });
+  });
+  const task = await fetcher.fetch('1');
+  expect(task.author).toBe('reporter');
+  expect(task.comments[0]?.authorAssociation).toBe('OWNER');
+  expect(calls[0]?.at(-1)?.split(',')).toContain('author');
+});

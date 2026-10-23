@@ -15,6 +15,7 @@ export interface GitLabIssue {
   labels: string[];
   /** glab always includes it; carried for the board (S9). */
   state?: string;
+  author?: { username: string };
 }
 
 /** Runs a `glab` subcommand and returns its stdout. Injected so unit tests never call real glab. */
@@ -47,6 +48,7 @@ function toGitLabTask(project: string, issue: GitLabIssue, notes: GitLabNote[] =
     comments,
     ref: String(issue.iid),
     ...(issue.state !== undefined ? { state: issue.state } : {}),
+    ...(issue.author?.username !== undefined ? { author: issue.author.username } : {}),
   };
 }
 

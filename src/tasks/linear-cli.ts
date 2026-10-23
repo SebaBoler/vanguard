@@ -38,13 +38,20 @@ interface LinearCliIssue {
   comments?: LinearCliCommentNode[] | { nodes?: LinearCliCommentNode[] };
 }
 
-/** Accepts comments as either an array or a { nodes: [...] } connection; unknown shapes -> []. */
+/**
+ * Accepts comments as either an array or a { nodes: [...] } connection; unknown shapes -> [].
+ * Every comment is stamped `authorAssociation: 'MEMBER'`: a Linear workspace has no anonymous
+ * commenters, so workspace membership IS the trust gate. Without this, Vanguard's own spec
+ * comment (posted under the API key owner's human name, which does not match isBotLogin) would be
+ * dropped and every Linear run would silently fall back to Part of.
+ */
 function parseComments(comments: LinearCliIssue['comments']): TaskComment[] {
   const nodes = Array.isArray(comments) ? comments : (comments?.nodes ?? []);
   return nodes
     .map((node) => ({
       author: node.user?.name ?? node.user?.displayName ?? node.author?.name ?? node.author?.displayName ?? '',
       body: node.body ?? '',
+      authorAssociation: 'MEMBER',
     }))
     .filter((comment) => comment.body !== ''); // attachment-only comments have no body; skip for v1
 }
