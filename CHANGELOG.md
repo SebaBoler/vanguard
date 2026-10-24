@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.12.0](https://github.com/spietrza/vanguard/compare/v1.11.0...v1.12.0) (2026-10-24)
+
+
+### Features
+
+* **approver:** deterministic APPROVE/ESCALATE for factory PRs, shadow mode ([#557](https://github.com/spietrza/vanguard/issues/557)) ([44196c5](https://github.com/spietrza/vanguard/commit/44196c50d0bd5464763ab8bf448122848fcea529))
+* **approver:** the `Vanguard Approver (shadow)` workflow runs the approver after the factory PR review and comments APPROVE/ESCALATE; it never merges, approves or labels ([#564](https://github.com/spietrza/vanguard/issues/564)) ([b4fca07](https://github.com/spietrza/vanguard/commit/b4fca07eb2a7268fc6ecd94526fb8343932d57a2))
+* **hub:** show how many tasks wait for the factory (spietrza/vanguard[#560](https://github.com/spietrza/vanguard/issues/560)) ([#562](https://github.com/spietrza/vanguard/issues/562)) ([ed440ef](https://github.com/spietrza/vanguard/commit/ed440efd2be76111f4052f6602ae082a1a6887d0))
+* **review:** risk level line after the review verdict (spietrza/vanguard[#559](https://github.com/spietrza/vanguard/issues/559)) ([#561](https://github.com/spietrza/vanguard/issues/561)) ([340425a](https://github.com/spietrza/vanguard/commit/340425a695339c722b786517a8325f49ca11fcd8))
+* revise: refuse fork PRs instead of pushing to a same-named base-repo branch (spietrza/vanguard[#567](https://github.com/spietrza/vanguard/issues/567)) ([#571](https://github.com/spietrza/vanguard/issues/571)) ([c889c81](https://github.com/spietrza/vanguard/commit/c889c81823b061aa08b1b8005f23ebbe135c23f7))
+* revise: trust PR feedback and spec manifests only from authorised authors (spietrza/vanguard[#566](https://github.com/spietrza/vanguard/issues/566)) ([#569](https://github.com/spietrza/vanguard/issues/569)) ([bc92f5f](https://github.com/spietrza/vanguard/commit/bc92f5f32cfe23e799f624fc182d9e554f894133))
+* secret-scan: check injected secret values regardless of path or allowlist marker (spietrza/vanguard[#568](https://github.com/spietrza/vanguard/issues/568)) ([#570](https://github.com/spietrza/vanguard/issues/570)) ([18b69c5](https://github.com/spietrza/vanguard/commit/18b69c599105c0df317152ebe0d890a32d8bc2ff))
+
+
+### Bug Fixes
+
+* **factory:** no double conventional prefix in the factory commit headline ([#553](https://github.com/spietrza/vanguard/issues/553)) ([d4ef178](https://github.com/spietrza/vanguard/commit/d4ef1780bae93534695d3d8caf9cf3430e503729))
+* **revise:** mark the PR ready with VANGUARD_PUSH_TOKEN so the automatic review runs ([#572](https://github.com/spietrza/vanguard/issues/572)) ([0b30b77](https://github.com/spietrza/vanguard/commit/0b30b776d574c999a0ec79c6ddc20449b77d9336))
+
+
+### Documentation
+
+* diagrams show the shadow approver ([#565](https://github.com/spietrza/vanguard/issues/565)) ([f54ee87](https://github.com/spietrza/vanguard/commit/f54ee871047b1b105b28919efea16e8978bf00ee))
+* PR review also fires on ready factory PRs ([#558](https://github.com/spietrza/vanguard/issues/558)) ([7a9def2](https://github.com/spietrza/vanguard/commit/7a9def29cb75e5c83393c72a178209e287d12058))
+* README hero flow as a diagram ([#554](https://github.com/spietrza/vanguard/issues/554)) ([d7b1b8a](https://github.com/spietrza/vanguard/commit/d7b1b8ac7b5a233d8c4315240e5a0d807307b374))
+
 ## [1.11.0](https://github.com/spietrza/vanguard/compare/v1.10.1...v1.11.0) (2026-10-22)
 
 
