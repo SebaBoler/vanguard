@@ -29,10 +29,14 @@ export interface GitHubIssue {
   author?: GitHubCommentAuthor | null;
 }
 
-/** Runs a `gh` subcommand and returns its stdout. Injected so unit tests never call real gh. */
-export type GhRunner = (args: string[]) => Promise<string>;
+/**
+ * Runs a `gh` subcommand and returns its stdout. Injected so unit tests never call real gh.
+ * `env` is merged over the process env for this one call (e.g. a one-off GH_TOKEN override).
+ */
+export type GhRunner = (args: string[], env?: Record<string, string>) => Promise<string>;
 
-export const defaultGhRunner: GhRunner = async (args: string[]): Promise<string> => (await execa('gh', args)).stdout;
+export const defaultGhRunner: GhRunner = async (args, env): Promise<string> =>
+  (await execa('gh', args, env !== undefined ? { env } : {})).stdout;
 
 /** Strips an optional `owner/repo#` prefix, returning just the numeric part. */
 export function issueNumber(ref: string): string {

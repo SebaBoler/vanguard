@@ -732,6 +732,130 @@ describe('runRevisePullRequest — VANGUARD_PUSH_TOKEN', () => {
     expect(pushCall?.args).toEqual(['push', '--no-verify', 'origin', 'HEAD:feature-branch']);
   });
 
+  it('when set, pr ready runs with GH_TOKEN set to the push token', async () => {
+    process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
+    const readyCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+    const gh: GhRunner = async (args, env) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') {
+        readyCalls.push({ args, ...(env !== undefined ? { env } : {}) });
+        return '';
+      }
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(result.undrafted).toBe(true);
+    expect(readyCalls).toHaveLength(1);
+    expect(readyCalls[0]?.env).toEqual({ GH_TOKEN: 'test-pat' });
+  });
+
+  it.each([`ghp_${'B'.repeat(36)}`, 'unrecognized-token-value'])('when token %s is refused, pr ready retries without leaking it', async (pat) => {
+    process.env.VANGUARD_PUSH_TOKEN = pat;
+    const readyCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+    const logs: string[] = [];
+    const gh: GhRunner = async (args, env) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') {
+        readyCalls.push({ args, ...(env !== undefined ? { env } : {}) });
+        if (env?.GH_TOKEN !== undefined) throw new Error(`HTTP 403: Resource not accessible by personal access token ${pat}`);
+        return '';
+      }
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      log: (line) => logs.push(line),
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(result.undrafted).toBe(true);
+    expect(readyCalls).toHaveLength(2);
+    expect(readyCalls[0]?.env).toEqual({ GH_TOKEN: pat });
+    expect(readyCalls[1]?.env).toBeUndefined();
+    // the retry warning never carries the raw token value
+    expect(logs.some((l) => l.includes('retrying with the ambient credential'))).toBe(true);
+    expect(logs.join('\n')).not.toContain(pat);
+  });
+
+  it('when unset, pr ready runs with no env override', async () => {
+    delete process.env.VANGUARD_PUSH_TOKEN;
+    const readyCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+    const gh: GhRunner = async (args, env) => {
+      if (args[0] === 'pr' && args[1] === 'view' && args.some((a) => a.includes('headRefName'))) return makePrViewJson();
+      if (args[0] === 'pr' && args[1] === 'diff') return 'diff --git a/fix.txt';
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const query = args.find((a) => a.startsWith('query=')) ?? '';
+        if (query.includes('reviewThreads')) return makeFeedbackJson();
+        if (query.includes('addPullRequestReviewThreadReply')) return JSON.stringify({ data: {} });
+        if (query.includes('resolveReviewThread')) return JSON.stringify({ data: {} });
+      }
+      if (args[0] === 'pr' && args[1] === 'comment') return '';
+      if (args[0] === 'pr' && args[1] === 'ready') {
+        readyCalls.push({ args, ...(env !== undefined ? { env } : {}) });
+        return '';
+      }
+      if (args[0] === 'label' && args[1] === 'create') return '';
+      if (args[0] === 'pr' && args[1] === 'edit') return '';
+      throw new Error(`unexpected gh call: ${args.join(' ')}`);
+    };
+
+    const result = await runRevisePullRequest('7', {
+      repoPath: repo,
+      repoSlug: 'o/r',
+      gh,
+      _sandbox: makeSandbox(),
+      _agent: agentThatCompletes([]),
+      _worktrees: new WorktreeManager(repo),
+      _pushRunner: async () => '',
+      _baseBranch: 'feature-branch',
+      provider: 'claude',
+    });
+
+    expect(result.undrafted).toBe(true);
+    expect(readyCalls).toHaveLength(1);
+    expect(readyCalls[0]?.env).toBeUndefined();
+  });
+
   it('is never forwarded into the sandbox secrets map (host-only credential)', () => {
     process.env.VANGUARD_PUSH_TOKEN = 'test-pat';
     const selected = selectAgents({ provider: 'claude' }, process.env);
