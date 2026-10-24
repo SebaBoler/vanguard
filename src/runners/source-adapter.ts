@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
 import { sandboxResourceLimits } from '../sandbox/limits.js';
-import { selectAgents, forcedProviderModel } from '../agents/registry.js';
+import { selectAgents, forcedProviderModel, providerKeyEnvNames } from '../agents/registry.js';
 import { DEFAULT_BASE_BRANCH } from '../core/base-branch.js';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { probeTaskDifficulty, decisionProbeConfig } from '../core/decision-probe.js';
@@ -609,6 +609,8 @@ export async function runSourcedIssue(
           : `${conventionalPrTitle(task.title, { bugLabel, ...(scope !== undefined ? { scope } : {}) })} (${task.id})`,
         ...(deps.commitAuthor !== undefined ? { commitAuthor: deps.commitAuthor } : {}),
         ...(partial ? { closingKeywordScan: true } : {}),
+        // A custom provider's key env var is repo-configured: the secret gate cannot know its name.
+        secretEnvVars: providerKeyEnvNames(deps),
         target: {
           kind: 'new-pr',
           title: `${task.title} (${task.id})`,

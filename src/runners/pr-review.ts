@@ -35,6 +35,10 @@ export interface PullRequestForReview extends PullRequestReviewTarget {
   headRefName: string;
   headRefOid: string;
   baseRefName: string;
+  /** True when the PR's head branch lives in a different repository (a fork). */
+  isCrossRepository: boolean;
+  /** Login that owns the head repository; '' when gh did not report one (e.g. the head repo was deleted). */
+  headRepositoryOwner: string;
   diff: string;
 }
 
@@ -79,6 +83,8 @@ interface GhPullRequestView {
   headRefName?: string;
   headRefOid?: string;
   baseRefName?: string;
+  isCrossRepository?: boolean;
+  headRepositoryOwner?: { login?: string } | null;
 }
 
 const PR_URL_RE = /^https?:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)(?:[/?#].*)?$/;
@@ -134,7 +140,7 @@ export function parsePullRequestUrl(url: string): PullRequestReviewTarget {
 export async function fetchPullRequestForReview(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<PullRequestForReview> {
   const number = String(target.number);
   const view = JSON.parse(
-    await gh(['pr', 'view', number, '--repo', target.repoSlug, '--json', 'number,title,body,url,author,headRefName,headRefOid,baseRefName']),
+    await gh(['pr', 'view', number, '--repo', target.repoSlug, '--json', 'number,title,body,url,author,headRefName,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner']),
   ) as GhPullRequestView;
   const diff = omitGeneratedFiles(await gh(['pr', 'diff', number, '--repo', target.repoSlug]));
   return {
@@ -147,6 +153,8 @@ export async function fetchPullRequestForReview(target: PullRequestReviewTarget,
     headRefName: view.headRefName ?? '',
     headRefOid: view.headRefOid ?? '',
     baseRefName: view.baseRefName ?? '',
+    isCrossRepository: view.isCrossRepository ?? false,
+    headRepositoryOwner: view.headRepositoryOwner?.login ?? '',
     diff,
   };
 }

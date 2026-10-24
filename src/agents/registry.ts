@@ -268,6 +268,15 @@ export function claudeCliKeyEnv(name: string, customs?: readonly CustomProviderE
 }
 
 /**
+ * Every host env var name a run's providers read a key from, deduped. Fed to the outgoing-secret gate
+ * (deliver-change) so a custom provider's repo-configured `keyEnv` — which no static list can name —
+ * is checked against the outgoing diff like the built-in credentials are.
+ */
+export function providerKeyEnvNames(choice: ProviderChoice): string[] {
+  return [...new Set(usedProviderNames(choice).flatMap((name) => claudeCliKeyEnv(name, choice.customProviders) ?? []))];
+}
+
+/**
  * Collect the API-key secrets for the given providers, read from env and split into two buckets:
  * `sandboxSecrets` (the env vars the providers' CLIs read inside the sandbox) and `proxySecrets` (real
  * keys held by trusted sidecars, never injected into the sandbox). Throws if a selected provider's key

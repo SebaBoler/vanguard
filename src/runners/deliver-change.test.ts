@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { execa } from 'execa';
 import { prepareContext, disposeContext } from '../core/vanguard.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import { conventionalPrTitle, deliverChange } from './deliver-change.js';
+import { conventionalPrTitle, deliverChange, scanOutgoingForSecrets } from './deliver-change.js';
+import { renderSecretBlockComment } from '../core/secret-scan.js';
 import type { IsolatedSandboxProvider, ExecResult } from '../sandbox/provider.js';
 
 let repo: string;
@@ -136,6 +137,85 @@ describe('deliverChange', () => {
     expect(gh?.[gh.indexOf('--title') + 1]).toBe('feat: thing (o/r#7)');
     expect(gh?.[gh.indexOf('--body') + 1]).toMatch(/leaks=[1-9]/);
     expect(calls.some((c) => c[0] === 'git' && c[1] === 'push')).toBe(true);
+  });
+
+  it('redacts an injected credential out of the commit message, the PR title (scope included) and the body, logging counts only', async () => {
+    const credential = 'opaque-credential-92837';
+    const logged: string[] = [];
+    const log = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { logged.push(args.join(' ')); });
+    const calls: string[][] = [];
+    try {
+      vi.stubEnv('OPENAI_API_KEY', credential);
+      await withWork('work', async (ctx) => {
+        const r = await deliverChange(ctx, {
+          taskId: 'o/r#7',
+          commitMessage: `feat: thing ${credential}`,
+          target: {
+            kind: 'new-pr',
+            title: `thing ${credential}`,
+            scope: credential,
+            body: () => `body ${credential}`,
+            runner: async (file, a) => {
+              calls.push([file, ...a]);
+              return file === 'gh' ? 'https://github.com/o/r/pull/9' : '';
+            },
+          },
+        });
+        expect(r.kind).toBe('delivered-pr');
+        expect((await execa('git', ['log', '-1', '--format=%s'], { cwd: ctx.worktreePath })).stdout).toBe('feat: thing [REDACTED-INJECTED]');
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      log.mockRestore();
+    }
+    const gh = calls.find((c) => c[0] === 'gh');
+    expect(gh?.[gh.indexOf('--title') + 1]).toBe('feat([REDACTED-INJECTED]): thing [REDACTED-INJECTED]');
+    expect(gh?.[gh.indexOf('--body') + 1]).toBe('body [REDACTED-INJECTED]');
+    expect(JSON.stringify(calls)).not.toContain(credential);
+    // One count-only line per redacted field (commit message, PR title, PR body), never the value.
+    expect(logged.filter((l) => l.includes('redacted'))).toEqual([
+      'vanguard: redacted 1 injected credential occurrence(s) from the commit message for o/r#7 (values withheld)',
+      'vanguard: redacted 2 injected credential occurrence(s) from the PR title for o/r#7 (values withheld)',
+      'vanguard: redacted 1 injected credential occurrence(s) from the PR body for o/r#7 (values withheld)',
+    ]);
+    expect(logged.join('\n')).not.toContain(credential);
+  });
+});
+
+describe('scanOutgoingForSecrets: injected credentials', () => {
+  // Long and high-entropy like a real credential, but matching no SECRET_PATTERNS entry: only the
+  // exact-value check against the run's own injected secrets can catch it.
+  const credential = 'opaque-credential-92837';
+  const diffOf = (line: string, path = 'tests/example.ts'): string =>
+    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,3 @@\n context\n-old\n+${line}\n+tail`;
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('blocks on an injected credential the pattern scan exempts (test path + allowlist marker), with no pattern findings', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('OPENAI_API_KEY', credential);
+    const block = scanOutgoingForSecrets(diffOf(`${credential} // gitleaks:allow`), 'T-1');
+    expect(block).toEqual({ reason: 'findings', findings: [], injected: [{ file: 'tests/example.ts', line: 2 }] });
+  });
+
+  it('checks a caller-supplied extra env var name (a custom provider keyEnv)', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('ACME_LLM_KEY', credential);
+    expect(scanOutgoingForSecrets(diffOf(credential), 'T-1')).toBeUndefined();
+    expect(scanOutgoingForSecrets(diffOf(credential), 'T-1', 'publish', ['ACME_LLM_KEY'])?.reason).toBe('findings');
+  });
+
+  it('never prints the credential in the block, the log line, or the comment', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('OPENAI_API_KEY', credential);
+    const block = scanOutgoingForSecrets(diffOf(`Bearer abc123 ${credential}`, `${credential}.txt`), 'T-1');
+    expect(block?.reason).toBe('findings');
+    expect(JSON.stringify(block)).not.toContain(credential);
+    expect(JSON.stringify(log.mock.calls)).not.toContain(credential);
+    expect(renderSecretBlockComment(block!)).not.toContain(credential);
   });
 });
 

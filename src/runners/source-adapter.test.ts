@@ -128,6 +128,7 @@ import { selectAgents } from '../agents/registry.js';
 vi.mock('../agents/registry.js', () => ({
   selectAgents: vi.fn(() => ({ agent: { name: 'claude' }, secrets: {}, proxySecrets: {}, injectAnthropicAuth: false })),
   forcedProviderModel: vi.fn(() => undefined),
+  providerKeyEnvNames: vi.fn(() => []),
 }));
 const { wmDiff, wmCommitMessages } = vi.hoisted(() => ({
   wmDiff: vi.fn(async () => ''),
