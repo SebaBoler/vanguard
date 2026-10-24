@@ -167,6 +167,31 @@ async function handBackPrLabels(
 }
 
 /**
+ * Un-draft the PR. With a pushToken, try `pr ready` as the token's owner first (GH_TOKEN for this one
+ * call): a `ready_for_review` event from the ambient GITHUB_TOKEN starts no workflows, so the review
+ * workflow's label-factory-pr job never fires on the final commit (#557). Refused (e.g. no Pull
+ * requests: write) → retry with the ambient credential so the PR still leaves draft.
+ */
+async function markReady(
+  gh: GhRunner,
+  repoSlug: string,
+  number: number,
+  pushToken: string | undefined,
+  log: (line: string) => void,
+): Promise<void> {
+  const args = ['pr', 'ready', String(number), '--repo', repoSlug];
+  if (pushToken) {
+    try {
+      await gh(args, { GH_TOKEN: pushToken });
+      return;
+    } catch {
+      log(`revise-pr ${repoSlug}#${number}: pr ready with VANGUARD_PUSH_TOKEN failed, retrying with the ambient credential`);
+    }
+  }
+  await gh(args);
+}
+
+/**
  * Run one PR revision round: read human review feedback, apply fixes on the existing PR branch,
  * reply to and resolve addressed threads, un-draft the PR, and flip the labels.
  */
@@ -533,8 +558,8 @@ export async function runRevisePullRequest(prRef: string, deps: ReviseGithubPrDe
       });
       await commentPullRequest(target, [summaryText, droppedCiPathsNote(ctx.droppedCiPaths)].filter((part) => part !== '').join('\n\n'), gh);
 
-      log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready`);
-      await gh(['pr', 'ready', String(target.number), '--repo', target.repoSlug]);
+      log(`revise-pr ${target.repoSlug}#${target.number}: undraft -> pr ready${pushToken ? ' (VANGUARD_PUSH_TOKEN)' : ''}`);
+      await markReady(gh, target.repoSlug, target.number, pushToken, log);
 
       await handBackPrLabels(gh, target.repoSlug, target.number, log);
 
