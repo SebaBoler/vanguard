@@ -23,6 +23,7 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   const baseDeps = {
+    ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
     repoPath: cmd.repoPath,
     signal: controller.signal,
     ...(cmd.repoSlug !== undefined ? { repoSlug: cmd.repoSlug } : {}),
@@ -62,6 +63,8 @@ export async function revisePrCommand(cmd: RevisePrCommand, deps: RevisePrComman
 }
 
 function logResult(result: ReviseGithubPrResult, log: (line: string) => void): void {
+  // Ignored-author lines are logged by runRevisePullRequest itself (through this same `log`) — printing
+  // them here too would duplicate every line.
   const id = `${result.pr.repoSlug}#${result.pr.number}`;
   if (result.secretBlocked === true) {
     log(`revise-pr ${id}: BLOCKED — the revision diff carries a secret; nothing pushed (${result.addressed} item(s) abandoned)`);

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { GitHubTaskFetcher, linkPullRequest } from './github.js';
+import { isTrustedComment } from './comment-trust.js';
 import type { GhRunner } from './github.js';
 
 function fakeGh(): GhRunner {
@@ -39,14 +40,48 @@ describe('GitHubTaskFetcher', () => {
     const gh: GhRunner = async (): Promise<string> => JSON.stringify(issueWithComments);
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', gh).fetch('7');
     expect(task.comments).toEqual([
-      { author: 'alice', body: 'First comment' },
-      { author: 'bob', body: 'Second comment' },
+      { author: 'alice', authorAssociation: '', body: 'First comment' },
+      { author: 'bob', authorAssociation: '', body: 'Second comment' },
     ]);
   });
 
   it('defaults comments to [] when the issue has no comments field', async () => {
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', fakeGh()).fetch('7');
     expect(task.comments).toEqual([]);
+  });
+
+  it('T19: fetch sources the issue author and comment association', async () => {
+    const calls: string[][] = [];
+    const fetcher = new GitHubTaskFetcher('o/r', async (args) => {
+      calls.push(args);
+      return JSON.stringify({ number: 1, title: '', body: '', labels: [], author: { login: 'reporter' },
+        comments: [{ author: { login: 'maintainer' }, authorAssociation: 'OWNER', body: 'spec' }] });
+    });
+    const task = await fetcher.fetch('1');
+    expect(task.author).toBe('reporter');
+    expect(task.comments[0]?.authorAssociation).toBe('OWNER');
+    expect(calls[0]?.at(-1)?.split(',')).toContain('author');
+  });
+
+  // GitHub always models an association, so a missing one fails closed (unlike GitLab, which models
+  // none) — and the fetcher warns, since a future gh that drops the field would mute every human.
+  it('fails closed and warns when gh returned no association at all', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const gh = async (): Promise<string> =>
+        JSON.stringify({ number: 1, title: '', body: '', labels: [], comments: [{ author: { login: 'alice' }, body: 'hi' }] });
+      const task = await new GitHubTaskFetcher('o/r', gh).fetch('1');
+      expect(task.comments[0]?.authorAssociation).toBe('');
+      expect(isTrustedComment(task.comments[0]!)).toBe(false);
+      expect(warn.mock.calls[0]?.[0]).toContain('no authorAssociation');
+      warn.mockClear();
+      const withAssociation = async (): Promise<string> =>
+        JSON.stringify({ number: 1, title: '', body: '', labels: [], comments: [{ author: { login: 'alice' }, authorAssociation: 'NONE', body: 'hi' }] });
+      await new GitHubTaskFetcher('o/r', withAssociation).fetch('1');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

@@ -1,3 +1,4 @@
+import { trustedSpecText } from '../tasks/comment-trust.js';
 import { describe, expect, it } from 'vitest';
 import {
   parseSpecManifest,
@@ -49,6 +50,20 @@ describe('parseSpecManifest', () => {
   it('returns undefined for a malformed manifest block', () => {
     expect(parseSpecManifest('<spec_manifest>{ not json }</spec_manifest>')).toBeUndefined();
     expect(parseSpecManifest('<spec_manifest>{"files":"nope"}</spec_manifest>')).toBeUndefined();
+  });
+
+  it('returns undefined for prose that merely names the tag', () => {
+    expect(parseSpecManifest('we should gate the <spec_manifest> on author trust')).toBeUndefined();
+  });
+
+  it('T18: keeps last-wins only among trusted manifests', () => {
+    const block = (path: string): string => '<spec_manifest>' + JSON.stringify({ files: [{ path }] }) + '</spec_manifest>';
+    const first = { author: 'a', authorAssociation: 'OWNER', body: block('first.ts') };
+    const last = { author: 'b', authorAssociation: 'MEMBER', body: block('last.ts') };
+    const task = { id: '1', title: '', description: '', labels: [], children: [], comments: [first, last] };
+    expect(parseSpecManifest(trustedSpecText(task))?.files?.[0]?.path).toBe('last.ts');
+    task.comments = [first, { ...last, authorAssociation: 'NONE' }];
+    expect(parseSpecManifest(trustedSpecText(task))?.files?.[0]?.path).toBe('first.ts');
   });
 });
 
@@ -330,3 +345,4 @@ describe('primaryModuleScope', () => {
     expect(primaryModuleScope({ files: files.slice(0, 2) })).toBe('hub');
   });
 });
+

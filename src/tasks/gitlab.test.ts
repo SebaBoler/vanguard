@@ -25,6 +25,7 @@ describe('encodeProject', () => {
 describe('GitLabTaskFetcher', () => {
   const fakeIssue = JSON.stringify({
     iid: 42,
+    author: { username: 'reporter' },
     title: 'Fix bug',
     description: 'Details',
     labels: ['backend'],
@@ -45,6 +46,8 @@ describe('GitLabTaskFetcher', () => {
     const task = await fetcher.fetch('owner/project#42');
     expect(task.id).toBe('owner/project#42');
     expect(task.title).toBe('Fix bug');
+    expect(task.author).toBe('reporter');
+    expect(task.comments[0]).not.toHaveProperty('authorAssociation');
     expect(task.comments).toHaveLength(1);
     expect(task.comments[0]!.author).toBe('alice');
     expect(calls[0]).toContain('42');

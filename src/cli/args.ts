@@ -63,6 +63,7 @@ export type Command =
     }
   | {
       kind: 'revise-pr';
+      feedbackAuthors?: string[];
       prRef: string;
       repoSlug?: string;
       repoPath: string;
@@ -331,9 +332,22 @@ type CheckedRunFlags = Exhaustive<
   Pick<SharedRunOptions, 'provider' | 'reviewProvider' | 'fallbackProvider' | 'fallbackModel' | 'commitAuthor' | 'flow' | 'maxTurns' | 'maxRepairIterations'>
 >;
 
+/** `--feedback-authors a, b ,A` -> ['a','b']; an empty or separator-only value -> undefined, not []. */
+function parseFeedbackAuthors(value: string | boolean | undefined): string[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const seen = new Set<string>();
+  const authors = value.split(',').map((a) => a.trim()).filter((a) => {
+    if (!a || seen.has(a.toLowerCase())) return false;
+    seen.add(a.toLowerCase());
+    return true;
+  });
+  return authors.length > 0 ? authors : undefined;
+}
+
 /** The one CLI → RunOptions mapping, used by run and watch so the two cannot drift. */
 function parseRunOptions(values: Record<string, string | boolean | undefined>, checked: CheckedRunFlags): SharedRunOptions {
   return present<SharedRunOptions>({
+    feedbackAuthors: parseFeedbackAuthors(values['feedback-authors']),
     provider: checked.provider,
     reviewProvider: checked.reviewProvider,
     fallbackProvider: checked.fallbackProvider,
@@ -469,6 +483,7 @@ export function parseCli(argv: string[], cwd: string): Command {
         // watch loop-v1
         'spec-label': { type: 'string' },
         'spec-file': { type: 'string' },
+        'feedback-authors': { type: 'string' },
         'agent-label': { type: 'string' },
         'needs-info-label': { type: 'string' },
         'spec-claimed-label': { type: 'string' },
@@ -813,8 +828,10 @@ export function parseCli(argv: string[], cwd: string): Command {
         : positionals[1];
     if (prRef === undefined) return { kind: 'help' };
     const maxRounds = parseLimit(values['max-rounds']);
+    const feedbackAuthors = parseFeedbackAuthors(values['feedback-authors']);
     return {
       kind: 'revise-pr',
+      ...(feedbackAuthors !== undefined ? { feedbackAuthors } : {}),
       prRef,
       repoPath,
       ...(typeof values.skills === 'string' ? { skillsDir: values.skills } : {}),
@@ -1316,6 +1333,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --fork <n>               Run the implementer as n variants (n>=2) and keep the best-scored diff
     --fork-scorer <llm|decision>  How --fork variants are scored: a one-shot LLM verdict (default) or a
                              decision model (clef; needs CLOUDFLARE_ACCOUNT_ID+CLOUDFLARE_AUTH_TOKEN or VANGUARD_DECISION_URL)
+    --feedback-authors <a,b> Extra GitHub/GitLab logins whose PR feedback and <spec_manifest>/<tech_spec> comments are trusted, beyond OWNER/MEMBER/COLLABORATOR and the issue author (pass the workflow's allowed-actors here)
     --spec-file <file>       Inject a local spec file as a virtual issue comment (implementer + conformance read it; nothing is posted to the tracker)
 
   review-pr options:
@@ -1361,6 +1379,7 @@ ${MAX_REPAIR_ITERATIONS_USAGE}
     --github-repo <o/r>    Required for bare PR numbers
     --provider <claude|codex|cursor|zai|openrouter|meridian>          Provider for the implementer/review stages (default: claude)
     --review-model <m>     Model for the review stage
+    --feedback-authors <a,b> Extra GitHub/GitLab logins whose PR feedback and <spec_manifest>/<tech_spec> comments are trusted, beyond OWNER/MEMBER/COLLABORATOR and the issue author (pass the workflow's allowed-actors here)
     --max-rounds <n>       Maximum revision rounds (default: 2)
     --egress --llm-proxy --skills <dir> --repo <path>  As for run/watch (--skills: the repo's .github/vanguard-skills/ is merged in)
 

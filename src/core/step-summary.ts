@@ -21,6 +21,8 @@ export interface StepSummary {
   risk?: string;
   /** The thrown error, when `exit` is 'error'. */
   error?: string;
+  /** Freeform lines rendered as `- Note: <line>` entries, e.g. ignored-feedback-author lines. */
+  notes?: string[];
 }
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
@@ -43,6 +45,7 @@ export function renderStepSummary(summary: StepSummary): string {
     summary.prUrl !== undefined ? `- PR: ${summary.prUrl}` : undefined,
     summary.verdict !== undefined ? `- Verdict: ${summary.verdict}` : undefined,
     summary.risk !== undefined ? `- Risk: ${summary.risk}` : undefined,
+    ...(summary.notes ?? []).map((note) => `- Note: ${note}`),
     summary.error !== undefined ? `- Error: ${summary.error}` : undefined,
   ].filter((line): line is string => line !== undefined);
   return [

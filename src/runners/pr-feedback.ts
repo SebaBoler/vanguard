@@ -1,3 +1,4 @@
+import { classifyAuthor, isBotLogin } from '../tasks/comment-trust.js';
 import { hasPullRequestReviewIncompleteMarker, hasPullRequestReviewMarker } from './pr-review.js';
 import { defaultGhRunner } from '../tasks/github.js';
 import { AUTHORITATIVE_BLOCK_INSTRUCTION, neutralizePromptTags } from './review-prompt.js';
@@ -11,6 +12,7 @@ export interface FeedbackItem {
   /** True when the owning thread is resolved; undefined for review/comment sources. */
   isResolved?: boolean;
   author: string;
+  authorAssociation: string;
   body: string;
   /** ISO timestamp; empty string when GitHub omits it. */
   createdAt: string;
@@ -32,6 +34,7 @@ export interface PullRequestFeedback {
 }
 
 export interface ActionableOptions {
+  feedbackAuthors?: readonly string[] | undefined;
   /** Extra logins to treat as bots (in addition to the built-in heuristic). */
   botLogins?: string[];
   /** Current PR head SHA — items with this SHA's marker in their body are skipped. */
@@ -50,10 +53,10 @@ const FEEDBACK_QUERY = [
   '      isDraft headRefOid',
   '      commits(last:1){ nodes{ commit{ committedDate } } }',
   '      reviewThreads(first:100){',
-  '        nodes{ id isResolved comments(first:50){ nodes{ author{ login } body createdAt } } }',
+  '        nodes{ id isResolved comments(first:50){ nodes{ author{ login } authorAssociation body createdAt } } }',
   '      }',
-  '      reviews(first:100){ nodes{ author{ login } body state submittedAt } }',
-  '      comments(first:100){ nodes{ author{ login } body createdAt } }',
+  '      reviews(first:100){ nodes{ author{ login } authorAssociation body state submittedAt } }',
+  '      comments(first:100){ nodes{ author{ login } authorAssociation body createdAt } }',
   '    }',
   '  }',
   '}',
@@ -61,12 +64,14 @@ const FEEDBACK_QUERY = [
 
 interface GqlComment {
   author?: { login?: string } | null;
+  authorAssociation?: string;
   body?: string;
   createdAt?: string;
 }
 
 interface GqlReview {
   author?: { login?: string } | null;
+  authorAssociation?: string;
   body?: string;
   state?: string;
   submittedAt?: string;
@@ -145,6 +150,7 @@ export async function fetchPullRequestFeedback(
         threadId,
         isResolved,
         author: comment?.author?.login ?? '',
+        authorAssociation: comment?.authorAssociation ?? '',
         body: comment?.body ?? '',
         createdAt: comment?.createdAt ?? '',
       };
@@ -162,6 +168,7 @@ export async function fetchPullRequestFeedback(
     items.push({
       source: 'review',
       author: review?.author?.login ?? '',
+      authorAssociation: review?.authorAssociation ?? '',
       body: review?.body ?? '',
       createdAt: review?.submittedAt ?? '',
     });
@@ -174,6 +181,7 @@ export async function fetchPullRequestFeedback(
     items.push({
       source: 'comment',
       author: comment?.author?.login ?? '',
+      authorAssociation: comment?.authorAssociation ?? '',
       body: comment?.body ?? '',
       createdAt: comment?.createdAt ?? '',
     });
@@ -182,35 +190,41 @@ export async function fetchPullRequestFeedback(
   return { headRefOid, headCommittedDate, isDraft, items, threads };
 }
 
-function isBotAuthor(login: string, extraBotLogins: string[]): boolean {
-  const lower = login.toLowerCase();
-  return (
-    lower.includes('vanguard') ||
-    lower.endsWith('[bot]') ||
-    lower === 'github-actions' ||
-    extraBotLogins.some((b) => lower === b.toLowerCase())
-  );
-}
-
 /**
  * Filter PullRequestFeedback down to items Vanguard should act on this round.
  * Drops: bot-authored items, items carrying the current head's PR-review marker,
  * Vanguard's incomplete-review notices (the bot heading plus the marker on its own line),
  * items in resolved threads, and items older than the head commit (watermark).
  */
-export function selectActionableFeedback(fb: PullRequestFeedback, opts: ActionableOptions): FeedbackItem[] {
+export interface FeedbackPartition {
+  actionable: FeedbackItem[];
+  /** Items dropped solely for author trust, after the existing filters. */
+  ignoredAuthors: FeedbackItem[];
+}
+
+export function partitionActionableFeedback(fb: PullRequestFeedback, opts: ActionableOptions): FeedbackPartition {
+  const ignoredAuthors: FeedbackItem[] = [];
   const extraBots = opts.botLogins ?? [];
   const watermark = opts.headCommittedDate !== undefined ? opts.headCommittedDate : fb.headCommittedDate;
 
-  return fb.items.filter((item) => {
-    if (isBotAuthor(item.author, extraBots)) return false;
+  const actionable = fb.items.filter((item) => {
+    if (isBotLogin(item.author, extraBots)) return false;
     if (hasPullRequestReviewMarker(item.body, opts.headRefOid)) return false;
     if (hasPullRequestReviewIncompleteMarker(item.body)) return false;
     if (hasRevisionMarker(item.body)) return false;
     if (item.isResolved === true) return false;
     if (watermark !== '' && item.createdAt !== '' && item.createdAt <= watermark) return false;
+    if (classifyAuthor(item.author, item.authorAssociation, { allowedAuthors: opts.feedbackAuthors }) === 'untrusted') {
+      ignoredAuthors.push(item);
+      return false;
+    }
     return true;
   });
+  return { actionable, ignoredAuthors };
+}
+
+export function selectActionableFeedback(fb: PullRequestFeedback, opts: ActionableOptions): FeedbackItem[] {
+  return partitionActionableFeedback(fb, opts).actionable;
 }
 
 const SOURCE_LABEL: Record<FeedbackItem['source'], string> = {
@@ -298,19 +312,15 @@ function hasRevisionMarker(body: string): boolean {
 }
 
 /** Count how many revision rounds Vanguard has already completed on this PR. */
-export function countRevisionRoundsFromFeedback(fb: PullRequestFeedback): number {
+export function countRevisionRoundsFromFeedback(fb: PullRequestFeedback, opts: Pick<ActionableOptions, 'feedbackAuthors' | 'botLogins'> = {}): number {
   const rounds = new Set<string>();
   for (const item of fb.items) {
+    if (classifyAuthor(item.author, item.authorAssociation, { allowedAuthors: opts.feedbackAuthors, botLogins: opts.botLogins }) === 'untrusted') continue;
     for (const match of item.body.matchAll(REVISION_MARKER_RE)) {
       if (match[1] !== undefined) rounds.add(match[1]);
     }
   }
   return rounds.size;
-}
-
-/** Count how many revision rounds Vanguard has already completed on this PR. */
-export async function countRevisionRounds(target: PullRequestReviewTarget, gh: GhRunner = defaultGhRunner): Promise<number> {
-  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback(target, gh));
 }
 
 /**
@@ -340,7 +350,7 @@ export function referenceSnippet(item: FeedbackItem): string {
 /**
  * Body for one non-threadable acknowledgement reply.
  * Includes a referencing snippet, commit SHA, and the revision marker so
- * selectActionableFeedback / countRevisionRounds skip this comment next round.
+ * selectActionableFeedback / countRevisionRoundsFromFeedback skip this comment next round.
  */
 export function buildItemReply(
   item: FeedbackItem,

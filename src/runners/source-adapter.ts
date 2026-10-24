@@ -1,3 +1,4 @@
+import { trustedSpecText, isTrustedComment } from '../tasks/comment-trust.js';
 import { readFile } from 'node:fs/promises';
 import { taskToVariables } from '../tasks/fetcher.js';
 import { DockerSandboxProvider, sandboxImage } from '../sandbox/docker.js';
@@ -94,6 +95,7 @@ export interface RunOptions extends ProviderChoice {
    * to the tracker. Pairs with `vanguard spec --out` for a no-trace client-repo flow. Set via --spec-file.
    */
   specFile?: string;
+  feedbackAuthors?: string[];
   /**
    * Skills directory injected into the sandbox (Vanguard's bundled `skills/` in the factory), merged
    * with the target repo's own `.github/vanguard-skills/`. Set via --skills.
@@ -110,6 +112,7 @@ export interface RunOptions extends ProviderChoice {
  */
 export function pickRunOptions(cmd: Readonly<Partial<RunOptions>>): RunOptions {
   return {
+    ...(cmd.feedbackAuthors !== undefined ? { feedbackAuthors: cmd.feedbackAuthors } : {}),
     ...(cmd.provider !== undefined ? { provider: cmd.provider } : {}),
     ...(cmd.reviewProvider !== undefined ? { reviewProvider: cmd.reviewProvider } : {}),
     ...(cmd.fallbackProvider !== undefined ? { fallbackProvider: cmd.fallbackProvider } : {}),
@@ -345,7 +348,7 @@ export async function runSourcedIssue(
       ? fetchedTask
       : {
           ...fetchedTask,
-          comments: [...fetchedTask.comments, { author: 'spec-file', body: await readSpecFile(deps.specFile) }],
+          comments: [...fetchedTask.comments, { author: 'spec-file', authorAssociation: 'OWNER', body: await readSpecFile(deps.specFile) }],
         };
 
   // White-label mode (triggered by --commit-author): the PR is delivered as a plain, human-looking PR.
@@ -498,8 +501,14 @@ export async function runSourcedIssue(
       // "iterate the implement loop", not "open PR and hope". Exhausting the cap (or having no
       // resumable session) falls through to a declared-partial PR (reviewRequestBody below), never a
       // silent `Closes` with either gate red.
-      const specText = task.comments.map((comment) => comment.body).join('\n');
+      const trust = { allowedAuthors: deps.feedbackAuthors, issueAuthor: task.author };
+      const specText = trustedSpecText(task, trust);
       const manifest = parseSpecManifest(specText);
+      // A *parseable* manifest only: prose that merely names the tag must not downgrade delivery.
+      const untrustedManifestDropped = manifest === undefined && task.comments.some(
+        (c) => !isTrustedComment(c, trust) && parseSpecManifest(c.body) !== undefined,
+      );
+      if (untrustedManifestDropped) console.log(`vanguard: ${task.id} ignoring <spec_manifest> from untrusted comment author(s) — declaring partial scope (Part of)`);
       const verifyCmd = await resolveVerifyCommand(ctx.worktreePath, deps.verifyCmd !== undefined ? { cmd: deps.verifyCmd } : {});
 
       // The implementer's position in `outcomes` is fixed while its session is resumable (repairUntilGreen
@@ -574,9 +583,10 @@ export async function runSourcedIssue(
       // forces the declared-partial path even when conformance itself passed.
       const verificationFailed = verification !== undefined && !verification.passed;
       const visualProofFailed = visualProof !== undefined && !visualProof.passed;
-      const partial = !gatePassed;
+      const partial = !gatePassed || untrustedManifestDropped;
       const baseBody = reviewRequestBody(task.id, {
         closeIssueOnMerge: !!adapter.closeIssueOnMerge,
+        ...(untrustedManifestDropped ? { untrustedManifest: true } : {}),
         ...(manifest !== undefined ? { conformance, manifest } : {}),
         ...(verificationFailed ? { verificationFailed: true } : {}),
         ...(!implementerDone ? { implementerIncomplete: true } : {}),

@@ -13,6 +13,8 @@ export interface GitHubComment {
   author: GitHubCommentAuthor | null; // gh returns null for deleted accounts; justifies optional chaining in toTask()
   body: string;
   createdAt: string;
+  /** GitHub CommentAuthorAssociation (e.g. OWNER/MEMBER/COLLABORATOR/CONTRIBUTOR/NONE). */
+  authorAssociation?: string;
 }
 
 export interface GitHubIssue {
@@ -23,6 +25,8 @@ export interface GitHubIssue {
   comments?: GitHubComment[];
   /** Present only when list() requests it (S9 board). */
   state?: string;
+  /** Issue author; added to fetch()'s --json field list (never on list(), which fetches no comments either). */
+  author?: GitHubCommentAuthor | null;
 }
 
 /**
@@ -44,7 +48,15 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
   const comments: TaskComment[] = (issue.comments ?? []).map((comment) => ({
     author: comment.author?.login ?? '',
     body: comment.body ?? '',
+    // GitHub models an association on every comment and gh returns it on `issue view --json comments`,
+    // so a missing one is mapped to '' and fails closed (see classifyAuthor). Only providers that model
+    // none at all (GitLab) keep the absent-means-no-signal path.
+    authorAssociation: comment.authorAssociation ?? '',
   }));
+  // A future gh that drops the field would turn every non-bot comment untrusted: say it out loud.
+  if (comments.length > 0 && (issue.comments ?? []).every((c) => c.authorAssociation === undefined)) {
+    console.warn(`vanguard: ${repo}#${issue.number} — gh returned no authorAssociation on any comment; non-bot comments are treated as untrusted`);
+  }
   return {
     id: `${repo}#${issue.number}`,
     title: issue.title,
@@ -54,6 +66,7 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
     comments,
     ref: String(issue.number),
     ...(issue.state !== undefined ? { state: issue.state } : {}),
+    ...(issue.author?.login !== undefined ? { author: issue.author.login } : {}),
   };
 }
 
@@ -66,7 +79,7 @@ export class GitHubTaskFetcher implements TaskFetcher {
 
   async fetch(id: string): Promise<Task> {
     const number = issueNumber(id);
-    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels,comments']);
+    const out = await this.gh(['issue', 'view', number, '--repo', this.repo, '--json', 'number,title,body,labels,comments,author']);
     return toTask(this.repo, JSON.parse(out) as GitHubIssue);
   }
 

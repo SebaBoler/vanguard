@@ -50,3 +50,16 @@ describe('GitHubProjectFetcher', () => {
     expect(task.id).toBe('other/repo#3');
   });
 });
+
+it('T19: project fetch requests and preserves issue/comment author trust data', async () => {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    return JSON.stringify({ number: 1, title: 't', body: '', labels: [], author: { login: 'reporter' },
+      comments: [{ author: { login: 'maintainer' }, authorAssociation: 'MEMBER', body: 'spec' }] });
+  };
+  const task = await new GitHubProjectFetcher({ owner: 'o', projectNumber: 1, repo: 'o/r', gh }).fetch('1');
+  expect(calls[0]?.at(-1)?.split(',')).toContain('author');
+  expect(task.author).toBe('reporter');
+  expect(task.comments[0]?.authorAssociation).toBe('MEMBER');
+});

@@ -1,3 +1,4 @@
+import { isTrustedNonAuthorComment } from '../tasks/comment-trust.js';
 import { LinearCliTaskFetcher, setLinearState, commentLinearIssue } from '../tasks/linear-cli.js';
 import { GitHubTaskFetcher, editGithubLabels, commentGithubIssue, defaultGhRunner } from '../tasks/github.js';
 import { GitLabTaskFetcher, editGitlabLabels, commentGitlabIssue, defaultGlabRunner } from '../tasks/gitlab.js';
@@ -348,7 +349,7 @@ export function linearWatchPrimitives(opts: WatchLinearOptions): WatchPrimitives
             triageAgentRun(id, fetcher, (i) => runLinearIssue(i, opts.deps), {
               comment: (body) => commentLinearIssue(id, body, opts.linear),
               toNeedsInfo: () => setLinearState(id, needsInfoState, opts.linear),
-            }),
+            }, opts.deps.feedbackAuthors),
     review: (id) => setLinearState(id, opts.reviewState, opts.linear),
     onNoChange: (id) =>
       commentAndRevert(
@@ -420,8 +421,9 @@ async function runSpecCore(
   actions: RunSpecCoreActions,
 ): Promise<'advanced' | 'needs_info'> {
   // (a) Idempotent retry: if a Vanguard-generated spec is already posted skip regeneration and just
-  // advance — cheap, no duplicate spec comment / wasted sandbox+LLM.
-  if (task.comments.some((c) => isVanguardSpec(c))) {
+  // advance — cheap, no duplicate spec comment / wasted sandbox+LLM. Issue-author trust is excluded
+  // here: the reporter must not be able to skip spec generation with a forged <tech_spec>.
+  if (task.comments.some((c) => isTrustedNonAuthorComment(c, { allowedAuthors: deps.feedbackAuthors }) && isVanguardSpec(c))) {
     await actions.advance();
     return 'advanced';
   }
@@ -458,9 +460,10 @@ async function triageAgentRun(
     comment: (body: string) => Promise<void>;
     toNeedsInfo: () => Promise<void>;
   },
+  allowedAuthors?: readonly string[],
 ): Promise<WatchRunOutcome> {
   const task = await fetcher.fetch(id);
-  if (assessTaskReadiness(task, 'agent') === 'needs_info') {
+  if (assessTaskReadiness(task, 'agent', { allowedAuthors }) === 'needs_info') {
     await action.comment(clarifyMessage('agent'));
     await action.toNeedsInfo();
     return { parked: true }; // no PR, already routed -> watchOnce skips onNoChange
@@ -683,7 +686,7 @@ export function githubIssueWatchPrimitives(opts: WatchGithubOptions): WatchPrimi
             triageAgentRun(id, fetcher, (i) => runGithubIssue(i, opts.deps), {
               comment: (body) => commentGithubIssue(repo, id, body, opts.gh),
               toNeedsInfo: () => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, opts.gh),
-            }),
+            }, opts.deps.feedbackAuthors),
     review: (id) => editGithubLabels(repo, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, opts.gh),
     onNoChange: (id) =>
       commentAndRevert(
@@ -994,7 +997,7 @@ export function gitlabWatchPrimitives(opts: WatchGitlabOptions): WatchPrimitives
               comment: (body) => commentGitlabIssue(project, id, body, glab),
               toNeedsInfo: () =>
                 editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [needsInfoLabel] }, glab),
-            }),
+            }, opts.deps.feedbackAuthors),
     review: (id) =>
       // Explicitly remove claimedLabel for robustness when non-scoped labels are configured.
       editGitlabLabels(project, id, { remove: [opts.claimedLabel], add: [opts.reviewLabel] }, glab),

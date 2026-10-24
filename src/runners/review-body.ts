@@ -13,6 +13,8 @@ export interface ReviewRequestBodyOptions {
   implementerIncomplete?: boolean;
   /** White-label mode: drop the "Automated implementation … by Vanguard" attribution line entirely. */
   hideAttribution?: boolean;
+  /** A `<spec_manifest>` was present but only from an untrusted comment author: scope is unverifiable. */
+  untrustedManifest?: boolean;
 }
 
 /**
@@ -25,16 +27,21 @@ export interface ReviewRequestBodyOptions {
  */
 export function reviewRequestBody(taskId: string, opts: ReviewRequestBodyOptions = {}): string {
   const { conformance, manifest, verificationFailed } = opts;
-  // Either red signal forces the non-closing path: failing tests or an implementer that stopped
-  // before finishing must never ship as a silent `Closes`.
-  const red = verificationFailed === true || opts.implementerIncomplete === true;
+  // Any red signal forces the non-closing path: failing tests, an implementer that stopped
+  // before finishing, or a spec manifest that only existed in an untrusted comment must never ship
+  // as a silent `Closes`.
+  const red = verificationFailed === true || opts.implementerIncomplete === true || opts.untrustedManifest === true;
   // White-label mode drops the attribution line; `join` then omits it (and its blank separator).
   const base = opts.hideAttribution === true ? undefined : `Automated implementation of ${taskId} by Vanguard.`;
   const join = (...parts: (string | undefined)[]): string =>
     parts.filter((p): p is string => p !== undefined && p !== '').join('\n\n');
 
+  const untrustedGap = opts.untrustedManifest === true
+    ? 'A <spec_manifest> was present but came from an unauthorised comment author; it was ignored and scope could not be verified.'
+    : undefined;
+
   if (conformance === undefined || !conformance.checked || manifest === undefined) {
-    if (red) return join(`Part of ${taskId}`, base);
+    if (red) return join(`Part of ${taskId}`, base, untrustedGap);
     return opts.closeIssueOnMerge ? join(`Closes ${taskId}`, base) : (base ?? '');
   }
 
@@ -49,6 +56,7 @@ export function reviewRequestBody(taskId: string, opts: ReviewRequestBodyOptions
     opts.implementerIncomplete === true
       ? 'The implementer ended (turn cap or timeout) before signalling the task complete.'
       : undefined,
+    untrustedGap,
   ]
     .filter((s): s is string => s !== undefined)
     .join('\n');

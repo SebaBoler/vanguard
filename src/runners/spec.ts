@@ -31,6 +31,7 @@ import { skillRegistryForRun } from '../context/skill-registry.js';
  * repo slug / verification / fork / review-model options are intentionally absent.
  */
 export interface RunSpecGeneratorDeps extends ProviderChoice {
+  feedbackAuthors?: string[];
   auth?: AgentAuth;
   /** Local repo path: where the worktree is cut and where the run record is persisted. */
   repoPath: string;

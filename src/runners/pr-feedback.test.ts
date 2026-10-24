@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   fetchPullRequestFeedback,
   selectActionableFeedback,
+  partitionActionableFeedback,
   buildRevisionPrompt,
-  countRevisionRounds,
   countRevisionRoundsFromFeedback,
   revisionMarker,
   referenceSnippet,
@@ -40,6 +40,7 @@ function threadItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
     threadId: 'thread-1',
     isResolved: false,
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Please rename this variable.',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -50,6 +51,7 @@ function reviewItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
   return {
     source: 'review',
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Overall LGTM but please address the naming.',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -60,6 +62,7 @@ function commentItem(overrides: Partial<FeedbackItem> = {}): FeedbackItem {
   return {
     source: 'comment',
     author: 'alice',
+    authorAssociation: 'COLLABORATOR',
     body: 'Can you add a test for the edge case?',
     createdAt: '2024-01-11T10:00:00Z',
     ...overrides,
@@ -319,18 +322,19 @@ describe('selectActionableFeedback', () => {
 });
 
 // ---------------------------------------------------------------------------
-// countRevisionRounds
+// countRevisionRoundsFromFeedback (over fetched feedback)
 // ---------------------------------------------------------------------------
 
 function makeGqlPayload(overrides: {
-  comments?: Array<{ author?: { login: string }; body: string; createdAt?: string }>;
-  reviews?: Array<{ author?: { login: string }; body: string; submittedAt?: string; state?: string }>;
+  comments?: Array<{ author?: { login: string }; authorAssociation?: string; body?: string; createdAt?: string }>;
+  reviews?: Array<{ author?: { login: string }; authorAssociation?: string; body?: string; submittedAt?: string; state?: string }>;
   threadCommentBodies?: string[];
+  threads?: Array<{ id: string; isResolved: boolean; comments: { nodes: Array<{ author: { login: string }; authorAssociation: string }> } }>;
 } = {}) {
   const threadNodes = (overrides.threadCommentBodies ?? []).map((body, i) => ({
     id: `thread-${i}`,
     isResolved: false,
-    comments: { nodes: [{ author: { login: 'alice' }, body, createdAt: '2024-01-11T10:00:00Z' }] },
+    comments: { nodes: [{ author: { login: 'alice' }, authorAssociation: 'COLLABORATOR', body, createdAt: '2024-01-11T10:00:00Z' }] },
   }));
   return {
     data: {
@@ -339,7 +343,7 @@ function makeGqlPayload(overrides: {
           isDraft: false,
           headRefOid: 'head-sha',
           commits: { nodes: [{ commit: { committedDate: '2024-01-10T09:00:00Z' } }] },
-          reviewThreads: { nodes: threadNodes },
+          reviewThreads: { nodes: overrides.threads ?? threadNodes },
           reviews: { nodes: overrides.reviews ?? [] },
           comments: { nodes: overrides.comments ?? [] },
         },
@@ -348,57 +352,47 @@ function makeGqlPayload(overrides: {
   };
 }
 
-describe('countRevisionRounds', () => {
-  it('counts repeated markers for the same head as one revision round', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-          { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
-          { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
-        ],
-      })),
-    );
+/** Rounds counted over the feedback fetched from one gh GraphQL payload. */
+async function fetchedRounds(payload: ReturnType<typeof makeGqlPayload>): Promise<number> {
+  const gh = vi.fn().mockResolvedValue(JSON.stringify(payload));
+  return countRevisionRoundsFromFeedback(await fetchPullRequestFeedback({ repoSlug: 'o/r', number: 7 }, gh));
+}
 
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+describe('countRevisionRoundsFromFeedback over fetched feedback', () => {
+  it('counts repeated markers for the same head as one revision round', async () => {
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: 'Re: first\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'vanguard' }, body: 'Re: second\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:01Z' },
+        { author: { login: 'vanguard' }, body: '## Revision Summary\n\n<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:02Z' },
+      ],
+    }))).resolves.toBe(1);
   });
 
   it('counts distinct revision marker heads as distinct rounds', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
-        ],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: deadbeef -->', createdAt: '2024-01-11T10:00:00Z' },
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: abc1234 -->', createdAt: '2024-01-11T10:00:01Z' },
+      ],
+    }))).resolves.toBe(2);
   });
 
   it('counts a round whose marker is only in an inline thread reply', async () => {
     // Thread-only round: revision marker posted exclusively as a thread reply,
     // not in PR-level comments or reviews. Must still be counted.
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        threadCommentBodies: ['Addressed inline.\n\n<!-- vanguard-revision: feedcafe -->'],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(1);
+    await expect(fetchedRounds(makeGqlPayload({
+      threadCommentBodies: ['Addressed inline.\n\n<!-- vanguard-revision: feedcafe -->'],
+    }))).resolves.toBe(1);
   });
 
   it('counts rounds from both thread replies and PR-level comments', async () => {
-    const gh = vi.fn().mockResolvedValue(
-      JSON.stringify(makeGqlPayload({
-        comments: [
-          { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
-        ],
-        threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
-      })),
-    );
-
-    await expect(countRevisionRounds({ repoSlug: 'o/r', number: 7 }, gh)).resolves.toBe(2);
+    await expect(fetchedRounds(makeGqlPayload({
+      comments: [
+        { author: { login: 'vanguard' }, body: '<!-- vanguard-revision: sha-round1 -->', createdAt: '2024-01-11T10:00:00Z' },
+      ],
+      threadCommentBodies: ['Fixed inline.\n\n<!-- vanguard-revision: sha-round2 -->'],
+    }))).resolves.toBe(2);
   });
 });
 
@@ -418,8 +412,8 @@ describe('white-label revision marker', () => {
   it('round-counting recognises BOTH marker forms (dedup unaffected by white-label)', () => {
     const fb = {
       items: [
-        { body: `default\n\n${revisionMarker('sha-1')}` },
-        { body: `white-label\n\n${revisionMarker('sha-2', true)}` },
+        { author: 'github-actions', body: `default\n\n${revisionMarker('sha-1')}` },
+        { author: 'github-actions', body: `white-label\n\n${revisionMarker('sha-2', true)}` },
       ],
     } as unknown as PullRequestFeedback;
     expect(countRevisionRoundsFromFeedback(fb)).toBe(2);
@@ -1023,6 +1017,7 @@ describe('describeItemChange', () => {
   it('returns scoped line when body mentions a file path present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'Please check src/runner.ts for the validation call',
       createdAt: '',
@@ -1034,6 +1029,7 @@ describe('describeItemChange', () => {
   it('returns empty string when body mentions nothing matchable', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'LGTM overall',
       createdAt: '',
@@ -1044,6 +1040,7 @@ describe('describeItemChange', () => {
   it('returns empty string when body mentions a file not present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'Check src/other.ts',
       createdAt: '',
@@ -1054,6 +1051,7 @@ describe('describeItemChange', () => {
   it('matches via backtick-quoted symbol present in diff', () => {
     const item: FeedbackItem = {
       source: 'review',
+      authorAssociation: 'COLLABORATOR',
       author: 'alice',
       body: 'The `validateProviderChoice` call should stay',
       createdAt: '',
@@ -1123,5 +1121,62 @@ describe('guardedPoint', () => {
     expect(guarded).toBe(candidate);
     expect(guarded).toContain('added `newThing`');
     expect(guarded).toContain('removed `oldThing`');
+  });
+});
+
+describe('author trust boundary', () => {
+  it('T5/T6/T9: keeps authorised feedback in order and reports only outsiders', () => {
+    const trusted = ['OWNER', 'MEMBER', 'COLLABORATOR'].map((authorAssociation) => commentItem({ authorAssociation }));
+    const outsiders = ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', ''].map((authorAssociation) => commentItem({ author: 'mallory', authorAssociation }));
+    const allowed = commentItem({ author: 'External', authorAssociation: 'NONE' });
+    const fb = makeFeedback({ items: [...trusted, ...outsiders, allowed] });
+    const opts = { headRefOid: 'abc123', feedbackAuthors: ['EXTERNAL'] };
+    const result = partitionActionableFeedback(fb, opts);
+    expect(result.actionable).toEqual([...trusted, allowed]);
+    expect(result.ignoredAuthors).toEqual(outsiders);
+    expect(selectActionableFeedback(fb, opts)).toEqual(result.actionable);
+  });
+  it('T7: reports no bot, marker, resolved or stale item as an ignored author', () => {
+    const base = { author: 'mallory', authorAssociation: 'NONE' };
+    const fb = makeFeedback({ items: [
+      commentItem({ ...base, author: 'foo[bot]' }),
+      commentItem({ ...base, body: revisionMarker('abc123') }),
+      threadItem({ ...base, isResolved: true }),
+      commentItem({ ...base, createdAt: '2020-01-01T00:00:00Z' }),
+    ] });
+    expect(partitionActionableFeedback(fb, { headRefOid: 'abc123' })).toEqual({ actionable: [], ignoredAuthors: [] });
+  });
+  it('T8: forged round markers do not raise the cap', () => {
+    const fb = makeFeedback({ items: [
+      commentItem({ author: 'mallory', authorAssociation: 'NONE', body: revisionMarker('fake1') + revisionMarker('fake2') }),
+      commentItem({ author: 'github-actions', body: revisionMarker('real') }),
+      commentItem({ author: 'external', authorAssociation: '', body: revisionMarker('allowed') }),
+    ] });
+    expect(countRevisionRoundsFromFeedback(fb)).toBe(1);
+    expect(countRevisionRoundsFromFeedback(fb, { feedbackAuthors: ['EXTERNAL'] })).toBe(2);
+  });
+  it('excludes vanguard-named automation from actionable feedback without trusting lookalikes', () => {
+    // The two questions are separate: the substring match keeps Vanguard's own OWNER comments out of
+    // the actionable set, while only an exact bot login grants trust — `mallory-vanguard` gets none.
+    const fb = makeFeedback({ items: [
+      commentItem({ author: 'vanguard-ci', authorAssociation: 'OWNER', body: 'CI output' }),
+      commentItem({ author: 'mallory-vanguard', authorAssociation: 'NONE', body: 'outsider instructions' }),
+    ] });
+    // Both are dropped by the wide automation filter, which runs before the trust check — so neither
+    // is reported as an ignored author, and neither is acted on.
+    expect(partitionActionableFeedback(fb, { headRefOid: 'abc123' })).toEqual({ actionable: [], ignoredAuthors: [] });
+    expect(countRevisionRoundsFromFeedback(makeFeedback({ items: [
+      commentItem({ author: 'mallory-vanguard', authorAssociation: 'NONE', body: revisionMarker('forged') }),
+    ] }))).toBe(0);
+  });
+  it('T4: maps associations on every node kind and defaults omissions to empty', async () => {
+    const gh = vi.fn().mockResolvedValue(JSON.stringify(makeGqlPayload({
+      threads: [{ id: 't', isResolved: false, comments: { nodes: [{ author: { login: 'a' }, authorAssociation: 'OWNER' }] } }],
+      reviews: [{ author: { login: 'b' }, authorAssociation: 'MEMBER' }],
+      comments: [{ author: { login: 'c' }, authorAssociation: 'COLLABORATOR' }, { author: { login: 'd' } }],
+    })));
+    const fb = await fetchPullRequestFeedback({ repoSlug: 'o/r', number: 7 }, gh);
+    expect(fb.items.map((i) => i.authorAssociation)).toEqual(['OWNER', 'MEMBER', 'COLLABORATOR', '']);
+    expect(gh.mock.calls[0]?.[0]?.join(' ').match(/authorAssociation/g)).toHaveLength(3);
   });
 });

@@ -1,4 +1,6 @@
 import type { Task, TaskComment } from './fetcher.js';
+import { trustedComments } from './comment-trust.js';
+import type { TrustOptions } from './comment-trust.js';
 
 export type Readiness = 'ok' | 'needs_info';
 
@@ -102,8 +104,12 @@ export function isVanguardSpec(comment: TaskComment): boolean {
  *   spec comment in `task.comments`.
  *
  * Returns `'ok'` when the task meets the bar, `'needs_info'` otherwise.
+ *
+ * The spec/tech-spec escape hatch in 'agent' mode only reads comments from an authorised author
+ * (OWNER/MEMBER/COLLABORATOR, the issue author, a bot, or `trust.allowedAuthors`) — an outsider
+ * comment carrying `<tech_spec` or acceptance-criteria bullets must not make a vague ticket "ready".
  */
-export function assessTaskReadiness(task: Task, mode: 'spec' | 'agent'): Readiness {
+export function assessTaskReadiness(task: Task, mode: 'spec' | 'agent', trust: TrustOptions = {}): Readiness {
   const cleaned = stripHtmlComments(task.description).trim();
 
   if (cleaned.length < MIN_DESCRIPTION_CHARS) {
@@ -120,7 +126,9 @@ export function assessTaskReadiness(task: Task, mode: 'spec' | 'agent'): Readine
     return 'ok';
   }
 
-  const hasSpecComment = task.comments.some((c) => c.body.trim() !== '' && (isVanguardSpec(c) || hasRealAcceptanceCriteria(c.body)));
+  const hasSpecComment = trustedComments(task, trust).some(
+    (c) => c.body.trim() !== '' && (isVanguardSpec(c) || hasRealAcceptanceCriteria(c.body)),
+  );
   if (hasSpecComment) {
     return 'ok';
   }

@@ -94,4 +94,15 @@ describe('revisePrCommand', () => {
       expect.objectContaining({ maxRounds: 3 }),
     );
   });
+
+  it('T27: forwards feedback authors and leaves the ignored-author lines to the runner', async () => {
+    const logs: string[] = [];
+    const revisePullRequest = vi.fn(async () => ({ ...makeResult(false), ignoredFeedback: [
+      { author: 'mallory', association: 'NONE' }, { author: 'outsider', association: '' },
+    ] }));
+    await revisePrCommand(makeCmd({ feedbackAuthors: ['Alice'] }), { revisePullRequest, log: (line) => logs.push(line) });
+    expect(revisePullRequest).toHaveBeenCalledWith('7', expect.objectContaining({ feedbackAuthors: ['Alice'] }));
+    // The runner already logs these through the same `log`; re-printing here duplicated every line.
+    expect(logs.filter((l) => l.includes('ignored feedback'))).toEqual([]);
+  });
 });
