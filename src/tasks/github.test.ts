@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GitHubTaskFetcher, linkPullRequest } from './github.js';
+import { isTrustedComment } from './comment-trust.js';
 import type { GhRunner } from './github.js';
 
 function fakeGh(): GhRunner {
@@ -39,8 +40,8 @@ describe('GitHubTaskFetcher', () => {
     const gh: GhRunner = async (): Promise<string> => JSON.stringify(issueWithComments);
     const task = await new GitHubTaskFetcher('SebaBoler/vanguard', gh).fetch('7');
     expect(task.comments).toEqual([
-      { author: 'alice', body: 'First comment' },
-      { author: 'bob', body: 'Second comment' },
+      { author: 'alice', authorAssociation: '', body: 'First comment' },
+      { author: 'bob', authorAssociation: '', body: 'Second comment' },
     ]);
   });
 
@@ -62,14 +63,16 @@ describe('GitHubTaskFetcher', () => {
     expect(calls[0]?.at(-1)?.split(',')).toContain('author');
   });
 
-  // Trust gating rides on authorAssociation, and only a live gh proves it is populated: warn rather
-  // than silently widen trust if a future gh drops the field.
-  it('warns when an issue has comments but gh returned no association at all', async () => {
+  // GitHub always models an association, so a missing one fails closed (unlike GitLab, which models
+  // none) — and the fetcher warns, since a future gh that drops the field would mute every human.
+  it('fails closed and warns when gh returned no association at all', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const gh = async (): Promise<string> =>
         JSON.stringify({ number: 1, title: '', body: '', labels: [], comments: [{ author: { login: 'alice' }, body: 'hi' }] });
-      await new GitHubTaskFetcher('o/r', gh).fetch('1');
+      const task = await new GitHubTaskFetcher('o/r', gh).fetch('1');
+      expect(task.comments[0]?.authorAssociation).toBe('');
+      expect(isTrustedComment(task.comments[0]!)).toBe(false);
       expect(warn.mock.calls[0]?.[0]).toContain('no authorAssociation');
       warn.mockClear();
       const withAssociation = async (): Promise<string> =>

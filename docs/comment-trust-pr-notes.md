@@ -4,7 +4,7 @@ Autonomous revision, manifest, readiness and research decisions now reject unaut
 
 The shared bot matcher uses an exact `vanguard` login rather than a substring: an outsider can choose a username such as `mallory-vanguard`. Custom bot logins can be supplied explicitly. Research iteration markers are gated on trust rather than on a bot login, so the white-label/PAT configuration (findings posted under a human-looking name) still advances the iteration counter.
 
-GitHub issue comments retain the existing `gh issue view --json comments` source: GitHub CLI's [Comment definition](https://github.com/cli/cli/blob/trunk/api/queries_comments.go) includes `authorAssociation`. Live authenticated verification was unavailable in this checkout, so `toTask` warns when an issue has comments and none carries an association — the case where trust could not be enforced.
+GitHub issue comments retain the existing `gh issue view --json comments` source: GitHub CLI's [Comment definition](https://github.com/cli/cli/blob/trunk/api/queries_comments.go) includes `authorAssociation`, and a live `gh issue view --json comments` returns it (checked 2026-10-23). GitHub models an association on every comment, so `toTask` maps a missing one to `''`, which fails closed; it also warns when an issue has comments and none carries an association, since a future `gh` that drops the field would turn every non-bot comment untrusted.
 
 ## Providers that model no association
 
@@ -15,7 +15,7 @@ Linear comments are treated as MEMBER because workspace membership gates comment
 ## Residual trust widening
 
 - `linear-cli.ts` stamps every comment MEMBER, so Linear gains no boundary from this change.
-- `issue-author` trust means an outsider who opens an issue stays trusted for that issue's `<spec_manifest>` and acceptance criteria — they already control the description those gates read, so the comment adds no reach.
+- `issue-author` trust means an outsider who opens an issue stays trusted for that issue's `<spec_manifest>` and acceptance criteria — they already control the description those gates read, so the comment adds no reach. It never lets the reporter *suppress* work: the "spec already posted" check and the research iteration markers require bot, association or allowlist trust.
 
 Both are defensible because runs are human-triggered, but they are trust, not verification.
 
@@ -29,11 +29,11 @@ In `revise.yml`'s **Revise the PR from review comments** step, add this to `env:
 IN_ALLOWED_ACTORS: ${{ inputs.allowed-actors }}
 ```
 
-In the step's `run:` body, add these exact lines (no expression interpolation inside `run:`):
+In the step's `run:` body, add these lines next to the existing `args+=` lines, before the `node …` call (no expression interpolation inside `run:`; `if` rather than `&&`, so an empty allowlist does not fail the step under `bash -e`):
 
 ```bash
 AUTHORS=$(printf '%s' "$IN_ALLOWED_ACTORS" | tr -d '[]" ' )
-[ -n "$AUTHORS" ] && args+=(--feedback-authors "$AUTHORS")
+if [ -n "$AUTHORS" ]; then args+=(--feedback-authors "$AUTHORS"); fi
 ```
 
 Apply the identical environment entry and two shell lines in `implement.yml`'s **Run Vanguard loop** step. No trigger, permissions or actor-gate change is required.

@@ -44,13 +44,14 @@ export function toTask(repo: string, issue: GitHubIssue): Task {
   const comments: TaskComment[] = (issue.comments ?? []).map((comment) => ({
     author: comment.author?.login ?? '',
     body: comment.body ?? '',
-    ...(comment.authorAssociation !== undefined ? { authorAssociation: comment.authorAssociation } : {}),
+    // GitHub models an association on every comment and gh returns it on `issue view --json comments`,
+    // so a missing one is mapped to '' and fails closed (see classifyAuthor). Only providers that model
+    // none at all (GitLab) keep the absent-means-no-signal path.
+    authorAssociation: comment.authorAssociation ?? '',
   }));
-  // Comment-author trust rides on authorAssociation; gh populates it on `issue view --json comments`.
-  // If a future gh stops doing so the field goes absent, which degrades to no-signal rather than
-  // failing closed (see classifyAuthor) — so say it out loud instead of silently widening trust.
-  if (comments.length > 0 && comments.every((c) => c.authorAssociation === undefined)) {
-    console.warn(`vanguard: ${repo}#${issue.number} — gh returned no authorAssociation on any comment; comment-author trust cannot be enforced`);
+  // A future gh that drops the field would turn every non-bot comment untrusted: say it out loud.
+  if (comments.length > 0 && (issue.comments ?? []).every((c) => c.authorAssociation === undefined)) {
+    console.warn(`vanguard: ${repo}#${issue.number} — gh returned no authorAssociation on any comment; non-bot comments are treated as untrusted`);
   }
   return {
     id: `${repo}#${issue.number}`,
