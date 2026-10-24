@@ -6,6 +6,7 @@
 ### Features
 
 * **approver:** deterministic APPROVE/ESCALATE for factory PRs, shadow mode ([#557](https://github.com/spietrza/vanguard/issues/557)) ([44196c5](https://github.com/spietrza/vanguard/commit/44196c50d0bd5464763ab8bf448122848fcea529))
+* **approver:** the `Vanguard Approver (shadow)` workflow runs the approver after the factory PR review and comments APPROVE/ESCALATE; it never merges, approves or labels ([#564](https://github.com/spietrza/vanguard/issues/564)) ([b4fca07](https://github.com/spietrza/vanguard/commit/b4fca07eb2a7268fc6ecd94526fb8343932d57a2))
 * **hub:** show how many tasks wait for the factory (spietrza/vanguard[#560](https://github.com/spietrza/vanguard/issues/560)) ([#562](https://github.com/spietrza/vanguard/issues/562)) ([ed440ef](https://github.com/spietrza/vanguard/commit/ed440efd2be76111f4052f6602ae082a1a6887d0))
 * **review:** risk level line after the review verdict (spietrza/vanguard[#559](https://github.com/spietrza/vanguard/issues/559)) ([#561](https://github.com/spietrza/vanguard/issues/561)) ([340425a](https://github.com/spietrza/vanguard/commit/340425a695339c722b786517a8325f49ca11fcd8))
 * revise: refuse fork PRs instead of pushing to a same-named base-repo branch (spietrza/vanguard[#567](https://github.com/spietrza/vanguard/issues/567)) ([#571](https://github.com/spietrza/vanguard/issues/571)) ([c889c81](https://github.com/spietrza/vanguard/commit/c889c81823b061aa08b1b8005f23ebbe135c23f7))
